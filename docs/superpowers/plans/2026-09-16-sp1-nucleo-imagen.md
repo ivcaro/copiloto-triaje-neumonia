@@ -1196,7 +1196,10 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
     criterio = nn.BCEWithLogitsLoss(pos_weight=peso_positivo)
 
     historial: list[dict] = []
-    mejor_recall, mejor_epoca, sin_mejora = -1.0, -1, 0
+    # mejor_recall/mejor_epoca son el registro GLOBAL del entrenamiento: se
+    # conservan entre fases. sin_mejora se reinicia al entrar a cada fase
+    # (ver mas abajo): es la paciencia POR FASE.
+    mejor_recall, mejor_epoca = -1.0, -1
     ruta_mejor = dir_checkpoints / "mejor.pt"
 
     fases = [("cabeza", cfg.epocas_cabeza, cfg.lr_cabeza),
@@ -1209,6 +1212,10 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
             descongelar_para_ajuste(modelo)
         parametros = [p for p in modelo.parameters() if p.requires_grad]
         optimizador = torch.optim.Adam(parametros, lr=lr)
+        # Paciencia propia de esta fase: agotarla en "cabeza" significa que
+        # la cabeza convergio, que es la señal para pasar al ajuste fino, no
+        # para abandonar el entrenamiento completo.
+        sin_mejora = 0
 
         for epoca in range(n_epocas):
             perdida = _pasada_de_entrenamiento(
@@ -1220,18 +1227,25 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
                         "especificidad": m["especificidad"]}
             historial.append(registro)
 
-            torch.save({"modelo": modelo.state_dict(), "epoca": registro["epoca"],
-                        "metricas": m}, dir_checkpoints / "ultimo.pt")
+            # Checkpoint fiel para reanudar tras una caida de sesion: el
+            # estado del optimizador (si no, Adam reanuda con el momento en
+            # blanco, que no es reanudar sino reiniciar con pesos calientes),
+            # la fase y el historial acumulado hasta esta epoca.
+            estado = {"modelo": modelo.state_dict(), "optimizador": optimizador.state_dict(),
+                      "epoca": registro["epoca"], "fase": nombre_fase,
+                      "metricas": m, "historial": historial}
+            torch.save(estado, dir_checkpoints / "ultimo.pt")
 
             if m["recall"] > mejor_recall:
                 mejor_recall, mejor_epoca, sin_mejora = m["recall"], registro["epoca"], 0
-                torch.save({"modelo": modelo.state_dict(), "epoca": registro["epoca"],
-                            "metricas": m}, ruta_mejor)
+                torch.save(estado, ruta_mejor)
             else:
                 sin_mejora += 1
                 if sin_mejora >= cfg.paciencia:
-                    return {"mejor_recall": mejor_recall, "mejor_epoca": mejor_epoca,
-                            "historial": historial, "ruta_mejor_checkpoint": ruta_mejor}
+                    # Corta SOLO esta fase (break), nunca toda la funcion
+                    # (return): el bucle exterior debe poder continuar con la
+                    # fase siguiente.
+                    break
 
     return {"mejor_recall": mejor_recall, "mejor_epoca": mejor_epoca,
             "historial": historial, "ruta_mejor_checkpoint": ruta_mejor}

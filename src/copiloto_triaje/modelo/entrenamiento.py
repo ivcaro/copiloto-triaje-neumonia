@@ -30,7 +30,13 @@ def evaluar_epoca(modelo, cargador, dispositivo) -> tuple[np.ndarray, np.ndarray
 
 def _etiquetas_de(cargador) -> np.ndarray:
     """Etiquetas del conjunto sin cargar las imagenes, si el dataset expone su
-    manifiesto. Solo itera el cargador como ultimo recurso."""
+    manifiesto. Solo itera el cargador como ultimo recurso.
+
+    Los dos caminos solo coinciden en conteo si el cargador tiene
+    `drop_last=False` (el valor por defecto de DataLoader): con
+    `drop_last=True` la iteracion omite las muestras del ultimo lote
+    incompleto y devolveria menos etiquetas que las del manifiesto.
+    """
     dataset = cargador.dataset
     manifiesto = getattr(dataset, "manifiesto", None)
     if manifiesto is not None and "etiqueta" in manifiesto:
@@ -47,7 +53,10 @@ def _pasada_de_entrenamiento(modelo, cargador, criterio, optimizador, dispositiv
         perdida = criterio(modelo(x).squeeze(1), y)
         perdida.backward()
         optimizador.step()
-        perdida_total += float(perdida) * x.size(0)
+        # .item() en vez de float(): extrae el escalar ya desprendido del
+        # grafo de autograd, sin el UserWarning de convertir un tensor con
+        # requires_grad=True directamente a float.
+        perdida_total += perdida.item() * x.size(0)
     return perdida_total / len(cargador.dataset)
 
 
@@ -83,7 +92,11 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
     criterio = nn.BCEWithLogitsLoss(pos_weight=peso_positivo)
 
     historial: list[dict] = []
-    mejor_recall, mejor_epoca, sin_mejora = -1.0, -1, 0
+    # mejor_recall/mejor_epoca son el registro GLOBAL del entrenamiento: se
+    # conservan entre fases (el mejor de todo el entrenamiento, cabeza o
+    # ajuste). sin_mejora, en cambio, se reinicia al entrar a cada fase (ver
+    # mas abajo): es un contador de paciencia POR FASE.
+    mejor_recall, mejor_epoca = -1.0, -1
     ruta_mejor = dir_checkpoints / "mejor.pt"
 
     fases = [("cabeza", cfg.epocas_cabeza, cfg.lr_cabeza),
@@ -96,6 +109,10 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
             descongelar_para_ajuste(modelo)
         parametros = [p for p in modelo.parameters() if p.requires_grad]
         optimizador = torch.optim.Adam(parametros, lr=lr)
+        # Paciencia propia de esta fase: agotarla en "cabeza" significa que
+        # la cabeza convergio, que es la señal para pasar al ajuste fino, no
+        # para abandonar el entrenamiento completo.
+        sin_mejora = 0
 
         for epoca in range(n_epocas):
             perdida = _pasada_de_entrenamiento(
@@ -107,18 +124,25 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
                         "especificidad": m["especificidad"]}
             historial.append(registro)
 
-            torch.save({"modelo": modelo.state_dict(), "epoca": registro["epoca"],
-                        "metricas": m}, dir_checkpoints / "ultimo.pt")
+            # Checkpoint fiel para reanudar tras una caida de sesion: el
+            # estado del optimizador (si no, Adam reanuda con el momento en
+            # blanco, que no es reanudar sino reiniciar con pesos calientes),
+            # la fase y el historial acumulado hasta esta epoca.
+            estado = {"modelo": modelo.state_dict(), "optimizador": optimizador.state_dict(),
+                      "epoca": registro["epoca"], "fase": nombre_fase,
+                      "metricas": m, "historial": historial}
+            torch.save(estado, dir_checkpoints / "ultimo.pt")
 
             if m["recall"] > mejor_recall:
                 mejor_recall, mejor_epoca, sin_mejora = m["recall"], registro["epoca"], 0
-                torch.save({"modelo": modelo.state_dict(), "epoca": registro["epoca"],
-                            "metricas": m}, ruta_mejor)
+                torch.save(estado, ruta_mejor)
             else:
                 sin_mejora += 1
                 if sin_mejora >= cfg.paciencia:
-                    return {"mejor_recall": mejor_recall, "mejor_epoca": mejor_epoca,
-                            "historial": historial, "ruta_mejor_checkpoint": ruta_mejor}
+                    # Corta SOLO esta fase (break), nunca toda la funcion
+                    # (return): el bucle exterior debe poder continuar con la
+                    # fase siguiente.
+                    break
 
     return {"mejor_recall": mejor_recall, "mejor_epoca": mejor_epoca,
             "historial": historial, "ruta_mejor_checkpoint": ruta_mejor}
