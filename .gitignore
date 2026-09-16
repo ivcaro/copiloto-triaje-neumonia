@@ -1,0 +1,38 @@
+# Datos crudos y derivados: NUNCA se versionan (viven fuera del repo y de OneDrive)
+data/
+datasets/
+*.dcm
+*.zip
+
+# Artefactos del modelo
+models/
+checkpoints/
+*.pt
+*.pth
+*.onnx
+runs/
+
+# Manifiestos generados (se regeneran de forma determinista con la semilla)
+manifiestos/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Entorno y secretos
+.env
+kaggle.json
+
+# Sistema operativo
+Thumbs.db
+desktop.ini
+.DS_Store
