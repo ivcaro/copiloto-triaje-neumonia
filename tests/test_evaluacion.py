@@ -38,14 +38,18 @@ def test_umbral_paso_1_cuando_se_cumplen_ambos_objetivos():
     assert m["especificidad"] >= 0.75
 
 
-def test_umbral_relaja_al_paso_2_si_el_recall_no_llega():
+def test_paso_2_solo_si_alcanza_recall_objetivo_sino_paso_3():
     """Clases muy solapadas: con especificidad 0,75 no se alcanza 0,85 de
-    recall, asi que la regla debe relajar hasta la especificidad minima."""
+    recall. La regla relaja a especificidad minima solo si ALCANZA 0,85."""
     rng = np.random.default_rng(1)
     y = np.array([1] * 200 + [0] * 800)
     score = np.where(y == 1, rng.normal(0.55, 0.20, 1000), rng.normal(0.45, 0.20, 1000))
     umbral, m, paso = elegir_umbral(y, score)
-    assert paso in ("paso_2_especificidad_minima", "paso_3_se_conserva_paso_1")
+    # Relacion: paso_2 solo si recall >= 0.85; si recall < 0.85, debe ser paso_3
+    if paso == "paso_2_especificidad_minima":
+        assert m["recall"] >= 0.85
+    if m["recall"] < 0.85:
+        assert paso == "paso_3_se_conserva_paso_1"
     assert m["especificidad"] >= 0.70
 
 

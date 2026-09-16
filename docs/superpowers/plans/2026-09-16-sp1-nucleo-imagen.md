@@ -542,7 +542,7 @@ def elegir_umbral(
         indice, paso = i1, "paso_1_especificidad_objetivo"
     else:
         i2 = mejor_indice(especificidad_minima)
-        if i2 is not None and tpr[i2] > tpr[i1]:
+        if i2 is not None and tpr[i2] >= recall_objetivo:
             indice, paso = i2, "paso_2_especificidad_minima"
         else:
             indice, paso = i1, "paso_3_se_conserva_paso_1"
