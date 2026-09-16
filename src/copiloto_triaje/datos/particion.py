@@ -42,7 +42,6 @@ def particionar_por_paciente(
     resultado: dict[str, list[dict]] = {"train": [], "val": [], "test": []}
 
     for grupo in (sorted(positivos), sorted(negativos)):
-        grupo = list(grupo)
         rng.shuffle(grupo)
         n = len(grupo)
         corte_train = round(n * proporciones[0])

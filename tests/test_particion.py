@@ -54,9 +54,19 @@ def test_proporciones_aproximadas():
 def test_estratificacion_conserva_la_tasa_de_positivos():
     registros = registros_sinteticos(n_pacientes=1000, tasa_positivos=0.225)
     p = particionar_por_paciente(registros, (0.7, 0.15, 0.15), semilla=42)
-    for nombre, regs in p.items():
-        tasa = sum(r["etiqueta"] for r in regs) / len(regs)
-        assert 0.17 <= tasa <= 0.28, f"{nombre} tiene tasa {tasa}"
+
+    # Contar pacientes ÚNICOS positivos en el dataset completo
+    pacientes_positivos = {r["patientId"] for r in registros if r["etiqueta"] == 1}
+    total_positivos = len(pacientes_positivos)
+
+    # Verificar que cada partición tiene el número ESPERADO de pacientes positivos,
+    # con tolerancia ±1 por redondeo. Cualquier reparto no estratificado falla.
+    for nombre, proporcion in [("train", 0.7), ("val", 0.15), ("test", 0.15)]:
+        pacientes_en_particion = {r["patientId"] for r in p[nombre]}
+        positivos_en_particion = len(pacientes_en_particion & pacientes_positivos)
+        esperado = total_positivos * proporcion
+        assert abs(positivos_en_particion - esperado) <= 1, \
+            f"{nombre}: esperado {esperado} positivos, obtuvo {positivos_en_particion}"
 
 
 def test_la_misma_semilla_reproduce_la_misma_particion():
