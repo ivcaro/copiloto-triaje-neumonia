@@ -201,3 +201,65 @@ def test_el_checkpoint_guarda_lo_necesario_para_reanudar(tmp_path):
     # presente como clave.
     optimizador_nuevo = torch.optim.Adam(ModeloTrivial().parameters(), lr=cfg.lr_cabeza)
     optimizador_nuevo.load_state_dict(estado["optimizador"])
+
+
+def test_entrenar_restaura_los_pesos_de_la_mejor_epoca_no_los_de_la_ultima(tmp_path, monkeypatch):
+    """Hallazgo 1 (Critical) de la ronda de arreglo 1/5 (Tarea 10): `entrenar`
+    guardaba 'mejor.pt' cada vez que el recall mejoraba, pero nunca lo volvia
+    a cargar antes de retornar. El `modelo` que el llamador recibia quedaba en
+    el estado de la ULTIMA epoca ejecutada, no en el de la mejor -casi
+    siempre peor, porque el early stopping corta precisamente cuando el
+    recall dejo de mejorar-. El notebook de la Tarea 10 elige el umbral y
+    evalua la prueba sobre ese `modelo`, asi que el bug se traducia en
+    metricas reportadas para un modelo distinto del que se dice haber
+    entrenado, sin ningun error visible.
+
+    Se fuerza el mejor recall en una epoca intermedia (1), no en la ultima
+    (2), y se hace que cada epoca deje un valor CONOCIDO y distinguible en la
+    capa lineal (en vez de depender de que el descenso de gradiente real
+    produzca pesos distintos por epoca: seria correcto, pero no deterministico
+    de verificar). Debe fallar si se quita la restauracion: sin ella, el
+    modelo quedaria con el valor de la epoca 2 (3.0) en vez del de la epoca 1
+    (2.0)."""
+    recalls = [0.3, 1.0, 0.3]  # mejor en la epoca 1 (intermedia), no en la 2 (ultima)
+    contador = {"epoca": -1}
+
+    def _pasada_falsa(modelo, cargador, criterio, optimizador, dispositivo):
+        contador["epoca"] += 1
+        with torch.no_grad():
+            modelo.capa.weight.fill_(float(contador["epoca"] + 1))
+        return 0.5
+
+    def _evaluar_falso(modelo, cargador, dispositivo):
+        detectados = round(recalls[contador["epoca"]] * 10)
+        return _y_true_y_score_con(detectados)
+
+    monkeypatch.setattr(entrenamiento_mod, "_pasada_de_entrenamiento", _pasada_falsa)
+    monkeypatch.setattr(entrenamiento_mod, "evaluar_epoca", _evaluar_falso)
+
+    train, val = cargadores_sinteticos()
+    cfg = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                 epocas_cabeza=3, epocas_ajuste=0)
+    dir_checkpoints = tmp_path / "ck"
+    modelo = ModeloTrivial()
+    res = entrenar(modelo, train, val, cfg, torch.device("cpu"), dir_checkpoints)
+
+    assert res["mejor_epoca"] == 1, "la epoca 1 debia ser la mejor, no la ultima (2)"
+
+    peso_checkpoint_mejor = torch.load(
+        res["ruta_mejor_checkpoint"], weights_only=False
+    )["modelo"]["capa.weight"].item()
+    peso_checkpoint_ultimo = torch.load(
+        dir_checkpoints / "ultimo.pt", weights_only=False
+    )["modelo"]["capa.weight"].item()
+
+    # Sanity de la propia prueba: si esto no se cumple, el resto no prueba
+    # lo que dice probar.
+    assert peso_checkpoint_mejor == 2.0
+    assert peso_checkpoint_ultimo == 3.0
+
+    assert modelo.capa.weight.item() == peso_checkpoint_mejor, (
+        "el modelo devuelto por entrenar() debe quedar en los pesos del "
+        "MEJOR checkpoint (epoca 1), no en los de la ultima epoca ejecutada"
+    )
+    assert modelo.capa.weight.item() != peso_checkpoint_ultimo

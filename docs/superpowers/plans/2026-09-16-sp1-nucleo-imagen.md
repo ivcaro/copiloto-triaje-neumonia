@@ -1181,6 +1181,12 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
     Fase 1: solo la cabeza (backbone congelado), `cfg.epocas_cabeza` epocas.
     Fase 2: ajuste fino de los ultimos bloques, `cfg.epocas_ajuste` epocas.
     En ambas, early stopping por Recall en validacion con `cfg.paciencia`.
+
+    Al retornar, `modelo` queda restaurado a los pesos de la MEJOR epoca por
+    Recall en validacion (los de `ruta_mejor_checkpoint`), no a los de la
+    ultima epoca ejecutada: el early stopping corta precisamente cuando el
+    recall dejo de mejorar, asi que sin esta restauracion el modelo en
+    memoria quedaria casi siempre peor que el guardado como "mejor".
     """
     dir_checkpoints = Path(dir_checkpoints)
     dir_checkpoints.mkdir(parents=True, exist_ok=True)
@@ -1246,6 +1252,17 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
                     # (return): el bucle exterior debe poder continuar con la
                     # fase siguiente.
                     break
+
+    # Restaura el modelo a los pesos de la mejor epoca antes de devolverlo:
+    # sin esto, `modelo` queda en el estado de la ULTIMA epoca ejecutada, y el
+    # early stopping corta justo cuando el recall dejo de mejorar, asi que ese
+    # estado es casi siempre peor que el mejor guardado. `ruta_mejor` solo
+    # puede faltar si ninguna fase llego a correr una sola epoca (epocas_
+    # cabeza y epocas_ajuste ambas <= 0); en ese caso no hay nada que
+    # restaurar.
+    if ruta_mejor.exists():
+        estado_mejor = torch.load(ruta_mejor, weights_only=False)
+        modelo.load_state_dict(estado_mejor["modelo"])
 
     return {"mejor_recall": mejor_recall, "mejor_epoca": mejor_epoca,
             "historial": historial, "ruta_mejor_checkpoint": ruta_mejor}
