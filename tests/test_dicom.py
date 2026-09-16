@@ -72,6 +72,55 @@ def test_convertir_lote_omite_los_corruptos_sin_abortar(tmp_path):
     assert omitidos[0]["motivo"]
 
 
+def crear_dicom_con_tag_vacio(ruta, patient_id="P9999", lado=64):
+    """DICOM valido salvo que el tag Rows esta PRESENTE pero VACIO.
+
+    No es un caso inventado: en DICOM un elemento puede existir con longitud
+    cero, y pydicom lo devuelve entonces como `None`. `int(None)` lanza
+    TypeError, no ValueError."""
+    ds = Dataset()
+    ds.PatientID = patient_id
+    ds.PatientAge = "51"
+    ds.PatientSex = "F"
+    ds.ViewPosition = "PA"
+    ds.Modality = "CR"
+    ds.Rows = None                      # tag presente, sin valor
+    ds.Columns = lado
+    ds.SamplesPerPixel = 1
+    ds.PhotometricInterpretation = "MONOCHROME2"
+    ds.BitsAllocated = 8
+    ds.BitsStored = 8
+    ds.HighBit = 7
+    ds.PixelRepresentation = 0
+    ds.PixelData = (np.arange(lado * lado) % 256).astype(np.uint8).tobytes()
+    ds.file_meta = FileMetaDataset()
+    ds.file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.2"
+    ds.file_meta.MediaStorageSOPInstanceUID = generate_uid()
+    ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    ds.save_as(str(ruta), enforce_file_format=True)
+
+
+def test_convertir_lote_omite_un_dicom_con_un_tag_presente_pero_vacio(tmp_path):
+    """Diferido de la revision, mandado arreglar en la oleada final:
+    `int(getattr(ds, "Rows", 0))` lanza TypeError cuando el tag existe con
+    valor None, y TypeError no estaba en la tupla del except. Un solo archivo
+    asi entre los 26 684 DICOM de RSNA abortaba a mitad una conversion de 21
+    minutos, que es justo lo que ese try existe para impedir."""
+    buenos = []
+    for i in range(2):
+        r = tmp_path / f"b{i}.dcm"
+        crear_dicom(r, patient_id=f"P{i:04d}")
+        buenos.append(r)
+    vacio = tmp_path / "rows_vacio.dcm"
+    crear_dicom_con_tag_vacio(vacio)
+
+    convertidos, omitidos = convertir_lote(buenos + [vacio], tmp_path / "png")
+
+    assert len(convertidos) == 2, "los archivos sanos deben convertirse igual"
+    assert [o["archivo"] for o in omitidos] == ["rows_vacio.dcm"]
+    assert "TypeError" in omitidos[0]["motivo"]
+
+
 def test_convertir_lote_es_idempotente(tmp_path):
     """Prueba que convertir_lote no reescribe PNG existentes.
 

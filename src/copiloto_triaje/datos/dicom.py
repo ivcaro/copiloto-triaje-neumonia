@@ -77,6 +77,15 @@ def convertir_lote(rutas_dcm, dir_png: Path) -> tuple[list[dict], list[dict]]:
             else:
                 meta = convertir_a_png(ruta, destino)
             convertidos.append(meta)
-        except (pydicom.errors.InvalidDicomError, OSError, ValueError) as exc:
+        # TypeError esta en la lista porque un tag PRESENTE pero VACIO existe
+        # en DICOM y devuelve None: `int(getattr(ds, "Rows", 0))` con Rows
+        # vacio no lanza ValueError sino TypeError. Un solo archivo asi
+        # abortaba a mitad una conversion de 21 minutos sobre los 26 684
+        # DICOM de RSNA, que es exactamente lo que este try existe para
+        # impedir. No se anade el TypeError a costa de la regla de la Tarea 4:
+        # los errores de PROGRAMACION (NameError, AttributeError...) siguen
+        # propagandose ruidosamente en vez de camuflarse como "omitidos".
+        except (pydicom.errors.InvalidDicomError, OSError, ValueError,
+                TypeError) as exc:
             omitidos.append({"archivo": ruta.name, "motivo": f"{type(exc).__name__}: {exc}"})
     return convertidos, omitidos

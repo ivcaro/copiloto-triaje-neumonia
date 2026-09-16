@@ -77,6 +77,25 @@ def main() -> int:
     print(f"      registros: {len(registros)} | positivos: {positivos} "
           f"({positivos / max(len(registros), 1) * 100:.1f}%)")
 
+    # `construir_registros` descarta en silencio toda imagen sin etiqueta. El
+    # spec §8 exige que una perdida silenciosa de datos sea IMPOSIBLE, y hasta
+    # ahora la unica forma de notarla era comparar a ojo dos lineas de stdout.
+    # Ahora se avisa en voz alta y se deja el detalle por escrito.
+    perdidos = len(convertidos) - len(registros)
+    if perdidos > 0:
+        sin_etiqueta = sorted(
+            {str(m.get("patientId", "")) for m in convertidos} - set(etiquetas))
+        ruta_aviso = cfg.dir_png.parent / "sin_etiqueta.json"
+        ruta_aviso.write_text(
+            json.dumps({"imagenes_descartadas": perdidos,
+                        "patient_id_sin_etiqueta": sin_etiqueta},
+                       indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"      AVISO: {perdidos} de {len(convertidos)} imagen(es) "
+              f"convertida(s) NO entraron en los manifiestos porque su "
+              f"patientId no aparece en stage_2_train_labels.csv "
+              f"({len(sin_etiqueta)} patientId distintos). Detalle en "
+              f"{ruta_aviso}")
+
     print("[4/4] Particionando por paciente y verificando fuga ...")
     particiones = particionar_por_paciente(registros, cfg.proporciones, cfg.semilla)
     verificar_sin_fuga(particiones)
