@@ -448,14 +448,24 @@ def test_umbral_paso_1_cuando_se_cumplen_ambos_objetivos():
     assert m["especificidad"] >= 0.75
 
 
-def test_umbral_relaja_al_paso_2_si_el_recall_no_llega():
+def test_paso_2_solo_si_alcanza_recall_objetivo_sino_paso_3():
     """Clases muy solapadas: con especificidad 0,75 no se alcanza 0,85 de
-    recall, asi que la regla debe relajar hasta la especificidad minima."""
+    recall. La regla relaja a especificidad minima solo si ALCANZA 0,85.
+
+    NOTA: la primera version de esta prueba aceptaba `paso in (paso_2, paso_3)`,
+    que es una asercion debil: pasa haga lo que haga la regla. La version real
+    -la que esta en `tests/test_evaluacion.py`- fija la RELACION entre el paso
+    aplicado y el recall obtenido, que es lo que el spec §6 realmente ordena.
+    """
     rng = np.random.default_rng(1)
     y = np.array([1] * 200 + [0] * 800)
     score = np.where(y == 1, rng.normal(0.55, 0.20, 1000), rng.normal(0.45, 0.20, 1000))
     umbral, m, paso = elegir_umbral(y, score)
-    assert paso in ("paso_2_especificidad_minima", "paso_3_se_conserva_paso_1")
+    # Relacion: paso_2 solo si recall >= 0.85; si recall < 0.85, debe ser paso_3
+    if paso == "paso_2_especificidad_minima":
+        assert m["recall"] >= 0.85
+    if m["recall"] < 0.85:
+        assert paso == "paso_3_se_conserva_paso_1"
     assert m["especificidad"] >= 0.70
 
 
@@ -542,7 +552,7 @@ def elegir_umbral(
         indice, paso = i1, "paso_1_especificidad_objetivo"
     else:
         i2 = mejor_indice(especificidad_minima)
-        if i2 is not None and tpr[i2] > tpr[i1]:
+        if i2 is not None and tpr[i2] >= recall_objetivo:
             indice, paso = i2, "paso_2_especificidad_minima"
         else:
             indice, paso = i1, "paso_3_se_conserva_paso_1"
@@ -1010,6 +1020,8 @@ def construir_modelo(congelar_backbone: bool = True, preentrenado: bool = True) 
 
 def descongelar_para_ajuste(modelo: nn.Module, n_bloques: int = 3) -> None:
     """Descongela los ultimos n bloques del extractor para el ajuste fino."""
+    if n_bloques <= 0:
+        return
     bloques = list(modelo.features)
     for bloque in bloques[-n_bloques:]:
         for parametro in bloque.parameters():
@@ -1179,6 +1191,12 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
     Fase 1: solo la cabeza (backbone congelado), `cfg.epocas_cabeza` epocas.
     Fase 2: ajuste fino de los ultimos bloques, `cfg.epocas_ajuste` epocas.
     En ambas, early stopping por Recall en validacion con `cfg.paciencia`.
+
+    Al retornar, `modelo` queda restaurado a los pesos de la MEJOR epoca por
+    Recall en validacion (los de `ruta_mejor_checkpoint`), no a los de la
+    ultima epoca ejecutada: el early stopping corta precisamente cuando el
+    recall dejo de mejorar, asi que sin esta restauracion el modelo en
+    memoria quedaria casi siempre peor que el guardado como "mejor".
     """
     dir_checkpoints = Path(dir_checkpoints)
     dir_checkpoints.mkdir(parents=True, exist_ok=True)
@@ -1194,7 +1212,10 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
     criterio = nn.BCEWithLogitsLoss(pos_weight=peso_positivo)
 
     historial: list[dict] = []
-    mejor_recall, mejor_epoca, sin_mejora = -1.0, -1, 0
+    # mejor_recall/mejor_epoca son el registro GLOBAL del entrenamiento: se
+    # conservan entre fases. sin_mejora se reinicia al entrar a cada fase
+    # (ver mas abajo): es la paciencia POR FASE.
+    mejor_recall, mejor_epoca = -1.0, -1
     ruta_mejor = dir_checkpoints / "mejor.pt"
 
     fases = [("cabeza", cfg.epocas_cabeza, cfg.lr_cabeza),
@@ -1207,6 +1228,10 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
             descongelar_para_ajuste(modelo)
         parametros = [p for p in modelo.parameters() if p.requires_grad]
         optimizador = torch.optim.Adam(parametros, lr=lr)
+        # Paciencia propia de esta fase: agotarla en "cabeza" significa que
+        # la cabeza convergio, que es la señal para pasar al ajuste fino, no
+        # para abandonar el entrenamiento completo.
+        sin_mejora = 0
 
         for epoca in range(n_epocas):
             perdida = _pasada_de_entrenamiento(
@@ -1218,18 +1243,36 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
                         "especificidad": m["especificidad"]}
             historial.append(registro)
 
-            torch.save({"modelo": modelo.state_dict(), "epoca": registro["epoca"],
-                        "metricas": m}, dir_checkpoints / "ultimo.pt")
+            # Checkpoint fiel para reanudar tras una caida de sesion: el
+            # estado del optimizador (si no, Adam reanuda con el momento en
+            # blanco, que no es reanudar sino reiniciar con pesos calientes),
+            # la fase y el historial acumulado hasta esta epoca.
+            estado = {"modelo": modelo.state_dict(), "optimizador": optimizador.state_dict(),
+                      "epoca": registro["epoca"], "fase": nombre_fase,
+                      "metricas": m, "historial": historial}
+            torch.save(estado, dir_checkpoints / "ultimo.pt")
 
             if m["recall"] > mejor_recall:
                 mejor_recall, mejor_epoca, sin_mejora = m["recall"], registro["epoca"], 0
-                torch.save({"modelo": modelo.state_dict(), "epoca": registro["epoca"],
-                            "metricas": m}, ruta_mejor)
+                torch.save(estado, ruta_mejor)
             else:
                 sin_mejora += 1
                 if sin_mejora >= cfg.paciencia:
-                    return {"mejor_recall": mejor_recall, "mejor_epoca": mejor_epoca,
-                            "historial": historial, "ruta_mejor_checkpoint": ruta_mejor}
+                    # Corta SOLO esta fase (break), nunca toda la funcion
+                    # (return): el bucle exterior debe poder continuar con la
+                    # fase siguiente.
+                    break
+
+    # Restaura el modelo a los pesos de la mejor epoca antes de devolverlo:
+    # sin esto, `modelo` queda en el estado de la ULTIMA epoca ejecutada, y el
+    # early stopping corta justo cuando el recall dejo de mejorar, asi que ese
+    # estado es casi siempre peor que el mejor guardado. `ruta_mejor` solo
+    # puede faltar si ninguna fase llego a correr una sola epoca (epocas_
+    # cabeza y epocas_ajuste ambas <= 0); en ese caso no hay nada que
+    # restaurar.
+    if ruta_mejor.exists():
+        estado_mejor = torch.load(ruta_mejor, weights_only=False)
+        modelo.load_state_dict(estado_mejor["modelo"])
 
     return {"mejor_recall": mejor_recall, "mejor_epoca": mejor_epoca,
             "historial": historial, "ruta_mejor_checkpoint": ruta_mejor}
@@ -1809,12 +1852,25 @@ git commit -m "docs: notebook de entrenamiento en GPU y README reproducible"
 | MobileNetV3-Large con salida binaria (§6) | 6 |
 | Entrenamiento en dos fases (§6) | 6, 7 |
 | Latencia de inferencia en CPU < 4 s (§2) | 6 |
-| Early stopping por Recall (§6) | 7 |
+| Early stopping por Recall (§6) | 7, oleada final |
 | Ponderación de clases por desbalance (§6) | 7 |
-| Checkpoints reanudables (§8) | 7 |
+| Escritura de un checkpoint por época (§8) | 7 |
+| **Reanudación** desde ese checkpoint (§8) | oleada final |
 | Idempotencia de las etapas (§8) | 4, 8 |
 | Manifiestos con semilla registrada (§7) | 8 |
 | Pipeline de punta a punta desde una orden (§2) | 8 |
 | Entrenamiento de humo en CPU (§9) | 9 |
 | Notebook delgado para GPU (§10) | 10 |
 | README reproducible (§12) | 10 |
+| Reporte de métricas en Markdown y curva ROC (§7, §12) | oleada final |
+| AUC reportado sobre el conjunto de prueba (§2) | oleada final |
+| Pesos exportados, cargables en CPU para SP2 (§12) | oleada final |
+| Determinismo de cuDNN para reproducir en GPU (§2) | oleada final |
+
+> **Corrección (oleada final de arreglo).** Esta tabla declaraba "Checkpoints
+> reanudables (§8) → Tarea 7", y no era cierto: la Tarea 7 escribía `ultimo.pt`
+> cada época, pero **nadie lo leía en todo el repositorio**, así que la
+> reanudación que promete el spec §8 no existía. La fila se ha partido en dos
+> para distinguir lo que la Tarea 7 sí hizo (escribir el checkpoint) de lo que
+> faltaba (reanudar desde él), implementado en la oleada final junto con el
+> resto de requisitos que la tabla no recogía.
