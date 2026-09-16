@@ -16,7 +16,7 @@ from copiloto_triaje.datos.particion import particionar_por_paciente, verificar_
 from copiloto_triaje.datos.preparacion import escribir_manifiestos
 from copiloto_triaje.modelo.arquitectura import construir_modelo
 from copiloto_triaje.modelo.entrenamiento import entrenar, evaluar_epoca
-from copiloto_triaje.modelo.evaluacion import elegir_umbral
+from copiloto_triaje.modelo.evaluacion import elegir_umbral, metricas_binarias
 
 
 def test_pipeline_completo_en_cpu(tmp_path):
@@ -24,8 +24,11 @@ def test_pipeline_completo_en_cpu(tmp_path):
     dir_png = tmp_path / "png"
     dir_png.mkdir()
 
-    # 50 pacientes: los positivos llevan una mancha clara, para que el modelo
-    # tenga algo que aprender en dos epocas.
+    # 50 pacientes: los positivos llevan una mancha clara. La intencion es
+    # que el modelo tenga *algo* que en principio podria aprender, pero esta
+    # prueba no lo comprueba: ningun aserto mide si lo aprende. Es una
+    # prueba de cableado (las piezas encajan y el pipeline corre en CPU),
+    # no de calidad del modelo.
     registros = []
     for i in range(50):
         etiqueta = int(i < 15)
@@ -53,11 +56,30 @@ def test_pipeline_completo_en_cpu(tmp_path):
     resultado = entrenar(modelo, cargador("train", True), cargador("val", False),
                          cfg, torch.device("cpu"), cfg.dir_checkpoints)
 
-    assert len(resultado["historial"]) >= 1
+    # epocas_ajuste=0 => el historial solo contiene la fase "cabeza"; con la
+    # paciencia por defecto (cfg.paciencia=3) y solo 2 epocas, la paciencia
+    # nunca se agota, asi que deben correr las 2 completas. El numero exacto
+    # detecta una regresion que trunque el entrenamiento antes de tiempo.
+    assert len(resultado["historial"]) == cfg.epocas_cabeza
     assert resultado["ruta_mejor_checkpoint"].exists()
 
-    y_true, y_score = evaluar_epoca(modelo, cargador("test", False), torch.device("cpu"))
-    assert len(y_true) == len(y_score) > 0
-    umbral, metricas, paso = elegir_umbral(y_true, y_score)
-    assert 0.0 <= metricas["recall"] <= 1.0
-    assert "umbral" in metricas and paso
+    # El umbral se elige SOLO con el conjunto de VALIDACION y se congela
+    # antes de tocar el de prueba (regla central del proyecto: ver el
+    # docstring de `elegir_umbral`). Decidir el punto de corte mirando la
+    # prueba contaminaria esa estimacion; por eso la prueba se evalua una
+    # unica vez, ya con el umbral fijo.
+    y_true_val, y_score_val = evaluar_epoca(modelo, cargador("val", False), torch.device("cpu"))
+    umbral, _, paso = elegir_umbral(y_true_val, y_score_val)
+    pasos_validos = {
+        "paso_1_especificidad_objetivo",
+        "paso_2_especificidad_minima",
+        "paso_3_se_conserva_paso_1",
+        "sin_umbral_con_especificidad_objetivo",
+    }
+    assert paso in pasos_validos
+
+    y_true_test, y_score_test = evaluar_epoca(modelo, cargador("test", False), torch.device("cpu"))
+    assert len(y_true_test) == len(y_score_test) > 0
+    metricas_test = metricas_binarias(y_true_test, (y_score_test >= umbral).astype(int))
+    total = metricas_test["tp"] + metricas_test["tn"] + metricas_test["fp"] + metricas_test["fn"]
+    assert total == len(y_true_test)
