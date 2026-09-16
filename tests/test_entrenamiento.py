@@ -294,6 +294,193 @@ def test_el_auc_desempata_cuando_el_recall_se_queda_clavado(tmp_path, monkeypatc
     assert res["mejor_epoca"] == 3
 
 
+def test_reanudar_continua_donde_iba_y_no_desde_cero(tmp_path):
+    """Hallazgo I1 (Important) de la oleada final: `ultimo.pt` se escribia cada
+    epoca y no lo leia NADIE en todo el repositorio. El spec §8 promete
+    reanudacion tras una caida de sesion en Colab, y con 35 minutos de
+    preparacion en un `/content` volatil una caida costaba la sesion entera.
+
+    La prueba corta el entrenamiento a las 2 epocas (la 'caida'), reanuda
+    pidiendo 5, y exige el criterio mas fuerte posible: que el resultado sea
+    IDENTICO al de una corrida de 5 epocas sin caida. Eso solo se cumple si se
+    restauran de verdad los pesos, el estado del optimizador (sin el, Adam
+    reanuda con el momento en blanco: no es reanudar, es reiniciar con pesos
+    calientes), el historial y los contadores de mejor y de paciencia.
+    """
+    train, val = cargadores_sinteticos()
+    dir_ck = tmp_path / "ck"
+    modelo = ModeloTrivial()
+    estado_inicial = copy.deepcopy(modelo.state_dict())
+
+    # paciencia=5 > epocas: aqui se prueba la reanudacion, no el early
+    # stopping; sin esto el corte por paciencia enmascararia el resultado.
+    cfg_corto = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                       epocas_cabeza=2, epocas_ajuste=0, paciencia=5)
+    res_caida = entrenar(modelo, train, val, cfg_corto, torch.device("cpu"), dir_ck)
+    assert len(res_caida["historial"]) == 2
+
+    # Modelo nuevo a proposito, con otros pesos: los del checkpoint deben
+    # ganarle. Si la reanudacion no cargara nada, el historial arrancaria en 0.
+    cfg_largo = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                       epocas_cabeza=5, epocas_ajuste=0, paciencia=5)
+    res_reanudado = entrenar(ModeloTrivial(), train, val, cfg_largo,
+                             torch.device("cpu"), dir_ck, reanudar=True)
+
+    assert [r["epoca"] for r in res_reanudado["historial"]] == [0, 1, 2, 3, 4], \
+        "la reanudacion volvio a numerar desde cero en vez de continuar"
+    assert res_reanudado["historial"][:2] == res_caida["historial"], \
+        "la reanudacion repitio epocas ya hechas en vez de continuar"
+
+    modelo_directo = ModeloTrivial()
+    modelo_directo.load_state_dict(estado_inicial)
+    res_directo = entrenar(modelo_directo, train, val, cfg_largo,
+                           torch.device("cpu"), tmp_path / "ck_directo")
+    assert res_reanudado["historial"] == res_directo["historial"], \
+        "reanudar 2+3 no equivale a correr 5 de una vez: falta estado por restaurar"
+    assert res_reanudado["mejor_epoca"] == res_directo["mejor_epoca"]
+
+
+def test_reanudar_retoma_la_fase_de_ajuste_sin_repetir_la_cabeza(tmp_path):
+    """Si la sesion cayo durante el ajuste fino, reanudar no puede volver a
+    entrenar la cabeza: esa fase ya termino."""
+    train, val = cargadores_sinteticos()
+    dir_ck = tmp_path / "ck"
+    cfg_corto = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                       epocas_cabeza=1, epocas_ajuste=1)
+    res1 = entrenar(ModeloTrivialConFeatures(), train, val, cfg_corto,
+                    torch.device("cpu"), dir_ck)
+    assert [r["fase"] for r in res1["historial"]] == ["cabeza", "ajuste"]
+
+    cfg_largo = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                       epocas_cabeza=1, epocas_ajuste=3)
+    res2 = entrenar(ModeloTrivialConFeatures(), train, val, cfg_largo,
+                    torch.device("cpu"), dir_ck, reanudar=True)
+    fases = [r["fase"] for r in res2["historial"]]
+    assert fases == ["cabeza", "ajuste", "ajuste", "ajuste"], \
+        f"se repitio alguna fase ya terminada: {fases}"
+
+
+def test_reanudar_no_repite_una_fase_que_ya_corto_por_paciencia(tmp_path):
+    """Una fase que termino por paciencia agotada esta terminada aunque le
+    queden epocas en el plan: reanudar debe pasar a la siguiente, no
+    resucitarla."""
+    train, val = cargadores_sinteticos()
+    dir_ck = tmp_path / "ck"
+    cfg = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                 epocas_cabeza=20, epocas_ajuste=0, paciencia=1)
+    res1 = entrenar(ModeloTrivialConFeatures(), train, val, cfg,
+                    torch.device("cpu"), dir_ck)
+    epocas_cabeza = len(res1["historial"])
+    assert epocas_cabeza < 20, "la fase cabeza deberia haber cortado por paciencia"
+
+    cfg2 = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                  epocas_cabeza=20, epocas_ajuste=2, paciencia=1)
+    res2 = entrenar(ModeloTrivialConFeatures(), train, val, cfg2,
+                    torch.device("cpu"), dir_ck, reanudar=True)
+    nuevas_cabeza = [r for r in res2["historial"] if r["fase"] == "cabeza"]
+    assert len(nuevas_cabeza) == epocas_cabeza, \
+        "reanudar resucito una fase que ya habia cortado por paciencia"
+    assert [r["fase"] for r in res2["historial"]][-1] == "ajuste"
+
+
+def test_sin_reanudar_se_empieza_de_cero_aunque_exista_checkpoint(tmp_path):
+    """El comportamiento por defecto no cambia: `reanudar=False` ignora el
+    checkpoint y entrena de cero."""
+    train, val = cargadores_sinteticos()
+    dir_ck = tmp_path / "ck"
+    cfg = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                 epocas_cabeza=2, epocas_ajuste=0)
+    entrenar(ModeloTrivial(), train, val, cfg, torch.device("cpu"), dir_ck)
+    res2 = entrenar(ModeloTrivial(), train, val, cfg, torch.device("cpu"), dir_ck)
+    assert [r["epoca"] for r in res2["historial"]] == [0, 1]
+
+
+def test_reanudar_sin_checkpoint_arranca_de_cero_sin_quejarse(tmp_path):
+    """En un entrenamiento nuevo la opcion no debe estorbar: si no hay
+    `ultimo.pt`, `reanudar=True` simplemente entrena desde el principio."""
+    train, val = cargadores_sinteticos()
+    cfg = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                 epocas_cabeza=2, epocas_ajuste=0)
+    res = entrenar(ModeloTrivial(), train, val, cfg, torch.device("cpu"),
+                   tmp_path / "ck_vacio", reanudar=True)
+    assert [r["epoca"] for r in res["historial"]] == [0, 1]
+
+
+def test_los_pesos_exportados_son_solo_del_modelo_y_en_cpu(tmp_path):
+    """Hallazgo I3 (Important) de la oleada final: SP2 tiene que servir el
+    modelo en la CPU de un VPS sin CUDA. `mejor.pt` no sirve para eso: mezcla
+    los pesos con el estado del optimizador y el historial, y sus tensores
+    estan en el dispositivo donde se entreno, asi que en una maquina sin CUDA
+    fallaria con RuntimeError. El entregable para SP2 es un state_dict limpio,
+    en CPU, con los pesos y nada mas.
+    """
+    train, val = cargadores_sinteticos()
+    cfg = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                 epocas_cabeza=2, epocas_ajuste=0)
+    res = entrenar(ModeloTrivial(), train, val, cfg, torch.device("cpu"), tmp_path / "ck")
+
+    # weights_only=True es la comprobacion de que el archivo es un state_dict
+    # y no un checkpoint de entrenamiento disfrazado.
+    cargado = torch.load(res["ruta_pesos_cpu"], map_location="cpu", weights_only=True)
+    modelo_nuevo = ModeloTrivial()
+    assert set(cargado) == set(modelo_nuevo.state_dict()), \
+        "el archivo de pesos no tiene exactamente las claves del modelo"
+    assert all(t.device.type == "cpu" for t in cargado.values())
+    modelo_nuevo.load_state_dict(cargado)  # strict=True por defecto
+
+    # Y son los del MEJOR checkpoint, no los de cualquier epoca.
+    mejor = torch.load(res["ruta_mejor_checkpoint"], map_location="cpu",
+                       weights_only=False)["modelo"]
+    for clave, valor in mejor.items():
+        assert torch.equal(valor.cpu(), cargado[clave])
+
+
+def test_entrenar_carga_los_checkpoints_con_map_location(tmp_path, monkeypatch):
+    """Parte de I3: sin `map_location`, releer en una maquina sin GPU un
+    checkpoint escrito en Colab (tensores CUDA) lanza RuntimeError. Aqui no
+    hay GPU con la que reproducirlo de verdad, asi que se vigila el contrato:
+    ninguna lectura de checkpoint puede quedarse sin `map_location`."""
+    train, val = cargadores_sinteticos()
+    cfg = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                 epocas_cabeza=1, epocas_ajuste=0)
+    dir_ck = tmp_path / "ck"
+    entrenar(ModeloTrivial(), train, val, cfg, torch.device("cpu"), dir_ck)
+
+    load_real = torch.load
+    mapeos = []
+
+    def load_espia(*args, **kwargs):
+        mapeos.append(kwargs.get("map_location", "SIN_MAP_LOCATION"))
+        return load_real(*args, **kwargs)
+
+    monkeypatch.setattr(entrenamiento_mod.torch, "load", load_espia)
+    cfg2 = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                  epocas_cabeza=2, epocas_ajuste=0)
+    entrenar(ModeloTrivial(), train, val, cfg2, torch.device("cpu"), dir_ck,
+             reanudar=True)
+
+    assert len(mapeos) >= 2, "deberian leerse el checkpoint de reanudacion y el mejor"
+    assert "SIN_MAP_LOCATION" not in mapeos
+
+
+def test_entrenar_activa_el_modo_determinista_de_cudnn(tmp_path):
+    """Hallazgo I4a (Important) de la oleada final: `torch.manual_seed` no
+    basta en CUDA. cuDNN elige sus algoritmos por benchmark y algunos kernels
+    no son deterministas, de modo que la reproducibilidad exacta que exige el
+    spec §2 no se cumpliria en Colab, que es donde corre el entrenamiento
+    real."""
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
+
+    train, val = cargadores_sinteticos()
+    cfg = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                 epocas_cabeza=1, epocas_ajuste=0)
+    entrenar(ModeloTrivial(), train, val, cfg, torch.device("cpu"), tmp_path / "ck")
+
+    assert torch.backends.cudnn.deterministic is True
+    assert torch.backends.cudnn.benchmark is False
+
+
 def _y_true_y_score_con(detectados: int, n: int = 10):
     """(y_true, y_score) sinteticos de n positivos y n negativos: `detectados`
     positivos con score alto (bien clasificados al umbral 0.5) y el resto con
