@@ -25,6 +25,8 @@ def construir_modelo(congelar_backbone: bool = True, preentrenado: bool = True) 
 
 def descongelar_para_ajuste(modelo: nn.Module, n_bloques: int = 3) -> None:
     """Descongela los ultimos n bloques del extractor para el ajuste fino."""
+    if n_bloques <= 0:
+        return
     bloques = list(modelo.features)
     for bloque in bloques[-n_bloques:]:
         for parametro in bloque.parameters():

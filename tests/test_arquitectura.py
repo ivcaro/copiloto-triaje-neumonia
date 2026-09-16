@@ -30,6 +30,16 @@ def test_sin_congelar_todo_es_entrenable():
     assert all(p.requires_grad for p in modelo.parameters())
 
 
+def test_descongelar_con_cero_bloques_no_cambia_parametros():
+    """Guardia contra la trampa del cero negativo: bloques[-0:] es bloques[0:],
+    la lista entera. Verificamos que n_bloques=0 no descongela nada."""
+    modelo = construir_modelo(congelar_backbone=True, preentrenado=False)
+    antes = contar_parametros_entrenables(modelo)
+    descongelar_para_ajuste(modelo, n_bloques=0)
+    despues = contar_parametros_entrenables(modelo)
+    assert antes == despues, "n_bloques=0 descongelo parametros cuando no deberia"
+
+
 def test_latencia_de_inferencia_en_cpu_bajo_el_limite():
     """Criterio de aceptacion del spec: menos de 4 s por imagen en CPU, que es
     lo que SP2 debe poder servir desde el VPS. Se mide la mediana de 5 pasadas
