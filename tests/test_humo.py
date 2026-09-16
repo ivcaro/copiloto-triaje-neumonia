@@ -16,7 +16,8 @@ from copiloto_triaje.datos.particion import particionar_por_paciente, verificar_
 from copiloto_triaje.datos.preparacion import escribir_manifiestos
 from copiloto_triaje.modelo.arquitectura import construir_modelo
 from copiloto_triaje.modelo.entrenamiento import entrenar, evaluar_epoca
-from copiloto_triaje.modelo.evaluacion import elegir_umbral, metricas_binarias
+from copiloto_triaje.modelo.evaluacion import elegir_umbral, metricas_en_umbral
+from copiloto_triaje.modelo.reporte import escribir_reporte_markdown, guardar_curva_roc
 
 
 def test_pipeline_completo_en_cpu(tmp_path):
@@ -69,7 +70,7 @@ def test_pipeline_completo_en_cpu(tmp_path):
     # prueba contaminaria esa estimacion; por eso la prueba se evalua una
     # unica vez, ya con el umbral fijo.
     y_true_val, y_score_val = evaluar_epoca(modelo, cargador("val", False), torch.device("cpu"))
-    umbral, _, paso = elegir_umbral(y_true_val, y_score_val)
+    umbral, metricas_val, paso = elegir_umbral(y_true_val, y_score_val)
     pasos_validos = {
         "paso_1_especificidad_objetivo",
         "paso_2_especificidad_minima",
@@ -80,6 +81,28 @@ def test_pipeline_completo_en_cpu(tmp_path):
 
     y_true_test, y_score_test = evaluar_epoca(modelo, cargador("test", False), torch.device("cpu"))
     assert len(y_true_test) == len(y_score_test) > 0
-    metricas_test = metricas_binarias(y_true_test, (y_score_test >= umbral).astype(int))
+    # `metricas_en_umbral`, no `metricas_binarias`: es lo que hace que el AUC
+    # del conjunto de PRUEBA quede reportado (hallazgo I2). Esta linea es la
+    # misma que ejecuta la celda de evaluacion del notebook.
+    metricas_test = metricas_en_umbral(y_true_test, y_score_test, umbral)
     total = metricas_test["tp"] + metricas_test["tn"] + metricas_test["fp"] + metricas_test["fn"]
     assert total == len(y_true_test)
+    assert 0.0 <= metricas_test["auc"] <= 1.0
+
+    # Los entregables del spec §12, generados con las mismas llamadas del
+    # notebook: si esta parte se rompe, se rompe en local y no a los 40
+    # minutos de GPU en Colab.
+    ruta_roc = guardar_curva_roc(y_true_test, y_score_test,
+                                 tmp_path / "curva_roc.svg", umbral=umbral)
+    ruta_md = escribir_reporte_markdown(
+        tmp_path / "reporte_metricas.md", umbral=umbral, paso=paso,
+        metricas_validacion=metricas_val, metricas_prueba=metricas_test,
+        historial=resultado["historial"], mejor_epoca=resultado["mejor_epoca"],
+        ruta_roc=ruta_roc)
+    assert ruta_roc.exists() and ruta_md.exists()
+    assert "Matriz de confusion" in ruta_md.read_text(encoding="utf-8")
+
+    # Y el entregable para SP2: los pesos limpios, en CPU (hallazgo I3).
+    pesos = torch.load(resultado["ruta_pesos_cpu"], map_location="cpu",
+                       weights_only=True)
+    construir_modelo(congelar_backbone=True, preentrenado=False).load_state_dict(pesos)
