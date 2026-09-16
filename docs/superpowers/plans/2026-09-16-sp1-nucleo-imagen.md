@@ -1594,35 +1594,73 @@ git commit -m "test: prueba de humo de punta a punta en CPU"
 - Consume: todo el paquete.
 - Produce: nada (documentación y punto de entrada para GPU).
 
-- [ ] **Paso 1: Crear el notebook con exactamente estas cinco celdas**
+- [ ] **Paso 1: Crear el notebook con exactamente estas seis celdas**
 
-El notebook no contiene lógica: instala el paquete y lo llama. Crear `notebooks/entrenar_gpu.ipynb` con estas celdas de código, en este orden:
+El notebook no contiene lógica: trae el código, trae los datos y llama al paquete. Tres reglas que gobiernan su diseño:
+
+1. **El dataset se descarga dentro de Colab desde Kaggle, nunca se sube desde la máquina local.** Subir 3,66 GB a Drive consumiría casi toda la cuota gratuita de 15 GB y tardaría horas; Colab lo baja de Kaggle en uno o dos minutos por su conexión de centro de datos.
+2. **Los checkpoints y el reporte van a Drive, no a `/content`.** Colab borra `/content` al caerse la sesión, que es exactamente el escenario del que los checkpoints deben protegernos.
+3. **Las credenciales de Kaggle se leen de los Secretos de Colab**, no de un archivo subido: se configuran una vez en el icono de la llave del panel lateral y no quedan en el notebook.
+
+Crear `notebooks/entrenar_gpu.ipynb` con estas celdas, en este orden:
 
 ```python
-# Celda 1 - entorno
+# Celda 1 - comprobar GPU e instalar lo que Colab no trae
 !nvidia-smi
-!pip install -q pydicom scikit-learn
+!pip install -q pydicom
+import torch
+assert torch.cuda.is_available(), "Sin GPU: en Colab, Entorno de ejecucion > Cambiar tipo > GPU"
+print('GPU:', torch.cuda.get_device_name(0))
 ```
 
 ```python
-# Celda 2 - traer el codigo (subir el repo comprimido o clonarlo)
-import sys, pathlib
+# Celda 2 - traer el codigo del paquete
+# Opcion A (mientras el repo sea privado): comprimir la carpeta copiloto-triaje
+# en el equipo y subirla aqui. Pesa unos 100 KB.
+import sys, pathlib, zipfile
+from google.colab import files
+
+subidos = files.upload()            # seleccionar copiloto-triaje.zip
+nombre = next(iter(subidos))
+with zipfile.ZipFile(nombre) as z:
+    z.extractall('/content')
 RAIZ = pathlib.Path('/content/copiloto-triaje')
+
+# Opcion B (cuando el repo sea publico, hito H8): comentar lo de arriba y usar
+# !git clone https://github.com/<usuario>/copiloto-triaje.git /content/copiloto-triaje
+
 sys.path.insert(0, str(RAIZ / 'src'))
-print('paquete en', RAIZ)
+import copiloto_triaje
+print('paquete cargado desde', RAIZ)
 ```
 
 ```python
-# Celda 3 - datos: subir el zip a Drive y descomprimir, o usar la API de Kaggle
-from google.colab import drive
+# Celda 3 - Drive para lo que debe sobrevivir, y descarga del dataset desde Kaggle
+import os, pathlib
+from google.colab import drive, userdata
+
 drive.mount('/content/drive')
-ZIP = '/content/drive/MyDrive/rsna-pneumonia-detection-challenge.zip'
+PERSISTENTE = pathlib.Path('/content/drive/MyDrive/copiloto-triaje')
+PERSISTENTE.mkdir(parents=True, exist_ok=True)
+
+# Secretos de Colab (icono de la llave): KAGGLE_USERNAME y KAGGLE_KEY
+os.environ['KAGGLE_USERNAME'] = userdata.get('KAGGLE_USERNAME')
+os.environ['KAGGLE_KEY'] = userdata.get('KAGGLE_KEY')
+
+!pip install -q kaggle
+!kaggle competitions download -c rsna-pneumonia-detection-challenge -p /content/datos
+ZIP = '/content/datos/rsna-pneumonia-detection-challenge.zip'
+print('descargado:', pathlib.Path(ZIP).stat().st_size / 1e9, 'GB')
+```
+
+```python
+# Celda 4 - preparar los datos: zip -> PNG -> manifiestos (dentro de Colab)
 !python {RAIZ}/scripts/preparar_datos.py --zip {ZIP} --raiz /content/trabajo
 ```
 
 ```python
-# Celda 4 - entrenamiento completo con GPU
-import torch, pandas as pd
+# Celda 5 - entrenamiento completo con GPU, checkpoints en Drive
+import torch, pandas as pd, pathlib
 from torch.utils.data import DataLoader
 from copiloto_triaje.config import Config
 from copiloto_triaje.datos.dataset import DatasetRadiografias
@@ -1631,7 +1669,8 @@ from copiloto_triaje.modelo.entrenamiento import entrenar
 
 cfg = Config(raiz_datos=pathlib.Path('/content/trabajo'),
              zip_rsna=pathlib.Path(ZIP), lote=64)
-dispositivo = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+dispositivo = torch.device('cuda')
+DIR_CHECKPOINTS = PERSISTENTE / 'checkpoints'   # en Drive: sobrevive a la caida
 
 def cargador(nombre, entrenamiento):
     df = pd.read_csv(cfg.dir_manifiestos / f'{nombre}.csv')
@@ -1640,12 +1679,13 @@ def cargador(nombre, entrenamiento):
 
 modelo = construir_modelo(congelar_backbone=True, preentrenado=True)
 resultado = entrenar(modelo, cargador('train', True), cargador('val', False),
-                     cfg, dispositivo, cfg.dir_checkpoints)
-print(resultado['mejor_recall'], resultado['mejor_epoca'])
+                     cfg, dispositivo, DIR_CHECKPOINTS)
+print('mejor recall en validacion:', resultado['mejor_recall'],
+      '| epoca:', resultado['mejor_epoca'])
 ```
 
 ```python
-# Celda 5 - umbral en VALIDACION y evaluacion UNICA en prueba
+# Celda 6 - umbral en VALIDACION, evaluacion UNICA en prueba, reporte a Drive
 import json
 from copiloto_triaje.modelo.evaluacion import elegir_umbral, metricas_binarias
 from copiloto_triaje.modelo.entrenamiento import evaluar_epoca
@@ -1653,16 +1693,21 @@ from copiloto_triaje.modelo.entrenamiento import evaluar_epoca
 y_val, s_val = evaluar_epoca(modelo, cargador('val', False), dispositivo)
 umbral, m_val, paso = elegir_umbral(y_val, s_val, cfg.especificidad_objetivo,
                                     cfg.especificidad_minima, cfg.recall_objetivo)
-print('umbral elegido en validacion:', umbral, '| regla:', paso)
+print('umbral elegido en validacion:', umbral, '| regla aplicada:', paso)
 
+# El conjunto de prueba se toca UNA sola vez, con el umbral ya congelado.
 y_test, s_test = evaluar_epoca(modelo, cargador('test', False), dispositivo)
 m_test = metricas_binarias(y_test, (s_test >= umbral).astype(int))
 print(json.dumps(m_test, indent=2, ensure_ascii=False))
-with open('/content/trabajo/reporte_metricas.json', 'w', encoding='utf-8') as f:
-    json.dump({'umbral': umbral, 'regla': paso, 'validacion': m_val,
-               'prueba': m_test, 'historial': resultado['historial']},
-              f, indent=2, ensure_ascii=False)
+
+(PERSISTENTE / 'reporte_metricas.json').write_text(
+    json.dumps({'umbral': umbral, 'regla': paso, 'validacion': m_val,
+                'prueba': m_test, 'historial': resultado['historial']},
+               indent=2, ensure_ascii=False), encoding='utf-8')
+print('reporte y checkpoints guardados en', PERSISTENTE)
 ```
+
+**Alternativa: notebooks de Kaggle.** Tu cuenta ya los tiene habilitados y ahí el dataset de la competencia **se adjunta sin descargar nada** (Add Input → Competitions → RSNA). Si Colab da problemas de cuota de GPU, se cambian las celdas 1 a 4 por adjuntar el dataset y apuntar `--raiz /kaggle/working`; las celdas 5 y 6 quedan idénticas porque el paquete es el mismo.
 
 - [ ] **Paso 2: Escribir el `README.md`**
 
@@ -1683,15 +1728,33 @@ python -m venv C:\venv-copiloto
 C:\venv-copiloto\Scripts\python.exe -m pip install -e ".[dev]"
 ```
 
+## Dónde corre cada cosa
+
+El mismo paquete se ejecuta en dos sitios, y la división no es negociable:
+
+| | Máquina local | Colab / Kaggle |
+| :--- | :--- | :--- |
+| **Tiene GPU** | No (`torch...+cpu`) | Sí |
+| Desarrollo y pruebas | Sí | — |
+| Entrenamiento de humo (2 épocas, datos sintéticos) | Sí | — |
+| Preparación de datos (26 684 DICOM) | solo una muestra, para verificar el script | Sí, el conjunto completo |
+| **Entrenamiento real** | **No** | **Sí** |
+
+El entrenamiento completo **nunca** corre en la máquina local: sin GPU tardaría
+días y no alcanzaría el Recall comprometido. El notebook exige GPU en su primera
+celda y se detiene si no la encuentra.
+
 ## Reproducir desde cero
 
-1. Descargar el dataset (requiere cuenta de Kaggle con las reglas de la
-   competencia aceptadas):
-   `kaggle competitions download -c rsna-pneumonia-detection-challenge`
-2. Preparar los datos:
-   `C:\venv-copiloto\Scripts\python.exe scripts/preparar_datos.py --zip <ruta-al-zip> --raiz <directorio-de-trabajo>`
-3. Entrenar: abrir `notebooks/entrenar_gpu.ipynb` en Colab o en los notebooks de
-   Kaggle (esta máquina no tiene GPU) y ejecutar las celdas en orden.
+1. **Local:** instalar y pasar las pruebas (`pytest -v`). Opcionalmente, verificar
+   el script de preparación sobre una muestra:
+   `C:\venv-copiloto\Scripts\python.exe scripts/preparar_datos.py --zip <zip> --raiz <dir> --limite 200`
+2. **Colab o Kaggle:** abrir `notebooks/entrenar_gpu.ipynb` y ejecutar las celdas
+   en orden. El notebook descarga el dataset desde Kaggle por sí mismo, prepara
+   los datos, entrena con GPU y deja checkpoints y reporte en Drive.
+3. Requisito previo para el paso 2: cuenta de Kaggle con las reglas de la
+   competencia aceptadas, y los secretos `KAGGLE_USERNAME` y `KAGGLE_KEY`
+   configurados en Colab.
 
 ## Pruebas
 
