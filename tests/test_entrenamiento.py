@@ -31,6 +31,64 @@ class ModeloTrivialConFeatures(ModeloTrivial):
         self.features = torch.nn.ModuleList([torch.nn.Identity()])
 
 
+class ModeloProyeccion(torch.nn.Module):
+    """Lineal sobre los 192 pixeles, no sobre su media.
+
+    Un modelo de un solo peso sobre un unico rasgo escalar no sirve para
+    probar el criterio de epoca: su curva ROC es INVARIANTE al entrenamiento
+    (escalar y desplazar un rasgo no cambia el orden de los puntajes), asi que
+    ninguna metrica basada en la ROC se moveria entre epocas. Con 192 entradas
+    el modelo tiene que APRENDER en que pixeles esta la senal, de modo que el
+    ordenamiento -y por tanto la ROC- si mejora epoca a epoca, que es lo que
+    un criterio de seleccion de epoca honesto debe poder ver.
+
+    El sesgo inicial positivo no es un truco para forzar el fallo: con
+    `pos_weight = negativos/positivos` la salida constante optima de la
+    perdida es exactamente logit 0, es decir probabilidad 0,5, o sea el
+    umbral ingenuo. El modelo queda sentado encima del umbral y cae entero a
+    un lado o al otro segun el signo del sesgo. Fijarlo positivo elige, de
+    forma determinista, el lado que reprodujo la revision (recall 1,0 con
+    especificidad 0,0); con el signo contrario el fallo es el simetrico
+    (recall 0,0 con especificidad 1,0) y el criterio viejo se rompe igual.
+    """
+
+    def __init__(self, sesgo_inicial: float = 0.2, semilla: int = 7):
+        super().__init__()
+        self.capa = torch.nn.Linear(192, 1)
+        # Inicializacion con un generador PROPIO, no el global: `nn.Linear`
+        # consume el generador global, asi que unos pesos iniciales heredados
+        # del estado que dejo la prueba anterior harian que este escenario
+        # dependiera del orden de ejecucion del archivo.
+        g = torch.Generator().manual_seed(semilla)
+        limite = 1.0 / 192 ** 0.5  # el rango por defecto de nn.Linear
+        with torch.no_grad():
+            self.capa.weight.copy_(
+                (torch.rand(1, 192, generator=g) * 2 - 1) * limite * 0.05)
+            self.capa.bias.fill_(sesgo_inicial)
+        self.features = torch.nn.ModuleList([torch.nn.Identity()])
+
+    def forward(self, x):
+        return self.capa(x.flatten(1))
+
+
+def cargadores_desbalanceados(n_train=600, n_val=300, tasa_positivos=0.225,
+                              senal=2.5, lote=32):
+    """Escenario realista: 22,5% de positivos (la proporcion real de RSNA) y
+    clases solapadas. La senal vive en 4 pixeles de un solo canal y el resto
+    es ruido, asi que las clases se distinguen pero no de forma trivial."""
+
+    def conjunto(n, semilla):
+        g = torch.Generator().manual_seed(semilla)
+        n_pos = int(n * tasa_positivos)
+        y = torch.cat([torch.ones(n_pos), torch.zeros(n - n_pos)])
+        x = torch.randn(n, 3, 8, 8, generator=g)
+        x[:, 0, :2, :2] += y.view(-1, 1, 1) * senal
+        return TensorDataset(x, y)
+
+    return (DataLoader(conjunto(n_train, 0), batch_size=lote),
+            DataLoader(conjunto(n_val, 1), batch_size=lote))
+
+
 def cargadores_sinteticos(n=32):
     g = torch.Generator().manual_seed(0)
     y = torch.cat([torch.ones(n // 2), torch.zeros(n // 2)])
@@ -133,6 +191,107 @@ def test_paciencia_agotada_en_cabeza_no_impide_la_fase_de_ajuste(tmp_path):
     assert len(epocas_cabeza) < 20, "la fase 'cabeza' deberia haber cortado por paciencia"
     assert len(epocas_ajuste) >= 1, \
         "la fase 'ajuste' nunca se ejecuto tras agotar la paciencia en 'cabeza'"
+
+
+def test_el_criterio_de_epoca_no_se_satura_con_el_desbalance_real(tmp_path):
+    """Hallazgo C1 (Critical) de la oleada final: el criterio de epoca tiene
+    que ser coherente con el criterio final de seleccion de umbral.
+
+    Escenario degenerado, reproducido con entrenamiento REAL (sin monkeypatch
+    de metricas: inyectar recalls no monotonos a mano es justo el caso que no
+    ocurre): 22,5% de positivos como en RSNA, `pos_weight` ~3,44 calculado por
+    `entrenar`, y clases solapadas. Con ese peso la salida constante optima de
+    la perdida es exactamente probabilidad 0,5, asi que el modelo se sienta
+    encima del umbral ingenuo y en la epoca 0 predice casi todo positivo:
+    recall 1,000 con especificidad 0,004.
+
+    Con el criterio VIEJO -recall medido en 0,5 fijo y comparacion estricta-
+    eso hace tres destrozos a la vez y esta prueba se pone en rojo por los
+    tres:
+      1. la epoca 0, la MENOS entrenada, se selecciona como mejor y ninguna
+         epoca posterior puede superarla jamas (1,0 no es > 1,0);
+      2. el modelo se restaura a esa epoca, con especificidad practicamente
+         cero, y de ahi salen las metricas del informe;
+      3. la paciencia se agota con tres empates y la fase de ajuste fino
+         muere a las 3 epocas de 7.
+    """
+    train, val = cargadores_desbalanceados()
+    cfg = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                 epocas_cabeza=3, epocas_ajuste=7, paciencia=3)
+    res = entrenar(ModeloProyeccion(), train, val, cfg,
+                   torch.device("cpu"), tmp_path / "ck")
+    historial = res["historial"]
+
+    # Sanity de la propia prueba: si el escenario no es el degenerate, el
+    # resto no prueba lo que dice probar. Esto se cumple con los dos criterios.
+    assert historial[0]["recall_umbral_fijo"] == 1.0, (
+        "el escenario ya no reproduce el modelo casi-todo-positivo de la "
+        "epoca 0; sin eso esta prueba no vigila nada")
+    assert historial[0]["especificidad_umbral_fijo"] <= 0.05
+
+    # (1) La mejor epoca no puede ser la primera, que es la menos entrenada.
+    assert res["mejor_epoca"] > 0, (
+        "se selecciono la epoca 0: el criterio saturo en el umbral fijo y "
+        "ninguna epoca posterior pudo superarlo")
+
+    # (2) El modelo que se restaura -y del que saldran las metricas del
+    # informe- tiene que respetar el piso de especificidad del spec.
+    mejor = historial[res["mejor_epoca"]]
+    assert mejor["especificidad"] >= cfg.especificidad_minima, (
+        f"la epoca elegida tiene especificidad {mejor['especificidad']:.3f}, "
+        f"por debajo del minimo {cfg.especificidad_minima} del spec")
+
+    # (3) El ajuste fino no puede morir por paciencia falsa.
+    epocas_ajuste = [r for r in historial if r["fase"] == "ajuste"]
+    assert len(epocas_ajuste) == cfg.epocas_ajuste, (
+        f"la fase de ajuste corrio {len(epocas_ajuste)} de "
+        f"{cfg.epocas_ajuste} epocas: la paciencia se agoto con empates")
+
+
+def test_el_auc_desempata_cuando_el_recall_se_queda_clavado(tmp_path, monkeypatch):
+    """El recall en el umbral elegido se queda clavado varias epocas seguidas
+    mientras el AUC sigue subiendo; sin desempate por AUC esas epocas cuentan
+    como 'sin mejora' y la paciencia corta el entrenamiento antes de tiempo.
+
+    Se controlan los puntajes de validacion por epoca para que el recall sea
+    identico en las cuatro y solo el AUC mejore.
+    """
+    contador = {"epoca": -1}
+    # Numero de negativos que en cada epoca ya cayeron POR DEBAJO de los
+    # positivos no detectados. El umbral elegido no se mueve (ninguno de esos
+    # negativos llega a dar especificidad >= 0,75 en el punto de recall 1,0),
+    # asi que el recall queda clavado en 0,6 mientras el AUC sube de 0,60 a
+    # 0,84 epoca a epoca: exactamente el empate que la paciencia malinterpreta.
+    negativos_ordenados = [0, 2, 4, 6]
+
+    def _pasada_falsa(modelo, cargador, criterio, optimizador, dispositivo):
+        contador["epoca"] += 1
+        return 0.5
+
+    def _evaluar_falso(modelo, cargador, dispositivo):
+        k = negativos_ordenados[contador["epoca"]]
+        y_true = np.array([1.0] * 10 + [0.0] * 10)
+        y_score = np.concatenate([
+            np.full(6, 0.90),        # positivos detectados
+            np.full(4, 0.10),        # positivos perdidos
+            np.full(k, 0.05),        # negativos ya bien ordenados
+            np.full(10 - k, 0.50),   # negativos aun por encima de esos positivos
+        ])
+        return y_true, y_score
+
+    monkeypatch.setattr(entrenamiento_mod, "_pasada_de_entrenamiento", _pasada_falsa)
+    monkeypatch.setattr(entrenamiento_mod, "evaluar_epoca", _evaluar_falso)
+
+    train, val = cargadores_sinteticos()
+    cfg = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                 epocas_cabeza=4, epocas_ajuste=0, paciencia=2)
+    res = entrenar(ModeloTrivial(), train, val, cfg, torch.device("cpu"), tmp_path / "ck")
+
+    recalls = {r["recall"] for r in res["historial"]}
+    assert len(recalls) == 1, "el escenario deberia tener el recall clavado"
+    assert len(res["historial"]) == 4, (
+        "la paciencia corto el entrenamiento pese a que el AUC seguia subiendo")
+    assert res["mejor_epoca"] == 3
 
 
 def _y_true_y_score_con(detectados: int, n: int = 10):

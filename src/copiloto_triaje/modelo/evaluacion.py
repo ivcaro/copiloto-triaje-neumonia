@@ -28,6 +28,24 @@ def metricas_binarias(y_true, y_pred) -> dict:
     }
 
 
+def metricas_en_umbral(y_true, y_score, umbral: float) -> dict:
+    """Metricas binarias al `umbral` dado, mas el AUC-ROC de los puntajes.
+
+    El AUC no depende del umbral -mide el ordenamiento completo, no un punto
+    de corte-, pero es uno de los cuatro criterios de aceptacion del spec (§2:
+    AUC >= 0,85). Hasta ahora solo se calculaba dentro de `elegir_umbral`, es
+    decir solo sobre VALIDACION, de modo que el criterio quedaba inreportable
+    sobre el conjunto de PRUEBA, que es donde el spec lo exige. Esta funcion
+    existe para poder reportarlo tambien alli.
+    """
+    y_true = np.asarray(y_true)
+    y_score = np.asarray(y_score)
+    metricas = metricas_binarias(y_true, (y_score >= umbral).astype(int))
+    metricas["auc"] = float(roc_auc_score(y_true, y_score))
+    metricas["umbral"] = float(umbral)
+    return metricas
+
+
 def elegir_umbral(
     y_true,
     y_score,
@@ -70,7 +88,4 @@ def elegir_umbral(
     umbral = float(umbrales[indice])
     if not np.isfinite(umbral):  # roc_curve devuelve inf en el primer punto
         umbral = float(y_score.max()) + 1.0
-    metricas = metricas_binarias(y_true, (y_score >= umbral).astype(int))
-    metricas["auc"] = float(roc_auc_score(y_true, y_score))
-    metricas["umbral"] = umbral
-    return umbral, metricas, paso
+    return umbral, metricas_en_umbral(y_true, y_score, umbral), paso
