@@ -448,14 +448,24 @@ def test_umbral_paso_1_cuando_se_cumplen_ambos_objetivos():
     assert m["especificidad"] >= 0.75
 
 
-def test_umbral_relaja_al_paso_2_si_el_recall_no_llega():
+def test_paso_2_solo_si_alcanza_recall_objetivo_sino_paso_3():
     """Clases muy solapadas: con especificidad 0,75 no se alcanza 0,85 de
-    recall, asi que la regla debe relajar hasta la especificidad minima."""
+    recall. La regla relaja a especificidad minima solo si ALCANZA 0,85.
+
+    NOTA: la primera version de esta prueba aceptaba `paso in (paso_2, paso_3)`,
+    que es una asercion debil: pasa haga lo que haga la regla. La version real
+    -la que esta en `tests/test_evaluacion.py`- fija la RELACION entre el paso
+    aplicado y el recall obtenido, que es lo que el spec §6 realmente ordena.
+    """
     rng = np.random.default_rng(1)
     y = np.array([1] * 200 + [0] * 800)
     score = np.where(y == 1, rng.normal(0.55, 0.20, 1000), rng.normal(0.45, 0.20, 1000))
     umbral, m, paso = elegir_umbral(y, score)
-    assert paso in ("paso_2_especificidad_minima", "paso_3_se_conserva_paso_1")
+    # Relacion: paso_2 solo si recall >= 0.85; si recall < 0.85, debe ser paso_3
+    if paso == "paso_2_especificidad_minima":
+        assert m["recall"] >= 0.85
+    if m["recall"] < 0.85:
+        assert paso == "paso_3_se_conserva_paso_1"
     assert m["especificidad"] >= 0.70
 
 
@@ -1842,12 +1852,25 @@ git commit -m "docs: notebook de entrenamiento en GPU y README reproducible"
 | MobileNetV3-Large con salida binaria (§6) | 6 |
 | Entrenamiento en dos fases (§6) | 6, 7 |
 | Latencia de inferencia en CPU < 4 s (§2) | 6 |
-| Early stopping por Recall (§6) | 7 |
+| Early stopping por Recall (§6) | 7, oleada final |
 | Ponderación de clases por desbalance (§6) | 7 |
-| Checkpoints reanudables (§8) | 7 |
+| Escritura de un checkpoint por época (§8) | 7 |
+| **Reanudación** desde ese checkpoint (§8) | oleada final |
 | Idempotencia de las etapas (§8) | 4, 8 |
 | Manifiestos con semilla registrada (§7) | 8 |
 | Pipeline de punta a punta desde una orden (§2) | 8 |
 | Entrenamiento de humo en CPU (§9) | 9 |
 | Notebook delgado para GPU (§10) | 10 |
 | README reproducible (§12) | 10 |
+| Reporte de métricas en Markdown y curva ROC (§7, §12) | oleada final |
+| AUC reportado sobre el conjunto de prueba (§2) | oleada final |
+| Pesos exportados, cargables en CPU para SP2 (§12) | oleada final |
+| Determinismo de cuDNN para reproducir en GPU (§2) | oleada final |
+
+> **Corrección (oleada final de arreglo).** Esta tabla declaraba "Checkpoints
+> reanudables (§8) → Tarea 7", y no era cierto: la Tarea 7 escribía `ultimo.pt`
+> cada época, pero **nadie lo leía en todo el repositorio**, así que la
+> reanudación que promete el spec §8 no existía. La fila se ha partido en dos
+> para distinguir lo que la Tarea 7 sí hizo (escribir el checkpoint) de lo que
+> faltaba (reanudar desde él), implementado en la oleada final junto con el
+> resto de requisitos que la tabla no recogía.

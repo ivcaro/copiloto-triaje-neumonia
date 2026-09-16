@@ -37,8 +37,10 @@ El mismo paquete se ejecuta en dos sitios, y la división no es negociable:
 | **Entrenamiento real** | **No** | **Sí** |
 
 El entrenamiento completo **nunca** corre en la máquina local: sin GPU tardaría
-días y no alcanzaría el Recall comprometido. El notebook exige GPU en su primera
-celda y se detiene si no la encuentra.
+días y no alcanzaría el Recall comprometido. El notebook **instala el paquete**
+(no lo pega a `sys.path`), de modo que los pines de `pyproject.toml` también se
+aplican en Colab, y luego comprueba el entorno: si no hay GPU, o si
+`copiloto_triaje` no viene del paquete instalado, se detiene.
 
 ## Reproducir desde cero
 
@@ -47,10 +49,16 @@ celda y se detiene si no la encuentra.
    `C:\venv-copiloto\Scripts\python.exe scripts/preparar_datos.py --zip <zip> --raiz <dir> --limite 200`
 2. **Colab o Kaggle:** abrir `notebooks/entrenar_gpu.ipynb` y ejecutar las celdas
    en orden. El notebook descarga el dataset desde Kaggle por sí mismo, prepara
-   los datos, entrena con GPU y deja checkpoints y reporte en Drive.
+   los datos y entrena con GPU. En Drive quedan los checkpoints y los
+   entregables: `reporte_metricas.md`, `reporte_metricas.json`, `curva_roc.svg`
+   y `pesos_modelo_cpu.pt` (el `state_dict` limpio, en CPU, que consumirá SP2).
 3. Requisito previo para el paso 2: cuenta de Kaggle con las reglas de la
    competencia aceptadas, y los secretos `KAGGLE_USERNAME` y `KAGGLE_KEY`
    configurados en Colab.
+4. **Si Colab se cae a mitad del entrenamiento:** volver a ejecutar el notebook
+   con `REANUDAR = True` (el valor por defecto). Como los checkpoints están en
+   Drive, `entrenar` retoma desde `ultimo.pt` —pesos, optimizador, época, fase,
+   historial y contadores— en vez de empezar de cero.
 
 ## Pruebas
 
@@ -58,8 +66,12 @@ celda y se detiene si no la encuentra.
 C:\venv-copiloto\Scripts\python.exe -m pytest -v
 ```
 
-La prueba `tests/test_particion.py` es la más importante: verifica que ningún
-paciente aparece en dos particiones. Si falla, las métricas no significan nada.
+Las dos pruebas más importantes son las que protegen la ausencia de fuga de
+datos: `tests/test_particion.py` verifica la lógica de partición, y
+`tests/test_manifiestos_emitidos.py` ejecuta el script de preparación de punta a
+punta y comprueba la propiedad **sobre los tres CSV que quedan en disco**, que
+son los que alimentan al Dataset. Si alguna falla, las métricas no significan
+nada.
 
 ## Datos del dataset (verificados el 16-sep-2026)
 
