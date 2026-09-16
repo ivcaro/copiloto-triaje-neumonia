@@ -50,8 +50,16 @@ def test_el_aumento_solo_se_aplica_en_entrenamiento():
     t_eval = construir_transformaciones(224, entrenamiento=False)
     nombres_train = [type(t).__name__ for t in t_train.transforms]
     nombres_eval = [type(t).__name__ for t in t_eval.transforms]
+
+    # Verificar que evaluación tiene EXACTAMENTE: Resize, ToTensor, Normalize
+    assert nombres_eval == ["Resize", "ToTensor", "Normalize"]
+
+    # Verificar que entrenamiento tiene aumento: Resize, RandomAffine, ColorJitter, ToTensor, Normalize
     assert "RandomAffine" in nombres_train
-    assert "RandomAffine" not in nombres_eval
+    assert "ColorJitter" in nombres_train
+
+    # Verificar que evaluación no contiene transformaciones aleatorias
+    assert not any(n.startswith("Random") for n in nombres_eval)
 
 
 def test_no_se_usa_volteo_horizontal():
@@ -59,3 +67,13 @@ def test_no_se_usa_volteo_horizontal():
     imagenes anatomicamente imposibles."""
     nombres = [type(t).__name__ for t in construir_transformaciones(224, True).transforms]
     assert not any("Flip" in n for n in nombres)
+
+
+def test_dataset_guarda_el_manifiesto_como_atributo(tmp_path):
+    """Tarea 7 lee self.manifiesto para calcular peso de clase sin cargar imagenes.
+    Un renombre futuro la romperia en silencio si no fijamos este contrato."""
+    man, dir_png = manifiesto_y_pngs(tmp_path)
+    ds = DatasetRadiografias(man, dir_png, 224, False)
+    assert hasattr(ds, "manifiesto")
+    assert isinstance(ds.manifiesto, pd.DataFrame)
+    assert len(ds.manifiesto) == len(man)

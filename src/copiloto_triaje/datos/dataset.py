@@ -19,6 +19,10 @@ def construir_transformaciones(tam_imagen: int, entrenamiento: bool):
 
     No se usa volteo horizontal: la lateralidad cardiaca es informacion
     clinica real y voltearla produciria anatomia imposible.
+
+    NOTA: RandomAffine y ColorJitter usan el generador global de torch porque
+    la API v1 de torchvision no acepta generadores propios. La reproducibilidad
+    depende de sembrar torch.manual_seed con la semilla de configuracion.
     """
     pasos = [transforms.Resize((tam_imagen, tam_imagen))]
     if entrenamiento:
