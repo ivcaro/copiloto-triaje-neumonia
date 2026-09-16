@@ -1,3 +1,6 @@
+import os
+from unittest.mock import patch
+
 import numpy as np
 import pydicom
 import pytest
@@ -70,11 +73,40 @@ def test_convertir_lote_omite_los_corruptos_sin_abortar(tmp_path):
 
 
 def test_convertir_lote_es_idempotente(tmp_path):
+    """Prueba que convertir_lote no reescribe PNG existentes.
+
+    Usa os.utime para retroceder el mtime a una hora conocida antes de la
+    segunda ejecucion. Si el archivo fuera reescrito, su mtime cambiaría.
+    """
     r = tmp_path / "a.dcm"
     crear_dicom(r)
     dir_png = tmp_path / "png"
     convertir_lote([r], dir_png)
-    mtime = (dir_png / "a.png").stat().st_mtime_ns
+    png_file = dir_png / "a.png"
+
+    # Retroceder el mtime a hace 10 segundos
+    tiempo_anterior = os.stat(png_file).st_mtime_ns - (10 * 1_000_000_000)
+    os.utime(png_file, ns=(tiempo_anterior, tiempo_anterior))
+
+    mtime_antes = os.stat(png_file).st_mtime_ns
     convertidos, _ = convertir_lote([r], dir_png)
+    mtime_despues = os.stat(png_file).st_mtime_ns
+
     assert len(convertidos) == 1
-    assert (dir_png / "a.png").stat().st_mtime_ns == mtime
+    assert mtime_antes == mtime_despues  # No fue reescrito
+
+
+def test_convertir_lote_propaga_errores_de_programacion(tmp_path):
+    """Errores de programacion (no de lectura DICOM) se propagan, no se omiten.
+
+    Esto asegura que bugs en el codigo de conversion no queden camuflados
+    como "archivos omitidos" esperados. Un NameError real debe fallar ruidoso.
+    """
+    r = tmp_path / "a.dcm"
+    crear_dicom(r)
+
+    # Inyectar un NameError en convertir_a_png
+    with patch("copiloto_triaje.datos.dicom.convertir_a_png") as mock_convert:
+        mock_convert.side_effect = NameError("variable no definida")
+        with pytest.raises(NameError):
+            convertir_lote([r], tmp_path / "png")

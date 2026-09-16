@@ -11,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 import pydicom
+import pydicom.errors
 from PIL import Image
 
 CAMPOS = {
@@ -21,13 +22,25 @@ CAMPOS = {
 }
 
 
-def leer_dicom(ruta: Path) -> tuple[np.ndarray, dict]:
-    """Devuelve (pixeles, metadatos) de un DICOM."""
-    ds = pydicom.dcmread(str(ruta))
+def _extraer_metadatos(ds) -> dict:
+    """Extrae metadatos de un dataset pydicom."""
     meta = {clave: str(getattr(ds, campo, "")) for clave, campo in CAMPOS.items()}
     meta["filas"] = int(getattr(ds, "Rows", 0))
     meta["columnas"] = int(getattr(ds, "Columns", 0))
+    return meta
+
+
+def leer_dicom(ruta: Path) -> tuple[np.ndarray, dict]:
+    """Devuelve (pixeles, metadatos) de un DICOM."""
+    ds = pydicom.dcmread(str(ruta))
+    meta = _extraer_metadatos(ds)
     return ds.pixel_array, meta
+
+
+def _leer_metadatos_dicom(ruta: Path) -> dict:
+    """Lee solo metadatos de un DICOM sin decodificar píxeles."""
+    ds = pydicom.dcmread(str(ruta), stop_before_pixels=True)
+    return _extraer_metadatos(ds)
 
 
 def convertir_a_png(ruta_dcm: Path, ruta_png: Path) -> dict:
@@ -59,11 +72,11 @@ def convertir_lote(rutas_dcm, dir_png: Path) -> tuple[list[dict], list[dict]]:
         destino = dir_png / (ruta.stem + ".png")
         try:
             if destino.exists():
-                _, meta = leer_dicom(ruta)
+                meta = _leer_metadatos_dicom(ruta)
                 meta["archivo_png"] = destino.name
             else:
                 meta = convertir_a_png(ruta, destino)
             convertidos.append(meta)
-        except Exception as exc:  # noqa: BLE001 - se registra y se continua
+        except (pydicom.errors.InvalidDicomError, OSError, ValueError) as exc:
             omitidos.append({"archivo": ruta.name, "motivo": f"{type(exc).__name__}: {exc}"})
     return convertidos, omitidos
