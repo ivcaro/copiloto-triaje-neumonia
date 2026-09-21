@@ -52,12 +52,24 @@ def elegir_umbral(
     especificidad_objetivo: float = 0.75,
     especificidad_minima: float = 0.70,
     recall_objetivo: float = 0.85,
+    recall_minimo: float = 0.80,
 ) -> tuple[float, dict, str]:
     """Elige el umbral sobre la curva ROC de VALIDACION (nunca la de prueba).
 
-    1. Entre los umbrales con especificidad >= objetivo, toma el de mayor recall.
-    2. Si ese recall no alcanza `recall_objetivo`, repite con la especificidad minima.
-    3. Si aun asi no se alcanza, conserva el umbral del paso 1 y reporta tal cual.
+    La regla ordena los puntos de operacion por cuanto del spec satisfacen, y
+    ante empate prefiere el de MAYOR especificidad:
+
+    1. Recall >= objetivo con especificidad >= objetivo.
+    2. Recall >= objetivo relajando a la especificidad minima.
+    3. Recall >= minimo con especificidad >= objetivo.
+    4. Recall >= minimo relajando a la especificidad minima.
+    5. Ninguno alcanza el recall minimo: se toma el de mayor recall dentro
+       del piso de especificidad y se reporta tal cual, sin forzar nada.
+
+    El orden importa: una version anterior conservaba el punto de la
+    especificidad objetivo aunque incumpliera el recall minimo, teniendo
+    disponible otro que cumplia AMBOS minimos. En triaje eso es al reves de
+    lo que interesa, porque el falso negativo es el error caro.
 
     Devuelve (umbral, metricas, nombre_del_paso_aplicado).
     """
@@ -72,18 +84,24 @@ def elegir_umbral(
             return None
         return int(candidatos[np.argmax(tpr[candidatos])])
 
-    i1 = mejor_indice(especificidad_objetivo)
-    if i1 is None:
-        indice = int(np.argmax(tpr - fpr))
-        paso = "sin_umbral_con_especificidad_objetivo"
-    elif tpr[i1] >= recall_objetivo:
-        indice, paso = i1, "paso_1_especificidad_objetivo"
+    i_objetivo = mejor_indice(especificidad_objetivo)
+    i_minima = mejor_indice(especificidad_minima)
+
+    def recall_de(indice):
+        return -1.0 if indice is None else float(tpr[indice])
+
+    if recall_de(i_objetivo) >= recall_objetivo:
+        indice, paso = i_objetivo, "paso_1_especificidad_objetivo"
+    elif recall_de(i_minima) >= recall_objetivo:
+        indice, paso = i_minima, "paso_2_especificidad_minima"
+    elif recall_de(i_objetivo) >= recall_minimo:
+        indice, paso = i_objetivo, "paso_3_recall_minimo_con_especificidad_objetivo"
+    elif recall_de(i_minima) >= recall_minimo:
+        indice, paso = i_minima, "paso_4_recall_minimo_con_especificidad_minima"
+    elif i_minima is not None:
+        indice, paso = i_minima, "paso_5_no_se_alcanza_el_recall_minimo"
     else:
-        i2 = mejor_indice(especificidad_minima)
-        if i2 is not None and tpr[i2] >= recall_objetivo:
-            indice, paso = i2, "paso_2_especificidad_minima"
-        else:
-            indice, paso = i1, "paso_3_se_conserva_paso_1"
+        indice, paso = int(np.argmax(tpr - fpr)), "sin_umbral_con_especificidad_minima"
 
     umbral = float(umbrales[indice])
     if not np.isfinite(umbral):  # roc_curve devuelve inf en el primer punto

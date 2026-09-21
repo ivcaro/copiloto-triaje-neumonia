@@ -17,7 +17,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from copiloto_triaje.modelo.arquitectura import descongelar_para_ajuste
+from copiloto_triaje.modelo.arquitectura import (
+    descongelar_para_ajuste,
+    descongelar_todo,
+)
 from copiloto_triaje.modelo.evaluacion import elegir_umbral, metricas_binarias
 
 NOMBRE_ULTIMO = "ultimo.pt"
@@ -128,7 +131,8 @@ def _puntuar_epoca(y_true, y_score, cfg) -> dict:
     """
     umbral, metricas, paso = elegir_umbral(
         y_true, y_score,
-        cfg.especificidad_objetivo, cfg.especificidad_minima, cfg.recall_objetivo)
+        cfg.especificidad_objetivo, cfg.especificidad_minima, cfg.recall_objetivo,
+        getattr(cfg, "recall_minimo", 0.80))
     diagnostico = metricas_binarias(
         y_true, (np.asarray(y_score) >= UMBRAL_DIAGNOSTICO).astype(int))
     return {
@@ -271,9 +275,21 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
         if hechas >= n_epocas:
             continue  # fase completada en la corrida anterior
         if nombre_fase == "ajuste":
-            descongelar_para_ajuste(modelo)
+            # Ajuste fino completo por defecto: dejar fijos casi todos los
+            # bloques limita cuanto puede adaptarse la red a una imagen de
+            # un solo canal y estadistica muy distinta a ImageNet.
+            if getattr(cfg, "descongelar_todo", False):
+                descongelar_todo(modelo)
+            else:
+                descongelar_para_ajuste(modelo, getattr(cfg, "bloques_ajuste", 3))
         parametros = [p for p in modelo.parameters() if p.requires_grad]
         optimizador = torch.optim.Adam(parametros, lr=lr)
+        # Coseno sobre las epocas de la fase: baja la tasa de forma suave
+        # para afinar al final en vez de rebotar alrededor del minimo.
+        planificador = (
+            torch.optim.lr_scheduler.CosineAnnealingLR(optimizador, T_max=max(n_epocas, 1))
+            if getattr(cfg, "usar_scheduler", False) else None
+        )
         # Paciencia propia de esta fase: agotarla en "cabeza" significa que
         # la cabeza convergio, que es la señal para pasar al ajuste fino, no
         # para abandonar el entrenamiento completo.
@@ -283,6 +299,8 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
             # blanco, que es reiniciar con pesos calientes, no reanudar.
             optimizador.load_state_dict(estado_previo["optimizador"])
             sin_mejora = int(estado_previo.get("sin_mejora", 0))
+            if planificador is not None and estado_previo.get("planificador"):
+                planificador.load_state_dict(estado_previo["planificador"])
 
         for _ in range(hechas, n_epocas):
             perdida = _pasada_de_entrenamiento(
@@ -302,6 +320,12 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
             else:
                 sin_mejora += 1
 
+            # El planificador avanza al cerrar la epoca y ANTES de guardar:
+            # si se guardara antes de avanzar, el checkpoint registraria la
+            # tasa de la epoca anterior y al reanudar se repetiria un paso.
+            if planificador is not None:
+                planificador.step()
+
             # Checkpoint fiel para reanudar tras una caida de sesion: el
             # estado del optimizador (si no, Adam reanuda con el momento en
             # blanco, que no es reanudar sino reiniciar con pesos calientes),
@@ -312,7 +336,9 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
                       "epoca": registro["epoca"], "fase": nombre_fase,
                       "metricas": dict(registro), "historial": historial,
                       "mejor_recall": mejor_recall, "mejor_auc": mejor_auc,
-                      "mejor_epoca": mejor_epoca, "sin_mejora": sin_mejora}
+                      "mejor_epoca": mejor_epoca, "sin_mejora": sin_mejora,
+                      "planificador": (planificador.state_dict()
+                                       if planificador is not None else None)}
             torch.save(estado, ruta_ultimo)
             if mejora:
                 torch.save(estado, ruta_mejor)

@@ -43,19 +43,58 @@ def test_umbral_paso_1_cuando_se_cumplen_ambos_objetivos():
     assert m["especificidad"] >= 0.75
 
 
-def test_paso_2_solo_si_alcanza_recall_objetivo_sino_paso_3():
+def test_paso_2_solo_si_alcanza_el_recall_objetivo():
     """Clases muy solapadas: con especificidad 0,75 no se alcanza 0,85 de
-    recall. La regla relaja a especificidad minima solo si ALCANZA 0,85."""
+    recall. La regla solo se queda en el paso 2 si ALCANZA el objetivo."""
     rng = np.random.default_rng(1)
     y = np.array([1] * 200 + [0] * 800)
     score = np.where(y == 1, rng.normal(0.55, 0.20, 1000), rng.normal(0.45, 0.20, 1000))
     umbral, m, paso = elegir_umbral(y, score)
-    # Relacion: paso_2 solo si recall >= 0.85; si recall < 0.85, debe ser paso_3
     if paso == "paso_2_especificidad_minima":
         assert m["recall"] >= 0.85
-    if m["recall"] < 0.85:
-        assert paso == "paso_3_se_conserva_paso_1"
     assert m["especificidad"] >= 0.70
+
+
+def test_prefiere_el_punto_que_cumple_AMBOS_minimos():
+    """El fallo real que esto previene, medido en la primera corrida:
+
+    con especificidad >= 0,75 el recall maximo era 78% -incumple el minimo de
+    80%-, mientras que relajando a especificidad >= 0,70 llegaba a 83,4%, que
+    cumple los dos minimos. La regla vieja conservaba el primero "por no
+    forzar el umbral" y reportaba un recall por debajo del minimo teniendo
+    disponible uno que si lo cumplia. En triaje eso es exactamente al reves:
+    el falso negativo es el error caro.
+    """
+    # Curva construida para que exista esa disyuntiva de forma nitida.
+    rng = np.random.default_rng(7)
+    y = np.array([1] * 300 + [0] * 700)
+    score = np.where(y == 1, rng.normal(0.62, 0.17, 1000), rng.normal(0.40, 0.17, 1000))
+    umbral, m, paso = elegir_umbral(y, score, 0.75, 0.70, 0.85, 0.80)
+
+    if m["recall"] < 0.85:  # no se alcanza el objetivo: estamos en pasos 3/4/5
+        assert paso.startswith(("paso_3", "paso_4", "paso_5"))
+        # Si la eleccion cumple el minimo de recall, la especificidad debe
+        # seguir respetando el piso: nunca se baja de 0,70 para maquillar.
+        if m["recall"] >= 0.80:
+            assert m["especificidad"] >= 0.70
+            assert paso.startswith(("paso_3", "paso_4"))
+
+
+def test_relaja_la_especificidad_si_es_lo_unico_que_cumple_el_recall_minimo():
+    """Si con especificidad objetivo se queda corto del recall minimo pero
+    relajando al piso si se cumple, la regla DEBE relajar. Es el caso que la
+    version anterior resolvia al reves."""
+    # tpr/fpr controlados: puntajes ordenados a mano en dos tramos.
+    y = np.array([1] * 100 + [0] * 300)
+    score = np.concatenate([
+        np.linspace(0.95, 0.55, 82),   # 82 positivos bien puntuados
+        np.linspace(0.45, 0.05, 18),   # 18 positivos mal puntuados
+        np.linspace(0.60, 0.50, 60),   # 60 negativos que estorban arriba
+        np.linspace(0.40, 0.01, 240),  # 240 negativos bien puntuados
+    ])
+    umbral, m, paso = elegir_umbral(y, score, 0.75, 0.70, 0.85, 0.80)
+    assert m["recall"] >= 0.80, "no se cumplio el recall minimo teniendo como"
+    assert m["especificidad"] >= 0.70, "se bajo del piso de especificidad"
 
 
 def test_metricas_en_umbral_reporta_el_auc_de_cualquier_conjunto():

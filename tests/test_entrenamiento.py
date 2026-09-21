@@ -1,6 +1,7 @@
 import copy
 
 import numpy as np
+import pytest
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -248,6 +249,12 @@ def test_el_criterio_de_epoca_no_se_satura_con_el_desbalance_real(tmp_path):
         f"{cfg.epocas_ajuste} epocas: la paciencia se agoto con empates")
 
 
+# Estas pruebas sustituyen `_pasada_de_entrenamiento` para controlar perdida y
+# recall por epoca, asi que el optimizador nunca avanza y el planificador se
+# queja de ir por delante. En entrenamiento real el optimizador avanza en cada
+# lote antes de que el planificador cierre la epoca: el aviso es del doble, no
+# del codigo.
+@pytest.mark.filterwarnings("ignore:Detected call of")
 def test_el_auc_desempata_cuando_el_recall_se_queda_clavado(tmp_path, monkeypatch):
     """El recall en el umbral elegido se queda clavado varias epocas seguidas
     mientras el AUC sigue subiendo; sin desempate por AUC esas epocas cuentan
@@ -314,15 +321,24 @@ def test_reanudar_continua_donde_iba_y_no_desde_cero(tmp_path):
 
     # paciencia=5 > epocas: aqui se prueba la reanudacion, no el early
     # stopping; sin esto el corte por paciencia enmascararia el resultado.
+    # usar_scheduler=False a proposito: el recocido coseno anela sobre el
+    # TOTAL de epocas de la fase, asi que una configuracion de 2 epocas y una
+    # de 5 describen trayectorias de tasa de aprendizaje distintas -son
+    # entrenamientos distintos, no el mismo interrumpido-. La equivalencia
+    # que esta prueba exige solo es formulable con tasa constante. Que el
+    # estado del planificador tambien se restaura lo cubre la prueba
+    # siguiente.
     cfg_corto = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
-                       epocas_cabeza=2, epocas_ajuste=0, paciencia=5)
+                       epocas_cabeza=2, epocas_ajuste=0, paciencia=5,
+                       usar_scheduler=False)
     res_caida = entrenar(modelo, train, val, cfg_corto, torch.device("cpu"), dir_ck)
     assert len(res_caida["historial"]) == 2
 
     # Modelo nuevo a proposito, con otros pesos: los del checkpoint deben
     # ganarle. Si la reanudacion no cargara nada, el historial arrancaria en 0.
     cfg_largo = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
-                       epocas_cabeza=5, epocas_ajuste=0, paciencia=5)
+                       epocas_cabeza=5, epocas_ajuste=0, paciencia=5,
+                       usar_scheduler=False)
     res_reanudado = entrenar(ModeloTrivial(), train, val, cfg_largo,
                              torch.device("cpu"), dir_ck, reanudar=True)
 
@@ -491,6 +507,12 @@ def _y_true_y_score_con(detectados: int, n: int = 10):
     return y_true, y_score
 
 
+# Estas pruebas sustituyen `_pasada_de_entrenamiento` para controlar perdida y
+# recall por epoca, asi que el optimizador nunca avanza y el planificador se
+# queja de ir por delante. En entrenamiento real el optimizador avanza en cada
+# lote antes de que el planificador cierre la epoca: el aviso es del doble, no
+# del codigo.
+@pytest.mark.filterwarnings("ignore:Detected call of")
 def test_el_mejor_checkpoint_sigue_al_recall_no_a_la_perdida(tmp_path, monkeypatch):
     """Hallazgo 2 (Important) de la ronda de arreglo 1/5: fija el criterio de
     'mejor' epoca al Recall, no a la perdida. Se controlan perdida y recall
@@ -549,6 +571,12 @@ def test_el_checkpoint_guarda_lo_necesario_para_reanudar(tmp_path):
     optimizador_nuevo.load_state_dict(estado["optimizador"])
 
 
+# Estas pruebas sustituyen `_pasada_de_entrenamiento` para controlar perdida y
+# recall por epoca, asi que el optimizador nunca avanza y el planificador se
+# queja de ir por delante. En entrenamiento real el optimizador avanza en cada
+# lote antes de que el planificador cierre la epoca: el aviso es del doble, no
+# del codigo.
+@pytest.mark.filterwarnings("ignore:Detected call of")
 def test_entrenar_restaura_los_pesos_de_la_mejor_epoca_no_los_de_la_ultima(tmp_path, monkeypatch):
     """Hallazgo 1 (Critical) de la ronda de arreglo 1/5 (Tarea 10): `entrenar`
     guardaba 'mejor.pt' cada vez que el recall mejoraba, pero nunca lo volvia
@@ -609,3 +637,37 @@ def test_entrenar_restaura_los_pesos_de_la_mejor_epoca_no_los_de_la_ultima(tmp_p
         "MEJOR checkpoint (epoca 1), no en los de la ultima epoca ejecutada"
     )
     assert modelo.capa.weight.item() != peso_checkpoint_ultimo
+
+
+def test_el_planificador_baja_la_tasa_y_su_estado_sobrevive_al_checkpoint(tmp_path):
+    """El recocido coseno es una de las mejoras del 21-sep: baja la tasa de
+    forma suave para afinar al final en vez de rebotar alrededor del minimo.
+
+    Dos garantias: que la tasa efectivamente baja a lo largo de la fase, y
+    que su estado viaja en el checkpoint. Sin lo segundo, reanudar reiniciaria
+    el recocido desde el principio y la tasa volveria a subir de golpe justo
+    donde deberia estar afinando.
+    """
+    train, val = cargadores_sinteticos()
+    cfg = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                 epocas_cabeza=4, epocas_ajuste=0, paciencia=9,
+                 usar_scheduler=True)
+    res = entrenar(ModeloTrivial(), train, val, cfg, torch.device("cpu"),
+                   tmp_path / "ck")
+
+    estado = torch.load(tmp_path / "ck" / "ultimo.pt", map_location="cpu",
+                        weights_only=False)
+    assert estado["planificador"] is not None,         "el estado del planificador no viaja en el checkpoint: al reanudar, "         "el recocido arrancaria de cero"
+    assert estado["planificador"]["last_epoch"] == len(res["historial"]),         "el planificador no avanzo una vez por epoca"
+    # La tasa guardada debe ser menor que la inicial: el coseno bajo.
+    assert estado["optimizador"]["param_groups"][0]["lr"] < cfg.lr_cabeza
+
+
+def test_sin_planificador_el_checkpoint_lo_dice_explicitamente(tmp_path):
+    train, val = cargadores_sinteticos()
+    cfg = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                 epocas_cabeza=1, epocas_ajuste=0, usar_scheduler=False)
+    entrenar(ModeloTrivial(), train, val, cfg, torch.device("cpu"), tmp_path / "ck")
+    estado = torch.load(tmp_path / "ck" / "ultimo.pt", map_location="cpu",
+                        weights_only=False)
+    assert estado["planificador"] is None

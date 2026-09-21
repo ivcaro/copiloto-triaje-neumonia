@@ -42,12 +42,22 @@ EXPLICACION_PASO = {
         "Paso 2: con la especificidad objetivo no se alcanzaba el recall "
         "objetivo, asi que la busqueda se relajo hasta la especificidad "
         "minima aceptable (0,70).",
-    "paso_3_se_conserva_paso_1":
-        "Paso 3: ni relajando hasta la especificidad minima se alcanza el "
-        "recall objetivo. Se conserva el umbral del paso 1 y se reporta tal "
-        "cual, sin relajar mas: un numero honesto antes que un umbral "
-        "forzado.",
-    "sin_umbral_con_especificidad_objetivo":
+    "paso_3_recall_minimo_con_especificidad_objetivo":
+        "Paso 3: no se alcanza el recall objetivo (0,85) por ningun camino, "
+        "pero con especificidad >= objetivo (0,75) si se cumple el recall "
+        "minimo (0,80). Se toma ese punto, que es el que mas exige a la "
+        "especificidad entre los que cumplen ambos minimos.",
+    "paso_4_recall_minimo_con_especificidad_minima":
+        "Paso 4: con la especificidad objetivo no se llegaba ni al recall "
+        "minimo, asi que se relajo hasta la especificidad minima (0,70), "
+        "donde si se cumple. En triaje el falso negativo es el error caro: "
+        "cumplir el recall minimo pesa mas que conservar especificidad.",
+    "paso_5_no_se_alcanza_el_recall_minimo":
+        "Paso 5: ningun umbral dentro del piso de especificidad alcanza el "
+        "recall minimo (0,80). Se reporta el de mayor recall disponible tal "
+        "cual, sin forzar nada: un numero honesto antes que un umbral "
+        "maquillado. El modelo necesita mejorar, no otro umbral.",
+    "sin_umbral_con_especificidad_minima":
         "Ningun umbral de la curva alcanzaba la especificidad objetivo; se "
         "tomo el de mayor indice de Youden (tpr - fpr).",
 }
