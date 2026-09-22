@@ -717,3 +717,54 @@ def test_reanudar_con_la_misma_arquitectura_sigue_funcionando(tmp_path):
                    torch.device("cpu"), dir_ck, reanudar=True)
 
     assert [r["epoca"] for r in res["historial"]] == [0, 1, 2, 3]
+
+
+def test_entrenar_avisa_de_cada_epoca_ya_guardada(tmp_path):
+    """`entrenar` no imprime nada, y en Colab eso son horas de silencio en las
+    que no se distingue "avanzando" de "colgado" -el unico latido era el mtime
+    de ultimo.pt en Drive-. El aviso llega DESPUES de escribir el checkpoint,
+    de modo que si salio, esa epoca sobrevive a una caida de sesion.
+    """
+    train, val = cargadores_sinteticos()
+    dir_ck = tmp_path / "ck"
+    vistos = []
+
+    def anotar(registro):
+        # El checkpoint tiene que existir YA cuando llega el aviso.
+        assert (dir_ck / "ultimo.pt").exists()
+        vistos.append(registro)
+
+    cfg = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                 epocas_cabeza=3, epocas_ajuste=0, paciencia=5)
+    resultado = entrenar(ModeloTrivial(), train, val, cfg, torch.device("cpu"),
+                         dir_ck, al_terminar_epoca=anotar)
+
+    assert [r["epoca"] for r in vistos] == [0, 1, 2]
+    assert len(vistos) == len(resultado["historial"])
+    for registro in vistos:
+        assert {"fase", "perdida", "recall", "auc", "mejora", "sin_mejora",
+                "paciencia"} <= set(registro)
+
+
+def test_el_aviso_de_epoca_no_puede_mutar_el_historial(tmp_path):
+    """Se entrega una copia: un oyente descuidado no debe corromper el
+    historial que se escribe en el reporte y en el checkpoint."""
+    train, val = cargadores_sinteticos()
+    cfg = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                 epocas_cabeza=2, epocas_ajuste=0, paciencia=5)
+    resultado = entrenar(ModeloTrivial(), train, val, cfg, torch.device("cpu"),
+                         tmp_path / "ck",
+                         al_terminar_epoca=lambda r: r.update(recall=-999))
+
+    assert all(r["recall"] != -999 for r in resultado["historial"])
+
+
+def test_entrenar_sin_el_aviso_se_comporta_igual(tmp_path):
+    """El parametro es opcional: omitirlo tiene que dejar la funcion muda y
+    con el mismo resultado de siempre."""
+    train, val = cargadores_sinteticos()
+    cfg = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                 epocas_cabeza=2, epocas_ajuste=0, paciencia=5)
+    resultado = entrenar(ModeloTrivial(), train, val, cfg, torch.device("cpu"),
+                         tmp_path / "ck")
+    assert len(resultado["historial"]) == 2

@@ -190,7 +190,8 @@ def exportar_pesos_cpu(modelo, ruta) -> Path:
 
 
 def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
-             dir_checkpoints, reanudar: bool = False) -> dict:
+             dir_checkpoints, reanudar: bool = False,
+             al_terminar_epoca=None) -> dict:
     """Entrena en dos fases y devuelve el historial y el mejor checkpoint.
 
     Fase 1: solo la cabeza (backbone congelado), `cfg.epocas_cabeza` epocas.
@@ -205,6 +206,15 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
     el spec §8 promete para una caida de sesion en Colab; sin esto, el
     checkpoint por epoca se escribia y no lo leia nadie. Si no hay checkpoint,
     `reanudar=True` arranca de cero sin quejarse.
+
+    `al_terminar_epoca` recibe, si se pasa, el registro de cada epoca YA
+    GUARDADA en disco: fase, epoca, perdida, metricas, si mejoro y cuantas
+    epocas lleva sin mejorar. Existe porque esta funcion no imprime nada y un
+    entrenamiento de 24 epocas en Colab son horas de silencio en las que no se
+    distingue "avanzando" de "colgado". La funcion sigue muda por defecto: la
+    libreria tiene pruebas y no debe escribir en la salida; quien llama decide
+    que mostrar. Se invoca despues de escribir el checkpoint, asi que si el
+    aviso salio, esa epoca sobrevive a una caida de sesion.
 
     Al retornar, `modelo` queda restaurado a los pesos de la MEJOR epoca (los
     de `ruta_mejor_checkpoint`), no a los de la ultima ejecutada: el early
@@ -359,6 +369,12 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
             torch.save(estado, ruta_ultimo)
             if mejora:
                 torch.save(estado, ruta_mejor)
+            if al_terminar_epoca is not None:
+                # Copia, no el registro: quien escuche no debe poder mutar el
+                # historial desde fuera.
+                al_terminar_epoca({**registro, "mejora": mejora,
+                                   "sin_mejora": sin_mejora,
+                                   "paciencia": cfg.paciencia})
             if sin_mejora >= cfg.paciencia:
                 # Corta SOLO esta fase (break), nunca toda la funcion
                 # (return): el bucle exterior debe poder continuar con la
