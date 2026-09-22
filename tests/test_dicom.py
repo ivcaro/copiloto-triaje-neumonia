@@ -4,6 +4,7 @@ from unittest.mock import patch
 import numpy as np
 import pydicom
 import pytest
+from PIL import Image
 from pydicom.dataset import Dataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
@@ -159,3 +160,67 @@ def test_convertir_lote_propaga_errores_de_programacion(tmp_path):
         mock_convert.side_effect = NameError("variable no definida")
         with pytest.raises(NameError):
             convertir_lote([r], tmp_path / "png")
+
+
+def test_convertir_lote_repara_un_png_truncado_en_vez_de_darlo_por_bueno(tmp_path):
+    """Corrida 2 en Colab: el entrenamiento reventó con "image file is
+    truncated" DESPUES de que la preparacion informara "convertidos: 26684 |
+    omitidos: 0". Las dos cosas eran ciertas a la vez porque la idempotencia
+    era `if destino.exists()`: un PNG que quedo a medias en un intento
+    anterior tenia el nombre definitivo, asi que cada reintento lo daba por
+    convertido sin abrirlo nunca. El dato roto no se podia reparar salvo
+    borrandolo a mano, y el fallo aparecia horas despues.
+
+    Existir no es estar completo: la idempotencia tiene que mirar la validez.
+    """
+    origen = tmp_path / "a.dcm"
+    crear_dicom(origen)
+    dir_png = tmp_path / "png"
+    convertir_lote([origen], dir_png)
+    png = dir_png / "a.png"
+    intacto = png.read_bytes()
+
+    # Truncar a la mitad simula exactamente la escritura interrumpida.
+    png.write_bytes(intacto[: len(intacto) // 2])
+    assert png.exists() and png.stat().st_size > 0
+
+    convertidos, omitidos = convertir_lote([origen], dir_png)
+
+    assert len(convertidos) == 1 and not omitidos
+    assert png.read_bytes() == intacto, "el PNG truncado no se reconvirtio"
+    with Image.open(png) as imagen:
+        imagen.verify()
+
+
+def test_convertir_lote_repara_un_png_vacio(tmp_path):
+    """El caso limite del anterior: 0 bytes. `exists()` tambien decia que si."""
+    origen = tmp_path / "a.dcm"
+    crear_dicom(origen)
+    dir_png = tmp_path / "png"
+    convertir_lote([origen], dir_png)
+    png = dir_png / "a.png"
+    intacto = png.read_bytes()
+
+    png.write_bytes(b"")
+    convertir_lote([origen], dir_png)
+
+    assert png.read_bytes() == intacto
+
+
+def test_convertir_a_png_no_deja_archivo_final_si_la_escritura_falla(tmp_path):
+    """La otra mitad del fallo: `Image.save()` escribia DIRECTO sobre el
+    destino final, asi que un corte a mitad -disco lleno, runtime reciclado-
+    dejaba un PNG parcial con el nombre bueno. Escribiendo a un temporal y
+    renombrando con os.replace, el destino final o esta completo o no esta.
+    """
+    origen = tmp_path / "a.dcm"
+    crear_dicom(origen)
+    destino = tmp_path / "png" / "a.png"
+
+    with patch("copiloto_triaje.datos.dicom.os.replace",
+               side_effect=OSError("No space left on device")):
+        with pytest.raises(OSError):
+            convertir_a_png(origen, destino)
+
+    assert not destino.exists(), "quedo un PNG a medias con el nombre definitivo"
+    assert not list(destino.parent.glob("*.tmp")), "quedo el temporal sin limpiar"

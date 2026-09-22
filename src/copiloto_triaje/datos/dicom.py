@@ -7,6 +7,7 @@ llegara con otra profundidad de bits.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -43,6 +44,19 @@ def _leer_metadatos_dicom(ruta: Path) -> dict:
     return _extraer_metadatos(ds)
 
 
+def _png_legible(ruta_png: Path) -> bool:
+    """Un PNG existe y esta COMPLETO. verify() comprueba los CRC de cada
+    chunk, asi que detecta el truncado sin decodificar la imagen entera."""
+    try:
+        with Image.open(ruta_png) as imagen:
+            imagen.verify()
+        return True
+    except Exception:
+        # Cualquier fallo al abrirlo o verificarlo significa lo mismo para
+        # quien llama: hay que reconvertirlo.
+        return False
+
+
 def convertir_a_png(ruta_dcm: Path, ruta_png: Path) -> dict:
     """Convierte un DICOM a PNG de 8 bits y devuelve sus metadatos."""
     arr, meta = leer_dicom(ruta_dcm)
@@ -51,7 +65,19 @@ def convertir_a_png(ruta_dcm: Path, ruta_png: Path) -> dict:
         rango = max(maximo - minimo, 1)
         arr = ((arr.astype(np.float32) - minimo) / rango * 255).astype(np.uint8)
     ruta_png.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(arr).save(ruta_png)
+    # Escritura ATOMICA: al temporal primero y luego os.replace, que en POSIX
+    # es atomico. Guardar directo sobre el destino final significa que un
+    # corte a mitad -disco lleno, runtime reciclado- deja un PNG truncado CON
+    # EL NOMBRE DEFINITIVO, y a partir de ahi nadie lo distingue de uno bueno:
+    # el entrenamiento reventaba horas despues con "image file is truncated".
+    # Con el temporal, una escritura interrumpida deja un .tmp que no se
+    # confunde con nada y el destino final o esta completo o no esta.
+    temporal = ruta_png.with_name(ruta_png.name + ".tmp")
+    try:
+        Image.fromarray(arr).save(temporal, format="PNG")
+        os.replace(temporal, ruta_png)
+    finally:
+        temporal.unlink(missing_ok=True)
     meta["archivo_png"] = ruta_png.name
     return meta
 
@@ -61,7 +87,10 @@ def convertir_lote(rutas_dcm, dir_png: Path) -> tuple[list[dict], list[dict]]:
     registra, pero nunca aborta el proceso: una perdida silenciosa de datos
     seria peor que un fallo ruidoso.
 
-    Es idempotente: si el PNG ya existe, no lo reescribe.
+    Es idempotente: si el PNG ya existe Y SE PUEDE LEER, no lo reescribe. La
+    comprobacion de lectura no sobra: con `destino.exists()` a secas, un PNG
+    truncado por una escritura interrumpida se daba por convertido en cada
+    reintento y no habia forma de repararlo salvo borrandolo a mano.
     """
     dir_png = Path(dir_png)
     dir_png.mkdir(parents=True, exist_ok=True)
@@ -71,7 +100,7 @@ def convertir_lote(rutas_dcm, dir_png: Path) -> tuple[list[dict], list[dict]]:
         ruta = Path(ruta)
         destino = dir_png / (ruta.stem + ".png")
         try:
-            if destino.exists():
+            if destino.exists() and _png_legible(destino):
                 meta = _leer_metadatos_dicom(ruta)
                 meta["archivo_png"] = destino.name
             else:
