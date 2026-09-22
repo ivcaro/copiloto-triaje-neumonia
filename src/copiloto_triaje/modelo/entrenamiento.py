@@ -252,6 +252,19 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
         # tiene que poder releerse tambien en una maquina sin GPU.
         estado_previo = torch.load(ruta_ultimo, map_location=dispositivo,
                                    weights_only=False)
+        # Un checkpoint de OTRA arquitectura no se puede cargar: sus claves no
+        # se parecen en nada (DenseNet guarda features.conv0.weight y
+        # MobileNet features.0.0.weight). load_state_dict lo detecta, pero lo
+        # cuenta enumerando cientos de claves, y ahi no se ve la causa. Se
+        # comprueba antes para decir lo unico que importa: esta carpeta es de
+        # otra corrida.
+        arq_previa = estado_previo.get("arquitectura")
+        if arq_previa is not None and arq_previa != cfg.arquitectura:
+            raise ValueError(
+                f"{ruta_ultimo} es un checkpoint de '{arq_previa}' y se esta "
+                f"entrenando '{cfg.arquitectura}'. Esa carpeta pertenece a otra "
+                "corrida: usa una carpeta de checkpoints por corrida, o pasa "
+                "reanudar=False si quieres empezar de cero.")
         modelo.load_state_dict(estado_previo["modelo"])
         historial = list(estado_previo["historial"])
         mejor_recall = float(estado_previo.get("mejor_recall", -1.0))
@@ -332,6 +345,10 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
             # la fase, el historial acumulado y los contadores de mejor y de
             # paciencia, que son lo que decide donde retomar.
             estado = {"modelo": modelo.state_dict(),
+                      # La arquitectura viaja DENTRO del checkpoint para que
+                      # reanudar pueda comprobar que corresponde al modelo que
+                      # se le pasa. Ver el guardado de `reanudar` mas abajo.
+                      "arquitectura": cfg.arquitectura,
                       "optimizador": optimizador.state_dict(),
                       "epoca": registro["epoca"], "fase": nombre_fase,
                       "metricas": dict(registro), "historial": historial,

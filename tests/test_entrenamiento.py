@@ -671,3 +671,49 @@ def test_sin_planificador_el_checkpoint_lo_dice_explicitamente(tmp_path):
     estado = torch.load(tmp_path / "ck" / "ultimo.pt", map_location="cpu",
                         weights_only=False)
     assert estado["planificador"] is None
+
+
+def test_reanudar_con_checkpoint_de_otra_arquitectura_lo_dice_en_claro(tmp_path):
+    """Corrida 2 en Colab: `REANUDAR=True` apuntaba a la carpeta de Drive que
+    habia dejado la corrida 1 con MobileNetV3, y el modelo nuevo era
+    DenseNet121. `load_state_dict` fallaba, pero lo contaba enumerando
+    cientos de claves ausentes e inesperadas, y entre esa pared no se veia la
+    unica causa que importa: la carpeta era de otra corrida.
+
+    Se comprueba la arquitectura ANTES de cargar, y el mensaje tiene que
+    nombrar las dos y decir que hacer.
+    """
+    train, val = cargadores_sinteticos()
+    dir_ck = tmp_path / "ck"
+    base = dict(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                epocas_cabeza=1, epocas_ajuste=0, paciencia=5)
+
+    cfg_uno = Config(arquitectura="mobilenet_v3_large", **base)
+    entrenar(ModeloTrivial(), train, val, cfg_uno, torch.device("cpu"), dir_ck)
+    assert (dir_ck / "ultimo.pt").exists()
+
+    cfg_dos = Config(arquitectura="densenet121", **base)
+    with pytest.raises(ValueError) as fallo:
+        entrenar(ModeloTrivial(), train, val, cfg_dos, torch.device("cpu"),
+                 dir_ck, reanudar=True)
+
+    mensaje = str(fallo.value)
+    assert "mobilenet_v3_large" in mensaje and "densenet121" in mensaje
+    assert "otra corrida" in mensaje
+
+
+def test_reanudar_con_la_misma_arquitectura_sigue_funcionando(tmp_path):
+    """La comprobacion anterior no debe estorbar al caso normal: mismo
+    modelo, misma carpeta, la reanudacion continua como siempre."""
+    train, val = cargadores_sinteticos()
+    dir_ck = tmp_path / "ck"
+    base = dict(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                arquitectura="densenet121", epocas_ajuste=0, paciencia=5,
+                usar_scheduler=False)
+
+    entrenar(ModeloTrivial(), train, val, Config(epocas_cabeza=2, **base),
+             torch.device("cpu"), dir_ck)
+    res = entrenar(ModeloTrivial(), train, val, Config(epocas_cabeza=4, **base),
+                   torch.device("cpu"), dir_ck, reanudar=True)
+
+    assert [r["epoca"] for r in res["historial"]] == [0, 1, 2, 3]
