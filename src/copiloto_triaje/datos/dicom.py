@@ -45,14 +45,22 @@ def _leer_metadatos_dicom(ruta: Path) -> dict:
 
 
 def _png_legible(ruta_png: Path) -> bool:
-    """Un PNG existe y esta COMPLETO. verify() comprueba los CRC de cada
-    chunk, asi que detecta el truncado sin decodificar la imagen entera."""
+    """Un PNG existe y esta COMPLETO.
+
+    Descodifica de verdad (`load()`) en vez de `verify()`. verify() recorre
+    los chunks y detecta la mayoria de los truncados, pero la unica prueba
+    que vale es la operacion que hace el entrenamiento al leer la imagen: si
+    esta funcion dice que si y el DataLoader revienta con "image file is
+    truncated", la comprobacion no sirve de nada. Cuesta mas, y es el precio
+    correcto: el fallo alternativo aparece horas despues, a mitad de un
+    entrenamiento, y obliga a repetirlo.
+    """
     try:
         with Image.open(ruta_png) as imagen:
-            imagen.verify()
+            imagen.load()
         return True
     except Exception:
-        # Cualquier fallo al abrirlo o verificarlo significa lo mismo para
+        # Cualquier fallo al abrirlo o descodificarlo significa lo mismo para
         # quien llama: hay que reconvertirlo.
         return False
 

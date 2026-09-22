@@ -224,3 +224,35 @@ def test_convertir_a_png_no_deja_archivo_final_si_la_escritura_falla(tmp_path):
 
     assert not destino.exists(), "quedo un PNG a medias con el nombre definitivo"
     assert not list(destino.parent.glob("*.tmp")), "quedo el temporal sin limpiar"
+
+
+def test_convertir_lote_repara_un_png_cortado_dentro_del_idat(tmp_path):
+    """Truncado con la firma y la cabecera IHDR intactas, cortado dentro del
+    bloque de datos. Es la forma de corrupcion mas dificil de distinguir de
+    un archivo sano mirando solo el principio.
+
+    Nota honesta: `verify()` tambien detecta este caso -se comprobo-, asi que
+    esta prueba NO justifica por si sola el cambio a `load()`. Ese cambio se
+    sostiene en otra cosa: `load()` es, por construccion, la misma operacion
+    que hace el DataLoader al leer la imagen, de modo que no puede decir que
+    un archivo esta bien y que el entrenamiento reviente con el. verify() es
+    mas barata y acerto en todos los casos que se pudieron construir, pero es
+    una comprobacion distinta de la que importa.
+    """
+    origen = tmp_path / "a.dcm"
+    crear_dicom(origen)
+    dir_png = tmp_path / "png"
+    convertir_lote([origen], dir_png)
+    png = dir_png / "a.png"
+    intacto = png.read_bytes()
+
+    # Cortar dentro del IDAT: el PNG conserva firma y cabecera IHDR.
+    idat = intacto.index(b"IDAT")
+    png.write_bytes(intacto[: idat + 12])
+    assert png.stat().st_size > 0
+
+    convertir_lote([origen], dir_png)
+
+    assert png.read_bytes() == intacto, "no se reconvirtio el PNG sin datos"
+    with Image.open(png) as imagen:
+        imagen.load()
