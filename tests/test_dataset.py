@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 import torch
 from PIL import Image
 
@@ -77,3 +78,35 @@ def test_dataset_guarda_el_manifiesto_como_atributo(tmp_path):
     assert hasattr(ds, "manifiesto")
     assert isinstance(ds.manifiesto, pd.DataFrame)
     assert len(ds.manifiesto) == len(man)
+
+
+def test_un_png_ilegible_dice_cual_es(tmp_path):
+    """El fallo en Colab fue `OSError: image file is truncated` a secas. Dentro
+    de un DataLoader con 8 procesos ese mensaje llega envuelto en dos trazas y
+    SIN el nombre del archivo, asi que no se puede reparar: hay que buscar el
+    defectuoso entre 25 403. El error tiene que nombrar la ruta y la fila.
+    """
+    dir_png = tmp_path / "png"
+    dir_png.mkdir()
+    buena = dir_png / "ok.png"
+    Image.new("L", (32, 32)).save(buena)
+    # Cortar DENTRO del IDAT reproduce el fallo real de Colab: firma y
+    # cabecera intactas, datos a medias, y PIL dice "image file is truncated".
+    # Cortar antes (p. ej. a 40 bytes) da otro error distinto -no puede ni
+    # identificar el formato- y no probaria el caso que nos interesa.
+    intacto = buena.read_bytes()
+    rota = dir_png / "rota.png"
+    rota.write_bytes(intacto[: intacto.index(b"IDAT") + 12])
+
+    manifiesto = pd.DataFrame([{"archivo_png": "ok.png", "etiqueta": 0},
+                               {"archivo_png": "rota.png", "etiqueta": 1}])
+    ds = DatasetRadiografias(manifiesto, dir_png, tam_imagen=32)
+
+    ds[0]  # la sana no molesta
+
+    with pytest.raises(OSError) as fallo:
+        ds[1]
+    mensaje = str(fallo.value)
+    assert "rota.png" in mensaje
+    assert "fila 1" in mensaje
+    assert "truncated" in mensaje.lower()

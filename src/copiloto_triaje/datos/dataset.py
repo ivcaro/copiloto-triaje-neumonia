@@ -48,7 +48,21 @@ class DatasetRadiografias(Dataset):
     def __getitem__(self, indice: int):
         fila = self.manifiesto.iloc[indice]
         ruta = self.dir_png / fila["archivo_png"]
-        imagen = Image.open(ruta).convert("RGB")  # 3 canales: la red es de ImageNet
+        try:
+            # El `with` cierra el descriptor: Image.open() lo deja abierto
+            # hasta que el recolector pase, y con 8 procesos de carga sobre
+            # 25 403 imagenes eso son descriptores acumulandose sin necesidad.
+            with Image.open(ruta) as archivo:
+                imagen = archivo.convert("RGB")  # 3 canales: la red es de ImageNet
+        except OSError as exc:
+            # PIL dice "image file is truncated" sin decir CUAL. Dentro de un
+            # DataLoader con varios procesos, ese mensaje llega envuelto en
+            # dos trazas mas y sin el nombre del archivo no se puede reparar
+            # nada: hay que buscar el defectuoso entre 25 403. El indice y la
+            # particion ayudan ademas a situarlo en el manifiesto.
+            raise OSError(
+                f"no se pudo leer {ruta} (fila {indice} del manifiesto): {exc}"
+            ) from exc
         x = self.transformaciones(imagen)
         y = torch.tensor(float(fila["etiqueta"]), dtype=torch.float32)
         return x, y
