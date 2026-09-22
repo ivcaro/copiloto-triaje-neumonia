@@ -67,3 +67,77 @@ def verificar_zip_existe(ruta_zip: Path) -> None:
             f"{ruta_zip}\nDebe apuntar al archivo .zip de RSNA, no a un "
             f"directorio."
         )
+
+
+def edad_en_anios(valor) -> int | None:
+    """Convierte el campo PatientAge del DICOM a un entero de anios.
+
+    En RSNA viene como un numero suelto ("51"), pero el estandar DICOM admite
+    tambien la forma con sufijo de unidad ("051Y", "018M", "003D"). Se
+    interpretan los anios; meses y dias se convierten, porque un paciente de
+    "018M" tiene ano y medio y debe contar como menor, no como 18 anios.
+    Devuelve None si no se puede interpretar: un dato que no se entiende no
+    se da por bueno.
+    """
+    if valor is None:
+        return None
+    texto = str(valor).strip().upper()
+    if not texto:
+        return None
+    unidad = texto[-1] if texto[-1].isalpha() else "Y"
+    digitos = "".join(c for c in texto if c.isdigit())
+    if not digitos:
+        return None
+    numero = int(digitos)
+    if unidad == "Y":
+        return numero
+    if unidad == "M":
+        return numero // 12
+    if unidad in ("W", "D"):
+        return 0
+    return None
+
+
+def filtrar_por_edad(registros: list[dict], edad_minima: int = 18,
+                     edad_maxima: int = 100) -> tuple[list[dict], dict]:
+    """Deja solo los pacientes dentro del rango de edad del alcance.
+
+    El proyecto declara por escrito que trata radiografias de ADULTOS, pero
+    el analisis exploratorio encontro que el 4,78% del padron son menores de
+    18 anios (desde 1 ano) y cinco pacientes tienen edades imposibles de 148
+    a 155. Entrenar con ellos contradiria el alcance entregado, y ademas la
+    neumonia pediatrica se ve distinta en la placa: es otra poblacion.
+
+    Devuelve (aceptados, resumen). El resumen detalla cuantos se descartaron
+    y por que motivo, para que la perdida de datos nunca sea silenciosa.
+    """
+    aceptados: list[dict] = []
+    descartados: list[dict] = []
+    for registro in registros:
+        edad = edad_en_anios(registro.get("edad"))
+        if edad is None:
+            motivo = "edad ilegible"
+        elif edad < edad_minima:
+            motivo = f"menor de {edad_minima}"
+        elif edad > edad_maxima:
+            motivo = f"mayor de {edad_maxima} (implausible)"
+        else:
+            registro = dict(registro)
+            registro["edad_anios"] = edad
+            aceptados.append(registro)
+            continue
+        descartados.append({"patientId": registro.get("patientId"),
+                            "edad": registro.get("edad"), "motivo": motivo})
+
+    conteo: dict[str, int] = {}
+    for d in descartados:
+        conteo[d["motivo"]] = conteo.get(d["motivo"], 0) + 1
+    resumen = {
+        "rango": [edad_minima, edad_maxima],
+        "entraron": len(registros),
+        "aceptados": len(aceptados),
+        "descartados": len(descartados),
+        "por_motivo": conteo,
+        "detalle": descartados,
+    }
+    return aceptados, resumen

@@ -24,7 +24,8 @@ from copiloto_triaje.datos.particion import (  # noqa: E402
     particionar_por_paciente, verificar_sin_fuga,
 )
 from copiloto_triaje.datos.preparacion import (  # noqa: E402
-    cargar_etiquetas, construir_registros, escribir_manifiestos, verificar_zip_existe,
+    cargar_etiquetas, construir_registros, escribir_manifiestos,
+    filtrar_por_edad, verificar_zip_existe,
 )
 
 
@@ -95,6 +96,25 @@ def main() -> int:
               f"patientId no aparece en stage_2_train_labels.csv "
               f"({len(sin_etiqueta)} patientId distintos). Detalle en "
               f"{ruta_aviso}")
+
+    # El alcance entregado declara ADULTOS. El analisis exploratorio mostro
+    # que el 4,78% del padron son menores de 18 y cinco pacientes tienen
+    # edades imposibles, asi que se filtran para que el modelo corresponda a
+    # la poblacion que el proyecto dice tratar.
+    registros, resumen_edad = filtrar_por_edad(
+        registros, cfg.edad_minima, cfg.edad_maxima)
+    if resumen_edad["descartados"]:
+        ruta_edad = cfg.dir_png.parent / "descartados_por_edad.json"
+        ruta_edad.write_text(json.dumps(resumen_edad, indent=2, ensure_ascii=False),
+                             encoding="utf-8")
+        motivos = ", ".join(f"{n} {m}" for m, n in resumen_edad["por_motivo"].items())
+        print(f"      filtro de edad [{cfg.edad_minima}-{cfg.edad_maxima}]: "
+              f"{resumen_edad['descartados']} descartado(s) ({motivos}). "
+              f"Detalle en {ruta_edad}")
+    positivos = sum(r["etiqueta"] for r in registros)
+    print(f"      tras el filtro: {len(registros)} registros | "
+          f"positivos: {positivos} "
+          f"({positivos / max(len(registros), 1) * 100:.1f}%)")
 
     print("[4/4] Particionando por paciente y verificando fuga ...")
     particiones = particionar_por_paciente(registros, cfg.proporciones, cfg.semilla)

@@ -34,6 +34,14 @@ class Config:
     arquitectura: str = "densenet121"
     proporciones: tuple[float, float, float] = (0.70, 0.15, 0.15)
     lote: int = 24
+    # El alcance entregado declara ADULTOS. El analisis exploratorio encontro
+    # que el 4,78% del padron son menores de 18 anios (desde 1 ano) y cinco
+    # pacientes tienen edades imposibles de 148 a 155. Se filtran: entrenar
+    # con ellos contradiria lo entregado, y la neumonia pediatrica se ve
+    # distinta en la placa. Quedan 25 403 pacientes (95,2%), con la tasa de
+    # positivos practicamente igual: 22,15% frente a 22,53%.
+    edad_minima: int = 18
+    edad_maxima: int = 100
 
     # --- entrenamiento --------------------------------------------------
     # La primera corrida paro a las 7 epocas con el AUC todavia subiendo.
@@ -70,6 +78,8 @@ class Config:
             raise ValueError("El recall minimo no puede superar al objetivo")
         if self.especificidad_minima > self.especificidad_objetivo:
             raise ValueError("La especificidad minima no puede superar a la objetivo")
+        if self.edad_minima > self.edad_maxima:
+            raise ValueError("La edad minima no puede superar a la maxima")
 
     @property
     def dir_png(self) -> Path:

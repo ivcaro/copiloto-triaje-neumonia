@@ -65,3 +65,69 @@ def test_verificar_zip_existe_falla_de_inmediato_citando_la_ruta_buscada(tmp_pat
     # tmp_path existe pero es un directorio, no un archivo: tambien debe fallar.
     with pytest.raises(FileNotFoundError, match=re.escape(str(tmp_path))):
         verificar_zip_existe(tmp_path)
+
+
+# ---------------------------------------------------------------- filtro de edad
+
+def test_edad_en_anios_interpreta_las_formas_del_estandar_dicom():
+    from copiloto_triaje.datos.preparacion import edad_en_anios
+    assert edad_en_anios("51") == 51        # forma de RSNA: numero suelto
+    assert edad_en_anios("051Y") == 51      # forma del estandar, con unidad
+    assert edad_en_anios("018M") == 1       # 18 MESES es un bebe, no 18 anios
+    assert edad_en_anios("003D") == 0       # dias
+    assert edad_en_anios("") is None        # ilegible: no se da por bueno
+    assert edad_en_anios(None) is None
+    assert edad_en_anios("ABC") is None
+
+
+def test_filtrar_por_edad_deja_solo_adultos():
+    """El alcance entregado declara ADULTOS, pero el analisis exploratorio
+    encontro un 4,78% de menores de 18 (desde 1 ano) y cinco pacientes con
+    edades imposibles de 148 a 155."""
+    from copiloto_triaje.datos.preparacion import filtrar_por_edad
+    registros = [
+        {"patientId": "adulto_joven", "edad": "18", "etiqueta": 1},
+        {"patientId": "adulto", "edad": "51", "etiqueta": 0},
+        {"patientId": "mayor", "edad": "100", "etiqueta": 1},
+        {"patientId": "nino", "edad": "7", "etiqueta": 1},
+        {"patientId": "bebe_en_meses", "edad": "018M", "etiqueta": 0},
+        {"patientId": "imposible", "edad": "155", "etiqueta": 0},
+        {"patientId": "ilegible", "edad": "", "etiqueta": 1},
+    ]
+    aceptados, resumen = filtrar_por_edad(registros, 18, 100)
+
+    ids = [r["patientId"] for r in aceptados]
+    assert ids == ["adulto_joven", "adulto", "mayor"], \
+        "los limites 18 y 100 son inclusivos y todo lo demas se descarta"
+    assert resumen["aceptados"] == 3
+    assert resumen["descartados"] == 4
+
+
+def test_filtrar_por_edad_no_pierde_datos_en_silencio():
+    """El spec §8 exige que una perdida de datos nunca sea silenciosa: el
+    resumen tiene que decir cuantos se fueron y por que motivo."""
+    from copiloto_triaje.datos.preparacion import filtrar_por_edad
+    registros = [
+        {"patientId": "a", "edad": "40", "etiqueta": 0},
+        {"patientId": "b", "edad": "5", "etiqueta": 1},
+        {"patientId": "c", "edad": "9", "etiqueta": 0},
+        {"patientId": "d", "edad": "150", "etiqueta": 0},
+        {"patientId": "e", "edad": "xx", "etiqueta": 1},
+    ]
+    _, resumen = filtrar_por_edad(registros, 18, 100)
+
+    assert resumen["entraron"] == 5
+    assert resumen["aceptados"] + resumen["descartados"] == resumen["entraron"], \
+        "las cuentas no cuadran: hay registros que no se explican"
+    assert resumen["por_motivo"] == {"menor de 18": 2,
+                                     "mayor de 100 (implausible)": 1,
+                                     "edad ilegible": 1}
+    assert {d["patientId"] for d in resumen["detalle"]} == {"b", "c", "d", "e"}
+
+
+def test_filtrar_por_edad_anade_la_edad_numerica_y_no_muta_la_entrada():
+    from copiloto_triaje.datos.preparacion import filtrar_por_edad
+    originales = [{"patientId": "a", "edad": "051Y", "etiqueta": 0}]
+    aceptados, _ = filtrar_por_edad(originales, 18, 100)
+    assert aceptados[0]["edad_anios"] == 51
+    assert "edad_anios" not in originales[0], "el filtro no debe mutar su entrada"
