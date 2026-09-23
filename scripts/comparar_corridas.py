@@ -105,6 +105,14 @@ CAMPOS_CORRIDA = (
     ("lote", "tamaño de lote"),
     ("paciencia", "paciencia"),
     ("edad", "rango de edad"),
+    # El coste entra en la tabla aunque no entre en la regla de seleccion. Es
+    # lo que el informe le pide al lector cuando dos corridas empatan en los
+    # tres criterios ("hace falta un criterio nuevo: latencia, tamanio del
+    # modelo, coste de entrenamiento") y estaba en los reportes sin que nadie
+    # lo mirara: entre mobilenet (3,1 h) y densenet121 (24,9 h) hay un factor
+    # de ocho que decide solo.
+    ("segundos_entrenamiento", "coste de entrenamiento"),
+    ("dispositivo", "dispositivo"),
 )
 
 # Listas que se leen mejor con un separador propio: [4, 20] epocas es "4+20"
@@ -175,6 +183,12 @@ def resumir(reporte: dict, ruta_json: Path) -> dict:
         "sin_bloque_corrida": not corrida,
         "prueba": prueba,
         "umbral": reporte.get("umbral"),
+        # El paso de `elegir_umbral` con el que salio ese umbral. Se cargaba y
+        # no lo leia nadie, y no es un detalle: un umbral de
+        # `paso_1_especificidad_objetivo` cumple el objetivo, y uno de
+        # `paso_5_no_se_alcanza_el_recall_minimo` significa que NINGUN umbral
+        # alcanzaba el minimo y se reporta el menos malo. Mostrar los dos
+        # numeros sin decir eso los presenta como equivalentes.
         "regla_umbral": reporte.get("regla"),
         "mejor_epoca": reporte.get("mejor_epoca"),
         "criterios": criterios,
@@ -296,7 +310,9 @@ def _seccion_veredicto(ordenadas: list[dict], ganadora, paso: str) -> list[str]:
             f"**Ninguna corrida cumple los {len(CRITERIOS_ACEPTACION)} mínimos "
             "del spec §2.** No se corona una ganadora: hacerlo daría por bueno "
             "un modelo que el propio proyecto declaró inaceptable. Esto es lo "
-            "que le falta a cada una, de la más cerca a la más lejos:",
+            "que le falta a cada una, **en el orden de la regla de selección** "
+            "(cuántos criterios cumple, luego recall, luego AUC) — que no es "
+            "el mismo que la distancia al mínimo:",
             "",
         ]
         for resumen in ordenadas:
@@ -463,11 +479,12 @@ def _seccion_procedencia(ordenadas: list[dict]) -> list[str]:
         lineas.append(f"| `{resumen['nombre']}` | `{resumen['ruta']}` |")
     if any(resumen["sin_bloque_corrida"] for resumen in ordenadas):
         lineas += ["",
-                   "Alguno de estos reportes no trae el bloque `corrida`: son "
-                   "los anteriores al 21-sep-2026, que guardaban las métricas "
-                   "pero no la configuración con la que se obtuvieron. De esas "
-                   "corridas no se sabe con qué se entrenaron, y por eso su "
-                   "fila lleva `n/d`."]
+                   "Alguno de estos reportes no trae el bloque `corrida`, que "
+                   "es donde se guarda la configuración con la que se entrenó. "
+                   "Los reportes que lo llevan son los generados a partir del "
+                   "commit `2aa33c5`; los anteriores guardaban las métricas "
+                   "pero no con qué se obtuvieron, y por eso su fila lleva "
+                   "`n/d` en esas columnas."]
     return lineas + [""]
 
 
@@ -507,19 +524,50 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     resumenes = []
+    # Se deduplica por el JSON ya resuelto, no por la ruta escrita: la carpeta
+    # y su reporte son rutas distintas que llevan al mismo sitio, y pasar las
+    # dos es un descuido facil. Antes salian dos filas identicas y un parrafo
+    # que atribuia a la semilla la diferencia entre un archivo y el mismo
+    # archivo.
+    vistos = set()
     for ruta in args.rutas:
         # Se cargan TODOS antes de escribir nada: con una ruta mal escrita el
         # error tiene que salir antes de dejar un informe a medias en disco.
+        #
+        # resumir() va DENTRO del try, no fuera: un JSON que pasa la
+        # comprobacion de cargar_reporte (tiene la clave 'prueba') pero cuyo
+        # contenido no sirve -{"prueba": [1, 2]}, o un recall que es la cadena
+        # "n/d"- soltaba una traza cruda sin decir de que corrida se trataba,
+        # que es justo lo que el contrato de esta funcion promete.
         try:
             reporte, ruta_json = cargar_reporte(ruta)
+            clave = ruta_json.resolve()
+            if clave in vistos:
+                print(f"aviso: {ruta} lleva al mismo reporte que otra ruta ya "
+                      "leída; se ignora la repetición")
+                continue
+            vistos.add(clave)
+            resumenes.append(resumir(reporte, ruta_json))
         except (FileNotFoundError, ValueError) as error:
             print(f"ERROR: {error}", file=sys.stderr)
             return 2
-        resumenes.append(resumir(reporte, ruta_json))
+        except (AttributeError, TypeError, KeyError) as error:
+            print(f"ERROR: {ruta} no es un reporte utilizable "
+                  f"({type(error).__name__}: {error})", file=sys.stderr)
+            return 2
         print(f"leido {ruta_json}")
 
     ganadora, paso = elegir_ganadora(resumenes)
-    salida = escribir_comparativa(resumenes, args.salida)
+    # Escribir tambien puede fallar, y hacerlo despues de haber leido todos los
+    # reportes con una traza cruda no ayuda a nadie: en Kaggle el script se
+    # invoca desde el Dataset adjunto, que cuelga de /kaggle/input y es de solo
+    # lectura, asi que un --salida olvidado cae justo aqui.
+    try:
+        salida = escribir_comparativa(resumenes, args.salida)
+    except OSError as error:
+        print(f"ERROR: no se pudo escribir {args.salida}: {error}",
+              file=sys.stderr)
+        return 2
     # El veredicto tambien por consola: el informe lo dice entero, pero tras
     # horas de entrenamiento lo primero que se quiere saber es cual queda.
     if ganadora is None:

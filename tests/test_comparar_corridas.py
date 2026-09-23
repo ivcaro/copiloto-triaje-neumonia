@@ -314,3 +314,73 @@ def test_la_cli_acepta_carpetas_y_json_y_deja_el_informe(tmp_path, capsys):
     assert "Gana `ganadora`" in texto
     assert "| 1 | `ganadora` |" in texto
     assert "| 2 | `perdedora` |" in texto
+
+
+def test_lo_ausente_pierde_todos_los_desempates(tmp_path):
+    """El unico escalon de la regla que no tenia prueba propia.
+
+    La revision lo demostro mutando `_numero_o` para que una metrica NO medida
+    ganara cualquier desempate: las 15 pruebas seguian pasando. Un valor
+    ausente y un 0,0 son cosas distintas -0,0 es un recall legitimo- y
+    confundirlos corona como ganadora a la corrida de la que menos se sabe.
+    """
+    assert comparar._numero_o(None) == -1.0
+    assert comparar._numero_o(0.0) == 0.0
+    assert comparar._numero_o(None) < comparar._numero_o(0.0)
+
+    # Y el efecto en la ordenacion, que es lo que de verdad decide.
+    medida = _resumen(_escribir_reporte(tmp_path, "medida", recall=0.0,
+                                        especificidad=0.0, auc=0.0))
+    sin_medir = _resumen(_escribir_reporte(tmp_path, "sin_medir", recall=None,
+                                           especificidad=None, auc=None))
+    ordenadas = comparar.ordenar_corridas([sin_medir, medida])
+    assert ordenadas[0]["nombre"] == "medida",         "una corrida sin metricas no puede ganarle a una medida"
+
+
+def test_la_nota_de_procedencia_aparece_con_un_reporte_antiguo(tmp_path):
+    """Prueba de la NOTA, no de cualquier aparicion de la cadena.
+
+    La version anterior afirmaba cubrir esto buscando 'bloque `corrida`' en el
+    Markdown, pero esa cadena la emite tambien el parrafo de prosa: la revision
+    borro la nota entera y la prueba siguio pasando. Con UNA sola corrida -el
+    caso real de la corrida 1- la prosa toma otra rama y no la menciona, asi
+    que la nota es la unica explicacion de los n/d de la tabla.
+    """
+    ruta = _escribir_reporte(tmp_path, "vieja", recall=0.766,
+                             especificidad=0.764, auc=0.845,
+                             con_bloque_corrida=False)
+    salida = tmp_path / "comparativa.md"
+    assert comparar.main([str(ruta), "--salida", str(salida)]) == 0
+
+    seccion = salida.read_text(encoding="utf-8").split("## Procedencia", 1)[1]
+    assert "no trae el bloque `corrida`" in seccion,         "sin la nota, los n/d de la tabla quedan sin explicar"
+    assert "2aa33c5" in seccion, "la nota debe citar de donde sale el bloque"
+
+
+def test_una_corrida_pasada_dos_veces_no_se_compara_consigo_misma(tmp_path):
+    """Pasar la carpeta y su JSON es un descuido facil, y antes producia dos
+    filas identicas y un parrafo que atribuia a la semilla la diferencia entre
+    un archivo y el mismo archivo."""
+    ruta = _escribir_reporte(tmp_path, "dup", recall=0.86, especificidad=0.76)
+    salida = tmp_path / "comparativa.md"
+    assert comparar.main([str(ruta.parent), str(ruta),
+                          "--salida", str(salida)]) == 0
+
+    texto = salida.read_text(encoding="utf-8")
+    assert "a partir de 1 reporte(s)" in texto
+    # Una fila en Procedencia, no dos: es la tabla que lista los reportes
+    # leidos. El nombre aparece tambien en la tabla comparativa y en el
+    # veredicto, asi que contarlo en todo el documento no distingue nada.
+    procedencia = texto.split("## Procedencia", 1)[1]
+    assert procedencia.count("| `dup`") == 1
+    # Y ningun parrafo que compare la corrida consigo misma.
+    assert "**`dup`** frente a **`dup`**" not in texto
+
+
+def test_un_json_con_prueba_inutilizable_dice_de_cual_se_trata(tmp_path):
+    """Pasa la comprobacion de cargar_reporte (tiene la clave 'prueba') pero
+    su contenido no sirve. Antes soltaba una traza cruda sin nombrar el
+    archivo, que es justo lo que el contrato promete."""
+    ruta = tmp_path / "rota.json"
+    ruta.write_text(json.dumps({"prueba": [1, 2]}), encoding="utf-8")
+    assert comparar.main([str(ruta), "--salida", str(tmp_path / "c.md")]) == 2
