@@ -25,7 +25,7 @@ from copiloto_triaje.datos.particion import (  # noqa: E402
 )
 from copiloto_triaje.datos.preparacion import (  # noqa: E402
     cargar_etiquetas, construir_registros, escribir_manifiestos,
-    filtrar_por_edad, verificar_zip_existe,
+    filtrar_por_edad, verificar_crudo_existe, verificar_zip_existe,
 )
 
 
@@ -45,7 +45,17 @@ def descomprimir(zip_rsna: Path, destino: Path) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Prepara los datos de RSNA")
-    parser.add_argument("--zip", required=True, type=Path)
+    # --zip o --crudo, nunca los dos. En Kaggle el dataset llega ya
+    # descomprimido y de SOLO LECTURA en /kaggle/input, asi que exigir un zip
+    # hacia imposible usar el script alli; y en local, con la carpeta crudo ya
+    # extraida, exigirlo obliga a tener 3,9 GB duplicados sin motivo.
+    fuente = parser.add_mutually_exclusive_group(required=True)
+    fuente.add_argument("--zip", type=Path,
+                        help="zip de la competencia; se descomprime en <raiz>/crudo")
+    fuente.add_argument("--crudo", type=Path,
+                        help="carpeta YA descomprimida que contiene "
+                             "stage_2_train_images/ y stage_2_train_labels.csv; "
+                             "se lee sin escribir nada en ella")
     parser.add_argument("--raiz", required=True, type=Path)
     parser.add_argument("--limite", type=int, default=0,
                         help="procesar solo N imagenes (para pruebas rapidas)")
@@ -56,10 +66,21 @@ def main() -> int:
     # con rutas temporales inexistentes), asi que la configuracion invalida
     # se detecta aqui, antes de tocar nada: fallar al inicio, no a mitad del
     # proceso, con un mensaje que cite la ruta buscada.
-    verificar_zip_existe(args.zip)
+    if args.zip is not None:
+        verificar_zip_existe(args.zip)
+    else:
+        verificar_crudo_existe(args.crudo)
 
-    cfg = Config(raiz_datos=args.raiz, zip_rsna=args.zip, semilla=args.semilla)
-    crudo = descomprimir(args.zip, args.raiz / "crudo")
+    # zip_rsna queda apuntando a la fuente real sea cual sea: Config lo guarda
+    # como procedencia de los datos y con --crudo no hay ningun zip que citar.
+    cfg = Config(raiz_datos=args.raiz,
+                 zip_rsna=args.zip if args.zip is not None else args.crudo,
+                 semilla=args.semilla)
+    if args.zip is not None:
+        crudo = descomprimir(args.zip, args.raiz / "crudo")
+    else:
+        crudo = Path(args.crudo)
+        print(f"[1/4] Usando la carpeta ya descomprimida {crudo}")
 
     dicoms = sorted((crudo / "stage_2_train_images").glob("*.dcm"))
     if args.limite:

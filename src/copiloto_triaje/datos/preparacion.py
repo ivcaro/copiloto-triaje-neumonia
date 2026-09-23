@@ -141,3 +141,25 @@ def filtrar_por_edad(registros: list[dict], edad_minima: int = 18,
         "detalle": descartados,
     }
     return aceptados, resumen
+
+
+def verificar_crudo_existe(ruta_crudo) -> None:
+    """Falla de inmediato si la carpeta ya descomprimida no sirve.
+
+    El equivalente de `verificar_zip_existe` para la fuente `--crudo`, que es
+    la que usa Kaggle (el dataset llega extraido y de solo lectura) y la que
+    evita duplicar 3,9 GB en local. No basta con que la carpeta exista: lo que
+    el resto del script necesita son `stage_2_train_images/` y
+    `stage_2_train_labels.csv`, asi que se comprueban los dos por nombre y el
+    mensaje cita la ruta que falta.
+    """
+    ruta_crudo = Path(ruta_crudo)
+    if not ruta_crudo.is_dir():
+        raise FileNotFoundError(
+            f"No existe la carpeta de datos descomprimidos: {ruta_crudo}")
+    for relativa in ("stage_2_train_images", "stage_2_train_labels.csv"):
+        if not (ruta_crudo / relativa).exists():
+            raise FileNotFoundError(
+                f"{ruta_crudo} no parece la carpeta de RSNA: falta "
+                f"{relativa}. Debe contener stage_2_train_images/ y "
+                "stage_2_train_labels.csv.")

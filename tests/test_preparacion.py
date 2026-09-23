@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 from copiloto_triaje.datos.preparacion import (
-    cargar_etiquetas, construir_registros, escribir_manifiestos, verificar_zip_existe,
+    cargar_etiquetas, construir_registros, escribir_manifiestos, verificar_crudo_existe, verificar_zip_existe,
 )
 from copiloto_triaje.datos.particion import particionar_por_paciente
 
@@ -131,3 +131,28 @@ def test_filtrar_por_edad_anade_la_edad_numerica_y_no_muta_la_entrada():
     aceptados, _ = filtrar_por_edad(originales, 18, 100)
     assert aceptados[0]["edad_anios"] == 51
     assert "edad_anios" not in originales[0], "el filtro no debe mutar su entrada"
+
+
+def test_verificar_crudo_existe_acepta_una_carpeta_valida(tmp_path):
+    crudo = tmp_path / "crudo"
+    (crudo / "stage_2_train_images").mkdir(parents=True)
+    (crudo / "stage_2_train_labels.csv").write_text("patientId\n", encoding="utf-8")
+    verificar_crudo_existe(crudo)   # no debe lanzar
+
+
+def test_verificar_crudo_existe_rechaza_lo_que_no_esta(tmp_path):
+    """No basta con que la carpeta exista: el script necesita las imagenes y
+    las etiquetas, y el mensaje tiene que decir cual falta para que el error
+    sea accionable en vez de reventar a mitad del proceso."""
+    with pytest.raises(FileNotFoundError, match="No existe la carpeta"):
+        verificar_crudo_existe(tmp_path / "no_esta")
+
+    solo_carpeta = tmp_path / "vacia"
+    solo_carpeta.mkdir()
+    with pytest.raises(FileNotFoundError, match="stage_2_train_images"):
+        verificar_crudo_existe(solo_carpeta)
+
+    sin_etiquetas = tmp_path / "a_medias"
+    (sin_etiquetas / "stage_2_train_images").mkdir(parents=True)
+    with pytest.raises(FileNotFoundError, match="stage_2_train_labels.csv"):
+        verificar_crudo_existe(sin_etiquetas)
