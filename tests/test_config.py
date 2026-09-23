@@ -54,3 +54,28 @@ def test_rutas_derivadas_cuelgan_de_la_raiz():
     assert cfg.dir_png == Path("/tmp/d/png")
     assert cfg.dir_manifiestos == Path("/tmp/d/manifiestos")
     assert cfg.dir_checkpoints == Path("/tmp/d/checkpoints")
+
+
+def test_el_margen_de_especificidad_por_defecto_es_el_medido(tmp_path):
+    """0,02 no es un numero redondo elegido a ojo.
+
+    Es el que en simulacion -con las dimensiones reales de las particiones,
+    3 810 validacion y 3 811 prueba al 22,15% de positivos y AUC 0,888- lleva
+    el cumplimiento del suelo de especificidad en PRUEBA del 84% al 97%,
+    costando 0,003 de recall. Sin margen, la corrida de DenseNet121 del
+    23-sep eligio el umbral con especificidad 0,70027 en validacion y cayo a
+    0,69869 en prueba: incumplio el minimo por trece diezmilesimas.
+
+    Queda fijado para que cambiarlo sea una decision y no un descuido.
+    """
+    cfg = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip")
+    assert cfg.margen_especificidad == 0.02
+
+
+def test_un_margen_negativo_se_rechaza(tmp_path):
+    """Un margen negativo BAJA el suelo al elegir, que es lo contrario de lo
+    que el parametro existe para hacer: dejaria pasar puntos de operacion que
+    ya incumplen el minimo en la propia validacion."""
+    with pytest.raises(ValueError, match="margen_especificidad"):
+        Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+               margen_especificidad=-0.01)

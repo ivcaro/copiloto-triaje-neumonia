@@ -53,6 +53,7 @@ def elegir_umbral(
     especificidad_minima: float = 0.70,
     recall_objetivo: float = 0.85,
     recall_minimo: float = 0.80,
+    margen_especificidad: float = 0.0,
 ) -> tuple[float, dict, str]:
     """Elige el umbral sobre la curva ROC de VALIDACION (nunca la de prueba).
 
@@ -65,6 +66,10 @@ def elegir_umbral(
     4. Recall >= minimo relajando a la especificidad minima.
     5. Ninguno alcanza el recall minimo: se toma el de mayor recall dentro
        del piso de especificidad y se reporta tal cual, sin forzar nada.
+
+    `margen_especificidad` eleva los dos suelos de especificidad al elegir,
+    para que el punto escogido no quede rozando el minimo: ver el comentario
+    junto a `i_objetivo`. Por defecto 0,0, que es el comportamiento anterior.
 
     El orden importa: una version anterior conservaba el punto de la
     especificidad objetivo aunque incumpliera el recall minimo, teniendo
@@ -84,8 +89,17 @@ def elegir_umbral(
             return None
         return int(candidatos[np.argmax(tpr[candidatos])])
 
-    i_objetivo = mejor_indice(especificidad_objetivo)
-    i_minima = mejor_indice(especificidad_minima)
+    # Los dos suelos se elevan por el margen. El umbral se elige aqui sobre
+    # VALIDACION y se aplica despues a datos que el modelo no vio, asi que el
+    # punto que justo roza el suelo cae por encima o por debajo en prueba
+    # segun el azar del muestreo. Medido por simulacion con las dimensiones
+    # reales del proyecto (3 810 validacion / 3 811 prueba, 22,15% positivos,
+    # AUC 0,888): sin margen solo el 84% de las corridas cumple el suelo en
+    # prueba, y con 0,02 sube al 97% a cambio de 0,003 de recall. La corrida
+    # de DenseNet121 del 23-sep cayo en ese 16%: especificidad 0,699 contra un
+    # minimo de 0,700, trece diezmilesimas.
+    i_objetivo = mejor_indice(especificidad_objetivo + margen_especificidad)
+    i_minima = mejor_indice(especificidad_minima + margen_especificidad)
 
     def recall_de(indice):
         return -1.0 if indice is None else float(tpr[indice])

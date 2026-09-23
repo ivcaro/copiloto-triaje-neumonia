@@ -62,6 +62,11 @@ class Config:
     especificidad_minima: float = 0.70
     recall_objetivo: float = 0.85
     recall_minimo: float = 0.80
+    # Holgura que se le exige de mas al suelo de especificidad AL ELEGIR el
+    # umbral sobre validacion, para que no quede rozando el minimo. No cambia
+    # los criterios de aceptacion, que se siguen midiendo contra 0,70 y 0,75:
+    # cambia donde se pone el punto de operacion. Ver elegir_umbral.
+    margen_especificidad: float = 0.02
 
     def __post_init__(self) -> None:
         total = sum(self.proporciones)
@@ -78,6 +83,13 @@ class Config:
             raise ValueError("El recall minimo no puede superar al objetivo")
         if self.especificidad_minima > self.especificidad_objetivo:
             raise ValueError("La especificidad minima no puede superar a la objetivo")
+        if self.margen_especificidad < 0:
+            # Un margen negativo BAJA el suelo al elegir el umbral, que es lo
+            # contrario de lo que el parametro existe para hacer: dejaria
+            # pasar puntos que ya incumplen el minimo en la propia validacion.
+            raise ValueError(
+                f"margen_especificidad no puede ser negativo: "
+                f"{self.margen_especificidad}")
         if self.edad_minima > self.edad_maxima:
             raise ValueError("La edad minima no puede superar a la maxima")
 

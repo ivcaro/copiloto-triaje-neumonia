@@ -132,7 +132,11 @@ def _puntuar_epoca(y_true, y_score, cfg) -> dict:
     umbral, metricas, paso = elegir_umbral(
         y_true, y_score,
         cfg.especificidad_objetivo, cfg.especificidad_minima, cfg.recall_objetivo,
-        getattr(cfg, "recall_minimo", 0.80))
+        getattr(cfg, "recall_minimo", 0.80),
+        # El mismo margen que en la seleccion final: si la epoca se puntua en
+        # un punto de operacion y luego se despliega en otro, la "mejor"
+        # epoca lo seria para un umbral que no se va a usar.
+        getattr(cfg, "margen_especificidad", 0.0))
     diagnostico = metricas_binarias(
         y_true, (np.asarray(y_score) >= UMBRAL_DIAGNOSTICO).astype(int))
     return {

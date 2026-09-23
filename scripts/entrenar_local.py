@@ -346,7 +346,8 @@ def main(argv=None) -> int:
     y_val, s_val = evaluar_epoca(modelo, cargador_val, dispositivo)
     umbral, metricas_val, paso = elegir_umbral(
         y_val, s_val, cfg.especificidad_objetivo, cfg.especificidad_minima,
-        cfg.recall_objetivo, cfg.recall_minimo)
+        cfg.recall_objetivo, cfg.recall_minimo,
+        cfg.margen_especificidad)
     print(f"umbral elegido en validación: {umbral:.4f} | regla: {paso}", flush=True)
 
     # El cargador de prueba se construye aqui, y no junto a los otros dos, para

@@ -138,3 +138,55 @@ def test_el_umbral_devuelto_reproduce_las_metricas_reportadas():
     recalculadas = metricas_binarias(y, (score >= umbral).astype(int))
     assert recalculadas["recall"] == m["recall"]
     assert recalculadas["especificidad"] == m["especificidad"]
+
+
+def _puntuaciones_separables(n=4000, semilla=7, separacion=1.72):
+    """Puntuaciones con la prevalencia (22,15%) y el AUC (~0,888) reales."""
+    rng = np.random.default_rng(semilla)
+    y = (rng.random(n) < 0.2215).astype(int)
+    return y, rng.normal(separacion * y, 1.0)
+
+
+def test_el_margen_aleja_el_umbral_del_suelo_de_especificidad():
+    """Corrida de DenseNet121 del 23-sep: el umbral se eligio en validacion
+    con especificidad 0,70027 -veintisiete diezmilesimas por encima del suelo
+    de 0,70- y en prueba cayo a 0,69869. No fue mala suerte: elegir el punto
+    que roza el suelo deja el resultado en datos no vistos a merced del
+    muestreo, y medido por simulacion falla una de cada seis veces.
+
+    El margen eleva el suelo AL ELEGIR, sin tocar los criterios de aceptacion.
+    """
+    y, s = _puntuaciones_separables()
+
+    _, sin_margen, _ = elegir_umbral(y, s, 0.75, 0.70, 0.85, 0.80)
+    _, con_margen, _ = elegir_umbral(y, s, 0.75, 0.70, 0.85, 0.80,
+                                     margen_especificidad=0.05)
+
+    assert con_margen["especificidad"] > sin_margen["especificidad"], (
+        "el margen tiene que empujar el punto de operacion lejos del suelo")
+    assert con_margen["especificidad"] >= 0.75, (
+        f"con margen 0,05 sobre un suelo de 0,70 la especificidad elegida "
+        f"deberia superar 0,75; salio {con_margen['especificidad']:.4f}")
+
+
+def test_sin_margen_el_comportamiento_es_el_de_antes():
+    """El parametro es nuevo y su ausencia no puede cambiar nada: las corridas
+    ya reportadas tienen que seguir siendo reproducibles con el mismo codigo."""
+    y, s = _puntuaciones_separables()
+    esperado = elegir_umbral(y, s, 0.75, 0.70, 0.85, 0.80)
+    con_cero = elegir_umbral(y, s, 0.75, 0.70, 0.85, 0.80,
+                             margen_especificidad=0.0)
+    assert esperado[0] == con_cero[0]
+    assert esperado[2] == con_cero[2]
+
+
+def test_el_margen_cuesta_recall_pero_poco():
+    """El margen no es gratis: exigir mas especificidad baja el recall. Se fija
+    que el precio sea pequenio, porque si fuera grande la cura seria peor que
+    la enfermedad y habria que elegir otro valor por defecto."""
+    y, s = _puntuaciones_separables()
+    _, sin_margen, _ = elegir_umbral(y, s, 0.75, 0.70, 0.85, 0.80)
+    _, con_margen, _ = elegir_umbral(y, s, 0.75, 0.70, 0.85, 0.80,
+                                     margen_especificidad=0.02)
+    caida = sin_margen["recall"] - con_margen["recall"]
+    assert caida < 0.05, f"el margen de 0,02 costo {caida:.4f} de recall"
