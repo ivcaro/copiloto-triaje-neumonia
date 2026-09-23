@@ -55,9 +55,17 @@ class Motor:
 
     @classmethod
     def cargar(cls, ruta_pesos, ruta_calibrador, umbral: float,
-               arquitectura: str = "efficientnet_b0", tam_imagen: int = 320,
-               auc_validacion: float = 0.883) -> "Motor":
-        """Carga como lo hara el contenedor: en CPU y con weights_only."""
+               auc_validacion: float, arquitectura: str = "efficientnet_b0",
+               tam_imagen: int = 320) -> "Motor":
+        """Carga como lo hara el contenedor: en CPU y con weights_only.
+
+        `auc_validacion` es obligatorio y sin default: es una cifra que se
+        muestra al profesional como afirmacion de calidad del modelo
+        cargado, no un dato ligado al codigo sino a LOS PESOS. Un default
+        silencioso (0,883 o cualquier otro) sobreviviria a un reentrenamiento
+        sin que nadie lo actualizara, y cada respuesta seguiria citando la
+        cifra vieja como si fuera la del modelo nuevo.
+        """
         ruta_pesos, ruta_calibrador = Path(ruta_pesos), Path(ruta_calibrador)
         if not ruta_pesos.is_file():
             raise FileNotFoundError(f"No estan los pesos en {ruta_pesos}")
@@ -71,31 +79,31 @@ class Motor:
                    tam_imagen, f"{arquitectura}_{tam_imagen}px", auc_validacion)
 
     def _tensor_desde_arreglo(self, arreglo) -> torch.Tensor:
-        """La conversion, en UN solo sitio.
+        """La conversion, en UN solo sitio: aqui y solo aqui se decide como
+        un arreglo de pixeles se convierte en el tensor que ve el modelo.
 
-        `clasificar` y `_preparar_tensor` la comparten a proposito: si cada uno
-        tuviera su copia, la prueba que verifica la igualdad con el
-        preprocesamiento de entrenamiento comprobaria un camino mientras
-        produccion usa el otro, que es justo el fallo que esa prueba existe
-        para impedir.
+        No existe una segunda copia (ni siquiera para pruebas): un metodo
+        auxiliar aparte que solo llamaran las pruebas invitaria a que esa
+        prueba verificara un camino distinto del que usa `clasificar`, que es
+        justo el fallo que la prueba de preprocesamiento existe para impedir.
+        Por eso esa prueba captura el tensor que `clasificar` le pasa
+        REALMENTE al modelo (espiando `modelo.forward`), no el resultado de
+        llamar a este metodo por separado.
         """
         return self._transformar(
             Image.fromarray(arreglo).convert("RGB")).unsqueeze(0)
-
-    def _preparar_tensor(self, datos_dicom: bytes) -> torch.Tensor:
-        """Mismo camino que el entrenamiento: se usa
-        `construir_transformaciones` del paquete en vez de reimplementarla,
-        porque una copia se desincroniza en silencio y degrada el modelo en
-        produccion sin que ninguna metrica lo avise."""
-        arreglo, _ = leer_dicom_desde_bytes(datos_dicom)
-        return self._tensor_desde_arreglo(arreglo)
 
     def clasificar(self, datos_dicom: bytes) -> dict:
         comienzo = time.perf_counter()
         try:
             arreglo, meta = leer_dicom_desde_bytes(datos_dicom)
-        except (pydicom.errors.InvalidDicomError, AttributeError,
-                ValueError, TypeError) as exc:
+        # AttributeError NO esta en esta tupla a proposito: `datos/dicom.py`
+        # documenta que los errores de PROGRAMACION deben propagarse
+        # ruidosamente, no camuflarse como "DICOM invalido". Si estuviera,
+        # un typo dentro de `leer_dicom_desde_bytes` haria que TODA peticion
+        # dijera al profesional que su radiografia esta corrupta.
+        except (pydicom.errors.InvalidDicomError, ValueError,
+                TypeError) as exc:
             raise ErrorDeInferencia(
                 "dicom_invalido",
                 f"El fichero no es un DICOM legible: {exc}") from exc
@@ -113,16 +121,24 @@ class Motor:
                 f"entre {EDAD_MINIMA} y {EDAD_MAXIMA}.")
 
         # El arreglo ya esta leido: se reusa en vez de volver a decodificar el
-        # DICOM, y la conversion es la MISMA que usa _preparar_tensor.
+        # DICOM. _tensor_desde_arreglo es el UNICO lugar que hace esta
+        # conversion; no hay una segunda copia que pueda desincronizarse.
         tensor = self._tensor_desde_arreglo(arreglo)
         with torch.no_grad():
             cruda = float(torch.sigmoid(self.modelo(tensor).view(-1))[0])
 
         return {
             "probabilidad_cruda": round(cruda, 4),
-            "probabilidad_calibrada": round(self.calibrador.calibrar(cruda), 4),
-            "razon_de_verosimilitud": round(
-                self.calibrador.razon_de_verosimilitud(cruda), 4),
+            # SIN redondear estas dos: `Calibrador.calibrar` recorta a
+            # [1e-6, 1-1e-6] precisamente para que nadie reciba 0 ni 1
+            # exactos, y cualquier redondeo mas grueso que 6 decimales
+            # deshace ese recorte (round(1e-6, 4) == 0.0). SP4 calcula
+            # odds = p/(1-p) sobre `probabilidad_calibrada`, y multiplica
+            # las odds previas por `razon_de_verosimilitud`: un 0.0 o un 1.0
+            # fabricados por el redondeo producirian una certeza -de ausencia
+            # o presencia de neumonia- que la radiografia no respalda.
+            "probabilidad_calibrada": self.calibrador.calibrar(cruda),
+            "razon_de_verosimilitud": self.calibrador.razon_de_verosimilitud(cruda),
             "umbral": round(self.umbral, 4),
             "clasificacion": ("opacidad_probable" if cruda >= self.umbral
                               else "sin_opacidad_probable"),
