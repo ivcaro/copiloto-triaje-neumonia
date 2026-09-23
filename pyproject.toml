@@ -11,10 +11,14 @@ dependencies = [
     "numpy>=2",
     "pandas>=2.2",
     "scikit-learn>=1.6",
+    "mcp==2.2.0",
+    "fastapi==0.141.1",
+    "uvicorn[standard]>=0.34",
+    "python-multipart",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "pytest-asyncio", "httpx"]
 
 [build-system]
 requires = ["setuptools>=68"]
