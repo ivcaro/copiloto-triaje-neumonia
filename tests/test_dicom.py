@@ -8,7 +8,9 @@ from PIL import Image
 from pydicom.dataset import Dataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
-from copiloto_triaje.datos.dicom import convertir_a_png, convertir_lote, leer_dicom
+from copiloto_triaje.datos.dicom import (
+    convertir_a_png, convertir_lote, leer_dicom, leer_dicom_desde_bytes,
+)
 
 
 def crear_dicom(ruta, patient_id="P0001", edad="51", sexo="F", vista="PA", lado=64):
@@ -256,3 +258,27 @@ def test_convertir_lote_repara_un_png_cortado_dentro_del_idat(tmp_path):
     assert png.read_bytes() == intacto, "no se reconvirtio el PNG sin datos"
     with Image.open(png) as imagen:
         imagen.load()
+
+
+def test_leer_dicom_desde_bytes_da_lo_mismo_que_desde_ruta(tmp_path):
+    """El servidor recibe el DICOM por la red, no como fichero. Leer desde
+    bytes tiene que dar exactamente lo mismo que leer desde disco: si
+    divergieran, el modelo veria en produccion algo distinto de lo que se
+    probo, y ninguna prueba de las existentes lo notaria."""
+    ruta = tmp_path / "a.dcm"
+    esperado = crear_dicom(ruta, edad="051Y", sexo="M", vista="AP")
+
+    desde_ruta, meta_ruta = leer_dicom(ruta)
+    desde_bytes, meta_bytes = leer_dicom_desde_bytes(ruta.read_bytes())
+
+    assert np.array_equal(desde_ruta, desde_bytes)
+    assert meta_ruta == meta_bytes
+    assert meta_bytes["edad"] == "051Y"
+    assert desde_bytes.shape == esperado.shape
+
+
+def test_leer_dicom_desde_bytes_rechaza_lo_que_no_es_dicom():
+    """Un PNG, un JSON o basura tienen que fallar con el error de pydicom, no
+    con un AttributeError tres capas mas arriba."""
+    with pytest.raises(pydicom.errors.InvalidDicomError):
+        leer_dicom_desde_bytes(b"esto no es un DICOM")

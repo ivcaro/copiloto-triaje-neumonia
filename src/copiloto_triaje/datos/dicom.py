@@ -7,6 +7,7 @@ llegara con otra profundidad de bits.
 """
 from __future__ import annotations
 
+import io
 import os
 from pathlib import Path
 
@@ -36,6 +37,17 @@ def leer_dicom(ruta: Path) -> tuple[np.ndarray, dict]:
     ds = pydicom.dcmread(str(ruta))
     meta = _extraer_metadatos(ds)
     return ds.pixel_array, meta
+
+
+def leer_dicom_desde_bytes(datos: bytes) -> tuple[np.ndarray, dict]:
+    """Igual que `leer_dicom` pero desde memoria.
+
+    El servidor de SP2 recibe el DICOM por la red. Escribirlo a un fichero
+    temporal solo para volver a leerlo seria un viaje al disco por peticion,
+    y dejaria restos que limpiar si el proceso muere a mitad.
+    """
+    ds = pydicom.dcmread(io.BytesIO(datos))
+    return ds.pixel_array, _extraer_metadatos(ds)
 
 
 def _leer_metadatos_dicom(ruta: Path) -> dict:
