@@ -33,11 +33,17 @@ El mismo paquete se ejecuta en dos sitios, y la división no es negociable:
 | **Tiene GPU** | No (`torch...+cpu`) | Sí |
 | Desarrollo y pruebas | Sí | — |
 | Entrenamiento de humo (2 épocas, datos sintéticos) | Sí | — |
-| Preparación de datos (26 684 DICOM) | solo una muestra, para verificar el script | Sí, el conjunto completo |
-| **Entrenamiento real** | **No** | **Sí** |
+| Preparación de datos (26 684 DICOM) | Sí (`--crudo`, ~25 min) | Sí, el conjunto completo |
+| **Entrenamiento real** | Sí, pero caro (`scripts/entrenar_local.py`) | Sí, en horas |
 
-El entrenamiento completo **nunca** corre en la máquina local: sin GPU tardaría
-días y no alcanzaría el Recall comprometido. El notebook **instala el paquete**
+El entrenamiento local **es posible y está soportado**, no es lo preferente.
+Medido en una CPU de 20 hilos lógicos (10 de cómputo), para 4 + 20 épocas:
+DenseNet121 a 320 px cuesta **24,9 h**, EfficientNet-B0 a 320 px **10,8 h** y
+MobileNetV3 a 224 px **3,1 h**; la carga de imágenes no es el cuello de botella
+(268 img/s con 8 procesos). Con GPU son horas. Por eso la ruta preferente sigue
+siendo Colab o Kaggle, y `scripts/entrenar_local.py` existe para cuando la
+cuota de GPU se agota: es reanudable justamente porque son corridas de una
+noche. El notebook **instala el paquete**
 (no lo pega a `sys.path`), de modo que los pines de `pyproject.toml` también se
 aplican en Colab, y luego comprueba el entorno: si no hay GPU, o si
 `copiloto_triaje` no viene del paquete instalado, se detiene.
