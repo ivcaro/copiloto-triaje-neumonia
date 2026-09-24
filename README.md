@@ -1,8 +1,18 @@
-# Copiloto de triaje para neumonía en adultos — núcleo de imagen (SP1)
+# Copiloto de triaje para neumonía en adultos
 
-Primer sub-proyecto del Proyecto Integrador (UEES, Maestría en IA). Entrena una
-CNN de clasificación binaria sobre radiografías de tórax de adultos del dataset
-RSNA, con partición por paciente verificada sin fuga de datos.
+Proyecto Integrador (UEES, Maestría en IA). Dos sub-proyectos entregados:
+
+- **SP1 — núcleo de imagen.** Entrena una CNN de clasificación binaria sobre
+  radiografías de tórax de adultos del dataset RSNA, con partición por paciente
+  verificada sin fuga de datos.
+- **SP2 — servidor.** Sirve esa CNN en Docker por dos puertas —una herramienta
+  MCP y un `POST /inferir` de respaldo— para que n8n la consulte sin que la
+  imagen salga nunca de la red local. Ver `docs/sp2-despliegue.md`.
+
+La arquitectura se fijó **midiendo**, no a priori: las tres candidatas empatan
+en AUC 0,874-0,889, un margen del orden de la varianza entre dos ejecuciones de
+la misma configuración. Se despliega EfficientNet-B0 a 320 px (AUC de
+validación 0,8827). El razonamiento está en `docs/comparativa-corridas.md`.
 
 ## Requisitos
 
@@ -86,7 +96,38 @@ nada.
 maneja con partición estratificada, ponderación de clases y selección del umbral
 sobre la curva ROC de validación.
 
+## El servidor (SP2)
+
+`servidor/` contiene el Dockerfile y el compose. El contenedor **no publica
+puertos**: se une a la red interna donde ya vive n8n, y ahí lo llaman por su
+nombre. Esa es la garantía de que la radiografía no sale de la red local.
+
+Lo que devuelve no es la salida cruda del modelo, que está desplazada por el
+`pos_weight` del entrenamiento. Se calibra con una isotónica ajustada sobre las
+3 810 imágenes de validación y se entrega como **razón de verosimilitud
+acotada** a `[0,0163 ; 77,32]` —los extremos que los datos sostienen—, para que
+la evidencia de imagen pueda mover la probabilidad previa de la regla clínica
+pero no anularla ni volverla certeza. Sin esa cota, una sola radiografía en el
+extremo saturado de la curva producía una razón de 3,5e-06, capaz de bajar un
+previo de 0,90 a 0,003%.
+
+El modelo **se niega** a opinar sobre pacientes fuera de 18-100 años, leyendo la
+edad de la cabecera DICOM: se entrenó y se validó sobre adultos, y devolver un
+número que nadie validó sería peor que no devolver nada.
+
+Latencia medida dentro del contenedor con la CPU acotada a 2 núcleos: 38 ms por
+REST y 43 ms por MCP, contra un presupuesto de 4 s.
+
+Los pesos (16 MB) **no viajan en el repo**: están en `.gitignore` y se copian al
+servidor por separado. `docs/sp2-despliegue.md` tiene el procedimiento completo,
+con los pre-chequeos de solo lectura y la vuelta atrás.
+
 ## Documentos
 
-- Diseño: `docs/superpowers/specs/2026-09-16-sp1-nucleo-imagen-design.md`
-- Plan: `docs/superpowers/plans/2026-09-16-sp1-nucleo-imagen.md`
+- Diseño SP1: `docs/superpowers/specs/2026-09-16-sp1-nucleo-imagen-design.md`
+- Plan SP1: `docs/superpowers/plans/2026-09-16-sp1-nucleo-imagen.md`
+- Diseño SP2: `docs/superpowers/specs/2026-09-23-sp2-servidor-mcp-design.md`
+- Plan SP2: `docs/superpowers/plans/2026-09-23-sp2-servidor-mcp.md`
+- Despliegue: `docs/sp2-despliegue.md`
+- Comparativa de arquitecturas: `docs/comparativa-corridas.md`
+- Frontera recall/especificidad: `docs/frontera-recall-especificidad.md`
