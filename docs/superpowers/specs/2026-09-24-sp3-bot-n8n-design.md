@@ -2,258 +2,488 @@
 
 **Hito:** H5, vence el 2-oct-2026.
 **Depende de:** SP2, desplegado y verificado en el VPS el 24-sep-2026.
-**Entrega a:** SP4 (H6, 9-oct), que añade la regla clínica y la combinación
-bayesiana sobre los datos que este sub-proyecto recoge.
+**Entrega a:** SP4 (H6, 9-oct), que añade la regla clínica de Heckerling y la
+combinación bayesiana sobre los datos que este sub-proyecto recoge.
 
 ---
 
 ## 1. Qué construye SP3, y qué no
 
 Construye el flujo conversacional completo de los **dos roles** y lo conecta al
-copiloto ya desplegado:
+copiloto ya desplegado: un bot para el **paciente**, que consiente, responde un
+cuestionario de síntomas y recibe un **código seudónimo**; un bot para el
+**profesional**, que presenta ese código, aporta los **signos** de la
+exploración y una **radiografía DICOM**, y recibe lo que dice el modelo; la base
+de datos que sostiene ambos; y la orquestación, en n8n.
 
-- un bot para el **paciente**, que responde un cuestionario de síntomas y recibe
-  un **código seudónimo**;
-- un bot para el **profesional**, que presenta ese código, aporta los **signos**
-  de la exploración y una **radiografía DICOM**, y recibe lo que dice el modelo;
-- la base de datos que sostiene ambos;
-- la orquestación, en n8n.
-
-**No construye** la regla clínica de Heckerling, ni la probabilidad previa, ni
-la combinación bayesiana. Los síntomas y los signos se **recogen y se guardan**,
+**No construye** la regla de Heckerling, ni la probabilidad previa, ni la
+combinación bayesiana. Los síntomas y los signos se **recogen y se guardan**,
 pero en SP3 el profesional los ve **al lado** del resultado de la imagen, nunca
-mezclados con él. Unirlos es H6.
+mezclados. Unirlos es H6.
 
-**No lleva LLM.** Ninguna pieza de SP3 llama a un modelo de lenguaje. Esto es un
-cambio respecto al documento entregado en la Semana 1 y se justifica en §3.4.
+**No lleva LLM.** Ninguna pieza de SP3 llama a un modelo de lenguaje (§4.5).
 
 ---
 
-## 2. Decisiones tomadas, y por qué
+## 2. Decisiones
 
 | # | Decisión | Razón |
 | :-- | :--- | :--- |
-| D1 | **Dos bots de Telegram separados** | Un paciente no puede recibir el pre-informe aunque falle una condición: su bot no tiene ese camino. La separación clínica deja de depender de que un `if` esté bien escrito |
-| D2 | **PostgreSQL propia**, contenedor nuestro | Los datos clínicos quedan en infraestructura que controlamos, con su ciclo de vida, su respaldo y su borrado. Las cuatro PostgreSQL del VPS son del cliente y no se tocan |
-| D3 | **SP3 sin la matemática** | H5 entrega algo demostrable de punta a punta; H6 añade la fórmula sobre datos que ya están recogidos, sin volver a tocar los bots |
-| D4 | **Cuestionario por botones**, texto libre solo opcional y fuera del cálculo | Un extractor probabilístico en la ENTRADA de un cálculo clínico no falla con un error: produce una probabilidad previa equivocada que nadie ve |
+| D1 | **Dos bots de Telegram separados** | Un paciente no puede recibir el resultado aunque falle una condición: su flujo no tiene ese camino. La separación deja de depender de que un `if` esté bien escrito |
+| D2 | **PostgreSQL propia** (`copiloto-bd`) | Los datos clínicos quedan en infraestructura que controlamos. Las PostgreSQL del VPS son del cliente y no se tocan |
+| D3 | **SP3 sin la matemática** | H5 entrega algo demostrable; H6 añade la fórmula sobre datos ya recogidos, sin volver a tocar los bots |
+| D4 | **Cuestionario por botones**, texto libre opcional y fuera del cálculo | Un extractor probabilístico en la ENTRADA de un cálculo clínico no falla con un error: produce una probabilidad previa equivocada que nadie ve |
 | D5 | **DICOM como documento de Telegram** | El servidor solo acepta DICOM: la edad sale de la cabecera y el preprocesamiento debe ser el del entrenamiento. Telegram recomprime a JPEG lo enviado como *foto* |
-| D6 | **Lista blanca de `chat_id`** | Un bot de Telegram es descubrible por su nombre de usuario. Sin puerta, D1 protege del error pero no del curioso |
-| D7 | **Toda la lógica en n8n** (enfoque A) | Decisión del responsable del proyecto. Menos piezas y más rápido para el 2-oct. El coste real y su mitigación están en §9 |
-| D8 | **Se llama a `/mcp`, no a `/inferir`** | Las dos puertas son el mismo servidor y el mismo modelo, pero hablar JSON-RPC con la herramienta `clasificar_radiografia` es la integración que el proyecto promete, y es la puerta que SP4 va a consumir: ejercitarla ahora adelanta las sorpresas del protocolo |
-| D9 | **Bots NUEVOS de BotFather** | Un token de Telegram admite UN solo webhook. Reutilizar una credencial existente le robaría el webhook a un bot del cliente y lo dejaría mudo, sin error visible |
-| D10 | **Dashboard después de H5**, con contraseña | No compite con los bots en la semana del hito, y se construye sabiendo qué métricas importan en vez de adivinarlas |
+| D6 | **Lista blanca de `chat_id`**, comprobada en **cada** mensaje | Un bot de Telegram es descubrible. Comprobar solo en `/start` deja entrar a quien salte ese paso |
+| D7 | **Toda la lógica en n8n** | Decisión del responsable. El coste real y su compensación están en §13, no implícitos |
+| D8 | **Se llama a `/mcp`, no a `/inferir`** | Las dos puertas son el mismo servidor y el mismo modelo, pero hablar JSON-RPC con `clasificar_radiografia` es la integración que el proyecto promete y la que SP4 consumirá |
+| D9 | **Bots NUEVOS de BotFather** | Un token de Telegram admite UN webhook. Reutilizar una credencial existente le robaría el webhook a un bot del cliente y lo dejaría mudo, sin error visible |
+| D10 | **Dashboard después de H5**, con contraseña | No compite con los bots en la semana del hito |
+| D11 | **Consentimiento explícito** antes de guardar nada | Es lo que un comité de ética preguntará en H7, y guardar síntomas sin decirlo no es defendible |
+| D12 | **Los síntomas se copian a `consultas`** al consultarse | Sin esto, H7 no tiene nada que validar: `cuestionarios` se borra a los 7 días. Solo perduran los casos que un clínico realmente usó |
+| D13 | **La etiqueta y la evidencia calibrada se presentan por separado** | Salen de escalas distintas y se contradicen en una banda real. Ver §8 |
 
 ---
 
-## 3. Arquitectura
+## 3. Hechos verificados que condicionan el diseño
 
-### 3.1. Piezas
+Medidos, no recordados. Cada fila es una restricción que el diseño obedece.
+
+| Hecho | Consecuencia |
+| :--- | :--- |
+| La etiqueta `clasificacion` se decide con `probabilidad_cruda >= 0,4258`; `probabilidad_calibrada` y `razon_de_verosimilitud` salen de la curva isotónica | **Son escalas distintas.** En `cruda ∈ [0,4258 ; 0,5786]` la etiqueta es positiva y la RV es menor que 1. Ver §8 |
+| La RV cruza 1,0 en `cruda = 0,5786` | Debajo de ahí la imagen **resta** probabilidades a favor de neumonía |
+| La RV viene acotada a `[0,0163 ; 77,32]` | La imagen no puede anular ni volver certeza la clínica |
+| El servidor atiende un `tools/call` suelto (`stateless_http=True`) | No hace falta el saludo `initialize`: un solo nodo HTTP Request |
+| El base64 envuelto en líneas se acepta (LF y CRLF) | n8n puede codificar como quiera |
+| Hay **dos** límites de tamaño distintos | Ver §10.4 |
+| Un token de Telegram admite **un** webhook | D9 |
+| n8n 2.35.4 soporta el marco de evaluaciones completo | §13 |
+| Un Telegram Trigger es un webhook público en `https://n8n.[retirado].com/webhook/...` | §4.2 |
+| `callback_data` de Telegram está limitado a 64 bytes | No caben las respuestas: hace falta estado en base de datos (§5.1) |
+| Latencia del copiloto en el VPS: mediana 143 ms, peor 225 ms | El presupuesto de 4 s de H4 sigue holgado dentro del bot |
+
+Ejemplos reales, medidos contra el contenedor el 24-sep-2026:
+
+| | cruda | calibrada | RV | clasificación | edad |
+| :--- | ---: | ---: | ---: | :--- | ---: |
+| placa positiva | 0,9764 | 0,8455 | 19,24 | `opacidad_probable` | 33 |
+| placa negativa | 0,0064 | 0,0046 | 0,0163 | `sin_opacidad_probable` | 27 |
+
+---
+
+## 4. Arquitectura
+
+### 4.1. Piezas
 
 | Pieza | Qué es | Nueva |
 | :--- | :--- | :--- |
 | `copiloto-mcp` | inferencia, ya desplegado | no, **no se toca** |
-| `copiloto-bd` | PostgreSQL, sin puertos publicados, en `[retirado]_[retirado]_network` | sí |
-| `🩺 Copiloto Triaje: Paciente (Telegram)` | workflow de n8n | sí |
-| `🩺 Copiloto Triaje: Profesional (Telegram)` | workflow de n8n | sí |
-| `⚙️ Sub: Limpieza de cuestionarios caducados` | workflow de n8n, disparador programado | sí |
+| `copiloto-bd` | PostgreSQL 16, en `[retirado]_[retirado]_network`, sin puertos | sí |
+| `🩺 Copiloto Triaje: Paciente (Telegram)` | workflow | sí |
+| `🩺 Copiloto Triaje: Profesional (Telegram)` | workflow | sí |
+| `🩺 Copiloto Triaje: Mantenimiento` | workflow, disparador programado diario | sí |
 | Dos bots de Telegram | dos tokens nuevos, dos credenciales nuevas | sí |
 
-### 3.2. El recorrido
+**`copiloto-bd`** se especifica como se especificó `copiloto-mcp`: imagen
+`postgres:16-alpine` con digest fijado, **volumen con nombre** para los datos,
+`healthcheck` con `pg_isready`, topes `cpus: "1"` y `memory: 1G`, rotación de
+log `max-size: 10m` / `max-file: 3`, `restart: unless-stopped`, y contraseña por
+variable de entorno (§12). Va en el **mismo `docker-compose.yml`** que
+`copiloto-mcp`, bajo el proyecto `copiloto-mcp`, para que la vuelta atrás siga
+siendo un solo `docker compose -p copiloto-mcp down`.
+
+### 4.2. Superficie pública
+
+Esto no estaba en el primer borrador y es lo que más expone el sistema.
+
+Cada Telegram Trigger registra un **webhook público** en
+`https://n8n.[retirado].com/webhook/<id>`, alcanzable desde internet a través del
+`nginx-proxy-manager` del cliente. Telegram hace POST ahí; **cualquiera que
+conozca la URL también puede**.
+
+Eso convierte el `chat_id` en **un dato que aporta quien llama**. Si alguien
+forja un `update` con un `chat_id` de la lista blanca, pasa la puerta de D6.
+
+**Obligatorio:** los dos webhooks se registran con **`secret_token`** de
+Telegram, y el flujo **rechaza** todo update cuya cabecera
+`X-Telegram-Bot-Api-Secret-Token` no coincida, **antes de mirar nada más**. Si
+el nodo Telegram Trigger de n8n no expone ese campo, se registra el webhook a
+mano con `setWebhook` y se comprueba la cabecera en el primer nodo del flujo.
+
+Sin esa comprobación, la lista blanca no protege de nada y D6 es decorativo.
+
+**Límite de uso del bot del paciente:** máximo **5 cuestionarios completados por
+`chat_id` y día**, contados en SQL. No es antiabuso serio; evita que un bucle o
+una broma llenen la tabla en la máquina del cliente.
+
+### 4.3. El recorrido
 
 ```
 PACIENTE                              PROFESIONAL
-   │ /start                              │ /start ─► ¿chat_id autorizado?
-   │ 7 preguntas de botones              │           no ─► "no autorizado", fin
-   ▼                                     │ código del paciente
-copiloto-bd ◄────────────────────────────┤ ─► lee los síntomas
-   │ código seudónimo                    │ 4 preguntas de signos
-   ▼                                     │ DICOM como DOCUMENTO
-"dáselo a tu médico"                     ▼
-                              copiloto-mcp:8000/mcp
-                              tools/call clasificar_radiografia
-                                         │
-                                         ▼
-                              dos bloques SEPARADOS:
-                              lo que dijo la imagen,
-                              lo que dijeron síntomas y signos
+  /start                                /start o cualquier mensaje
+  consentimiento ─ no acepta ─► fin     │
+  7 preguntas de botones                ├─► secret_token válido?  no ─► descarta
+     ▼                                  ├─► chat_id en lista blanca? no ─► "no autorizado"
+copiloto-bd ◄───────────────────────────┤ código del paciente
+     │ código seudónimo                 │ 4 preguntas de signos
+     ▼                                  │ DICOM como DOCUMENTO
+"dáselo a tu médico"                    ▼
+                             copiloto-mcp:8000/mcp
+                             tools/call clasificar_radiografia
+                                        │
+                                        ▼
+                             §8: clasificación y evidencia,
+                             en bloques separados
 ```
 
-El flujo del paciente **no contiene ningún nodo que hable con el copiloto**.
-Esa ausencia es la garantía de D1 y debe verificarse en la revisión.
+El flujo del paciente **no contiene ningún nodo que hable con `copiloto-mcp`**.
+Esa ausencia es la garantía de D1 y se verifica en la revisión (§13).
 
-### 3.3. Reparto síntomas / signos
+### 4.4. Reparto síntomas / signos, y su correspondencia con Heckerling
 
-La regla de Heckerling que consumirá H6 se apoya en cinco predictores, y **tres
-no los puede reportar el paciente**: los crepitantes y el murmullo vesicular
-disminuido exigen un fonendoscopio, y la frecuencia cardiaca, un pulsioxímetro
-o un dedo entrenado.
+De los cinco predictores, **tres exigen exploración física** y no los puede
+reportar el paciente.
 
-**El paciente aporta síntomas** (7 preguntas, botones):
+| Predictor de Heckerling | Campo | Quién | Tipo |
+| :--- | :--- | :--- | :--- |
+| Temperatura > 37,8 °C | `signos.temperatura_c` | profesional | número |
+| Frecuencia cardiaca > 100 lpm | `signos.frecuencia_cardiaca` | profesional | entero |
+| Crepitantes | `signos.crepitantes` | profesional | booleano |
+| Murmullo vesicular disminuido | `signos.murmullo_disminuido` | profesional | booleano |
+| **Ausencia** de asma | `sintomas.asma` | paciente | `si` / `no` / `no_se` |
 
-1. ¿Ha sentido fiebre en los últimos días? — Sí / No / No sé
-2. ¿Tiene tos? — Sí, con flema / Sí, seca / No
-3. ¿Desde hace cuánto? — menos de 3 días / 3 a 7 días / más de 7 días
-4. ¿Le falta el aire? — Sí / No
-5. ¿Le duele el pecho al respirar? — Sí / No
-6. ¿Tiene asma diagnosticada? — Sí / No / No sé
-7. ¿Algo más que quiera contar? — texto libre **opcional**
+**El asma es el único con tres estados, y eso es deliberado.** Heckerling
+necesita un booleano, pero *convertir* `no_se` en uno sería fabricar el dato:
+tratarlo como "no tiene asma" sube la probabilidad previa sin fundamento, y
+tratarlo como "sí tiene" la baja igual de infundadamente. SP3 **conserva los
+tres estados** y muestra al profesional "asma: no sabe" para que lo resuelva
+clínicamente. **H6 debe definir explícitamente qué hace con `no_se` y no puede
+coaccionarlo en silencio.**
 
-La 7 **no alimenta ningún cálculo**: acompaña al profesional y nada más. Se
-almacena como texto y se muestra tal cual.
+**El paciente aporta** (7 preguntas, botones):
 
-**El profesional aporta signos** (4 preguntas):
+| # | Pregunta | Clave | Valores |
+| :-- | :--- | :--- | :--- |
+| 1 | ¿Ha sentido fiebre estos días? | `fiebre` | `si` / `no` / `no_se` |
+| 2 | ¿Tiene tos? | `tos` | `con_flema` / `seca` / `no` |
+| 3 | ¿Desde hace cuánto? | `dias_evolucion` | `menos_3` / `3_a_7` / `mas_7` |
+| 4 | ¿Le falta el aire? | `disnea` | `si` / `no` |
+| 5 | ¿Le duele el pecho al respirar? | `dolor_toracico` | `si` / `no` |
+| 6 | ¿Tiene asma diagnosticada? | `asma` | `si` / `no` / `no_se` |
+| 7 | ¿Algo más? (opcional) | `texto_libre` | texto o `null` |
 
-1. Temperatura medida (°C) — número
-2. Frecuencia cardiaca (lpm) — número
-3. Crepitantes a la auscultación — Sí / No
-4. Murmullo vesicular disminuido — Sí / No
+La 7 **no alimenta ningún cálculo**. Se recorta a 500 caracteres y se muestra al
+profesional **como texto plano, nunca con `parse_mode`**: es el único canal por
+el que el paciente escribe libremente, y un `*` o un `_` sueltos romperían el
+formato del mensaje del profesional o permitirían inyectar formato. Se sale de
+ella con el botón **«Omitir»** o escribiendo.
 
-Con eso H6 tiene los cinco predictores sin volver a tocar los bots.
+**El profesional aporta** (4 preguntas):
 
-### 3.4. Por qué no hay LLM
+| # | Pregunta | Clave | Entrada |
+| :-- | :--- | :--- | :--- |
+| 1 | Temperatura (°C) | `temperatura_c` | número, **30,0 a 45,0**, acepta coma o punto |
+| 2 | Frecuencia cardiaca (lpm) | `frecuencia_cardiaca` | entero, **20 a 250** |
+| 3 | Crepitantes | `crepitantes` | botones Sí / No |
+| 4 | Murmullo disminuido | `murmullo_disminuido` | botones Sí / No |
 
-El documento maestro de la Semana 1 dice que el LLM "normaliza español
-coloquial". Con D4 eso deja de hacer falta: el paciente contesta con botones y
-lo que entra al cálculo es exactamente lo que tocó.
+Fuera de rango o no numérico: el bot lo dice, **no avanza de paso** y vuelve a
+preguntar. Un `38,2` y un `38.2` son el mismo valor; se normaliza a punto antes
+de guardar.
 
-La consecuencia buena es que **ningún dato de paciente sale del VPS** en SP3 —
-antes, con un LLM externo, los síntomas habrían viajado a un tercero.
+### 4.5. Por qué no hay LLM
 
-**Acción pendiente:** anotar este cambio en el "Registro de cambios" del
-documento maestro de la Semana 1, como se hizo con las cifras del dataset.
+Con D4 el paciente contesta con botones y lo que entra al cálculo es exactamente
+lo que tocó, así que la "normalización de español coloquial" del documento
+maestro deja de hacer falta. La consecuencia buena: **ningún dato de paciente
+sale hacia un tercero**.
+
+**Deuda:** anotarlo en el "Registro de cambios" del documento maestro de la
+Semana 1 (§18).
 
 ---
 
-## 4. Datos
+## 5. Datos
 
-### 4.1. Esquema
+### 5.1. Esquema
 
 ```sql
--- Estado efímero mientras el paciente contesta.
--- Existe porque un flujo de n8n no recuerda nada entre mensajes y el
--- callback_data de Telegram está limitado a 64 bytes: no caben 7 respuestas.
+-- Estado efímero del PACIENTE mientras contesta.
 CREATE TABLE sesiones_paciente (
   chat_id        bigint PRIMARY KEY,
   paso           smallint    NOT NULL DEFAULT 0,
+  consentido_en  timestamptz,                  -- null = aún no aceptó
   respuestas     jsonb       NOT NULL DEFAULT '{}',
   actualizado_en timestamptz NOT NULL DEFAULT now()
 );
 
--- El cuestionario completo. Inmutable una vez creado.
-CREATE TABLE cuestionarios (
-  codigo     text PRIMARY KEY,
-  respuestas jsonb       NOT NULL,
-  creado_en  timestamptz NOT NULL DEFAULT now(),
-  expira_en  timestamptz NOT NULL
+-- Estado efímero del PROFESIONAL. Su conversación es más larga que la del
+-- paciente (código + 4 signos + DICOM) y n8n no recuerda nada entre mensajes.
+-- Sin esta tabla, dos consultas simultáneas pueden cruzar los signos de un
+-- paciente con la radiografía de otro, y el mensaje resultante sería
+-- sintácticamente perfecto.
+CREATE TABLE sesiones_profesional (
+  chat_id        bigint PRIMARY KEY,
+  paso           smallint    NOT NULL DEFAULT 0,
+  codigo         text,
+  signos         jsonb       NOT NULL DEFAULT '{}',
+  actualizado_en timestamptz NOT NULL DEFAULT now()
 );
 
--- La lista blanca.
+CREATE TABLE cuestionarios (
+  codigo        text PRIMARY KEY,
+  respuestas    jsonb       NOT NULL,
+  consentido_en timestamptz NOT NULL,
+  creado_en     timestamptz NOT NULL DEFAULT now(),
+  expira_en     timestamptz NOT NULL
+);
+
 CREATE TABLE profesionales (
   chat_id bigint PRIMARY KEY,
   nombre  text        NOT NULL,
   activo  boolean     NOT NULL DEFAULT true,
-  alta_en timestamptz NOT NULL DEFAULT now()
+  alta_en timestamptz NOT NULL DEFAULT now(),
+  baja_en timestamptz
 );
 
--- El registro. Fuente del dashboard y de la validación clínica de H7.
+-- El registro permanente. Fuente del dashboard y de la validación de H7.
 CREATE TABLE consultas (
-  id        bigserial PRIMARY KEY,
-  codigo    text,
-  chat_id   bigint,
-  signos    jsonb,
-  resultado jsonb,        -- lo que devolvió el copiloto
-  error     text,         -- fuera_de_alcance, dicom_invalido, ...
-  creado_en timestamptz NOT NULL DEFAULT now()
+  id           bigserial PRIMARY KEY,
+  codigo       text,
+  chat_id      bigint,
+  sintomas     jsonb,        -- COPIA (D12): cuestionarios se borra a los 7 días
+  signos       jsonb,
+  resultado    jsonb,        -- el structuredContent completo
+  error        text,         -- el código, no el texto
+  ms_extremo   integer,      -- latencia de extremo a extremo, para §16
+  creado_en    timestamptz NOT NULL DEFAULT now()
+);
+
+-- Contador para la métrica "iniciados vs completados" del dashboard, que el
+-- esquema anterior hacía imposible de calcular: las sesiones se borran.
+CREATE TABLE cuestionarios_iniciados (
+  dia     date PRIMARY KEY,
+  cuantos integer NOT NULL DEFAULT 0
 );
 ```
 
-`consultas` guarda **también los rechazos**. Un sistema que solo registra sus
-éxitos no se puede validar, y la tasa de rechazos es una métrica del dashboard.
+`consultas` guarda **también los rechazos**, con su código. Un sistema que solo
+registra sus éxitos no se puede validar, y la tasa de rechazos es la señal de
+salud operativa del §16.
 
-### 4.2. El código seudónimo
+`consultas.codigo` **no lleva clave foránea** a `cuestionarios`: esa tabla se
+borra a los 7 días y la referencia rompería el registro permanente.
 
-Seis caracteres de un alfabeto **sin glifos ambiguos** — se excluyen `0`, `O`,
-`1`, `I` y `L` — porque se dicta en voz alta en una consulta. Con 31 caracteres
-son ~887 millones de combinaciones.
+### 5.2. El código seudónimo
 
-**No es de un solo uso.** Un profesional puede consultar dos veces —segunda
-opinión, placa repetida— y bloquearlo estorbaría sin ganar seguridad: adivinar
-un código no sirve de nada si no se está además en la lista blanca. La
-trazabilidad la da `consultas`, donde cada uso queda registrado.
+Seis caracteres del alfabeto `ABCDEFGHJKMNPQRSTUVWXYZ23456789` — **31
+caracteres**, sin `0`, `O`, `1`, `I` ni `L`, porque se dicta en voz alta.
+~887 millones de combinaciones.
 
-### 4.3. Retención
+Lo genera PostgreSQL con `gen_random_bytes` (extensión `pgcrypto`), no n8n: así
+la generación y la comprobación de unicidad ocurren **en la misma transacción**.
+Ante colisión, reintenta; a la tercera, falla con un error registrado.
 
-- **`sesiones_paciente`**: se borra al completar el cuestionario. Las
-  abandonadas de más de 24 h las barre la limpieza diaria.
-- **`cuestionarios`**: **7 días y se borran de verdad**, no se marcan. Es la
-  ventana entre que el paciente lo llena y pisa la consulta; pasada, el dato
-  solo es riesgo acumulado.
-- **`consultas`**: perduran mientras dure el proyecto. Son seudónimas y sin
-  ellas no hay validación clínica en H7 ni dashboard.
+**No es de un solo uso:** un profesional puede consultar dos veces —segunda
+opinión, placa repetida— y bloquearlo estorbaría sin ganar seguridad, porque
+adivinar un código no sirve si no se está además en la lista blanca. Cada uso
+queda en `consultas`.
 
-**Decisión pendiente, explícita y no olvidada:** qué pasa con `consultas` al
-cerrar el proyecto. Se resuelve antes de H8.
+Un paciente puede tener **varios códigos vivos** si rellena el cuestionario más
+de una vez (hasta el límite de §4.2). El profesional usa el que le dicten.
 
-El borrado lo ejecuta `⚙️ Sub: Limpieza de cuestionarios caducados`, con
-disparador programado diario. Una tabla que crece para siempre con datos de
-pacientes en el disco del cliente no es aceptable.
+### 5.3. Esquema de los `jsonb`
+
+Las claves y los valores permitidos son los de las tablas de §4.4. `resultado`
+guarda el `structuredContent` completo del servidor, tal cual, sin recortar: sus
+campos están en §10.2.
+
+Una fila de `consultas` completa se ve así:
+
+```json
+{
+  "sintomas": {"fiebre":"si","tos":"con_flema","dias_evolucion":"3_a_7",
+               "disnea":"no","dolor_toracico":"si","asma":"no",
+               "texto_libre":null},
+  "signos":   {"temperatura_c":38.2,"frecuencia_cardiaca":104,
+               "crepitantes":true,"murmullo_disminuido":false},
+  "resultado":{"probabilidad_cruda":0.9764,"probabilidad_calibrada":0.8455,
+               "razon_de_verosimilitud":19.238,"umbral":0.4258,
+               "clasificacion":"opacidad_probable","edad_paciente":33,
+               "modelo":"efficientnet_b0_320px","auc_validacion":0.8827,
+               "milisegundos":143.0}
+}
+```
+
+### 5.4. Retención, y dónde viven los datos de verdad
+
+El primer borrador razonaba como si todo el dato clínico viviera en
+`copiloto-bd`. **No es cierto**, y es el hallazgo más incómodo de la revisión:
+
+> **n8n guarda los datos de ejecución de cada nodo**, incluidos el DICOM
+> descargado, su base64 y las respuestas del cuestionario, en la base de datos
+> de n8n **del cliente**.
+
+Por eso, además de la retención de nuestras tablas:
+
+- Los dos workflows se configuran con **`Save successful production executions:
+  none`** y **`Save failed production executions: none`**, o con la retención
+  mínima que n8n permita sin tocar la configuración global del cliente.
+- Ningún nodo escribe el base64 en un campo que se persista.
+- Si n8n no permitiera desactivarlo por workflow, se declara como deuda (§18) y
+  se acuerda con el cliente (§17) antes de meter datos reales.
+
+Retención de nuestras tablas:
+
+| Tabla | Vive | Por qué |
+| :--- | :--- | :--- |
+| `sesiones_paciente` / `sesiones_profesional` | se borran al completar; las abandonadas, a las **24 h** | estado, no dato |
+| `cuestionarios` | **7 días**, borrado real | ventana entre que se llena y se usa |
+| `consultas` | mientras dure el proyecto | seudónimas; sin ellas no hay H7 ni dashboard |
+| `profesionales` | mientras esté activo; al dar de baja se pone `baja_en` y el `nombre` se sustituye por `"(dado de baja)"` | es la única tabla con un dato personal directo de una persona real |
+| `cuestionarios_iniciados` | agregado por día, sin datos personales | indefinido, no hay nada que proteger |
+
+**Zona horaria:** todo es `timestamptz`. `expira_en` es `creado_en + 7 días`.
+Las agrupaciones por día del dashboard y el `cuestionarios_iniciados.dia` usan
+**`America/Guayaquil`**, declarado explícitamente en las consultas, para que
+"hoy" signifique lo mismo en el informe que en la cabeza de quien lo lee.
+
+**Decisión pendiente, explícita:** qué pasa con `consultas` al cerrar el
+proyecto. Se resuelve antes de H8 (§18).
+
+El borrado lo ejecuta `🩺 Copiloto Triaje: Mantenimiento`, diario.
 
 ---
 
-## 5. Flujo del paciente
+## 6. Flujo del paciente
 
-1. `/start` → aviso de qué es esto y qué **no** es: no es un diagnóstico; si le
-   cuesta respirar, que acuda a urgencias.
-2. Las 7 preguntas de §3.3, una por mensaje, con botones en línea.
-3. Cada respuesta se guarda en `sesiones_paciente` según llega.
-4. Al completar: se genera el código, nace la fila de `cuestionarios`, se borra
-   la sesión, y se responde:
+1. `/start` → **consentimiento**: qué se guarda, cuánto tiempo, quién lo ve, y
+   que **no es un diagnóstico; si le cuesta respirar, que acuda a urgencias**.
+   Botones **Acepto** / **No acepto**.
+   - *No acepto* → mensaje de despedida y **no se guarda nada**.
+   - *Acepto* → se crea la sesión con `consentido_en`, y se incrementa
+     `cuestionarios_iniciados`.
+2. Las 7 preguntas de §4.4, una por mensaje.
+3. Cada respuesta actualiza `sesiones_paciente`, poniendo `actualizado_en = now()`.
+4. Al completar: se genera el código, nace la fila de `cuestionarios` con su
+   `consentido_en`, se borra la sesión, y se responde:
 
    > **Su código es `K7FM2P`.**
    > Enséñeselo a su médico junto con su radiografía. Caduca en 7 días.
 
-5. Fin. No hay más camino.
+5. Fin.
 
-`/reiniciar` borra la sesión en curso y vuelve al paso 1.
+`/reiniciar` borra la sesión y vuelve al paso 1. Un mensaje que no sea un botón
+esperado (salvo en la pregunta 7) se contesta repitiendo la pregunta actual.
 
 ---
 
-## 6. Flujo del profesional
+## 7. Flujo del profesional
 
-1. `/start` → se comprueba `chat_id` contra `profesionales` (con `activo`).
-   Si no está: **"No autorizado"** y fin, sin pistas sobre qué hay detrás.
-2. Pide el código. Lo busca en `cuestionarios` comprobando `expira_en`.
-3. Muestra los síntomas referidos por el paciente.
-4. Las 4 preguntas de signos de §3.3.
+**En cada mensaje entrante, antes de nada:** se comprueba el `secret_token`
+(§4.2) y luego el `chat_id` contra `profesionales` con `activo = true`. **No es
+un paso del flujo, es una condición de entrada**: un profesional dado de baja a
+mitad de conversación deja de pasar en el mensaje siguiente.
+
+1. Saludo → pide el código.
+2. Busca en `cuestionarios` comprobando `expira_en`. Guarda `codigo` en la
+   sesión.
+3. Muestra los síntomas referidos, con "asma: no sabe" si aplica.
+4. Las 4 preguntas de signos de §4.4, guardando cada una en la sesión.
 5. Pide la radiografía, advirtiendo que debe ir **como archivo**.
-6. Descarga el fichero de Telegram, lo codifica en base64 y llama al copiloto
-   (§7).
-7. Responde con **dos bloques separados**:
+6. Descarga de Telegram, base64, llamada al copiloto (§10).
+7. Responde según §8.
+8. Escribe la fila de `consultas` —con la **copia** de los síntomas (D12)— y
+   borra la sesión.
 
-   > **Imagen** — opacidad probable (probabilidad calibrada 0,85; razón de
-   > verosimilitud 19,2)
-   > **Síntomas referidos** — fiebre sí, tos con flema, 5 días, sin asma
-   > **Signos** — 38,2 °C, 104 lpm, crepitantes sí
-   >
-   > *La combinación de ambos llega en la siguiente entrega. Esto no es un
-   > diagnóstico.*
-
-8. Se registra la consulta, con resultado o con error.
-
-El orden es estricto. `/reiniciar` vuelve al paso 2.
+`/reiniciar` borra la sesión y vuelve al paso 1.
 
 ---
 
-## 7. Integración con el copiloto
+## 8. Cómo se presenta el resultado
+
+**Esta sección existe porque el primer borrador ponía la etiqueta y la razón de
+verosimilitud en el mismo renglón, y se contradicen.**
+
+La etiqueta sale de `probabilidad_cruda >= 0,4258`, un punto elegido sobre la
+ROC de las puntuaciones crudas para conseguir recall 0,88 con especificidad
+0,70. La probabilidad calibrada y la RV salen de la curva isotónica, que es otra
+escala. En `cruda ∈ [0,4258 ; 0,5786]` **la etiqueta es positiva y la RV es
+menor que 1**: el cribado marca la placa, y la evidencia bayesiana *baja* las
+probabilidades a favor de neumonía. Las dos cosas son correctas y miden cosas
+distintas.
+
+**Regla:** nunca van en el mismo renglón. El mensaje tiene **tres bloques
+rotulados**:
+
+> **Cribado** — opacidad probable
+> *(puntuación 0,98 ≥ umbral 0,4258; punto orientado a detectar, sens. 0,88 /
+> esp. 0,70)*
+>
+> **Evidencia de la imagen** — multiplica por **19,2** las probabilidades a
+> favor de neumonía *(probabilidad calibrada 0,85)*
+>
+> **Referido por el paciente** — fiebre sí, tos con flema, 3 a 7 días, sin asma
+> **Explorado** — 38,2 °C, 104 lpm, crepitantes sí, murmullo normal
+>
+> *La combinación de imagen y clínica llega en la siguiente entrega. Esto no es
+> un diagnóstico.*
+
+**Cuando la etiqueta es positiva y la RV es menor que 1**, el bloque de
+evidencia lo dice de forma explícita:
+
+> **Evidencia de la imagen** — **reduce** a **0,59×** las probabilidades a favor
+> de neumonía *(probabilidad calibrada 0,14)*.
+> ⚠️ El cribado marca esta placa por estar orientado a detectar, pero la imagen
+> en sí no apoya el diagnóstico. Decide la clínica.
+
+**Cuando la etiqueta es negativa** se usan los mismos tres bloques con
+"sin opacidad probable" y la RV correspondiente. La plantilla es una sola; solo
+cambian los valores y el aviso.
+
+**Formato:** los números se muestran con la precisión de arriba —probabilidades
+con dos decimales, RV con uno o dos—, y el mensaje se manda con `parse_mode:
+MarkdownV2` **escapando** todo lo que venga de datos, o con `parse_mode` vacío
+si el texto libre del paciente está presente (§4.4).
+
+---
+
+## 9. Errores
+
+| Situación | Código registrado | Qué dice el bot | Estado después |
+| :--- | :--- | :--- | :--- |
+| Envía **foto** en vez de archivo | `envio_como_foto` | "Telegram recomprime las fotos y destruye el DICOM. Envíela como archivo." | **se queda en el paso 5**, esperando el archivo |
+| No es un DICOM legible | `dicom_invalido` | relata el detalle del servidor | se queda en el paso 5 |
+| **Edad fuera de 18-100** | `fuera_de_alcance` | el detalle del servidor, **sin ninguna cifra de probabilidad** | **termina**: se registra y se borra la sesión |
+| La cabecera no declara edad | `edad_desconocida` | el detalle del servidor, **sin ninguna cifra** | termina |
+| Base64 mal formado | `base64_invalido` | "No pude leer el archivo. Vuelva a enviarlo." | se queda en el paso 5 |
+| Más de 5 MB (respuesta MCP) | `payload_excesivo` | "El archivo supera los 5 MB." | se queda en el paso 5 |
+| **HTTP 413** del transporte (§10.4) | `payload_excesivo_transporte` | mismo mensaje | se queda en el paso 5 |
+| Código inexistente o caducado | `codigo_invalido` | "Ese código no existe o caducó. Pida al paciente que repita el cuestionario." | se queda en el paso 2 |
+| Fichero de Telegram > 20 MB | `fichero_no_descargable` | "Telegram no me deja descargar archivos de más de 20 MB." | se queda en el paso 5 |
+| Timeout o error de red | `copiloto_no_responde` | "El servicio de imagen no está disponible. Inténtelo en unos minutos." | se queda en el paso 5 |
+| `isError` con un código desconocido | `error_no_reconocido` | "El servicio devolvió un error que no sé interpretar. Se ha registrado." | termina, y el texto íntegro va a `consultas.error` |
+
+**Ninguna rama de error emite una cifra de probabilidad.** El rechazo por edad
+es una **decisión clínica del sistema**, no un fallo técnico, y debe llegar como
+tal: si se filtrara un número junto al rechazo, alguien lo usaría.
+
+El mensaje que se muestra sale de **relatar el detalle del servidor** tras
+quitarle el prefijo del SDK y el código (§10.3). No se reconstruye la frase ni
+se interpola la edad por nuestra cuenta: la edad no viene en ningún campo
+estructurado cuando hay error, solo dentro del texto.
+
+---
+
+## 10. Integración con el copiloto
 
 **Verificado contra el contenedor real el 24-sep-2026.**
 
-Un nodo HTTP Request, sin AI Agent y sin nodo MCP Client Tool. El nodo *MCP
-Client Tool* de n8n exige un AI Agent, y eso obligaría al modelo a **emitir**
-~175 KB de base64 literal, que no funciona.
+Un nodo HTTP Request, sin AI Agent y sin nodo MCP Client Tool: ese nodo exige un
+AI Agent, y obligaría al modelo a **emitir** ~175 KB de base64 literal.
 
-**Petición:**
+### 10.1. Petición
 
 ```
 POST http://copiloto-mcp:8000/mcp
@@ -265,151 +495,283 @@ Accept: application/json, text/event-stream
            "arguments":{"dicom_base64":"<base64 por expresión de n8n>"}}}
 ```
 
-No hace falta el saludo `initialize`: el servidor se construye con
-`stateless_http=True` y atiende un `tools/call` suelto. Comprobado.
+No hace falta el saludo `initialize`: el servidor es `stateless_http=True`.
+Comprobado. El base64 **puede ir envuelto** (LF o CRLF): el servidor quita los
+espacios. Comprobado.
 
-El base64 **puede ir envuelto en líneas**: el servidor quita espacios y saltos
-antes de descodificar. Comprobado con LF y con CRLF, resultados idénticos al
-plano.
+En el nodo HTTP Request: **Response Format = `Text`**, no `JSON`, porque la
+respuesta es SSE y un parseo automático fallaría. **Timeout 30 000 ms.**
+**Un solo reintento** ante error de red, nunca ante una respuesta con `isError`.
+La fila de `consultas` se escribe **una sola vez**, con el desenlace final, para
+que el dashboard no cuente dos veces la misma consulta.
 
-**Respuesta:** llega como evento SSE. El JSON está en la línea `data:`, no
-suelto:
+### 10.2. Respuesta correcta
+
+Llega como evento SSE; el JSON está en la línea `data:`, no suelto:
 
 ```
 event: message
 data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"<json>"}],"structuredContent":{...},"isError":false}}
 ```
 
-Se lee de `result.structuredContent`, que trae las claves ya tipadas. Campos:
-`probabilidad_cruda`, `probabilidad_calibrada`, `razon_de_verosimilitud`,
-`umbral`, `clasificacion`, `edad_paciente`, `modelo`, `auc_validacion`,
-`milisegundos`.
+Se lee de `result.structuredContent`. Campos: `probabilidad_cruda`,
+`probabilidad_calibrada`, `razon_de_verosimilitud`, `umbral`, `clasificacion`,
+`edad_paciente`, `modelo`, `auc_validacion`, `milisegundos`.
 
-**Errores:** `result.isError` es `true` y el texto viene en
-`result.content[0].text`, con el prefijo que antepone el SDK:
+Si `structuredContent` no viniera, se cae a parsear `result.content[0].text`,
+que lleva el mismo JSON como texto.
+
+### 10.3. Errores del servidor
+
+`result.isError` es `true` y el texto está en `result.content[0].text` con el
+prefijo que antepone el SDK:
 
 ```
 Error executing tool clasificar_radiografia: fuera_de_alcance: El paciente tiene 12 anios y el modelo solo es valido entre 18 y 100.
 ```
 
-El código de error es el **segundo** campo. Se busca **dentro** del texto; NO se
+El código es el **segundo** campo. Se busca **dentro** del texto; **NO** se
 parte por el primer `:`, que devolvería `Error executing tool
-clasificar_radiografia`.
+clasificar_radiografia`. El detalle que se muestra al profesional es lo que
+queda tras el segundo `:`.
 
-**La razón de verosimilitud viene acotada** a `[0,0163 ; 77,32]` por diseño de
-SP2. SP4 debe saberlo: la evidencia de imagen puede mover la probabilidad previa
-pero no anularla ni volverla certeza.
+### 10.4. Los dos límites de tamaño, que no son el mismo
+
+| Tamaño del DICOM | Qué pasa |
+| ---: | :--- |
+| hasta 5 MiB | funciona |
+| 5 MiB a ~5,3 MiB | el **tool** responde `payload_excesivo` dentro de un SSE normal |
+| más de ~5,3 MiB | el **transporte** corta antes: **HTTP 413**, sin SSE y sin JSON-RPC |
+| más de 20 MB | Telegram no deja ni descargarlo |
+
+El flujo debe tratar **las tres** ramas. El primer borrador solo contemplaba la
+primera, y una respuesta 413 habría caído en el camino de éxito y reventado al
+buscar `data:`.
+
+**Cualquier respuesta HTTP que no sea 200 con un cuerpo SSE** se trata como
+error, se registra con su código de §9 y no se intenta parsear.
+
+En la práctica los DICOM de RSNA tienen 131 KB de mediana, así que nada de esto
+debería activarse: está aquí para que, si se activa, el bot diga algo cierto.
+
+### 10.5. La razón de verosimilitud viene acotada
+
+A `[0,0163 ; 77,32]` por diseño de SP2. La imagen puede mover la probabilidad
+previa pero no anularla ni volverla certeza. **Esas cotas dependen del
+calibrador desplegado**: si se reentrena el modelo, cambian, y §8 y §16 hay que
+revisarlos. No son constantes universales.
 
 ---
 
-## 8. Errores
+## 11. Alta y baja de profesionales
 
-| Situación | Código | Qué dice el bot |
+El primer borrador definía la tabla y la comprobación pero **no cómo entra una
+fila**, que es lo único que hace que D6 exista.
+
+**Alta:** manual, por el responsable del proyecto, con una sentencia SQL
+ejecutada contra `copiloto-bd`. Para un piloto con un grupo conocido es lo más
+simple que de verdad protege: no hay flujo de registro que atacar.
+
+```sql
+INSERT INTO profesionales (chat_id, nombre) VALUES (123456789, 'Dra. Apellido');
+```
+
+El `chat_id` se obtiene pidiéndole al clínico que escriba `/start` al bot: aunque
+no esté autorizado, el flujo **registra el intento** (`consultas.error =
+'no_autorizado'` con su `chat_id`) y de ahí se lee.
+
+**Baja:** `UPDATE profesionales SET activo = false, baja_en = now(), nombre =
+'(dado de baja)' WHERE chat_id = ...`. Surte efecto en el mensaje siguiente,
+porque la comprobación es por mensaje (§7).
+
+---
+
+## 12. Secretos
+
+| Secreto | Dónde vive | Si se filtra |
 | :--- | :--- | :--- |
-| Envía **foto** en vez de archivo | — | "Telegram recomprime las fotos y destruye el DICOM. Envíela como archivo." |
-| No es un DICOM legible | `dicom_invalido` | "Ese archivo no es una radiografía DICOM legible." |
-| **Paciente menor de 18 o mayor de 100** | `fuera_de_alcance` | "Este copiloto se validó solo en adultos (18-100). No voy a dar un resultado sobre un paciente de N años." **Y ninguna cifra.** |
-| La cabecera no declara edad | `edad_desconocida` | "La cabecera DICOM no declara una edad interpretable." **Y ninguna cifra.** |
-| Base64 mal formado | `base64_invalido` | "No pude leer el archivo. Vuelva a enviarlo." |
-| Más de 5 MB | `payload_excesivo` | "El archivo supera los 5 MB." |
-| Código inexistente o caducado | — | "Ese código no existe o caducó. Pida al paciente que repita el cuestionario." |
-| El copiloto no responde | — | "El servicio de imagen no está disponible. Inténtelo en unos minutos." |
+| Token del bot del paciente | credencial de n8n | revocar en BotFather, crear otro, actualizar la credencial |
+| Token del bot del profesional | credencial de n8n | igual |
+| `secret_token` del webhook (§4.2) | credencial de n8n | rotarlo y volver a llamar a `setWebhook` |
+| Contraseña de `copiloto-bd` | variable de entorno del compose, en un `.env` del VPS | rotar y recrear el contenedor |
+| Contraseña del dashboard | credencial de n8n | rotar |
 
-**El rechazo por edad es una decisión clínica del sistema, no un fallo
-técnico.** Debe llegar al profesional como tal, y **ninguna rama de error puede
-emitir una cifra**: si se filtrara un número junto al rechazo, alguien lo usaría.
-
-Todos los rechazos se registran en `consultas.error`.
+**Ninguno va al repositorio.** El `.env` del VPS está en `.gitignore`. El
+`docker-compose.yml` versionado referencia variables, nunca valores.
 
 ---
 
-## 9. Pruebas
+## 13. Pruebas
 
-El enfoque A pone la lógica en workflows de n8n, no en código con pytest. Esto
-es lo que lo compensa, y es más de lo que parecía: n8n 2.35.4 soporta el marco
-de evaluaciones completo (leer ≥ 2.30, ejecutar ≥ 2.32).
-
-**Un Telegram Trigger es un webhook.** Se le puede hacer POST de un `update` de
-Telegram fabricado —un `/start`, una pulsación de botón, un documento— ejecutar
-el flujo de verdad, y **afirmar sobre la base de datos**.
+D7 pone la lógica en workflows, no en código con pytest. Esto es lo que lo
+compensa: n8n 2.35.4 soporta el marco de evaluaciones completo, y **un Telegram
+Trigger es un webhook** al que se le puede hacer POST de un `update` fabricado
+para ejecutar el flujo de verdad y **afirmar sobre la base de datos**.
 
 | Superficie | Cómo se prueba |
 | :--- | :--- |
-| Máquina de estados del cuestionario | POST de updates sintéticos, aserción sobre `sesiones_paciente` y `cuestionarios` |
-| Lista blanca | update con `chat_id` no autorizado → no deja rastro y no llama al copiloto |
-| Las 8 ramas de error de §8 | update fabricado por rama, aserción sobre `consultas.error` y sobre la ausencia de cifras |
-| Traducción de errores MCP | igual, con el DICOM de un menor real del conjunto de prueba |
-| Contrato con el copiloto (§7) | pytest en este repo contra el contenedor: forma del SSE, claves, prefijo del error |
-| SQL de borrado y del código | pytest contra una PostgreSQL efímera |
-| Que los botones se vean bien | **manual**, con guion escrito |
+| Máquina de estados del paciente | updates sintéticos → aserción sobre `sesiones_paciente` y `cuestionarios` |
+| Consentimiento | *No acepto* → **cero filas** en cualquier tabla |
+| Máquina de estados del profesional | igual, sobre `sesiones_profesional` |
+| **Dos profesionales a la vez** | dos conversaciones solapadas → los signos **no se cruzan** |
+| `secret_token` | update sin la cabecera → se descarta sin tocar nada |
+| Lista blanca | `chat_id` no autorizado → no llega al copiloto; y dar de baja a mitad de conversación corta en el mensaje siguiente |
+| Las 11 ramas de §9 | una por rama → aserción sobre `consultas.error` **y sobre la ausencia de cifras en el mensaje** |
+| §8, banda contradictoria | un DICOM con `cruda ∈ [0,4258 ; 0,5786]` → el mensaje lleva el aviso y no pega etiqueta y RV |
+| Contrato con el copiloto (§10) | pytest contra el contenedor: SSE, claves, prefijo del error, los tres límites |
+| SQL de borrado, código y contadores | pytest contra una PostgreSQL efímera |
+| Que el flujo del paciente no toque el copiloto | **revisión del JSON exportado**: ninguna URL del copiloto |
+| Que los botones se vean bien | manual, con guion escrito |
 
-Las pruebas son **de integración contra un n8n vivo**: más lentas que las
-unitarias, con un bot y un `chat_id` de prueba, y mandan mensajes de Telegram de
-verdad. Ese es el coste real de D7, y es menor de lo que parecía.
+Las pruebas son **de integración contra un n8n vivo**: más lentas, con un bot y
+un `chat_id` de prueba, y mandan mensajes de Telegram de verdad.
 
-Los dos workflows se **exportan a `n8n/` en este repo** en cada cambio. El diff
-de un JSON de nodos se lee mal, pero deja historial, revisión y de dónde
-restaurar.
+**Contra qué instancia.** Las pruebas corren contra los **mismos workflows** del
+n8n del cliente pero con el **bot de prueba** y una base de datos de prueba
+(`copiloto-bd`, esquema `pruebas`). No se crea una segunda instancia de n8n. Las
+ejecuciones de prueba quedan en el historial del cliente: se acuerda con él
+(§17) y se limita el volumen.
+
+**Exportación:** los dos workflows y el de mantenimiento se exportan a `n8n/` de
+este repo con `n8n_get_workflow` por su ID, **uno a uno y solo los nuestros**,
+en cada cambio. Nunca un volcado completo de la instancia.
 
 ---
 
-## 10. Reglas duras
+## 14. Reglas duras
 
 1. **No se modifica ningún workflow existente** del cliente. Los nuestros son
-   nuevos y llevan el prefijo `🩺 Copiloto Triaje:`.
+   nuevos y llevan el prefijo `🩺 Copiloto Triaje:`, **los tres**.
 2. **No se reutiliza ninguna credencial de Telegram existente** (D9).
-3. **No se crea ni se borra la red** `[retirado]_[retirado]_network`, ni se tocan sus
-   otros contenedores.
+3. **No se crea ni se borra** `[retirado]_[retirado]_network`, ni se tocan sus otros
+   contenedores.
 4. **No se toca `copiloto-mcp`.** Si SP3 necesitara algo del servidor, se para y
    se decide: es otro sub-proyecto con su propia revisión.
-5. `copiloto-bd` **no publica puertos**.
-6. Ningún dato de paciente sale del VPS.
+5. `copiloto-bd` **no publica puertos**, y su contraseña no es la de ninguna otra
+   base de datos de la máquina. *No publicar puertos no es aislamiento*: los
+   otros 24 contenedores comparten la red y podrían alcanzarla por nombre. La
+   contraseña es lo que protege.
+6. **Ningún dato de paciente sale del VPS** hacia un tercero. Matiz honesto: los
+   datos **sí pasan por n8n**, que es del cliente y vive en la misma máquina
+   (§5.4); y el paciente los escribe **en Telegram**, que es un servicio externo
+   fuera de nuestro control. La regla es sobre lo que *nosotros* enviamos.
+7. **No se cambia la configuración global de n8n**, solo la de nuestros
+   workflows.
 
 ---
 
-## 11. Dashboard (después de H5)
+## 15. Dashboard (después de H5)
 
-Un workflow: **Webhook con autenticación básica** → consultas SQL → HTML. Sin
-contenedor nuevo, sin framework.
+Un workflow: **Webhook con autenticación básica** → consultas SQL → HTML.
 
-| Bloque | Para qué |
+| Bloque | De dónde sale |
 | :--- | :--- |
-| Consultas por día, últimos 30 | ¿se usa? |
-| Cuestionarios iniciados vs completados | el abandono mide si el cuestionario es largo |
-| Distribución de clasificaciones | ¿cuántas opacidades probables? |
-| Rechazos por código | salud operativa: si `dicom_invalido` sube, algo pasa con cómo mandan las placas |
-| Latencia p50/p95 | vigila el presupuesto de 4 s en producción |
-| Consultas por profesional | de cara a H7 |
+| Consultas por día, últimos 30 | `consultas`, agrupado en `America/Guayaquil` |
+| Iniciados vs completados | `cuestionarios_iniciados` contra `consultas` |
+| Distribución de clasificaciones | `resultado->>'clasificacion'` |
+| **Casos en la banda contradictoria** | `resultado` con `cruda` en `[0,4258 ; 0,5786]` — cuántas veces el cribado y la evidencia discreparon |
+| Rechazos por código | `consultas.error` |
+| Latencia p50/p95 | `ms_extremo` (extremo a extremo) y `resultado->>'milisegundos'` (solo el modelo) |
+| Consultas por profesional | `consultas.chat_id` contra `profesionales` |
 
 Solo lo ven las dos personas del equipo, con contraseña. **Ningún código
-seudónimo ni respuesta individual aparece**: si la contraseña se aflojara, lo
-que se filtra son recuentos.
+seudónimo, ninguna respuesta individual y ningún texto libre aparece**: si la
+contraseña se aflojara, lo que se filtra son recuentos.
 
 ---
 
-## 12. Riesgos abiertos
+## 16. Observabilidad
+
+Un sistema que se cae en silencio no sirve. El workflow de mantenimiento, además
+de limpiar, comprueba a diario y **avisa por Telegram al equipo** si:
+
+- `copiloto-mcp` no responde a `/salud`;
+- `copiloto-bd` no acepta conexiones;
+- alguno de los tres workflows quedó **desactivado**;
+- la tasa de `dicom_invalido` de los últimos 7 días supera el 20 % (algo pasa
+  con cómo mandan las placas);
+- hay cuestionarios caducados sin borrar (la limpieza falló).
+
+---
+
+## 17. Acuerdo con el cliente
+
+SP3 instala en la máquina de un tercero un contenedor con estado, una base de
+datos, tres workflows y **dos webhooks públicos**, y le mete tráfico de internet.
+Antes de meter datos reales hay que acordar con el cliente, como mínimo: que se
+añade un contenedor y cuánto consume; que entrarán ejecuciones nuevas en su
+historial de n8n; que los webhooks pasan por su nginx; y la retención de
+ejecuciones de §5.4.
+
+**Retirada:** `docker compose -p copiloto-mcp down`, borrar el volumen de
+`copiloto-bd`, desactivar y archivar los tres workflows, borrar sus credenciales
+y revocar los dos bots en BotFather. Escrito aquí para que exista antes de
+necesitarlo.
+
+---
+
+## 18. Deuda declarada
+
+| Deuda | Cuándo se salda |
+| :--- | :--- |
+| Anotar en el "Registro de cambios" de la Semana 1 que no hay LLM (§4.5) | al cerrar H5 |
+| Decidir qué pasa con `consultas` al cerrar el proyecto | antes de H8 |
+| H6 debe definir el tratamiento de `asma = no_se` (§4.4) | H6 |
+| Si n8n no deja desactivar el guardado de ejecuciones por workflow (§5.4) | antes de datos reales |
+| Las cotas de la RV de §10.5 son literales; cambian si se reentrena | al reentrenar |
+| Revalidar con el clínico que el DICOM se obtiene del PACS | antes de H7 |
+
+---
+
+## 19. Riesgos abiertos
 
 | Riesgo | Mitigación |
 | :--- | :--- |
-| El profesional no consigue el DICOM del PACS en la práctica | Confirmado por el responsable: sí lo consigue. Revalidar con el clínico antes de H7 |
-| Las pruebas de integración mandan mensajes reales de Telegram | Bot y `chat_id` dedicados de prueba, nunca los de producción |
-| El cuestionario resulta largo y los pacientes abandonan | El dashboard lo mide; acortar es barato una vez hay datos |
-| Un despliegue del cliente reinicia n8n a mitad de una conversación | El estado vive en PostgreSQL, no en memoria: la conversación se reanuda |
-| `consultas` sin política de cierre | Decisión explícita antes de H8 (§4.3) |
+| Un update forjado se hace pasar por Telegram | `secret_token` obligatorio (§4.2) |
+| Dos profesionales a la vez cruzan datos de pacientes | `sesiones_profesional` con `chat_id` como clave, y prueba dedicada (§13) |
+| El cribado y la evidencia se contradicen y confunden | §8 lo hace explícito en el propio mensaje, y el dashboard lo cuenta |
+| Las pruebas mandan mensajes reales de Telegram | bot y `chat_id` dedicados, nunca los de producción |
+| Un despliegue del cliente reinicia n8n a mitad de conversación | el estado vive en PostgreSQL: se reanuda |
+| El cuestionario resulta largo y los pacientes abandonan | `cuestionarios_iniciados` lo mide; acortar es barato |
+| El paciente no llega nunca al bot | **no resuelto**: no hay plan de difusión. Es de producto, no técnico, y bloquea la validación de H7 |
 
 ---
 
-## 13. Criterios de aceptación de H5
+## 20. Entregables
 
-1. Un paciente completa el cuestionario en Telegram y recibe un código.
-2. Un profesional **no autorizado** recibe "no autorizado" y **no** llega al
-   copiloto.
-3. Un profesional autorizado presenta el código, aporta los signos, envía un
-   DICOM real de adulto y recibe el resultado del modelo **con los bloques
-   separados**.
-4. Una placa de un paciente **menor de 18** produce el rechazo clínico
-   explicado, **sin ninguna cifra**, y queda registrada en `consultas.error`.
-5. Una imagen enviada **como foto** produce la explicación de por qué no sirve.
-6. Los cuestionarios caducados desaparecen de la base de datos.
-7. Ningún workflow ni contenedor existente del cliente cambió de estado.
-8. Los dos workflows están exportados en `n8n/` de este repo.
+| Artefacto | Dónde |
+| :--- | :--- |
+| `n8n/copiloto-paciente.json` | este repo |
+| `n8n/copiloto-profesional.json` | este repo |
+| `n8n/copiloto-mantenimiento.json` | este repo |
+| `servidor/docker-compose.yml` actualizado con `copiloto-bd` | este repo |
+| `bd/esquema.sql` | este repo |
+| `tests/test_contrato_mcp.py` y `tests/test_bd_sp3.py` | este repo |
+| `docs/sp3-operacion.md` — alta de profesionales, guion manual, retirada | este repo |
+| Registro del cambio en el documento maestro de la Semana 1 | `Proyecto Integrador/Semana 1/` |
+
+---
+
+## 21. Criterios de aceptación de H5
+
+1. Un paciente que **no acepta** el consentimiento no deja **ninguna fila** en
+   ninguna tabla.
+2. Un paciente que acepta completa el cuestionario y recibe un código.
+3. Un update **sin `secret_token` válido** se descarta sin tocar nada.
+4. Un `chat_id` **no autorizado** recibe "no autorizado", **no** llega al
+   copiloto, y queda registrado el intento.
+5. Un profesional autorizado presenta el código, aporta los signos, envía un
+   DICOM real de adulto y recibe los **tres bloques** de §8.
+6. Un DICOM con `cruda` en la **banda contradictoria** produce el aviso explícito
+   de §8.
+7. Una placa de un paciente **menor de 18** produce el rechazo clínico
+   explicado, **sin ninguna cifra**, y queda en `consultas.error`.
+8. Una imagen enviada **como foto** produce la explicación, y la conversación
+   **sigue esperando el archivo**.
+9. **Dos profesionales conversando a la vez** no cruzan sus signos.
+10. Los cuestionarios caducados desaparecen; `consultas` conserva la copia de
+    los síntomas de los casos consultados.
+11. Ningún workflow ni contenedor existente del cliente cambió de estado —
+    comprobado con la foto de `docker ps` y la lista de workflows de antes y
+    después, como se hizo en SP2.
+12. Los tres workflows están exportados en `n8n/` de este repo.
