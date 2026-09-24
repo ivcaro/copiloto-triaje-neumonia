@@ -85,17 +85,25 @@ Tres capas con una responsabilidad cada una:
 
 | Capa | Dónde vive | Responsabilidad |
 | :--- | :--- | :--- |
+| **Calibración** | `src/copiloto_triaje/servicio/calibracion.py` | salida cruda → probabilidad calibrada y razón de verosimilitud |
 | **Núcleo** | `src/copiloto_triaje/servicio/inferencia.py` | bytes de DICOM → resultado. No sabe de HTTP, MCP ni Docker |
-| **Puerta MCP** | `src/copiloto_triaje/servicio/mcp.py` | expone `clasificar_radiografia` sobre HTTP; DICOM en base64 |
-| **Puerta REST** | `src/copiloto_triaje/servicio/rest.py` | `POST /inferir` multipart y `GET /salud` |
+| **Las dos puertas** | `src/copiloto_triaje/servicio/aplicacion.py` | monta MCP (`clasificar_radiografia`, DICOM en base64) y REST (`POST /inferir` multipart, `GET /salud`) sobre el mismo núcleo |
+
+Las dos puertas viven en **un solo módulo y un solo proceso**, no en un
+`mcp.py` y un `rest.py` separados. La razón es el `lifespan`: la aplicación de
+MCP trae un gestor de sesiones que hay que arrancar, y el FastAPI que sirve REST
+tiene que ceder su `lifespan` al de MCP para montarlo. Repartir eso entre dos
+módulos obligaría a que uno importara al otro solo para cederle el ciclo de
+vida, que es la misma dependencia de siempre con un fichero más. Un módulo que
+construye las dos y las devuelve montadas deja el acoplamiento a la vista.
 
 Las tres capas viven **dentro del paquete**, y en `servidor/` solo quedan los
-artefactos de despliegue (Dockerfile y compose). La razón es la prueba de
-equivalencia de §9: comparar lo que devuelven las dos puertas exige importarlas,
-y desde una carpeta suelta fuera del paquete no se puede sin trucos de
-`sys.path`. Las dos son envoltorios delgados sobre la misma función del núcleo,
-que es lo único que impide que el respaldo REST y el camino MCP digan cosas
-distintas sobre la misma radiografía.
+artefactos de despliegue (Dockerfile, compose y el punto de entrada). La razón
+es la prueba de equivalencia de §9: comparar lo que devuelven las dos puertas
+exige importarlas, y desde una carpeta suelta fuera del paquete no se puede sin
+trucos de `sys.path`. Las dos son envoltorios delgados sobre la misma función
+del núcleo, que es lo único que impide que el respaldo REST y el camino MCP
+digan cosas distintas sobre la misma radiografía.
 
 ## 6. El contrato
 
@@ -144,6 +152,13 @@ de verosimilitud se deriva de la probabilidad calibrada y de la prevalencia:
 
 `RV = [p/(1-p)] / [0.2215/(1-0.2215)]`
 
+La RV está **acotada** por los extremos sostenidos de la curva de calibración,
+no por una constante cerca de 0 y de 1: la isotónica satura en 0,0 y en 1,0 en
+un solo punto de cada extremo, donde el tramo ya no tiene contraejemplos, y
+esos dos valores son un artefacto y no una medición. Dejarlos pasar daría
+RV de 3,5e-06 y 3,5e+06, y SP4 los multiplicaría por las *odds* clínicas.
+Los valores concretos de este calibrador están en `docs/sp2-despliegue.md` §9.
+
 ### 6.2 El umbral y la frontera
 
 `umbral` y `clasificacion` se incluyen para que n8n pueda redactar en lenguaje
@@ -159,14 +174,14 @@ código.
 El servidor falla ruidosamente y con un motivo accionable. **Nunca devuelve un
 número dudoso.**
 
-Por MCP, los errores se lanzan como  del SDK y **no** como
-: en MCP 2.x una excepción que no sea  se trata como un
+Por MCP, los errores se lanzan como `ToolError` del SDK y **no** como
+`ValueError`: en MCP 2.x una excepción que no sea `ToolError` se trata como un
 fallo inesperado y **el SDK descarta su mensaje**, de modo que un paciente
 fuera de rango, un base64 ilegible y un fichero corrupto llegarían al cliente
 como el mismo texto. Verificado levantando el servidor y llamándolo con el
-cliente oficial. El SDK antepone  al mensaje,
-así que el código queda como **segundo** campo: quien lo consuma debe buscar el
-código dentro del texto, no partir por el primer .
+cliente oficial. El SDK antepone `Error executing tool clasificar_radiografia: `
+al mensaje, así que el código queda como **segundo** campo: quien lo consuma
+debe buscar el código dentro del texto, no partir por el primer `:`.
 
 | Caso | Código | Detalle |
 | :--- | :--- | :--- |
@@ -226,9 +241,12 @@ producción sin que ninguna prueba falle.
 
 ## 11. Entregables de SP2
 
-1. `src/copiloto_triaje/servicio/inferencia.py` — el núcleo, con pruebas.
-2. `src/copiloto_triaje/servicio/mcp.py` y `.../rest.py` — las dos puertas.
-3. `servidor/Dockerfile` y `servidor/docker-compose.yml`.
+1. `src/copiloto_triaje/servicio/inferencia.py` — el núcleo, con pruebas, y
+   `.../calibracion.py` — la calibración y la razón de verosimilitud.
+2. `src/copiloto_triaje/servicio/aplicacion.py` — las dos puertas, montadas en
+   un solo proceso (ver §5).
+3. `servidor/Dockerfile`, `servidor/docker-compose.yml` y
+   `servidor/arrancar.py`.
 4. `scripts/ajustar_calibrador.py` y el `calibrador.json` que produce,
    versionado en el repositorio.
 5. `docs/sp2-despliegue.md` — cómo levantarlo desde cero, para la prueba
