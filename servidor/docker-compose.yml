@@ -57,6 +57,44 @@ services:
     networks:
       - [retirado]_network
 
+  copiloto-bd:
+    # Por digest y no por `postgres:16-alpine`: esa etiqueta es de un tercero y
+    # se mueve con cada parche de Postgres/Alpine, asi que un redespliegue
+    # rutinario en la maquina del cliente podria traer otra version de
+    # PostgreSQL por sorpresa, sobre un volumen que ya tiene datos. Para
+    # actualizar a proposito:
+    #   docker pull postgres:16-alpine
+    #   docker inspect postgres:16-alpine --format '{{index .RepoDigests 0}}'
+    image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+    container_name: copiloto-bd
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: copiloto
+      POSTGRES_USER: copiloto
+      # Sin valor por defecto a proposito: si falta, el arranque falla de forma
+      # visible en vez de levantar una base con una contrasena conocida.
+      POSTGRES_PASSWORD: ${COPILOTO_BD_PASSWORD:?hay que declararla en .env}
+    volumes:
+      - copiloto_bd_datos:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U copiloto -d copiloto"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - [retirado]_network
+
 networks:
   [retirado]_network:
     external: true
@@ -64,3 +102,6 @@ networks:
     # servicio solo se une a ella: asi n8n lo alcanza por nombre de servicio y
     # la radiografia no sale de la maquina.
     name: ${RED_N8N:-[retirado]_[retirado]_network}
+
+volumes:
+  copiloto_bd_datos:

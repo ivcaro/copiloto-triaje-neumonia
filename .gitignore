@@ -40,3 +40,10 @@ desktop.ini
 # Los pesos del modelo viajan DENTRO de la imagen Docker, no en el repo
 # (16 MB binarios). El calibrador.json de al lado si se versiona.
 servidor/pesos_modelo_cpu.pt
+servidor/.env
+
+# Cache de puntuaciones crudas sobre PRUEBA: se regenera infiriendo con el
+# modelo desplegado, no es una fuente de verdad. El .sha256 de al lado es el
+# hash de los pesos con los que se genero, para invalidarla al reentrenar.
+pruebas/crudas_prueba.csv
+pruebas/crudas_prueba.sha256

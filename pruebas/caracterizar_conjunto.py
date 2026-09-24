@@ -15,38 +15,23 @@ import pathlib
 import sys
 
 import numpy as np
-import pandas as pd
-import torch
-from torch.utils.data import DataLoader
 
-REPO = pathlib.Path(r"C:\Users\[retirado]\OneDrive\Desktop\Claude\Proyecto Integrador\copiloto-triaje")
+REPO = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "src"))
 
-from copiloto_triaje.datos.dataset import DatasetRadiografias  # noqa: E402
-from copiloto_triaje.modelo.arquitectura import construir_modelo  # noqa: E402
 from copiloto_triaje.servicio.calibracion import Calibrador  # noqa: E402
+from pruebas.puntuaciones import puntuaciones_de_prueba  # noqa: E402
 
-RAIZ = pathlib.Path(r"C:\Users\[retirado]\datasets\rsna-pneumonia\trabajo")
 UMBRAL = 0.4258
 
 
 def main() -> int:
-    df = pd.read_csv(RAIZ / "manifiestos" / "test.csv")
-    conjunto = DatasetRadiografias(df, RAIZ / "png", 320, entrenamiento=False)
-    cargador = DataLoader(conjunto, batch_size=32, num_workers=4)
-
-    modelo = construir_modelo("efficientnet_b0", congelar_backbone=False,
-                              preentrenado=False)
-    modelo.load_state_dict(torch.load(
-        REPO / "servidor" / "pesos_modelo_cpu.pt",
-        map_location="cpu", weights_only=True))
-    modelo.eval()
-
-    crudas = []
-    with torch.no_grad():
-        for x, _ in cargador:
-            crudas.append(torch.sigmoid(modelo(x).view(-1)).numpy())
-    crudas = np.concatenate(crudas)
+    # La inferencia sobre las 3 811 imagenes de prueba vive en
+    # pruebas/puntuaciones.py, compartida con seleccionar_casos.py: una sola
+    # fuente de verdad para "que puntua el modelo desplegado sobre prueba".
+    df = puntuaciones_de_prueba()
+    crudas = df["cruda"].to_numpy()
     etiquetas = df["etiqueta"].to_numpy()
 
     cal = Calibrador.desde_json(REPO / "servidor" / "calibrador.json")
