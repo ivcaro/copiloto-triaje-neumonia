@@ -159,12 +159,22 @@ código.
 El servidor falla ruidosamente y con un motivo accionable. **Nunca devuelve un
 número dudoso.**
 
+Por MCP, los errores se lanzan como  del SDK y **no** como
+: en MCP 2.x una excepción que no sea  se trata como un
+fallo inesperado y **el SDK descarta su mensaje**, de modo que un paciente
+fuera de rango, un base64 ilegible y un fichero corrupto llegarían al cliente
+como el mismo texto. Verificado levantando el servidor y llamándolo con el
+cliente oficial. El SDK antepone  al mensaje,
+así que el código queda como **segundo** campo: quien lo consuma debe buscar el
+código dentro del texto, no partir por el primer .
+
 | Caso | Código | Detalle |
 | :--- | :--- | :--- |
 | El fichero no es un DICOM válido | `dicom_invalido` | incluye el motivo de pydicom |
 | `PatientAge` fuera de 18-100 | `fuera_de_alcance` | incluye la edad leída |
 | `PatientAge` ausente o ilegible | `edad_desconocida` | **no se asume adulto** |
-| Payload > 5 MB | `payload_excesivo` | rechazo antes de decodificar |
+| Payload > 5 MB | `payload_excesivo` | el transporte de MCP corta muy por encima como red de seguridad, pero el umbral del producto se comprueba sobre los bytes YA DECODIFICADOS, para que las dos puertas rechacen el mismo tamanio |
+| base64 ilegible (solo MCP) | `base64_invalido` | antes de intentar leer el DICOM |
 | El modelo no cargó | `/salud` responde no-listo | el healthcheck del contenedor falla |
 
 `edad_desconocida` merece justificarse: dar por adulto a quien no declara edad
