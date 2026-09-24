@@ -264,18 +264,28 @@ async def test_el_transporte_deja_llegar_el_base64_envuelto_del_tamano_maximo(
 
     Se comprueba con un payload que se pasa del maximo por 1 KiB: tiene que
     llegar a la comprobacion del TOOL -y traer su codigo- y no morir antes.
+
+    Con LOS DOS saltos, y no solo con el que usa `base64.encodebytes`: el MIME
+    canonico corta con CRLF, que escapado cuesta el doble que LF. Presupuestar
+    solo LF dejaba abierta una banda residual de casi 85 KiB por la que el CRLF
+    seguia muriendo en el transporte. Sin este caso, ese agujero no lo veia
+    nadie.
     """
     excesivo = b"\x00" * (MAXIMO_BYTES + 1024)
-    envuelto = base64.encodebytes(excesivo).decode()
-    assert "\n" in envuelto
-    # El tamano que mide el transporte es el del CUERPO, donde cada salto de
-    # linea va escapado como dos caracteres dentro de la cadena JSON.
-    cuerpo = len(json.dumps(envuelto))
-    assert cuerpo < MAXIMO_CUERPO_MCP, (cuerpo, MAXIMO_CUERPO_MCP)
+    crudo = base64.b64encode(excesivo)
+    for salto in (b"\n", b"\r\n"):
+        envuelto = salto.join(
+            crudo[i:i + 76] for i in range(0, len(crudo), 76)).decode()
+        assert salto.decode() in envuelto
+        # El tamano que mide el transporte es el del CUERPO, donde cada salto de
+        # linea va escapado dentro de la cadena JSON: dos caracteres si es LF,
+        # cuatro si es CRLF.
+        cuerpo = len(json.dumps(envuelto))
+        assert cuerpo < MAXIMO_CUERPO_MCP, (salto, cuerpo, MAXIMO_CUERPO_MCP)
 
-    async with cliente_de(motor) as cliente:
-        respuesta = await _llamar_por_mcp(cliente, envuelto)
-    assert _codigo_del_error_mcp(respuesta) == "payload_excesivo"
+        async with cliente_de(motor) as cliente:
+            respuesta = await _llamar_por_mcp(cliente, envuelto)
+        assert _codigo_del_error_mcp(respuesta) == "payload_excesivo", salto
 
 
 @pytest.mark.asyncio

@@ -802,6 +802,8 @@ que falla y obliga a actualizar esta tabla en vez de dejarla mintiendo.
 Consecuencia práctica para SP4: la evidencia de imagen puede mover el previo
 clínico, pero no puede anularlo ni volverlo certeza. Eso es deliberado.
 
+### Cuando se niega: los códigos de rechazo
+
 Todo rechazo lleva un **código** legible por máquina, pero **dónde aparece
 depende de la puerta**, y esto importa para programar el cliente:
 
