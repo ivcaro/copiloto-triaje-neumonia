@@ -444,13 +444,9 @@ a nginx y a la API del cliente sin red común. Docker se niega a borrar una red
 con contenedores conectados, pero no si en ese momento están parados, así que la
 protección no es de fiar. Para eso está la variable.
 
-Si levantas con `RED_N8N=copiloto-local`, **todos** los comandos posteriores que
-mencionen la red —el `docker run --network ...` del paso 6— tienen que usar
-también `copiloto-local`. Ese comando está escrito con la misma variable, así que
-basta con exportarla en la sesión (`export RED_N8N=copiloto-local`) y no hay que
-sustituir nada a mano. Los comandos de **solo lectura** del paso 2, como
-`docker network inspect`, sí llevan el nombre literal: ahí lo que se teclea es el
-nombre real que acabas de ver en `docker network ls`.
+Recuerda que si levantas con `RED_N8N=copiloto-local`, **todos** los comandos
+posteriores que mencionen la red —el `docker run --network ...` del paso 6— usan
+también `copiloto-local`.
 
 ## 5. Construir la imagen
 
@@ -563,10 +559,16 @@ docker run --rm --network "${RED_N8N:-[retirado]_[retirado]_network}" python:3.1
 ```
 
 Es la **misma variable** con la que levantaste el compose, y por eso va aquí en
-vez del nombre literal: si arrancaste con `RED_N8N=copiloto-local`, este comando
-usa `copiloto-local` solo; si no la declaraste, cae al mismo nombre por defecto
-que el compose. Un literal aquí obligaría a editarlo a mano cada vez y dejaría
-que esta comprobación mirase una red distinta de la que se está usando.
+vez del nombre literal: si arrancaste con `RED_N8N=copiloto-local`, exporta la
+variable en esta sesión (`export RED_N8N=copiloto-local`) y el comando usa
+`copiloto-local` solo; si no la declaraste, cae al mismo nombre por defecto que
+el compose. Un literal aquí obligaría a editarlo a mano cada vez y dejaría que
+esta comprobación mirase una red distinta de la que se está usando —justo lo que
+esta comprobación existe para descartar.
+
+Los comandos de **solo lectura** del paso 2, como `docker network inspect`, sí
+llevan el nombre literal, y eso es a propósito: ahí lo que se teclea es el nombre
+real que acabas de leer en `docker network ls`.
 
 Si esto responde, el cableado de red está bien. Si da `Name or service not
 known`, los dos contenedores no están en la misma red.
