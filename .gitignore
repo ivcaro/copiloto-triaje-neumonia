@@ -36,3 +36,7 @@ kaggle.json
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Los pesos del modelo viajan DENTRO de la imagen Docker, no en el repo
+# (16 MB binarios). El calibrador.json de al lado si se versiona.
+servidor/pesos_modelo_cpu.pt

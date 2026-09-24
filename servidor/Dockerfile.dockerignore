@@ -1,0 +1,14 @@
+# El nombre NO es `.dockerignore`: el contexto de construccion es la raiz del
+# repo (`context: ..`), y ahi Docker solo lee un `.dockerignore` que este en la
+# RAIZ del contexto. Un `servidor/.dockerignore` se ignora en silencio -
+# comprobado: con el, `tests/` seguia entrando al contexto-. La forma soportada
+# de tener reglas propias por Dockerfile es `<ruta-del-dockerfile>.dockerignore`
+# junto al Dockerfile, que es este fichero.
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.git
+docs
+tests
+notebooks
+scripts
