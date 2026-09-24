@@ -53,6 +53,8 @@ Medidos, no recordados. Cada fila es una restricción que el diseño obedece.
 | :--- | :--- |
 | La etiqueta `clasificacion` se decide con `probabilidad_cruda >= 0,4258`; `probabilidad_calibrada` y `razon_de_verosimilitud` salen de la curva isotónica | **Son escalas distintas.** En `cruda ∈ [0,4258 ; 0,5786]` la etiqueta es positiva y la RV es menor que 1. Ver §8 |
 | La RV cruza 1,0 en `cruda = 0,5786` | Debajo de ahí la imagen **resta** probabilidades a favor de neumonía |
+| **379 de las 3 811 radiografías de prueba (9,9 %) caen en esa banda**, y son el **23,3 % de todo lo que el cribado etiqueta como `opacidad_probable`** | El aviso de §8 se dispara **una de cada cuatro veces** que hay un positivo. No es un caso raro: es el comportamiento habitual |
+| De esas 379, el **80,5 % no tenía opacidad** de verdad | La RV acierta y la etiqueta es la llamada conservadora del cribado. El aviso dice algo cierto y útil 4 de cada 5 veces |
 | La RV viene acotada a `[0,0163 ; 77,32]` | La imagen no puede anular ni volver certeza la clínica |
 | El servidor atiende un `tools/call` suelto (`stateless_http=True`) | No hace falta el saludo `initialize`: un solo nodo HTTP Request |
 | El base64 envuelto en líneas se acepta (LF y CRLF) | n8n puede codificar como quiera |
@@ -608,6 +610,45 @@ compensa: n8n 2.35.4 soporta el marco de evaluaciones completo, y **un Telegram
 Trigger es un webhook** al que se le puede hacer POST de un `update` fabricado
 para ejecutar el flujo de verdad y **afirmar sobre la base de datos**.
 
+### 13.1. Los casos salen del conjunto de prueba real, no de la imaginación
+
+Los casos límite **no se fabrican: están en los datos**. El conjunto de prueba
+de RSNA trae 3 811 radiografías reales con su edad y su etiqueta, y entre ellas
+hay 1 276 menores de edad, 5 pacientes con edades imposibles (148-155 años) y
+379 placas en la banda contradictoria de §8. Probar con eso encuentra lo que
+un caso sintético no: las 379 aparecieron **midiendo**, no razonando.
+
+**Nivel 1 — el conjunto entero contra `copiloto-mcp`.** Sin pasar por los bots.
+Caracteriza las distribuciones que condicionan el diseño: cuántas caen en la
+banda contradictoria, cuántas se rechazan por edad, qué latencias salen. Es lo
+que produjo las tres filas nuevas de §3. Barato, repetible y se vuelve a correr
+entero cada vez que se reentrena el modelo.
+
+**Nivel 2 — un subconjunto estratificado, por los bots de verdad.** Telegram
+limita a ~1 mensaje por segundo y chat, así que replicar 3 811 conversaciones
+llevaría horas: se eligen unos **60 casos**, a propósito, uno o varios por rama:
+
+| Perfil | De dónde sale del conjunto de prueba |
+| :--- | :--- |
+| Positiva clara | `cruda > 0,9` |
+| Negativa clara | `cruda < 0,1` |
+| **Banda contradictoria** | de las 379 medidas |
+| **Menor de edad** | de los 1 276 menores reales |
+| Edad imposible o ausente | los 5 de 148-155 años |
+| Fichero corrupto | truncando un DICOM real |
+| Fichero enorme | rellenando un DICOM real por encima de 5 MiB |
+
+El arnés (`pruebas/reproducir_casos.py`) crea la conversación del paciente,
+obtiene el código, conduce la del profesional con los signos y la placa real, y
+**guarda cada mensaje final**. La salida es un corpus revisable: se lee y se ve
+si lo que el bot dijo tiene sentido clínico, que es algo que ninguna aserción
+automática puede juzgar.
+
+**Los síntomas de esos casos son inventados, y pasa nada — aquí.** Lo que se
+está midiendo es la fontanería: que el estado no se cruce, que los errores digan
+lo correcto, que §8 se presente bien. Los síntomas no intervienen en eso.
+**Para validar la combinación clínica de H6 y H7, en cambio, no sirven** (§19).
+
 | Superficie | Cómo se prueba |
 | :--- | :--- |
 | Máquina de estados del paciente | updates sintéticos → aserción sobre `sesiones_paciente` y `cuestionarios` |
@@ -734,6 +775,7 @@ necesitarlo.
 | Un despliegue del cliente reinicia n8n a mitad de conversación | el estado vive en PostgreSQL: se reanuda |
 | El cuestionario resulta largo y los pacientes abandonan | `cuestionarios_iniciados` lo mide; acortar es barato |
 | El paciente no llega nunca al bot | **no resuelto**: no hay plan de difusión. Es de producto, no técnico, y bloquea la validación de H7 |
+| **No existen datos reales que emparejen imagen y clínica** | **No resuelto, y es el riesgo mayor del proyecto.** RSNA trae imagen, etiqueta, edad y sexo; **no trae síntomas ni hallazgos de exploración**. Los casos de §13.2 llevan síntomas inventados, y eso vale para probar el sistema pero **no para validar la combinación bayesiana**: si se inventan síntomas correlacionados con la etiqueta y luego se "valida" que Bayes funciona, se ha validado la invención, no el método. H6 puede implementarse y probarse; **H7 necesita datos clínicos reales emparejados o un piloto prospectivo**. Decidir cuál antes de H6, porque cambia lo que H7 puede afirmar |
 
 ---
 
@@ -747,6 +789,8 @@ necesitarlo.
 | `servidor/docker-compose.yml` actualizado con `copiloto-bd` | este repo |
 | `bd/esquema.sql` | este repo |
 | `tests/test_contrato_mcp.py` y `tests/test_bd_sp3.py` | este repo |
+| `pruebas/caracterizar_conjunto.py` — nivel 1 de §13.1 | este repo |
+| `pruebas/reproducir_casos.py` — el arnés de nivel 2, y su corpus de salida | este repo |
 | `docs/sp3-operacion.md` — alta de profesionales, guion manual, retirada | este repo |
 | Registro del cambio en el documento maestro de la Semana 1 | `Proyecto Integrador/Semana 1/` |
 
