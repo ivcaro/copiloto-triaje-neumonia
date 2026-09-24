@@ -31,6 +31,41 @@ resultado ni en el mensaje de error.
 radiografía no debe salir de la máquina. Solo se alcanza desde dentro de la red
 de Docker, por el nombre de servicio `copiloto-mcp`.
 
+### Por qué estos pesos y no los que ganan la comparativa
+
+Los pesos que se despliegan son los de la **corrida 6**,
+`efficientnet_b0_320px_lote24_4+20ep`: EfficientNet-B0 a 320 px, AUC 0,8827 en
+validación y 0,885 en prueba. La comparativa de corridas
+(`docs/comparativa-corridas.md`) corona otra, `kaggle_efficientnet_b0_320px_c2`,
+con AUC 0,889 en prueba. La pregunta es legítima, así que la respuesta queda
+escrita aquí y no hay que reconstruirla.
+
+Las ocho corridas de las tres arquitecturas —EfficientNet-B0, DenseNet-121 y
+MobileNetV3— caben entre 0,874 y 0,889 de AUC en prueba. **Ese margen de 0,015
+entre la mejor y la peor es del orden de lo que mueve una semilla distinta**, y
+no hay que suponerlo: las dos ejecuciones de la MISMA configuración de
+MobileNetV3 (`kaggle_mobilenet_v3_large_320px_c1` y `_c2`) difieren en 0,010 de
+AUC entre sí. Dicho de otro modo, el ruido de una repetición se come dos tercios
+de la diferencia entre la mejor arquitectura y la peor. Cada configuración se
+entrenó una vez y con una sola semilla, así que la comparativa no puede
+distinguir "mejor modelo" de "corrida afortunada", y elegir la que casualmente
+queda arriba es **seleccionar por ruido**. La misma lógica está escrita en
+`docs/frontera-recall-especificidad.md`, donde se decidió no reentrenar
+persiguiendo las cinco milésimas de AUC que separan poder de no poder cumplir
+los dos objetivos a la vez.
+
+Empatadas estadísticamente, decide lo que sí se puede verificar: la corrida 6 es
+la que tiene **el calibrador isotónico ajustado** sobre sus propias 3 810
+radiografías de validación (`servidor/calibrador.json`, que registra su
+procedencia) y **los pesos verificados a mano** por SHA-256, el hash que el paso
+3.1 obliga a comprobar dos veces. Sin calibrador propio, la razón de
+verosimilitud que consume SP4 no significaría lo que dice significar: un
+calibrador ajustado sobre una corrida y aplicado a otra introduce exactamente el
+sesgo silencioso que ese número existe para eliminar. Cambiar de corrida no es
+copiar un `.pt`: obliga a reajustar el calibrador, a volver a medir la frontera
+recall/especificidad y a reelegir el umbral, y todo eso a cambio de una
+diferencia que la propia medición no distingue del ruido.
+
 ## 2. Comprobaciones previas: SOLO LECTURA, antes de tocar nada
 
 Esto es **lo primero que se ejecuta**. Ninguno de los comandos de esta sección
@@ -804,7 +839,7 @@ el modelo.
 | Variable | Valor por defecto | Qué es |
 | :--- | :--- | :--- |
 | `UMBRAL` | `0.4258` | punto de operación; el de especificidad 0,70 y recall 0,8815 |
-| `AUC_VALIDACION` | `0.883` | AUC en validación, **se le muestra al profesional** en cada respuesta |
+| `AUC_VALIDACION` | **ninguno: es obligatoria** (el compose la pone a `0.883`) | AUC en validación, **se le muestra al profesional** en cada respuesta |
 | `RUTA_PESOS` | `/modelo/pesos_modelo_cpu.pt` | dentro de la imagen |
 | `RUTA_CALIBRADOR` | `/modelo/calibrador.json` | dentro de la imagen |
 | `OMP_NUM_THREADS` | `2` | hilos que usa torch. **Tiene que valer lo mismo que `cpus`** del bloque de límites: torch no lee el cgroup y sin esto abriría un hilo por núcleo del host |
@@ -813,6 +848,14 @@ el modelo.
 `AUC_VALIDACION` viaja por entorno y no como literal en el código a propósito:
 es una afirmación de calidad sobre **los pesos**, no sobre el código. Si
 reentrenas y no la actualizas, cada respuesta seguirá citando la cifra vieja.
+
+Y **no tiene valor por defecto**: si falta, `arrancar.py` se niega a arrancar con
+un mensaje que dice qué declarar, en vez de servir una cifra inventada. Un
+default —cualquier default— convertiría esta variable en exactamente la mentira
+silenciosa que existe para evitar: sobreviviría a un reentrenamiento y nadie se
+enteraría. El compose ya la declara, así que en el despliegue normal esto no se
+nota; se nota si alguien levanta el contenedor a mano y se la olvida, que es
+justo cuando conviene notarlo.
 
 ## 11. Cuando algo va mal
 
