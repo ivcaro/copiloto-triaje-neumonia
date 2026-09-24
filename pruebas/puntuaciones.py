@@ -58,4 +58,18 @@ def puntuaciones_de_prueba() -> pd.DataFrame:
     df["cruda"] = np.concatenate(crudas)
     CACHE.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(CACHE, index=False)
-    return df
+    # Se relee del propio fichero en vez de devolver `df` tal cual: la
+    # columna `cruda` es float32 (numpy la produce asi), y `to_csv` la
+    # escribe con la precision corta de float32 (~8 cifras), no con la
+    # de float64. Devolver `df` directamente daria, en esta primera
+    # llamada, valores float64 "exactos" (el bit a bit de cada float32
+    # subido a float64); una segunda llamada, que lee la cache ya escrita,
+    # daria los mismos numeros pero reconstruidos desde esa cadena corta:
+    # DIFERENTES en el ultimo digito, aunque el modelo no haya cambiado.
+    # Eso rompia `test_la_seleccion_es_determinista` exactamente en la
+    # primera corrida (cache fria) y solo en ella -- se detecto ejecutando
+    # la prueba en frio, no se documentaba en el brief. Releer aqui hace
+    # que TODA llamada, incluida esta que crea la cache, pase por la misma
+    # serializacion, y la comparacion de la prueba de determinismo sea
+    # entre dos lecturas identicas del mismo fichero.
+    return pd.read_csv(CACHE)
