@@ -9,6 +9,7 @@ import json
 import os
 import pathlib
 import re
+import sys
 import urllib.error
 import urllib.request
 
@@ -17,6 +18,18 @@ import pytest
 BASE = os.environ.get("COPILOTO_URL", "http://127.0.0.1:18000")
 CRUDO = pathlib.Path(
     r"C:\Users\[retirado]\datasets\rsna-pneumonia\trabajo\crudo\stage_2_train_images")
+
+# Rango en el que esta ajustada la curva isotonica del calibrador desplegado
+# (ver src/copiloto_triaje/servicio/calibracion.py); fuera de el actua el
+# recorte a los extremos SOSTENIDOS de la curva. Las cotas exactas se miden
+# una vez con el calibrador real y se afirman como literales: si el modelo se
+# reentrena y el calibrador cambia, esta prueba debe volver a medirlas, no
+# recalcularlas por su cuenta -- afirmar un numero que la propia prueba
+# recalcula no prueba nada.
+RANGO_AJUSTADO_MIN = 0.000215
+RANGO_AJUSTADO_MAX = 0.996927
+COTA_INFERIOR_RV = 0.016271632806621517
+COTA_SUPERIOR_RV = 77.32279909706551
 
 
 def _llamar(b64: str) -> dict:
@@ -178,3 +191,79 @@ def test_la_razon_de_verosimilitud_es_float_positivo_dentro_del_rango_declarado(
     assert isinstance(rv, float)
     assert rv > 0
     assert 0.0163 <= rv <= 77.33
+
+
+def _cache_puntuaciones():
+    """La cache de pruebas/puntuaciones.py: cruda por cada radiografia de
+    PRUEBA. La construye la Tarea 4; si no existe todavia, este import la
+    genera (infiere sobre las 3 811 imagenes, tarda minutos la primera vez).
+    """
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(repo))
+    from pruebas.puntuaciones import puntuaciones_de_prueba  # noqa: E402
+    return puntuaciones_de_prueba()
+
+
+@pytest.fixture(scope="module")
+def dicom_fuera_de_rango_abajo() -> bytes:
+    """Una radiografia real cuya probabilidad CRUDA cae por debajo de
+    [RANGO_AJUSTADO_MIN, RANGO_AJUSTADO_MAX]: la unica forma de ejercitar el
+    recorte de verdad, en vez de solo pasar cerca de el.
+    """
+    df = _cache_puntuaciones()
+    candidatas = df[df.cruda < RANGO_AJUSTADO_MIN].sort_values("patientId")
+    if candidatas.empty:
+        pytest.skip(
+            "ninguna radiografia de PRUEBA cae por debajo del rango "
+            "ajustado del calibrador desplegado: el recorte inferior no "
+            "seria alcanzable con datos reales -- hallazgo en si mismo, "
+            "ver el informe de la Tarea 4")
+    patient_id = candidatas.iloc[0].patientId
+    return (CRUDO / f"{patient_id}.dcm").read_bytes()
+
+
+@pytest.fixture(scope="module")
+def dicom_fuera_de_rango_arriba() -> bytes:
+    """Simetrica a `dicom_fuera_de_rango_abajo`, por ENCIMA del rango."""
+    df = _cache_puntuaciones()
+    candidatas = df[df.cruda > RANGO_AJUSTADO_MAX].sort_values("patientId")
+    if candidatas.empty:
+        pytest.skip(
+            "ninguna radiografia de PRUEBA cae por encima del rango "
+            "ajustado del calibrador desplegado: el recorte superior no "
+            "seria alcanzable con datos reales -- hallazgo en si mismo, "
+            "ver el informe de la Tarea 4")
+    patient_id = candidatas.iloc[0].patientId
+    return (CRUDO / f"{patient_id}.dcm").read_bytes()
+
+
+def test_la_razon_de_verosimilitud_se_recorta_a_la_cota_inferior(
+        dicom_fuera_de_rango_abajo):
+    """Esta SI ejercita el recorte de calibracion.py -- la prueba que el
+    docstring de `test_la_razon_de_verosimilitud_es_float_positivo_dentro_del_rango_declarado`
+    prometia para la Tarea 4.
+
+    La radiografia de `dicom_fuera_de_rango_abajo` tiene una probabilidad
+    CRUDA por debajo de [0.000215, 0.996927], el rango en el que esta
+    ajustada la curva isotonica del calibrador desplegado (ver
+    `pruebas/puntuaciones.py` y `Calibrador.__init__`). Sin el recorte, la RV
+    saldria del orden de 3,5e-06 -certeza fabricada de ausencia que los datos
+    de validacion no sostienen-; CON el recorte, sale EXACTAMENTE la cota que
+    fija `Calibrador.probabilidad_minima_sostenida`. Si alguien borrara el
+    recorte hoy, esta prueba fallaria; la debil de arriba seguiria pasando.
+    """
+    sc = _llamar(base64.b64encode(dicom_fuera_de_rango_abajo).decode())[
+        "result"]["structuredContent"]
+    assert sc["razon_de_verosimilitud"] == COTA_INFERIOR_RV
+
+
+def test_la_razon_de_verosimilitud_se_recorta_a_la_cota_superior(
+        dicom_fuera_de_rango_arriba):
+    """Simetrica a la anterior: `dicom_fuera_de_rango_arriba` tiene una
+    probabilidad CRUDA por ENCIMA del rango ajustado. Sin el recorte la RV
+    saldria del orden de 3,5e+06 -certeza fabricada de presencia-; con el
+    recorte, sale EXACTAMENTE `Calibrador.probabilidad_maxima_sostenida`.
+    """
+    sc = _llamar(base64.b64encode(dicom_fuera_de_rango_arriba).decode())[
+        "result"]["structuredContent"]
+    assert sc["razon_de_verosimilitud"] == COTA_SUPERIOR_RV
