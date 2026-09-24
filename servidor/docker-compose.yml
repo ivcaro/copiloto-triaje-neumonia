@@ -1,0 +1,35 @@
+services:
+  copiloto-mcp:
+    build:
+      context: ..
+      dockerfile: servidor/Dockerfile
+    image: copiloto-mcp:0.1.0
+    container_name: copiloto-mcp
+    restart: unless-stopped
+    # Sin `ports`: el servicio NO se expone a internet. n8n lo alcanza por
+    # nombre de servicio dentro de la red interna, que es lo que garantiza
+    # que la radiografia no salga de la maquina.
+    environment:
+      UMBRAL: "0.4258"
+      AUC_VALIDACION: "0.883"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/salud').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    networks:
+      - [retirado]_network
+
+networks:
+  [retirado]_network:
+    external: true
+    # La red la posee la infraestructura del cliente, donde ya corre n8n. Este
+    # servicio solo se une a ella: asi n8n lo alcanza por nombre de servicio y
+    # la radiografia no sale de la maquina.
+    name: ${RED_N8N:-[retirado]_[retirado]_network}
