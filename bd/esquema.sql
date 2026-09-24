@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS consultas (
   id         bigserial PRIMARY KEY,
   codigo     text,
   chat_id    bigint,
+  -- COPIA (D12): cuestionarios se borra a los 7 dias: sin esta copia, H7 no
+  -- tiene nada que validar una vez pasada esa ventana.
   sintomas   jsonb,
   signos     jsonb,
   resultado  jsonb,

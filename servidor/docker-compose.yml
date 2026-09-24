@@ -58,9 +58,14 @@ services:
       - [retirado]_network
 
   copiloto-bd:
-    # Digest fijado como el de copiloto-mcp: una etiqueta movil convierte un
-    # redespliegue rutinario en un cambio de version silencioso.
-    image: postgres:16-alpine
+    # Por digest y no por `postgres:16-alpine`: esa etiqueta es de un tercero y
+    # se mueve con cada parche de Postgres/Alpine, asi que un redespliegue
+    # rutinario en la maquina del cliente podria traer otra version de
+    # PostgreSQL por sorpresa, sobre un volumen que ya tiene datos. Para
+    # actualizar a proposito:
+    #   docker pull postgres:16-alpine
+    #   docker inspect postgres:16-alpine --format '{{index .RepoDigests 0}}'
+    image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
     container_name: copiloto-bd
     restart: unless-stopped
     environment:
