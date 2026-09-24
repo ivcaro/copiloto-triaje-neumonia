@@ -10,11 +10,16 @@ una sola fuente de verdad; los dos ficheros la importan.
 
 Inferir sobre las 3 811 imagenes de prueba tarda minutos; el resultado se
 cachea en `crudas_prueba.csv` para que las corridas siguientes sean
-instantaneas. Esa cache NO se versiona (va en `.gitignore`): se regenera
-sola y describe el modelo desplegado en cada momento, no una verdad fija.
+instantaneas. Esa cache NO se versiona (va en `.gitignore`): describe el
+modelo desplegado en el momento en que se genero, y se invalida sola -junto
+a ella se guarda el sha256 de `servidor/pesos_modelo_cpu.pt`, y si no
+coincide con el de ahora mismo se vuelve a inferir- para que un
+reentrenamiento no deje sirviendo, en silencio, las puntuaciones del modelo
+viejo.
 """
 from __future__ import annotations
 
+import hashlib
 import pathlib
 import sys
 
@@ -30,17 +35,41 @@ from copiloto_triaje.datos.dataset import DatasetRadiografias  # noqa: E402
 from copiloto_triaje.modelo.arquitectura import construir_modelo  # noqa: E402
 
 RAIZ = pathlib.Path(r"C:\Users\[retirado]\datasets\rsna-pneumonia\trabajo")
+PESOS = REPO / "servidor" / "pesos_modelo_cpu.pt"
 CACHE = REPO / "pruebas" / "crudas_prueba.csv"
+# El sha256 de PESOS en el momento en que se genero CACHE. Vive al lado y no
+# dentro del CSV porque es metadato de la cache, no una columna de datos.
+CACHE_HASH = REPO / "pruebas" / "crudas_prueba.sha256"
+
+
+def _sha256(ruta: pathlib.Path) -> str:
+    h = hashlib.sha256()
+    with ruta.open("rb") as f:
+        for bloque in iter(lambda: f.read(1 << 20), b""):
+            h.update(bloque)
+    return h.hexdigest()
+
+
+def _cache_valida() -> bool:
+    if not (CACHE.is_file() and CACHE_HASH.is_file()):
+        return False
+    return CACHE_HASH.read_text(encoding="utf-8").strip() == _sha256(PESOS)
 
 
 def puntuaciones_de_prueba() -> pd.DataFrame:
     """El manifiesto de prueba (`test.csv`) con una columna `cruda` anadida.
 
-    Cachea en `CACHE`: si el fichero ya existe, se lee de ahi y no se vuelve
-    a inferir.
+    Cachea en `CACHE`: si el fichero ya existe Y el sha256 de `PESOS`
+    guardado junto a el coincide con el de ahora, se lee de ahi y no se
+    vuelve a inferir. Si el modelo se reentreno desde la ultima corrida, el
+    hash no coincide y se regenera -- sin esto, la cache seguiria sirviendo
+    las puntuaciones del modelo viejo para siempre, y `caracterizar_conjunto.py`
+    (§3 del spec, §13.1 exige volver a correrlo al reentrenar) no notaria
+    nada distinto.
     """
-    if CACHE.is_file():
+    if _cache_valida():
         return pd.read_csv(CACHE)
+    hash_actual = _sha256(PESOS)
     df = pd.read_csv(RAIZ / "manifiestos" / "test.csv")
     cargador = DataLoader(
         DatasetRadiografias(df, RAIZ / "png", 320, entrenamiento=False),
@@ -48,8 +77,7 @@ def puntuaciones_de_prueba() -> pd.DataFrame:
     modelo = construir_modelo("efficientnet_b0", congelar_backbone=False,
                               preentrenado=False)
     modelo.load_state_dict(torch.load(
-        REPO / "servidor" / "pesos_modelo_cpu.pt",
-        map_location="cpu", weights_only=True))
+        PESOS, map_location="cpu", weights_only=True))
     modelo.eval()
     crudas = []
     with torch.no_grad():
@@ -58,6 +86,7 @@ def puntuaciones_de_prueba() -> pd.DataFrame:
     df["cruda"] = np.concatenate(crudas)
     CACHE.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(CACHE, index=False)
+    CACHE_HASH.write_text(hash_actual, encoding="utf-8")
     # Se relee del propio fichero en vez de devolver `df` tal cual: la
     # columna `cruda` es float32 (numpy la produce asi), y `to_csv` la
     # escribe con la precision corta de float32 (~8 cifras), no con la
