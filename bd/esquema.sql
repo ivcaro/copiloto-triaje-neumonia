@@ -71,9 +71,10 @@ CREATE TABLE IF NOT EXISTS cuestionarios_iniciados (
 --
 -- El bucle interior es muestreo por RECHAZO y no un modulo a secas: 256 no es
 -- multiplo de 31, asi que `byte % 31` haria salir los 8 primeros caracteres un
--- 29% mas que el resto. Descartando los bytes >= 248 (31*8) el reparto queda
--- uniforme. No es una frontera de seguridad, pero un alfabeto sesgado en algo
--- que se usa como identificador es deuda gratuita.
+-- 12,5% mas que el resto (256 = 8*31 + 8: esos 8 residuos reciben 9 valores de
+-- byte en vez de 8, y 9/8 - 1 = 0,125). Descartando los bytes >= 248 (31*8) el
+-- reparto queda uniforme. No es una frontera de seguridad, pero un alfabeto
+-- sesgado en algo que se usa como identificador es deuda gratuita.
 CREATE OR REPLACE FUNCTION generar_codigo() RETURNS text AS $$
 DECLARE
   alfabeto constant text := 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
