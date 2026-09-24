@@ -690,6 +690,29 @@ equivalentes de siempre, que ninguna versión ignora:
     cpus: 2.0
 ```
 
+Y el tercer tope, que no es de CPU ni de memoria sino de **disco**:
+
+```bash
+docker inspect copiloto-mcp --format 'driver={{.HostConfig.LogConfig.Type}} max-size={{index .HostConfig.LogConfig.Config "max-size"}} max-file={{index .HostConfig.LogConfig.Config "max-file"}}'
+```
+
+Esperado: `driver=json-file max-size=10m max-file=3`.
+
+Sin ese bloque, Docker escribe el log del contenedor **sin límite ni rotación**
+en `/var/lib/docker/containers/<id>/<id>-json.log`. Y hay una fuente que no
+para nunca: el `healthcheck` consulta `/salud` cada 30 s y uvicorn registra una
+línea por petición, o sea unas **2 880 líneas al día —del orden de 200 MB al
+año— antes de que pase un solo paciente**. En un VPS compartido con dos
+PostgreSQL, [retirado] y n8n, el disco que se llena no es solo tuyo.
+
+Con `max-size: 10m` y `max-file: 3` el techo son 30 MB duros, y
+`docker logs --tail` sigue sirviendo igual para diagnosticar.
+
+> Un detalle que confunde al redesplegar: **el contador de logs vuelve a cero**,
+> porque el fichero va atado al contenedor y `up --build` crea uno nuevo. Ver
+> el log pequeño después de un despliegue no significa que la rotación esté
+> funcionando; para eso está el `docker inspect` de arriba.
+
 Y comprueba además que torch se ha enterado del tope de CPU, porque **no mira el
 cgroup**: se guía por `OMP_NUM_THREADS`, que el compose fija a 2.
 

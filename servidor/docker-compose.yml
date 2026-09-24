@@ -39,6 +39,21 @@ services:
           # encarezca. Romper lo que ya funciona costaria mucho mas que unos ms.
           cpus: "2"
           memory: 2G
+    logging:
+      # Sin esto, Docker escribe el log del contenedor sin limite ni rotacion en
+      # /var/lib/docker/containers/<id>/<id>-json.log, en el disco del cliente.
+      # No es hipotetico: el `healthcheck` de arriba consulta /salud cada 30 s y
+      # uvicorn registra una linea por peticion, asi que son ~2 880 lineas al
+      # dia -unos 200 MB al anio- ANTES de que pase un solo paciente. Ese disco
+      # lo comparten dos PostgreSQL, [retirado] y n8n; cuando se llena, el que
+      # muere no es este servicio.
+      #
+      # 10 MB x 3 ficheros = 30 MB como techo duro, y `docker logs --tail`
+      # sigue funcionando igual para diagnosticar.
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - [retirado]_network
 
