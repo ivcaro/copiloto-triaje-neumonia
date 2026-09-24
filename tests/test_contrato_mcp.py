@@ -93,12 +93,19 @@ def test_el_base64_envuelto_da_el_mismo_resultado_que_el_plano(dicom_adulto):
 def test_el_codigo_de_error_es_el_SEGUNDO_campo_del_texto(dicom_menor):
     """El SDK antepone su propio prefijo. Partir por el primer ':' devuelve
     'Error executing tool clasificar_radiografia', no el codigo.
+
+    Se afirma la POSICION exacta, no solo que el codigo aparezca en algun
+    sitio: tras partir el texto por ':', 'fuera_de_alcance' tiene que estar
+    en el indice 1. Si el SDK metiera un campo extra delante, una asercion
+    mas debil (solo "esta en el texto" y "no es el primer campo") seguiria
+    pasando mientras que el flujo de n8n, que parte por el segundo ':' a
+    ciegas, se rompería.
     """
     r = _llamar(base64.b64encode(dicom_menor).decode())["result"]
     assert r["isError"] is True
     texto = r["content"][0]["text"]
-    assert "fuera_de_alcance" in texto
-    assert texto.split(":")[0].strip() != "fuera_de_alcance"
+    partes = texto.split(":")
+    assert partes[1].strip() == "fuera_de_alcance", texto
 
 
 def test_el_rechazo_por_edad_no_trae_ninguna_cifra_de_probabilidad(dicom_menor):
@@ -144,7 +151,30 @@ def test_por_encima_del_limite_del_transporte_llega_un_413_y_no_un_SSE():
     assert exc.value.code == 413
 
 
-def test_la_razon_de_verosimilitud_viene_acotada(dicom_adulto):
-    """La cota es lo que impide que una sola imagen anule la clinica en SP4."""
+def test_la_razon_de_verosimilitud_es_float_positivo_dentro_del_rango_declarado(dicom_adulto):
+    """NO ejercita el recorte de calibracion.py.
+
+    Esta radiografia (una cualquiera con etiqueta positiva del CSV de
+    prueba) da RV 19.24 -- lejisimos de los extremos. Para ejercitar el
+    recorte de verdad hace falta una imagen cuya PROBABILIDAD CRUDA caiga
+    fuera del rango ajustado de la curva, [0.000215, 0.996927]; hay unas 4
+    asi entre las 3811 de prueba, pero encontrarlas exige inferir sobre el
+    conjunto entero (minutos), y la cache que lo abarataria
+    (pruebas/crudas_prueba.csv) todavia no existe -- la crea la Tarea 4, que
+    es donde debe ir la prueba que si ejercita el recorte. Si alguien
+    borrara el recorte de calibracion.py hoy, ESTA prueba seguiria pasando.
+
+    Mientras tanto, aqui solo se afirma la invariante mas debil que se puede
+    verificar sin mentir: la razon de verosimilitud llega, es un float,
+    es estrictamente positiva, y cae dentro del rango que declara el spec.
+
+    Cota superior: 77.33, no 77.32. El valor exacto medido con el
+    calibrador desplegado es 77.32279909706551; el "77,32" del §10.5 del
+    spec es un redondeo de lectura, y asertar `<= 77.32` fallaria contra el
+    servidor real.
+    """
     sc = _llamar(base64.b64encode(dicom_adulto).decode())["result"]["structuredContent"]
-    assert 0.0163 <= sc["razon_de_verosimilitud"] <= 77.33
+    rv = sc["razon_de_verosimilitud"]
+    assert isinstance(rv, float)
+    assert rv > 0
+    assert 0.0163 <= rv <= 77.33
