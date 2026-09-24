@@ -814,6 +814,30 @@ orden del 10 % (se han visto 38, 39, 41, 42 y 43 ms según la puerta y la
 corrida), irrelevante frente a un presupuesto 100 veces mayor. Lo que hay que
 mirar es el orden de magnitud, no el dígito.
 
+### Medido en el VPS real (24-sep-2026)
+
+Las cifras de arriba son de una máquina de desarrollo. En el VPS de producción,
+con la misma radiografía de 99 808 bytes y el mismo tope de dos núcleos:
+
+| Puerta | Mediana | Peor de 20 | Margen |
+| :--- | ---: | ---: | ---: |
+| MCP (`/mcp`) | **143 ms** | 225 ms | **28x** |
+
+**3,3 veces más lento que en desarrollo, y es lo esperado:** ese servidor tiene
+otros 23 contenedores encima —n8n, [retirado], [retirado], nginx, seis servicios
+de otro proyecto y dos PostgreSQL— compitiendo por la CPU. Los dos núcleos que
+el compose reserva son un techo, no una reserva: si la máquina está ocupada, se
+obtiene menos.
+
+**Usa 143 ms, no 43 ms, para cualquier informe.** Sigue habiendo 28 veces de
+holgura sobre el presupuesto de H4, que es lo que importa; pero la cifra que
+describe el sistema desplegado es la del sitio donde está desplegado.
+
+Comprobado en la misma sesión, y son las dos cosas que había que demostrar: los
+topes llegaron de verdad (`NanoCpus=2000000000`, `Memory=2147483648`) y el
+stack del cliente no se movió —los 23 contenedores siguieron con sus tiempos de
+actividad intactos, ninguno reinició—.
+
 Si alguna mediana te saliera por encima de 4 000 ms, para y averigua por qué
 antes de dar el hito por bueno.
 
