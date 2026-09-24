@@ -1,3 +1,9 @@
+# El nombre de proyecto se declara aqui y no se hereda del directorio. Si se
+# heredara seria `servidor`, y toda la seguridad de la vuelta atras dependeria de
+# estar en la carpeta correcta al escribir `docker compose down`. Con el nombre
+# explicito, `docker compose ls` y `down` se identifican solos.
+name: copiloto-mcp
+
 services:
   copiloto-mcp:
     build:
@@ -12,6 +18,10 @@ services:
     environment:
       UMBRAL: "0.4258"
       AUC_VALIDACION: "0.883"
+      # torch NO mira el cgroup: sin esto abre un hilo por nucleo del HOST,
+      # ignorando el limite de `cpus` de abajo, y se pelea por la CPU del VPS
+      # con PostgreSQL y la API del cliente. Tiene que valer lo mismo que `cpus`.
+      OMP_NUM_THREADS: "2"
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/salud').status==200 else 1)"]
@@ -22,6 +32,12 @@ services:
     deploy:
       resources:
         limits:
+          # Dos nucleos, no todos: el VPS es compartido con n8n, PostgreSQL y la
+          # API del cliente, y este servicio es un invitado. Dos sobran para el
+          # presupuesto del hito: la inferencia tarda 41 ms y el techo son
+          # 4 000 ms, asi que hay margen de sobra aunque acotar la CPU la
+          # encarezca. Romper lo que ya funciona costaria mucho mas que unos ms.
+          cpus: "2"
           memory: 2G
     networks:
       - [retirado]_network

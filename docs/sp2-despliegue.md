@@ -81,17 +81,27 @@ una promesa: es consecuencia de cómo está escrito el compose.
 | La red se declara `external: true`: Compose **no la crea, no la modifica y no la borra** | el mismo fichero |
 | No hay `ports:`, así que no puede quitarle un puerto del host a nadie | el mismo fichero |
 | No hay `volumes:`, así que no monta ni escribe nada del host | el mismo fichero |
-| `docker compose down` lanzado desde `servidor/` solo alcanza a los contenedores de **este** proyecto | paso 12 |
+| El proyecto se llama `copiloto-mcp` (`name:` en el compose), así que `docker compose down` **solo** alcanza a este servicio | el mismo fichero, y paso 12 |
 
 Compruébalo tú, sin fiarte del párrafo anterior:
 
 ```bash
 cd servidor
-grep -nE 'ports:|volumes:|external:|container_name:' docker-compose.yml
+grep -nE '^\s*(name|ports|volumes|external|container_name):' docker-compose.yml
 ```
 
-Tiene que salir `external: true` y `container_name: copiloto-mcp`, y
-**ninguna** línea `ports:` ni `volumes:`.
+Salida literal:
+
+```
+5:name: copiloto-mcp
+13:    container_name: copiloto-mcp
+47:    external: true
+51:    name: ${RED_N8N:-[retirado]_[retirado]_network}
+```
+
+Cuatro líneas: el nombre del proyecto, el del contenedor, la red marcada como
+externa y el nombre de esa red. Y **ninguna** línea `ports:` ni `volumes:`, que
+es lo que querías comprobar.
 
 ### 2.2. Que la red externa existe, y con qué nombre exacto
 
@@ -172,8 +182,13 @@ por dentro.
 Verifícalo, que es más fiable que creerlo:
 
 ```bash
-grep -n 'ports' docker-compose.yml   # no debe devolver ninguna linea
+grep -nE '^\s*ports:' docker-compose.yml   # no debe devolver ninguna linea
 ```
+
+El `^\s*ports:` es a propósito y no un `grep ports` a secas: el compose tiene un
+comentario que **explica** que no hay puertos, y un `grep ports` lo encontraría y
+te haría creer que sí los hay. Lo que quieres comprobar es que no existe la
+directiva, es decir una línea que empiece por `ports:`.
 
 Solo si alguien decide publicarlo **para depurar** — no hace falta para que n8n
 funcione, y saca la radiografía fuera de la red de Docker — entonces sí hay que
@@ -210,36 +225,121 @@ espacio primero; no empieces la construcción a ver si cabe.
 ## 3. Requisitos previos
 
 - Docker con Compose v2 o superior (probado en 29.6.1 / v5.2.0).
-- El repositorio `copiloto-triaje`, rama `sp2-servidor-mcp`.
 - Unos 4 GB libres de disco (la imagen ocupa ~2 GB en disco y la construcción
   descarga ~200 MB de ruedas). Se comprueba en el paso 2.6.
 - Salida a internet durante la construcción (PyPI y `download.pytorch.org`).
+- Acceso `ssh` al VPS, y `scp` en tu máquina (viene con Git para Windows).
 - Para medir latencia o probar de verdad: **al menos un fichero DICOM real**
   del dataset RSNA, de un paciente **de 18 a 100 años** (ver el paso 7).
+- El código y los pesos **puestos en el VPS**, que es el apartado 3.1.
 
-### Los pesos del modelo NO están en el repositorio
+### 3.1. Llevar el código y los pesos al VPS
 
-Esto es lo primero que se atasca. `servidor/pesos_modelo_cpu.pt` son 16 MB
-binarios y está en `.gitignore` a propósito: al clonar, **no estará**. El
-`servidor/calibrador.json` de al lado sí se versiona, ese ya lo tienes.
+Dos hechos hacen que esto no sea un `git clone` y punto:
 
-Cópialo a mano antes de construir, desde la corrida que produjo el modelo:
+- **El repositorio no tiene remoto configurado.** `git remote -v` sale vacío, así
+  que hoy no existe ninguna URL desde la que clonar estando en el VPS.
+- **Los pesos no viajan con el código.** `servidor/pesos_modelo_cpu.pt` son
+  16 MB binarios y está en `.gitignore` a propósito, así que no estarían ni
+  aunque hubiera remoto. El `servidor/calibrador.json` de al lado sí se
+  versiona, ese viaja solo.
+
+O sea: hay que empaquetar y copiar, en dos envíos. Los comandos se ejecutan **en
+tu máquina Windows** (Git Bash), salvo los marcados `[VPS]`.
+
+Antes de empezar, sustituye en todos los comandos:
+
+| Marcador | Por |
+| :--- | :--- |
+| `usuario@vps` | tu usuario y el host o IP del VPS, p. ej. `root@203.0.113.10` |
+| `/opt/copiloto` | el directorio del VPS donde quieras dejar esto |
+| `<url-del-repositorio>` | solo en la variante del final, si algún día hay remoto |
+
+El prefijo `[VPS]` marca los comandos que van **dentro** de la sesión `ssh`. No
+se escribe: es solo para que sepas en qué máquina estás en cada línea.
+
+**Paso 1. Que los pesos estén en `servidor/` en tu máquina.** No se versionan,
+así que se traen de la corrida que produjo el modelo:
 
 ```bash
+cd "C:/Users/[retirado]/OneDrive/Desktop/Claude/Proyecto Integrador/copiloto-triaje"
 cp "C:/Users/[retirado]/datasets/rsna-pneumonia/trabajo/corridas/efficientnet_b0_320px_lote24_4+20ep/checkpoints/pesos_modelo_cpu.pt" \
    servidor/pesos_modelo_cpu.pt
+sha256sum servidor/pesos_modelo_cpu.pt
 ```
 
-Comprueba que es el fichero correcto antes de seguir:
+Tiene que decir exactamente:
+
+```
+bb985e1f792e1cfee150ec57bdc6d706f7484499fa999da3406a5798260e8d47
+```
+
+Si no coincide, para aquí: estarías desplegando un modelo distinto del que esta
+guía certifica. Apunta ese hash, lo vuelves a usar en el paso 5.
+
+**Paso 2. Empaquetar el código de la rama.** `git archive` saca un tar de la
+rama tal como está **commiteada**, sin `.git` y sin ficheros sueltos:
 
 ```bash
-sha256sum servidor/pesos_modelo_cpu.pt
-# bb985e1f792e1cfee150ec57bdc6d706f7484499fa999da3406a5798260e8d47
+git archive --format=tar --output=../copiloto-triaje.tar sp2-servidor-mcp
 ```
 
-Si el hash no coincide, para: estarías midiendo y certificando otro modelo.
-Si el fichero no está, la construcción falla en el `COPY` con
+Salen unos 5,3 MB. Ojo con la palabra *commiteada*: lo que no esté en un commit
+de `sp2-servidor-mcp` no entra en el tar. Si vas a desplegar algo que acabas de
+tocar, commitéalo primero.
+
+**Paso 3. Copiar las dos cosas al VPS**, el código y los pesos por separado,
+porque los pesos no están dentro del tar:
+
+```bash
+ssh usuario@vps "mkdir -p /opt/copiloto"
+scp ../copiloto-triaje.tar usuario@vps:/opt/copiloto/
+scp servidor/pesos_modelo_cpu.pt usuario@vps:/opt/copiloto/
+```
+
+**Paso 4. Desempaquetar en el VPS y poner los pesos en su sitio.** El tar no
+lleva directorio raíz, así que se extrae directamente sobre `/opt/copiloto`:
+
+```bash
+ssh usuario@vps
+[VPS] cd /opt/copiloto
+[VPS] tar -xf copiloto-triaje.tar
+[VPS] mv pesos_modelo_cpu.pt servidor/pesos_modelo_cpu.pt
+[VPS] rm copiloto-triaje.tar
+```
+
+**Paso 5. Comprobar que llegó entero.** Esto es lo que separa "copié el
+fichero" de "copié el fichero **entero**":
+
+```bash
+[VPS] sha256sum servidor/pesos_modelo_cpu.pt
+bb985e1f792e1cfee150ec57bdc6d706f7484499fa999da3406a5798260e8d47
+
+[VPS] ls servidor/
+Dockerfile  Dockerfile.dockerignore  arrancar.py  calibrador.json
+docker-compose.yml  medir_latencia.py  pesos_modelo_cpu.pt
+```
+
+El hash tiene que ser **idéntico** al del paso 1. Si difiere, la transferencia
+se truncó: borra el fichero y repite el `scp`. Merece la pena mirarlo, porque un
+`.pt` truncado no falla de forma clara: da un error de deserialización a mitad de
+la carga del modelo, y se parece más a un bug del código que a una copia mala.
+
+Si en `servidor/` falta `pesos_modelo_cpu.pt`, la construcción morirá con
 `"/servidor/pesos_modelo_cpu.pt": not found`.
+
+**Variante, si algún día el repositorio tiene remoto.** Entonces el camino es
+más corto, pero los pesos siguen yendo aparte porque seguirán gitignorados:
+
+```bash
+[VPS] git clone -b sp2-servidor-mcp <url-del-repositorio> /opt/copiloto
+scp servidor/pesos_modelo_cpu.pt usuario@vps:/opt/copiloto/servidor/
+```
+
+Y el mismo `sha256sum` del paso 5, que no sobra en ningún camino.
+
+> En PowerShell en vez de Git Bash, el equivalente de `sha256sum` es
+> `Get-FileHash servidor\pesos_modelo_cpu.pt -Algorithm SHA256`.
 
 ## 4. La red de Docker: el único punto que cambia entre el VPS y tu máquina
 
@@ -286,18 +386,32 @@ docker inspect <nombre-del-contenedor-de-n8n> --format '{{json .NetworkSettings.
 
 Aquí n8n no corre (vive en el VPS), así que la red externa no existe y el
 compose fallaría con `network [retirado]_[retirado]_network declared as external, but
-could not be found`. Créate una suelta con ese nombre:
+could not be found`.
+
+Créate una red **con un nombre de tirar**, y pásasela por `RED_N8N`:
 
 ```bash
-docker network create [retirado]_[retirado]_network
+docker network create copiloto-local
+RED_N8N=copiloto-local docker compose up -d
 ```
 
-Y cuando acabes, si quieres dejar limpio (primero baja el contenedor):
+Y cuando acabes, primero baja el contenedor y luego borra **esa** red:
 
 ```bash
 docker compose down
-docker network rm [retirado]_[retirado]_network
+docker network rm copiloto-local
 ```
+
+El nombre de tirar no es remilgo: es para que el nombre de la red de producción
+**nunca aparezca en esta guía al lado de un `docker network rm`**. Si lo hiciera,
+bastaría un copiar y pegar despistado en la sesión equivocada para dejar a n8n,
+a nginx y a la API del cliente sin red común. Docker se niega a borrar una red
+con contenedores conectados, pero no si en ese momento están parados, así que la
+protección no es de fiar. Para eso está la variable.
+
+Recuerda que si levantas con `RED_N8N=copiloto-local`, **todos** los comandos
+posteriores que mencionen la red —el `docker run --network ...` del paso 6— usan
+también `copiloto-local`.
 
 ## 5. Construir la imagen
 
@@ -312,15 +426,21 @@ docker compose build
 Tarda unos 2 minutos la primera vez; casi todo es la descarga de torch
 (196,3 MB). La imagen resultante es `copiloto-mcp:0.1.0`.
 
+Todo lo que se instala está clavado a una versión exacta, **incluida la imagen
+base, que se referencia por digest** y no por la etiqueta `python:3.12-slim`. Es
+deliberado: una etiqueta se mueve con cada parche de Debian, y entonces la imagen
+que construyes dentro de un mes no sería la que se midió. Si construyes hoy y
+construyes en marzo, sale lo mismo.
+
 ```bash
 docker images copiloto-mcp
 ```
 
-Salida literal, medida el 23-sep-2026 tras un `build --no-cache`:
+Salida literal, medida el 23-sep-2026:
 
 ```
 IMAGE                ID             DISK USAGE   CONTENT SIZE   EXTRA
-copiloto-mcp:0.1.0   2948362c4e3f          2GB          442MB
+copiloto-mcp:0.1.0   f4aa5009834b          2GB          442MB
 ```
 
 | Medida | Valor | Qué es |
@@ -328,7 +448,22 @@ copiloto-mcp:0.1.0   2948362c4e3f          2GB          442MB
 | `CONTENT SIZE` | **442 MB** | lo que se empuja o se descarga, comprimido |
 | `DISK USAGE` | **2 GB** | lo que ocupa en el disco del VPS, descomprimido |
 
-El `ID` será otro en tu máquina; el tamaño no debería moverse apenas.
+El `ID` será otro en tu máquina —lo fija también la fecha de construcción— pero
+el tamaño no debería moverse. Si quieres confirmar que llevas las versiones
+certificadas:
+
+```bash
+docker run --rm --entrypoint python copiloto-mcp:0.1.0 \
+  -c "import importlib.metadata as m; [print(p, m.version(p)) for p in ('torch','fastapi','mcp','uvicorn','python-multipart')]"
+```
+
+```
+torch 2.14.0+cpu
+fastapi 0.141.1
+mcp 2.2.0
+uvicorn 0.53.0
+python-multipart 0.0.32
+```
 
 **No te alarmes por los 2 GB: la rueda CPU de torch sí se aplicó.** Se
 comprueba así, y `False` es lo correcto:
@@ -391,6 +526,52 @@ docker run --rm --network [retirado]_[retirado]_network python:3.12-slim python 
 Si esto responde, el cableado de red está bien. Si da `Name or service not
 known`, los dos contenedores no están en la misma red.
 
+### Comprobar que los límites de recursos llegaron de verdad
+
+Esto **no es opcional en un VPS compartido**, y es la comprobación que más fácil
+se olvida. Los límites se declaran en el compose bajo `deploy.resources.limits`,
+que es sintaxis de Swarm: un Compose que no la interprete arranca el contenedor
+**sin límite ninguno y sin avisar**. El síntoma no sería un error, sería el
+copiloto comiéndose la RAM y la CPU que necesitan PostgreSQL y la API del
+cliente.
+
+```bash
+docker inspect copiloto-mcp --format '{{.HostConfig.Memory}}'
+docker inspect copiloto-mcp --format '{{.HostConfig.NanoCpus}}'
+```
+
+Esperado, y verificado el 23-sep-2026 con Compose v5.2.0:
+
+```
+2147483648     <- 2 GiB de memoria
+2000000000     <- 2 nucleos (en milmillonesimas)
+```
+
+**Si alguno sale `0`, no hay límite**: tu versión de Compose está ignorando el
+bloque `deploy`. En ese caso cambia en `docker-compose.yml` el bloque por sus
+equivalentes de siempre, que ninguna versión ignora:
+
+```yaml
+    mem_limit: 2g
+    cpus: 2.0
+```
+
+Y comprueba además que torch se ha enterado del tope de CPU, porque **no mira el
+cgroup**: se guía por `OMP_NUM_THREADS`, que el compose fija a 2.
+
+```bash
+docker compose exec copiloto-mcp python -c "import os,torch; print(torch.get_num_threads(), os.cpu_count())"
+```
+
+```
+2 20
+```
+
+El primer número es el que importa y tiene que coincidir con `cpus`. El segundo
+es cuántos núcleos ve la máquina, y que sean distintos es justo el motivo de que
+`OMP_NUM_THREADS` esté puesto: sin él, torch abriría 20 hilos para pelearse por
+una cuota de 2 núcleos, con el VPS entero pagándolo.
+
 ## 7. Medir la latencia dentro del contenedor
 
 Se mide **dentro** del contenedor porque es ahí donde va a correr: el límite de
@@ -416,29 +597,34 @@ docker compose exec copiloto-mcp python /modelo/medir_latencia.py
 > `can't open file '/app/C:/Program Files/Git/modelo/...'`.
 
 El script hace 20 repeticiones por puerta más una de calentamiento y reporta la
-mediana. Resultado de referencia, medido el 23-sep-2026 sobre una imagen
-reconstruida desde cero (`docker compose build --no-cache`):
+mediana. Resultado de referencia, medido el 23-sep-2026, con la imagen de
+versiones clavadas y **con los límites de 2 núcleos y 2 GB ya aplicados**:
 
 ```
 DICOM de prueba: 131322 bytes
-REST: mediana 42 ms | peor 49 ms | presupuesto 4000 ms -> 95x de margen
-MCP : mediana 41 ms | peor 46 ms | presupuesto 4000 ms -> 97x de margen
+REST: mediana 38 ms | peor 50 ms | presupuesto 4000 ms -> 104x de margen
+MCP : mediana 43 ms | peor 52 ms | presupuesto 4000 ms -> 93x de margen
 ```
 
 | Puerta | Mediana | Peor de 20 | Presupuesto H4 | Margen |
 | :--- | ---: | ---: | ---: | ---: |
-| REST (`/inferir`) | **42 ms** | 49 ms | 4 000 ms | 95x |
-| MCP (`/mcp`) | **41 ms** | 46 ms | 4 000 ms | 97x |
+| REST (`/inferir`) | **38 ms** | 50 ms | 4 000 ms | 104x |
+| MCP (`/mcp`) | **43 ms** | 52 ms | 4 000 ms | 93x |
 
 **Criterio de aceptación de H4 cumplido con dos órdenes de magnitud de
 holgura.** Las dos puertas miden prácticamente lo mismo, que es lo esperado:
 el trabajo real (decodificar el DICOM e inferir) es el mismo y el sobre del
 protocolo no pesa nada al lado.
 
-No esperes las mismas cifras al milisegundo. Una medición anterior en la misma
-máquina dio 39 ms y 40 ms: la dispersión entre corridas es del orden del 10 %,
-irrelevante frente a un presupuesto 100 veces mayor. Lo que hay que mirar es el
-orden de magnitud, no el dígito.
+Que la medida se tomase con la CPU acotada a dos núcleos importa: es la cifra del
+servicio tal como se va a desplegar, no la de un contenedor sin límites. Acotarla
+no costó nada medible —sin límite las medianas eran 42 ms y 41 ms—, porque esta
+red a 320×320 no aprovecha más de dos hilos.
+
+No esperes las mismas cifras al milisegundo. Entre corridas la dispersión es del
+orden del 10 % (se han visto 38, 39, 41, 42 y 43 ms según la puerta y la
+corrida), irrelevante frente a un presupuesto 100 veces mayor. Lo que hay que
+mirar es el orden de magnitud, no el dígito.
 
 Si alguna mediana te saliera por encima de 4 000 ms, para y averigua por qué
 antes de dar el hito por bueno.
@@ -501,7 +687,9 @@ data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"...","type":"text"}]
 
 ## 9. Qué devuelve, y qué hace cuando se niega
 
-Una inferencia correcta:
+Una inferencia correcta. Esta es literalmente la respuesta del DICOM de
+referencia del paso 7, la primera de la corrida (de ahí que `milisegundos` sea
+más alto que la mediana: la primera paga el arranque perezoso):
 
 ```json
 {
@@ -513,9 +701,12 @@ Una inferencia correcta:
   "edad_paciente": 40,
   "modelo": "efficientnet_b0_320px",
   "auc_validacion": 0.883,
-  "milisegundos": 53.2
+  "milisegundos": 59.8
 }
 ```
+
+`milisegundos` es lo único que cambia entre corridas; el resto es determinista y
+te debe salir idéntico con este mismo fichero.
 
 La cifra que se combina con la regla clínica es `razon_de_verosimilitud`; la
 `probabilidad_calibrada` está calculada con la prevalencia del dataset
@@ -555,7 +746,8 @@ el modelo.
 | `AUC_VALIDACION` | `0.883` | AUC en validación, **se le muestra al profesional** en cada respuesta |
 | `RUTA_PESOS` | `/modelo/pesos_modelo_cpu.pt` | dentro de la imagen |
 | `RUTA_CALIBRADOR` | `/modelo/calibrador.json` | dentro de la imagen |
-| `RED_N8N` | `[retirado]_[retirado]_network` | nombre de la red externa de n8n |
+| `OMP_NUM_THREADS` | `2` | hilos que usa torch. **Tiene que valer lo mismo que `cpus`** del bloque de límites: torch no lee el cgroup y sin esto abriría un hilo por núcleo del host |
+| `RED_N8N` | `[retirado]_[retirado]_network` | nombre de la red externa de n8n. Se pasa en la línea de comandos, no se edita el fichero |
 
 `AUC_VALIDACION` viaja por entorno y no como literal en el código a propósito:
 es una afirmación de calidad sobre **los pesos**, no sobre el código. Si
@@ -565,7 +757,7 @@ reentrenas y no la actualizas, cada respuesta seguirá citando la cifra vieja.
 
 | Síntoma | Causa | Arreglo |
 | :--- | :--- | :--- |
-| `network [retirado]_[retirado]_network declared as external, but could not be found` | la red no existe (caso local) | `docker network create [retirado]_[retirado]_network`, o `RED_N8N=<nombre real>` |
+| `network [retirado]_[retirado]_network declared as external, but could not be found` | el nombre que espera el compose no es el de la red real | **primero**: averigua el nombre real con `docker network ls` y arranca con `RED_N8N=<nombre real> docker compose up -d`. Ver el recuadro de abajo |
 | `"/servidor/pesos_modelo_cpu.pt": not found` al construir | no copiaste los pesos | ver el paso 3 |
 | `Conflict. The container name "/copiloto-mcp" is already in use` | ya hay un contenedor con ese nombre | el paso 2.4 lo detecta antes. Averigua de quién es con `docker ps -a --filter name=copiloto-mcp` **antes** de borrarlo |
 | `no space left on device` al construir | disco lleno | el paso 2.6 lo detecta antes. Libera espacio; no uses `docker system prune -a` en el VPS (paso 12) |
@@ -575,6 +767,34 @@ reentrenas y no la actualizas, cada respuesta seguirá citando la cifra vieja.
 | el estado pasa a `unhealthy` | el proceso murió al arrancar | `docker compose logs copiloto-mcp` |
 | `can't open file '/app/C:/Program Files/Git/modelo/...'` | Git Bash convirtió la ruta | `MSYS_NO_PATHCONV=1` delante del comando |
 | `curl http://localhost:8000/salud` desde el host no responde | **es lo correcto**: no hay `ports` publicados | usar `docker compose exec`, o un contenedor en la misma red |
+
+### La red no aparece: NO la crees en el VPS
+
+Este es el error que más tienta a hacer lo peor, así que va aparte.
+
+Cuando el compose dice que la red externa no existe, la reacción natural es
+crearla. **En el VPS eso es justo lo que no hay que hacer.** Si la red real se
+llama de otra forma, `docker network create [retirado]_[retirado]_network` te deja una
+red vacía, el contenedor arranca, el estado dice `healthy`, todo parece bien
+— y n8n no lo alcanza nunca, porque están en redes distintas. Es el fallo
+silencioso que el paso 2.2 existe para evitar, y lo habrías provocado tú.
+
+El orden correcto es siempre este:
+
+```bash
+# 1. cual es la red real
+docker network ls
+
+# 2. si n8n no se deja adivinar por el nombre, preguntaselo
+docker inspect <nombre-del-contenedor-de-n8n> --format '{{range $red, $c := .NetworkSettings.Networks}}{{println $red}}{{end}}'
+
+# 3. arrancar con el nombre real, sin editar el compose
+RED_N8N=<nombre real> docker compose up -d
+```
+
+`docker network create` solo tiene sentido **en local**, con un nombre de tirar,
+y está en el Caso B del paso 4. **Nunca en el VPS**: allí la red la posee la
+infraestructura del cliente y ya existe.
 
 Los logs, siempre:
 
@@ -589,7 +809,23 @@ volúmenes, ni configuración del sistema que revertir.
 
 ### Bajarlo
 
-Desde `servidor/`, y **solo** desde ahí:
+Antes de bajar nada, confirma qué proyecto vas a tocar. El compose declara
+`name: copiloto-mcp`, así que el proyecto se identifica solo y no depende de
+cómo se llame la carpeta:
+
+```bash
+docker compose ls
+```
+
+```
+NAME           STATUS       CONFIG FILES
+copiloto-mcp   running(1)   /opt/copiloto/servidor/docker-compose.yml
+```
+
+`running(1)`: un solo contenedor. Si ves cualquier otro proyecto en esa línea,
+no es el nuestro.
+
+Ahora sí, desde `servidor/`:
 
 ```bash
 cd servidor
@@ -606,8 +842,7 @@ Salida literal:
 ```
 
 Cuatro líneas, las cuatro sobre `copiloto-mcp`. Si aparece el nombre de
-cualquier otro contenedor, estabas en el directorio equivocado: `Ctrl+C` y
-comprueba dónde estás antes de seguir.
+cualquier otro contenedor, para: `Ctrl+C` y vuelve al `docker compose ls`.
 
 `docker compose down` **no borra la red externa.** Comprobado: después del
 `down`, `docker network ls` sigue mostrando `[retirado]_[retirado]_network` intacta con
