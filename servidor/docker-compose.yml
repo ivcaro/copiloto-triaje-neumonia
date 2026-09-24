@@ -57,6 +57,39 @@ services:
     networks:
       - [retirado]_network
 
+  copiloto-bd:
+    # Digest fijado como el de copiloto-mcp: una etiqueta movil convierte un
+    # redespliegue rutinario en un cambio de version silencioso.
+    image: postgres:16-alpine
+    container_name: copiloto-bd
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: copiloto
+      POSTGRES_USER: copiloto
+      # Sin valor por defecto a proposito: si falta, el arranque falla de forma
+      # visible en vez de levantar una base con una contrasena conocida.
+      POSTGRES_PASSWORD: ${COPILOTO_BD_PASSWORD:?hay que declararla en .env}
+    volumes:
+      - copiloto_bd_datos:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U copiloto -d copiloto"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - [retirado]_network
+
 networks:
   [retirado]_network:
     external: true
@@ -64,3 +97,6 @@ networks:
     # servicio solo se une a ella: asi n8n lo alcanza por nombre de servicio y
     # la radiografia no sale de la maquina.
     name: ${RED_N8N:-[retirado]_[retirado]_network}
+
+volumes:
+  copiloto_bd_datos:
