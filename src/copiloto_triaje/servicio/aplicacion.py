@@ -68,8 +68,15 @@ def construir_aplicacion(motor: Motor, host_permitido: str = "0.0.0.0") -> FastA
         # "Error executing tool clasificar_radiografia", indistinguibles, y
         # esta puerta divergia entera de la REST justo en el camino de error.
         #
-        # El codigo va delante y separado por ": " para que quien llame
-        # parta por el primer ":" y no tenga que interpretar prosa.
+        # El codigo se pone al PRINCIPIO del mensaje del ToolError y separado
+        # por ": ", pero ojo: no acaba siendo el primer campo de lo que lee el
+        # cliente. El SDK antepone su propio
+        # "Error executing tool clasificar_radiografia: ", asi que por MCP el
+        # codigo queda de SEGUNDO. Quien lo consuma tiene que buscarlo DENTRO
+        # del texto (o quitar antes ese prefijo): partir por el primer ":"
+        # devuelve "Error executing tool clasificar_radiografia" para todos los
+        # codigos por igual. Por REST no hay nada que parsear, el codigo viaja
+        # aislado en el campo `codigo` del JSON.
         try:
             datos = base64.b64decode(dicom_base64, validate=True)
         except Exception as exc:

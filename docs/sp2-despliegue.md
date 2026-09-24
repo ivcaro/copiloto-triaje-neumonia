@@ -747,8 +747,16 @@ que falla y obliga a actualizar esta tabla en vez de dejarla mintiendo.
 Consecuencia práctica para SP4: la evidencia de imagen puede mover el previo
 clínico, pero no puede anularlo ni volverlo certeza. Eso es deliberado.
 
-Los rechazos llevan **código delante, separado por `": "`**, para que quien
-llame parta por el primer `:` y no tenga que interpretar prosa:
+Todo rechazo lleva un **código** legible por máquina, pero **dónde aparece
+depende de la puerta**, y esto importa para programar el cliente:
+
+- **Por REST** viene aislado en el campo `codigo` del JSON. Nada que parsear.
+- **Por MCP** viene dentro del texto del error, y **no es el primer campo**: el
+  SDK antepone `Error executing tool clasificar_radiografia: ` al mensaje, así
+  que el código queda de **segundo**. Hay que buscarlo dentro del texto —o
+  quitar ese prefijo primero—; **partir por el primer `:` devuelve
+  `Error executing tool clasificar_radiografia`**, que es lo mismo para todos
+  los códigos y no sirve de nada. Se ve en el ejemplo de más abajo.
 
 | Código | Cuándo | REST | MCP |
 | :--- | :--- | :--- | :--- |
