@@ -137,3 +137,58 @@ def test_el_contador_de_iniciados_acumula_por_dia(conexion):
             " cuestionarios_iniciados.cuantos + 1")
     assert conexion.execute(
         "SELECT cuantos FROM cuestionarios_iniciados").fetchone()[0] == 3
+
+
+def test_el_limite_cuenta_por_chat_id_y_dia(conexion):
+    """El limite de 5/dia del §4.2, que el esquema anterior no podia sostener:
+    `cuestionarios` no tiene `chat_id`."""
+    conexion.execute("TRUNCATE limite_paciente")
+    for _ in range(3):
+        conexion.execute(
+            "INSERT INTO limite_paciente (chat_id, dia, cuantos)"
+            " VALUES (777, (now() AT TIME ZONE 'America/Guayaquil')::date, 1)"
+            " ON CONFLICT (chat_id, dia) DO UPDATE SET cuantos ="
+            " limite_paciente.cuantos + 1")
+    conexion.execute(
+        "INSERT INTO limite_paciente (chat_id, dia, cuantos)"
+        " VALUES (888, (now() AT TIME ZONE 'America/Guayaquil')::date, 1)")
+    filas = dict(conexion.execute(
+        "SELECT chat_id, cuantos FROM limite_paciente ORDER BY chat_id").fetchall())
+    assert filas == {777: 3, 888: 1}, "los contadores de dos chats se mezclaron"
+
+
+def test_el_limite_no_puede_ligar_un_chat_id_a_un_codigo(conexion):
+    """LA prueba de esta tabla, y la razon de que sea una tabla aparte.
+
+    El contador necesita saber CUANTOS cuestionarios hizo un chat_id hoy, no
+    CUALES. Si alguien anadiera aqui una columna con el codigo seudonimo -o
+    metiera el chat_id en `cuestionarios`- el seudonimo dejaria de serlo: se
+    podria reconstruir que cuenta de Telegram respondio que cuestionario.
+
+    Esta prueba existe para que ese cambio no pase desapercibido en una
+    revision.
+    """
+    columnas = {f[0] for f in conexion.execute(
+        "SELECT column_name FROM information_schema.columns"
+        " WHERE table_name = 'limite_paciente'").fetchall()}
+    assert columnas == {"chat_id", "dia", "cuantos"}, columnas
+
+    de_cuestionarios = {f[0] for f in conexion.execute(
+        "SELECT column_name FROM information_schema.columns"
+        " WHERE table_name = 'cuestionarios'").fetchall()}
+    assert "chat_id" not in de_cuestionarios, (
+        "cuestionarios no puede llevar chat_id: ataria el codigo seudonimo a "
+        "una cuenta de Telegram")
+
+
+def test_la_limpieza_borra_el_contador_a_los_dos_dias(conexion):
+    conexion.execute("TRUNCATE limite_paciente")
+    conexion.execute(
+        "INSERT INTO limite_paciente (chat_id, dia, cuantos) VALUES"
+        " (1, (now() AT TIME ZONE 'America/Guayaquil')::date, 1),"
+        " (2, (now() AT TIME ZONE 'America/Guayaquil')::date - 1, 1),"
+        " (3, (now() AT TIME ZONE 'America/Guayaquil')::date - 5, 1)")
+    conexion.execute((BD / "limpieza.sql").read_text(encoding="utf-8"))
+    quedan = sorted(f[0] for f in conexion.execute(
+        "SELECT chat_id FROM limite_paciente").fetchall())
+    assert quedan == [1, 2], "se borro el contador de hoy o sobrevivio el viejo"

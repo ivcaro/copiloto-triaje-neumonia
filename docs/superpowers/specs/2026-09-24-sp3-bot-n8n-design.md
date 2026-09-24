@@ -116,8 +116,19 @@ mano con `setWebhook` y se comprueba la cabecera en el primer nodo del flujo.
 Sin esa comprobación, la lista blanca no protege de nada y D6 es decorativo.
 
 **Límite de uso del bot del paciente:** máximo **5 cuestionarios completados por
-`chat_id` y día**, contados en SQL. No es antiabuso serio; evita que un bucle o
-una broma llenen la tabla en la máquina del cliente.
+`chat_id` y día**. No es antiabuso serio; evita que un bucle o una broma llenen
+la tabla en la máquina del cliente.
+
+El contador vive en una **tabla propia**, `limite_paciente`, y no como una
+columna de `cuestionarios`. La diferencia no es de estilo: `cuestionarios` está
+identificado por el **código seudónimo**, y meterle el `chat_id` al lado ataría
+cada cuestionario a una cuenta de Telegram concreta — que es exactamente lo que
+el seudónimo existe para impedir. Con la tabla aparte, el sistema sabe *cuántos*
+ha hecho un `chat_id` hoy sin saber *cuáles*.
+
+Y el contador **se borra a los 2 días** con la limpieza diaria (§5.4). Guardar
+más tiempo la actividad por cuenta de Telegram no aporta nada al límite y sí
+acumula un rastro de quién usó el bot y cuándo.
 
 ### 4.3. El recorrido
 
@@ -268,6 +279,17 @@ CREATE TABLE cuestionarios_iniciados (
   dia     date PRIMARY KEY,
   cuantos integer NOT NULL DEFAULT 0
 );
+
+-- Contador del limite de 5/dia (§4.2). Tabla APARTE y no una columna de
+-- `cuestionarios`: esa esta identificada por el codigo seudonimo, y meterle el
+-- chat_id al lado ataria cada cuestionario a una cuenta de Telegram, que es lo
+-- que el seudonimo existe para impedir. Aqui se sabe CUANTOS, no CUALES.
+CREATE TABLE limite_paciente (
+  chat_id bigint  NOT NULL,
+  dia     date    NOT NULL,
+  cuantos integer NOT NULL DEFAULT 0,
+  PRIMARY KEY (chat_id, dia)
+);
 ```
 
 `consultas` guarda **también los rechazos**, con su código. Un sistema que solo
@@ -345,6 +367,7 @@ Retención de nuestras tablas:
 | `consultas` | mientras dure el proyecto | seudónimas; sin ellas no hay H7 ni dashboard |
 | `profesionales` | mientras esté activo; al dar de baja se pone `baja_en` y el `nombre` se sustituye por `"(dado de baja)"` | es la única tabla con un dato personal directo de una persona real |
 | `cuestionarios_iniciados` | agregado por día, sin datos personales | indefinido, no hay nada que proteger |
+| `limite_paciente` | **2 días** | solo sirve para el límite del día; más tiempo es un rastro de quién usó el bot y cuándo. Dos días y no uno por el borde de la zona horaria |
 
 **Zona horaria:** todo es `timestamptz`. `expira_en` es `creado_en + 7 días`.
 Las agrupaciones por día del dashboard y el `cuestionarios_iniciados.dia` usan
