@@ -310,7 +310,7 @@ Antes de empezar, sustituye en todos los comandos:
 | :--- | :--- |
 | `usuario@vps` | tu usuario y el host o IP del VPS, p. ej. `root@203.0.113.10` |
 | `/opt/copiloto` | el directorio del VPS donde quieras dejar esto |
-| `<url-del-repositorio>` | la URL SSH del repositorio privado |
+| `<url-del-repositorio>` | `github-copiloto:[retirado]/copiloto-triaje.git` — el repositorio privado, por el alias SSH del 3.2. Por HTTPS sería `https://github.com/[retirado]/copiloto-triaje.git`, pero entonces el VPS pide usuario en cada `pull` |
 
 El prefijo `[VPS]` marca los comandos que van **dentro** de la sesión `ssh`. No
 se escribe: es solo para que sepas en qué máquina estás en cada línea.
