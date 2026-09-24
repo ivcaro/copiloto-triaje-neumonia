@@ -37,7 +37,29 @@ TROZO_BYTES = 1024 * 1024
 # comprobacion autoritativa pasa a ser la del tool sobre los bytes
 # decodificados: el MISMO numero que aplica REST.
 MARGEN_SOBRE_JSONRPC = 64 * 1024
-MAXIMO_CUERPO_MCP = MAXIMO_BYTES * 4 // 3 + MARGEN_SOBRE_JSONRPC
+
+# Lo que ocupa en base64, con su relleno, un payload de MAXIMO_BYTES.
+CARACTERES_BASE64 = (MAXIMO_BYTES + 2) // 3 * 4
+
+# Y el sitio para los SALTOS DE LINEA, porque el tool acepta el base64 envuelto:
+# muchas librerias cortan a 76 columnas por defecto -el ancho del MIME,
+# `base64.encodebytes` entre ellas-. Sin contarlos aqui, la aceptacion del
+# envuelto quedaba deshecha una capa mas arriba justo en la banda de arriba: un
+# payload envuelto de entre 4,98 y 5,00 MiB decodificados pasaba la comprobacion
+# del tool pero moria antes, en el 413 del transporte, mientras que el mismo
+# payload en una sola linea si entraba. Las dos puertas tienen que aceptar el
+# MISMO tamano, y el numero autoritativo son los bytes decodificados.
+#
+# Cada salto cuesta DOS caracteres y no uno: el base64 viaja dentro de una
+# cadena JSON, donde un \n literal no es legal y se escapa como "\\n". Medido:
+# con un solo byte por salto el transporte seguia devolviendo 413.
+COLUMNAS_MIME = 76
+BYTES_POR_SALTO_ESCAPADO = 2
+MARGEN_SALTOS_DE_LINEA = ((CARACTERES_BASE64 // COLUMNAS_MIME + 1)
+                          * BYTES_POR_SALTO_ESCAPADO)
+
+MAXIMO_CUERPO_MCP = (CARACTERES_BASE64 + MARGEN_SALTOS_DE_LINEA
+                     + MARGEN_SOBRE_JSONRPC)
 
 
 def construir_aplicacion(motor: Motor,

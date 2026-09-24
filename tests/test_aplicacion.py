@@ -252,6 +252,33 @@ async def test_mcp_acepta_el_base64_envuelto_en_lineas(motor, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_el_transporte_deja_llegar_el_base64_envuelto_del_tamano_maximo(
+        motor):
+    """Aceptar el base64 envuelto no puede quedar deshecho por el transporte.
+
+    Los saltos de linea engordan el CUERPO un 1,3%, y el limite del transporte
+    mide el cuerpo. Sin contarlos, un payload envuelto cerca del maximo moria en
+    el 413 del transporte mientras el mismo payload en una sola linea llegaba
+    hasta la comprobacion del tool: las dos puertas volvian a aceptar tamanios
+    distintos, que es el fallo que MAXIMO_CUERPO_MCP existe para cerrar.
+
+    Se comprueba con un payload que se pasa del maximo por 1 KiB: tiene que
+    llegar a la comprobacion del TOOL -y traer su codigo- y no morir antes.
+    """
+    excesivo = b"\x00" * (MAXIMO_BYTES + 1024)
+    envuelto = base64.encodebytes(excesivo).decode()
+    assert "\n" in envuelto
+    # El tamano que mide el transporte es el del CUERPO, donde cada salto de
+    # linea va escapado como dos caracteres dentro de la cadena JSON.
+    cuerpo = len(json.dumps(envuelto))
+    assert cuerpo < MAXIMO_CUERPO_MCP, (cuerpo, MAXIMO_CUERPO_MCP)
+
+    async with cliente_de(motor) as cliente:
+        respuesta = await _llamar_por_mcp(cliente, envuelto)
+    assert _codigo_del_error_mcp(respuesta) == "payload_excesivo"
+
+
+@pytest.mark.asyncio
 async def test_la_herramienta_mcp_devuelve_exactamente_las_claves_del_contrato(
         motor, tmp_path):
     """Las claves son el contrato que SP4 va a leer, asi que se fijan aqui.
