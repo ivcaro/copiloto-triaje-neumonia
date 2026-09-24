@@ -113,27 +113,41 @@ def test_el_preprocesamiento_es_el_mismo_que_el_de_entrenamiento(motor, tmp_path
     assert torch.allclose(visto["tensor"], esperado)
 
 
-def test_el_contrato_nunca_emite_probabilidad_cero_ni_uno(tmp_path):
-    """El recorte de `Calibrador.calibrar` existe para que SP4 no reciba 0 ni 1
-    exactos: lo primero que hara con la probabilidad es calcular p/(1-p). Un
-    `round(x, 4)` sobre un recorte de 1e-6 lo deshace, y el fallo no se ve
-    porque la fixture sintetica nunca llega a los extremos de la curva.
+@pytest.mark.parametrize("logit,extremo", [(-20.0, "minima"), (20.0, "maxima")])
+def test_el_contrato_emite_la_evidencia_ya_acotada_por_la_curva(tmp_path, logit,
+                                                                extremo):
+    """Lo que sale del contrato tiene que ser el valor SOSTENIDO de la curva.
+
+    La cota vive en `Calibrador.calibrar`, pero el numero que SP4 va a leer
+    sale de aqui, y esta rama ya ha visto una decision correcta deshecha una
+    capa mas arriba: un `round(x, 4)` que convertia el recorte de 1e-6 en 0,0.
+    Comprobar solo `> 0` no lo habria detectado -1e-6 tambien es > 0-, asi que
+    se compara con el valor exacto que la cota debe producir. Cualquier
+    redondeo, recorte o default que se cuele entre `calibrar` y la respuesta
+    hace fallar esta prueba.
+
+    Se usa el calibrador REAL y no la fixture sintetica porque la fixture no
+    llega a los tramos saturados de la curva.
     """
     real = Calibrador.desde_json("servidor/calibrador.json")
+    esperada = getattr(real, f"probabilidad_{extremo}_sostenida")
 
-    class CasiCero(torch.nn.Module):
+    class Saturado(torch.nn.Module):
         def forward(self, x):
-            # logit muy negativo: cruda ~ 1e-9, por debajo del minimo de la curva
-            return torch.full((x.shape[0], 1), -20.0)
+            # Logit enorme en valor absoluto: la cruda se sale de la curva por
+            # el extremo que toque, que es donde la isotonica satura.
+            return torch.full((x.shape[0], 1), logit)
 
-    motor = Motor(modelo=CasiCero(), calibrador=real, umbral=0.4258,
+    motor = Motor(modelo=Saturado(), calibrador=real, umbral=0.4258,
                   tam_imagen=32, nombre_modelo="prueba", auc_validacion=0.883)
     ruta = tmp_path / "a.dcm"
     crear_dicom(ruta, edad="054Y")
     salida = motor.clasificar(ruta.read_bytes())
 
-    assert salida["probabilidad_calibrada"] > 0.0
-    assert salida["razon_de_verosimilitud"] > 0.0
+    odds_previo = real.prevalencia / (1 - real.prevalencia)
+    assert salida["probabilidad_calibrada"] == pytest.approx(esperada)
+    assert salida["razon_de_verosimilitud"] == pytest.approx(
+        (esperada / (1 - esperada)) / odds_previo)
     # Y las odds siempre se pueden calcular sobre lo que se reporta.
     p = salida["probabilidad_calibrada"]
     assert 0.0 < p < 1.0

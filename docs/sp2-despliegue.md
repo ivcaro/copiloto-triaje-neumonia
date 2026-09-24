@@ -712,6 +712,41 @@ La cifra que se combina con la regla clínica es `razon_de_verosimilitud`; la
 `probabilidad_calibrada` está calculada con la prevalencia del dataset
 (0,2215) y no con la de la consulta.
 
+### La razón de verosimilitud está ACOTADA, y eso es parte del contrato
+
+Quien consuma este campo —SP4— tiene que saber que no puede tomar cualquier
+valor. Con el calibrador que hoy sirve el contenedor
+(`efficientnet_b0_320px_lote24_4+20ep`):
+
+| Cota | `probabilidad_calibrada` | `razon_de_verosimilitud` |
+| :--- | ---: | ---: |
+| mínima | 0,004608 | **0,0163** |
+| máxima | 0,956522 | **77,32** |
+
+Ninguna radiografía, por extrema que sea, sale de ahí. **La razón es que la
+curva de calibración no sostiene más certeza que esa.** La regresión isotónica
+se ajustó sobre 3 810 radiografías de validación y se guarda como 200 puntos;
+en el punto más bajo y en el más alto —uno de 200 en cada extremo— el tramo
+correspondiente ya no tiene ningún negativo (o ningún positivo) y la isotónica
+devuelve 0,0 y 1,0 exactos. Esos dos valores no son una medición: son el
+artefacto de un tramo sin contraejemplos. Dejarlos pasar daría razones de
+verosimilitud de 3,5e-06 y 3,5e+06, y como SP4 las multiplica por las *odds* de
+la regla clínica, un paciente con sospecha alta (previo 0,90) acabaría con un
+posterior de 0,003% —certeza de ausencia, es decir un falso negativo— cuando el
+vecino inmediato de la curva, que sí tiene datos detrás, da 12,8%. Un salto de
+4 630 veces decidido por una sola placa. En el extremo alto pasa lo simétrico y
+fabrica certeza de presencia.
+
+Así que el tope es el último valor **sostenido** de la curva por cada lado, y no
+una constante cerca de 0 y de 1. Las dos cifras de la tabla salen de
+`servidor/calibrador.json`, se recalculan solas al cargarlo y **cambiarán si se
+reajusta el calibrador**: no están escritas en el código. Si se reentrena, hay
+una prueba (`test_el_calibrador_desplegado_acota_la_evidencia_donde_dice_el_contrato`)
+que falla y obliga a actualizar esta tabla en vez de dejarla mintiendo.
+
+Consecuencia práctica para SP4: la evidencia de imagen puede mover el previo
+clínico, pero no puede anularlo ni volverlo certeza. Eso es deliberado.
+
 Los rechazos llevan **código delante, separado por `": "`**, para que quien
 llame parta por el primer `:` y no tenga que interpretar prosa:
 

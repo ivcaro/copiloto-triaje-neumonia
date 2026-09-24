@@ -129,14 +129,18 @@ class Motor:
 
         return {
             "probabilidad_cruda": round(cruda, 4),
-            # SIN redondear estas dos: `Calibrador.calibrar` recorta a
-            # [1e-6, 1-1e-6] precisamente para que nadie reciba 0 ni 1
-            # exactos, y cualquier redondeo mas grueso que 6 decimales
-            # deshace ese recorte (round(1e-6, 4) == 0.0). SP4 calcula
-            # odds = p/(1-p) sobre `probabilidad_calibrada`, y multiplica
-            # las odds previas por `razon_de_verosimilitud`: un 0.0 o un 1.0
-            # fabricados por el redondeo producirian una certeza -de ausencia
-            # o presencia de neumonia- que la radiografia no respalda.
+            # SIN redondear estas dos. `Calibrador.calibrar` las acota a los
+            # extremos SOSTENIDOS de la curva de calibracion -con el
+            # calibrador desplegado, 0,004608 y 0,956522- para que nadie
+            # reciba mas certeza que la que los datos de validacion
+            # respaldan. Redondear aqui deshace esa cota igual que antes
+            # deshacia la vieja (round(1e-6, 4) == 0.0), solo que ahora el
+            # valor que se perderia es una probabilidad de verdad y no un
+            # epsilon. SP4 calcula odds = p/(1-p) sobre
+            # `probabilidad_calibrada` y multiplica las odds previas por
+            # `razon_de_verosimilitud`: cualquier numero que este redondeo
+            # fabricara seria certeza -de ausencia o de presencia de
+            # neumonia- que la radiografia no respalda.
             "probabilidad_calibrada": self.calibrador.calibrar(cruda),
             "razon_de_verosimilitud": self.calibrador.razon_de_verosimilitud(cruda),
             "umbral": round(self.umbral, 4),
