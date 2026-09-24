@@ -267,20 +267,42 @@ espacio primero; no empieces la construcción a ver si cabe.
 - Para medir latencia o probar de verdad: **al menos un fichero DICOM real**
   del dataset RSNA, de un paciente **de 18 a 100 años** (ver el paso 7).
 - El código y los pesos **puestos en el VPS**, que es el apartado 3.1.
+- Si vas a redesplegar con `git pull`: una **llave de despliegue de solo
+  lectura** en el VPS, que es el apartado 3.2. El repositorio es privado, así
+  que sin ella el `git pull` se cuelga pidiendo usuario.
 
 ### 3.1. Llevar el código y los pesos al VPS
 
-Dos hechos hacen que esto no sea un `git clone` y punto:
+Un hecho manda sobre todo lo demás en este apartado:
 
-- **El repositorio no tiene remoto configurado.** `git remote -v` sale vacío, así
-  que hoy no existe ninguna URL desde la que clonar estando en el VPS.
-- **Los pesos no viajan con el código.** `servidor/pesos_modelo_cpu.pt` son
-  16 MB binarios y está en `.gitignore` a propósito, así que no estarían ni
-  aunque hubiera remoto. El `servidor/calibrador.json` de al lado sí se
-  versiona, ese viaja solo.
+> **Los pesos no viajan con el código.** `servidor/pesos_modelo_cpu.pt` son
+> 16 MB binarios y está en `.gitignore` a propósito, así que **no llegan por
+> `git`, ni hoy ni nunca**. El `servidor/calibrador.json` de al lado sí se
+> versiona, ese viaja solo.
 
-O sea: hay que empaquetar y copiar, en dos envíos. Los comandos se ejecutan **en
-tu máquina Windows** (Git Bash), salvo los marcados `[VPS]`.
+Eso parte el despliegue en dos envíos, vayas por donde vayas. Hay dos caminos,
+y el que te toque depende de si el VPS puede hablar con el repositorio:
+
+| | Cuándo usarlo | Qué hace |
+| :--- | :--- | :--- |
+| **Camino A: `git clone`** | el repositorio privado existe **y** el VPS tiene llave de despliegue | clona `main` y copia los pesos aparte |
+| **Camino B: `git archive` + `tar`** | no hay remoto, o el VPS no tiene llave | empaqueta la rama y la copia por `scp` |
+
+El camino A es el bueno si vas a redesplegar más de una vez, porque deja un
+repositorio de verdad en `/opt/copiloto` y a partir de ahí actualizar es un
+`git pull` (ver el redespliegue, al final del apartado 6). El camino B no deja
+repositorio: cada actualización vuelve a ser un tar entero.
+
+**Una cosa que el camino A necesita y el B no: credenciales en una máquina que
+no es tuya.** El repositorio es privado, así que un `git pull` en el VPS se
+queda colgado pidiendo usuario y contraseña. Se resuelve con una **llave de
+despliegue de solo lectura acotada a este repositorio**, nunca con un token
+dentro de la URL (`https://usuario:token@github.com/...`): ese token queda **en
+claro** en `/opt/copiloto/.git/config` y en el historial de `root` del cliente,
+y abre todos tus repositorios, no solo este. Ver 3.2.
+
+Los comandos se ejecutan **en tu máquina Windows** (Git Bash), salvo los
+marcados `[VPS]`.
 
 Antes de empezar, sustituye en todos los comandos:
 
@@ -288,7 +310,7 @@ Antes de empezar, sustituye en todos los comandos:
 | :--- | :--- |
 | `usuario@vps` | tu usuario y el host o IP del VPS, p. ej. `root@203.0.113.10` |
 | `/opt/copiloto` | el directorio del VPS donde quieras dejar esto |
-| `<url-del-repositorio>` | solo en la variante del final, si algún día hay remoto |
+| `<url-del-repositorio>` | la URL SSH del repositorio privado |
 
 El prefijo `[VPS]` marca los comandos que van **dentro** de la sesión `ssh`. No
 se escribe: es solo para que sepas en qué máquina estás en cada línea.
@@ -312,16 +334,50 @@ bb985e1f792e1cfee150ec57bdc6d706f7484499fa999da3406a5798260e8d47
 Si no coincide, para aquí: estarías desplegando un modelo distinto del que esta
 guía certifica. Apunta ese hash, lo vuelves a usar en el paso 5.
 
-**Paso 2. Empaquetar el código de la rama.** `git archive` saca un tar de la
-rama tal como está **commiteada**, sin `.git` y sin ficheros sueltos:
+#### Camino A: clonar el repositorio privado
+
+Se clona **`main`**, y se clona en superficie. Los dos detalles importan:
 
 ```bash
-git archive --format=tar --output=../copiloto-triaje.tar sp2-servidor-mcp
+ssh usuario@vps "git clone --depth 1 <url-del-repositorio> /opt/copiloto"
+```
+
+- **`main`, no `sp2-servidor-mcp`.** La rama ya está fusionada (`git rev-list
+  --count main..sp2-servidor-mcp` da 0). Clonarla funcionaría hoy y rompería el
+  **segundo** despliegue en cuanto la borres, con un `your configuration
+  specifies to merge with the ref refs/heads/sp2-servidor-mcp... but no such
+  ref was fetched` que no dice lo que pasa.
+- **`--depth 1`** se salta los 2,1 MB de historial, que en un directorio de
+  despliegue no sirven para nada.
+
+Ahora los pesos, que el clon no trajo:
+
+```bash
+cd "C:/Users/[retirado]/OneDrive/Desktop/Claude/Proyecto Integrador/copiloto-triaje"
+scp servidor/pesos_modelo_cpu.pt usuario@vps:/opt/copiloto/servidor/
+```
+
+Y salta al **paso 5**, la comprobación del hash, que no sobra en ningún camino.
+
+> **Lo que el clon deja en el disco del cliente.** El árbol completo son 5,3 MB,
+> de los cuales 4 MB son `docs/eda/metadatos_eda.csv`: 26 685 filas de
+> metadatos por paciente del concurso RSNA. No entra en la imagen —el
+> `Dockerfile.dockerignore` excluye `docs/`— pero sí queda en `/opt/copiloto`.
+> Si no quieres eso en la máquina del cliente, el camino B no lo lleva, o se
+> saca el CSV del repositorio.
+
+#### Camino B: empaquetar y copiar
+
+**Paso 2. Empaquetar el código.** `git archive` saca un tar de la rama tal como
+está **commiteada**, sin `.git` y sin ficheros sueltos:
+
+```bash
+git archive --format=tar --output=../copiloto-triaje.tar main
 ```
 
 Salen unos 5,3 MB. Ojo con la palabra *commiteada*: lo que no esté en un commit
-de `sp2-servidor-mcp` no entra en el tar. Si vas a desplegar algo que acabas de
-tocar, commitéalo primero.
+de `main` no entra en el tar. Si vas a desplegar algo que acabas de tocar,
+commitéalo primero.
 
 **Paso 3. Copiar las dos cosas al VPS**, el código y los pesos por separado,
 porque los pesos no están dentro del tar:
@@ -363,18 +419,49 @@ la carga del modelo, y se parece más a un bug del código que a una copia mala.
 Si en `servidor/` falta `pesos_modelo_cpu.pt`, la construcción morirá con
 `"/servidor/pesos_modelo_cpu.pt": not found`.
 
-**Variante, si algún día el repositorio tiene remoto.** Entonces el camino es
-más corto, pero los pesos siguen yendo aparte porque seguirán gitignorados:
-
-```bash
-[VPS] git clone -b sp2-servidor-mcp <url-del-repositorio> /opt/copiloto
-scp servidor/pesos_modelo_cpu.pt usuario@vps:/opt/copiloto/servidor/
-```
-
-Y el mismo `sha256sum` del paso 5, que no sobra en ningún camino.
-
 > En PowerShell en vez de Git Bash, el equivalente de `sha256sum` es
 > `Get-FileHash servidor\pesos_modelo_cpu.pt -Algorithm SHA256`.
+
+### 3.2. La llave de despliegue (solo para el camino A)
+
+Solo hace falta si el VPS va a hablar con el repositorio, es decir, si vas a
+redesplegar con `git pull`. Es **de solo lectura y acotada a este
+repositorio**: si alguien entra al VPS, se lleva la capacidad de leer este
+código y nada más.
+
+En el VPS, generar la llave:
+
+```bash
+[VPS] ssh-keygen -t ed25519 -N '' -C 'despliegue-copiloto' -f ~/.ssh/copiloto_deploy && cat ~/.ssh/copiloto_deploy.pub
+```
+
+**Ese `.pub` lo pegas tú** en GitHub: repositorio → *Settings* → *Deploy keys* →
+*Add deploy key*, **sin marcar** *Allow write access*. Un despliegue no tiene
+por qué poder escribir en el repositorio.
+
+Si el VPS ya tiene una llave de despliegue para otro repositorio privado, hace
+falta una **segunda**: GitHub no deja reutilizar la misma en dos repositorios
+(`key is already in use`). De ahí que se le ponga un alias propio:
+
+```bash
+[VPS] printf 'Host github-copiloto\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/copiloto_deploy\n  IdentitiesOnly yes\n' >> ~/.ssh/config && chmod 600 ~/.ssh/config
+```
+
+```bash
+[VPS] ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
+```
+
+Ese `ssh-keyscan` evita que el primer `git clone` se quede colgado esperando un
+"¿confías en este host?" que nadie va a contestar dentro de un script.
+
+Con el alias puesto, la URL del clon es `github-copiloto:[retirado]/copiloto-triaje.git`.
+Para comprobar que la llave quedó bien y **sin permiso de escritura**:
+
+```bash
+[VPS] ssh -T git@github-copiloto
+```
+
+Debe nombrar el repositorio y **no** decir `write access`.
 
 ## 4. La red de Docker: el único punto que cambia entre el VPS y tu máquina
 
@@ -618,6 +705,60 @@ El primer número es el que importa y tiene que coincidir con `cpus`. El segundo
 es cuántos núcleos ve la máquina, y que sean distintos es justo el motivo de que
 `OMP_NUM_THREADS` esté puesto: sin él, torch abriría 20 hilos para pelearse por
 una cuota de 2 núcleos, con el VPS entero pagándolo.
+
+### Redespliegue: actualizar una instalación que ya existe
+
+Todo lo anterior es el **primer** despliegue. Para los siguientes, con el
+camino A, es una sola orden:
+
+```bash
+cd /opt/copiloto && git pull --ff-only && docker compose -f servidor/docker-compose.yml up -d --build copiloto-mcp && for i in $(seq 1 30); do e=$(docker inspect -f '{{.State.Health.Status}}' copiloto-mcp 2>/dev/null || echo ausente); [ "$e" = healthy ] && break; sleep 5; done && docker inspect -f '{{.State.Health.Status}}' copiloto-mcp && docker compose -f servidor/docker-compose.yml exec copiloto-mcp python -c "import urllib.request,json; print(json.load(urllib.request.urlopen('http://127.0.0.1:8000/salud')))"
+```
+
+Cuatro cosas que esa línea tiene por un motivo:
+
+- **`--ff-only`.** Un directorio de despliegue nunca debe intentar fusionar. Si
+  alguien editó algo a mano en `/opt/copiloto`, esto falla en vez de mezclar.
+- **`--build` no es opcional.** El tag está fijado a `copiloto-mcp:0.1.0`
+  (línea 12 del compose). Sin `--build`, Compose ve que la imagen ya existe, no
+  reconstruye, y **sigue sirviendo el código viejo después de un `git pull`
+  exitoso**, sin un solo mensaje de error.
+- **Espera a `healthy`, no cuenta segundos.** El `start_period` es de 40 s, así
+  que un `sleep 30` te enseñaría `health: starting` y parecería un fallo.
+- **Pregunta a `/salud` por `exec`.** `docker logs` solo enseña uvicorn
+  arrancando: un contenedor `Up` con los pesos mal cargados se ve idéntico a
+  uno sano. Y `curl localhost:8000` **desde el host falla aunque todo esté
+  perfecto**, porque el compose no publica puertos a propósito.
+
+**Los pesos sobreviven al `git pull`.** Están en `.gitignore`, y ni `pull`, ni
+`checkout`, ni `reset --hard` tocan un fichero ignorado y sin seguimiento. El
+único comando que los destruye es `git clean -xfd`, que es justo el reflejo de
+"dejar el repositorio limpio": no lo teclees en `/opt/copiloto`.
+
+**Si reentrenaste el modelo**, los pesos nuevos van por `scp` como en el primer
+despliegue, y hay que revisar que `UMBRAL` y `AUC_VALIDACION` del compose sigan
+describiendo *esos* pesos:
+
+```bash
+cd /opt/copiloto && sha256sum servidor/pesos_modelo_cpu.pt && grep -nE 'UMBRAL|AUC_VALIDACION' servidor/docker-compose.yml
+```
+
+**El disco, cada pocos redespliegues.** Como el tag es fijo, cada
+reconstrucción deja la imagen anterior colgando (~2 GB). Se listan y se borran
+**por ID**, nunca con `prune`, que en esta máquina se llevaría por delante
+cosas del cliente:
+
+```bash
+docker images --filter dangling=true --format '{{.ID}} {{.CreatedSince}} {{.Size}}'
+```
+
+> **Construir consume la máquina del cliente.** Los topes de
+> `deploy.resources.limits` acotan el contenedor **en ejecución**, no el
+> `build`. Instalar torch tarda minutos a toda CPU dentro del demonio Docker
+> del cliente. Si `free -m` da menos de ~3 000 MB disponibles, no construyas
+> ahí: construye en local y mueve la imagen ya hecha con
+> `docker save copiloto-mcp:0.1.0 | gzip | ssh usuario@vps "gunzip | docker load"`,
+> y luego solo `up -d` sin `--build`.
 
 ## 7. Medir la latencia dentro del contenedor
 
@@ -875,6 +1016,9 @@ justo cuando conviene notarlo.
 | el estado pasa a `unhealthy` | el proceso murió al arrancar | `docker compose logs copiloto-mcp` |
 | `can't open file '/app/C:/Program Files/Git/modelo/...'` | Git Bash convirtió la ruta | `MSYS_NO_PATHCONV=1` delante del comando |
 | `curl http://localhost:8000/salud` desde el host no responde | **es lo correcto**: no hay `ports` publicados | usar `docker compose exec`, o un contenedor en la misma red |
+| el `git pull` del VPS se queda colgado sin decir nada | está esperando usuario y contraseña: el repositorio es privado | la llave de despliegue del paso 3.2. **No** metas un token en la URL |
+| desplegaste, el `git pull` trajo cambios, y el servicio sigue comportándose igual que antes | se levantó **sin `--build`**: el tag `copiloto-mcp:0.1.0` es fijo, Compose vio la imagen y no reconstruyó | `up -d --build`. No da ningún error, por eso hay que saberlo |
+| `untracked working tree files would be overwritten by merge` al hacer `git pull` | desplegaste antes por el camino B y ahora el repositorio trae un fichero que ya existía suelto | borra el fichero suelto que nombre el error y repite el `pull` |
 
 ### La red no aparece: NO la crees en el VPS
 
@@ -933,12 +1077,22 @@ copiloto-mcp   running(1)   /opt/copiloto/servidor/docker-compose.yml
 `running(1)`: un solo contenedor. Si ves cualquier otro proyecto en esa línea,
 no es el nuestro.
 
-Ahora sí, desde `servidor/`:
+Ahora sí. Se baja **por nombre de proyecto**, no desde un directorio:
 
 ```bash
-cd servidor
-docker compose down
+docker compose -p copiloto-mcp down
 ```
+
+Con `-p` no se lee ningún fichero de compose, así que **el directorio en el que
+estés deja de ser un riesgo**. Esa es toda la diferencia: `docker compose down`
+a secas baja el proyecto de la carpeta donde te encuentres, y en este VPS esa
+carpeta puede ser la del cliente. La única razón por la que `-p copiloto-mcp`
+funciona es la línea 5 del compose (`name: copiloto-mcp`); si alguien la quita
+en un commit futuro, este comando deja de identificar nada.
+
+Y no teclees nunca `-v` ni `--volumes` en ese `down`. Aquí es inofensivo —este
+servicio no declara volúmenes— pero esa memoria muscular, aplicada al stack de
+al lado, borra los datos del cliente.
 
 Salida literal:
 
