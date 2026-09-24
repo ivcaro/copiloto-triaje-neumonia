@@ -227,6 +227,58 @@ async def test_mcp_devuelve_el_codigo_dicom_invalido(motor):
 
 
 @pytest.mark.asyncio
+async def test_mcp_acepta_el_base64_envuelto_en_lineas(motor, tmp_path):
+    """El mismo DICOM con saltos de linea tiene que dar el mismo resultado.
+
+    `base64.encodebytes` -y varias librerias por defecto, siguiendo el MIME de
+    toda la vida- envuelve a 76 columnas. Con `validate=True` a secas esos
+    saltos de linea daban `base64_invalido` por una radiografia perfectamente
+    valida, que es el peor rechazo posible: el cliente no tiene forma de saber
+    que el problema es el formato del sobre y no la placa.
+    """
+    ruta = tmp_path / "a.dcm"
+    crear_dicom(ruta, edad="054Y")
+    datos = ruta.read_bytes()
+    de_una_linea = base64.b64encode(datos).decode()
+    envuelto = base64.encodebytes(datos).decode()  # con \n cada 76 columnas
+    assert "\n" in envuelto
+
+    async with cliente_de(motor) as cliente:
+        liso = _extraer_resultado(await _llamar_por_mcp(cliente, de_una_linea))
+        con_saltos = _extraer_resultado(await _llamar_por_mcp(cliente, envuelto))
+
+    sin_tiempo = lambda d: {k: v for k, v in d.items() if k != "milisegundos"}
+    assert sin_tiempo(con_saltos) == sin_tiempo(liso)
+
+
+@pytest.mark.asyncio
+async def test_la_herramienta_mcp_devuelve_exactamente_las_claves_del_contrato(
+        motor, tmp_path):
+    """Las claves son el contrato que SP4 va a leer, asi que se fijan aqui.
+
+    Ni una menos -SP4 se quedaria sin el campo y fallaria en produccion- ni una
+    mas sin decidirlo: anadir una obliga a pasar por esta prueba y por el §9 de
+    la guia de despliegue, en vez de que aparezca sola en la respuesta.
+    """
+    ruta = tmp_path / "a.dcm"
+    crear_dicom(ruta, edad="054Y")
+    async with cliente_de(motor) as cliente:
+        salida = _extraer_resultado(
+            await _llamar_por_mcp(cliente, ruta.read_bytes()))
+
+    assert set(salida) == {
+        "probabilidad_cruda", "probabilidad_calibrada",
+        "razon_de_verosimilitud", "umbral", "clasificacion", "edad_paciente",
+        "modelo", "auc_validacion", "milisegundos",
+    }
+    # Y `razon_de_verosimilitud` llega como numero, no como texto: SP4 la
+    # multiplica por las odds de la regla clinica sin convertir nada.
+    assert isinstance(salida["razon_de_verosimilitud"], float)
+    assert isinstance(salida["edad_paciente"], int)
+    assert isinstance(salida["clasificacion"], str)
+
+
+@pytest.mark.asyncio
 async def test_mcp_rechaza_un_base64_invalido(motor):
     """`validate=True` rechaza lo que no sea base64, y ese rechazo tiene que
     llegar al cliente con su codigo, no como un fallo generico."""

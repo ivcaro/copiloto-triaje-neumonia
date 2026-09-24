@@ -409,9 +409,13 @@ a nginx y a la API del cliente sin red común. Docker se niega a borrar una red
 con contenedores conectados, pero no si en ese momento están parados, así que la
 protección no es de fiar. Para eso está la variable.
 
-Recuerda que si levantas con `RED_N8N=copiloto-local`, **todos** los comandos
-posteriores que mencionen la red —el `docker run --network ...` del paso 6— usan
-también `copiloto-local`.
+Si levantas con `RED_N8N=copiloto-local`, **todos** los comandos posteriores que
+mencionen la red —el `docker run --network ...` del paso 6— tienen que usar
+también `copiloto-local`. Ese comando está escrito con la misma variable, así que
+basta con exportarla en la sesión (`export RED_N8N=copiloto-local`) y no hay que
+sustituir nada a mano. Los comandos de **solo lectura** del paso 2, como
+`docker network inspect`, sí llevan el nombre literal: ahí lo que se teclea es el
+nombre real que acabas de ver en `docker network ls`.
 
 ## 5. Construir la imagen
 
@@ -520,8 +524,14 @@ Esto es lo que hará n8n, y conviene verificarlo sin n8n de por medio. Levanta
 un contenedor de usar y tirar en la misma red y pídele que resuelva el nombre:
 
 ```bash
-docker run --rm --network [retirado]_[retirado]_network python:3.12-slim python -c "import urllib.request,json; print(json.load(urllib.request.urlopen('http://copiloto-mcp:8000/salud')))"
+docker run --rm --network "${RED_N8N:-[retirado]_[retirado]_network}" python:3.12-slim python -c "import urllib.request,json; print(json.load(urllib.request.urlopen('http://copiloto-mcp:8000/salud')))"
 ```
+
+Es la **misma variable** con la que levantaste el compose, y por eso va aquí en
+vez del nombre literal: si arrancaste con `RED_N8N=copiloto-local`, este comando
+usa `copiloto-local` solo; si no la declaraste, cae al mismo nombre por defecto
+que el compose. Un literal aquí obligaría a editarlo a mano cada vez y dejaría
+que esta comprobación mirase una red distinta de la que se está usando.
 
 Si esto responde, el cableado de red está bien. Si da `Name or service not
 known`, los dos contenedores no están en la misma red.
@@ -685,6 +695,14 @@ event: message
 data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"...","type":"text"}]}}
 ```
 
+**El base64 puede venir envuelto en líneas.** El servidor quita los espacios y
+los saltos de línea antes de descodificar, así que da igual si la librería que
+lo genera corta a 76 columnas —el comportamiento por defecto de muchas, incluida
+`base64.encodebytes` de Python— o lo manda en una sola línea. Lo que sí sigue
+rechazándose con `base64_invalido` es cualquier carácter que no sea del alfabeto
+base64: eso no se ignora en silencio, porque si se ignorase el error reaparecería
+más tarde como `dicom_invalido` y apuntaría al sitio equivocado.
+
 ## 9. Qué devuelve, y qué hace cuando se niega
 
 Una inferencia correcta. Esta es literalmente la respuesta del DICOM de
@@ -804,7 +822,7 @@ reentrenas y no la actualizas, cada respuesta seguirá citando la cifra vieja.
 | `"/servidor/pesos_modelo_cpu.pt": not found` al construir | no copiaste los pesos | ver el paso 3 |
 | `Conflict. The container name "/copiloto-mcp" is already in use` | ya hay un contenedor con ese nombre | el paso 2.4 lo detecta antes. Averigua de quién es con `docker ps -a --filter name=copiloto-mcp` **antes** de borrarlo |
 | `no space left on device` al construir | disco lleno | el paso 2.6 lo detecta antes. Libera espacio; no uses `docker system prune -a` en el VPS (paso 12) |
-| HTTP **421 "Invalid Host header"** | el transporte MCP valida la cabecera `Host` y por defecto solo acepta `127.0.0.1` | ya está resuelto: la aplicación se construye con `host_permitido="0.0.0.0"`. Si reaparece, alguien cambió ese valor |
+| HTTP **421 "Invalid Host header"** | el transporte MCP valida la cabecera `Host` y por defecto solo acepta `127.0.0.1` | ya está resuelto: la aplicación se construye con `direccion_de_escucha="0.0.0.0"`. Si reaparece, alguien cambió ese valor |
 | n8n da `ECONNREFUSED` o `Name or service not known` | n8n y el copiloto no están en la misma red | comprobar con el `docker run --rm --network ...` del paso 6 |
 | el estado se queda en `starting` | aún está cargando los pesos | esperar; son ~10 s, con 40 s de gracia |
 | el estado pasa a `unhealthy` | el proceso murió al arrancar | `docker compose logs copiloto-mcp` |

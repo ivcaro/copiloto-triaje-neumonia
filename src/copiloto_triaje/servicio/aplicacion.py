@@ -8,6 +8,7 @@ camino de error, que es donde la divergencia pasa mas desapercibida.
 from __future__ import annotations
 
 import base64
+from typing import Any
 
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import JSONResponse
@@ -39,14 +40,20 @@ MARGEN_SOBRE_JSONRPC = 64 * 1024
 MAXIMO_CUERPO_MCP = MAXIMO_BYTES * 4 // 3 + MARGEN_SOBRE_JSONRPC
 
 
-def construir_aplicacion(motor: Motor, host_permitido: str = "0.0.0.0") -> FastAPI:
+def construir_aplicacion(motor: Motor,
+                         direccion_de_escucha: str = "0.0.0.0") -> FastAPI:
     """Monta MCP y REST en un solo proceso.
 
-    `host_permitido` va a "0.0.0.0" y NO al 127.0.0.1 por defecto del SDK:
-    el transporte valida la cabecera Host y con el valor por defecto responde
-    421 "Invalid Host header" a todo lo que no venga de localhost. En Docker,
-    n8n llama por nombre de servicio, asi que con el valor por defecto el
-    despliegue falla entero. Comprobado durante el diseño.
+    `direccion_de_escucha` es LA DIRECCION en la que el servidor acepta
+    cabeceras Host, que es lo que el SDK valida con este valor. NO es una lista
+    de hosts permitidos -no acepta varios, ni nombres-, y el nombre anterior
+    (`host_permitido`) sugeria lo contrario.
+
+    Va a "0.0.0.0" y NO al 127.0.0.1 por defecto del SDK: el transporte valida
+    la cabecera Host y con el valor por defecto responde 421 "Invalid Host
+    header" a todo lo que no venga de localhost. En Docker, n8n llama por nombre
+    de servicio, asi que con el valor por defecto el despliegue falla entero.
+    Comprobado durante el diseño.
     """
     servidor = MCPServer(name="copiloto-triaje", version="0.1.0",
                          instructions="Clasifica opacidad pulmonar en "
@@ -58,7 +65,7 @@ def construir_aplicacion(motor: Motor, host_permitido: str = "0.0.0.0") -> FastA
                     "devuelve la evidencia de imagen: probabilidad calibrada "
                     "y razon de verosimilitud para combinar con la regla "
                     "clinica. Solo valida para pacientes de 18 a 100 anios.")
-    def clasificar_radiografia(dicom_base64: str) -> dict:
+    def clasificar_radiografia(dicom_base64: str) -> dict[str, Any]:
         # Las tres ramas de fallo levantan ToolError y no ValueError: el SDK
         # documenta ToolError como "a failure you anticipated" y propaga su
         # texto al cliente, mientras que CUALQUIER otra excepcion la trata
@@ -78,7 +85,17 @@ def construir_aplicacion(motor: Motor, host_permitido: str = "0.0.0.0") -> FastA
         # codigos por igual. Por REST no hay nada que parsear, el codigo viaja
         # aislado en el campo `codigo` del JSON.
         try:
-            datos = base64.b64decode(dicom_base64, validate=True)
+            # Se quitan los espacios en blanco ANTES de descodificar. Con
+            # `validate=True` a secas, b64decode rechaza los saltos de linea, y
+            # varias librerias envuelven el base64 a 76 columnas por defecto
+            # (es lo que manda el MIME de toda la vida): un cliente asi recibia
+            # `base64_invalido` por una radiografia perfectamente valida. El
+            # `validate=True` se mantiene para todo lo demas -un caracter que no
+            # sea del alfabeto base64 sigue siendo un rechazo- porque sin el
+            # b64decode se come la basura en silencio y el error reaparece mas
+            # tarde como "esto no es un DICOM", que apunta al sitio equivocado.
+            limpio = "".join(str(dicom_base64).split())
+            datos = base64.b64decode(limpio, validate=True)
         except Exception as exc:
             raise ToolError(f"base64_invalido: {exc}") from exc
         if len(datos) > MAXIMO_BYTES:
@@ -93,7 +110,7 @@ def construir_aplicacion(motor: Motor, host_permitido: str = "0.0.0.0") -> FastA
         streamable_http_path="/mcp",
         stateless_http=True,
         max_request_body_size=MAXIMO_CUERPO_MCP,
-        host=host_permitido,
+        host=direccion_de_escucha,
     )
 
     # El lifespan del app de MCP se cede al de FastAPI: montarlo sin esto deja
@@ -103,7 +120,7 @@ def construir_aplicacion(motor: Motor, host_permitido: str = "0.0.0.0") -> FastA
                   lifespan=mcp_app.router.lifespan_context)
 
     @api.get("/salud")
-    def salud() -> dict:
+    def salud() -> dict[str, Any]:
         return {"estado": "listo", "modelo": motor.nombre_modelo,
                 "umbral": motor.umbral,
                 "calibrador": motor.calibrador.procedencia}
