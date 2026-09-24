@@ -66,6 +66,25 @@ CREATE TABLE IF NOT EXISTS cuestionarios_iniciados (
   cuantos integer NOT NULL DEFAULT 0
 );
 
+-- Contador del limite de 5 cuestionarios por chat_id y dia (§4.2).
+--
+-- Tabla APARTE y no una columna de `cuestionarios` a proposito: esa tabla esta
+-- identificada por el codigo seudonimo, y meterle el chat_id al lado ataria
+-- cada cuestionario a una cuenta de Telegram concreta, que es justo lo que el
+-- seudonimo existe para impedir. Aqui el sistema sabe CUANTOS ha hecho un
+-- chat_id hoy sin saber CUALES.
+--
+-- La limpieza diaria lo borra a los 2 dias: guardar mas tiempo la actividad por
+-- cuenta no mejora el limite y acumula un rastro de quien uso el bot y cuando.
+-- Son 2 y no 1 por el borde de la zona horaria: el contador agrupa en
+-- America/Guayaquil y el borrado corre en UTC.
+CREATE TABLE IF NOT EXISTS limite_paciente (
+  chat_id bigint  NOT NULL,
+  dia     date    NOT NULL,
+  cuantos integer NOT NULL DEFAULT 0,
+  PRIMARY KEY (chat_id, dia)
+);
+
 -- El codigo seudonimo: 6 caracteres de un alfabeto de 31, sin 0/O ni 1/I/L
 -- porque se dicta en voz alta en una consulta.
 --
