@@ -158,6 +158,15 @@ mudo sin decir por qué.**
 
 ### Cuando no responde
 
+Lo mismo que hay debajo, pero ya interpretado —los dos bots de una vez, y con
+qué hacer en cada caso— lo da:
+
+```powershell
+C:\venv-copiloto\Scripts\python.exe pruebas/verificar_webhooks.py
+```
+
+A mano, un bot a la vez:
+
 ```powershell
 $t = Read-Host 'token'; (Invoke-RestMethod -Uri "https://api.telegram.org/bot$t/getWebhookInfo").result | Format-List
 ```
