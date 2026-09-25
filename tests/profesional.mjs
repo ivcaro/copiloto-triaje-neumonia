@@ -452,8 +452,8 @@ ok("sin structuredContent se cae a result.content[0].text (§10.2)", await (asyn
 // Los textos de error son los que el contenedor devolvio de verdad.
 const ERRORES_MEDIDOS = [
   ["fuera_de_alcance",
-   "Error executing tool clasificar_radiografia: fuera_de_alcance: El paciente tiene 12 anios y el modelo solo es valido entre 18 y 100.",
-   "El paciente tiene 12 anios y el modelo solo es valido entre 18 y 100."],
+   "Error executing tool clasificar_radiografia: fuera_de_alcance: El paciente tiene 12 años y el modelo solo es válido entre 18 y 100.",
+   "El paciente tiene 12 años y el modelo solo es válido entre 18 y 100."],
   ["dicom_invalido",
    "Error executing tool clasificar_radiografia: dicom_invalido: El fichero no es un DICOM legible: File is missing DICOM File Meta Information header or the 'DICM' prefix is missing from the header. Use force=True to force reading.",
    "El fichero no es un DICOM legible: File is missing DICOM File Meta Information header or the 'DICM' prefix is missing from the header. Use force=True to force reading."],
@@ -649,7 +649,7 @@ const SPEC_9 = [
   ["error_no_reconocido", true],
 ];
 const DETALLES = {
-  fuera_de_alcance: "El paciente tiene 12 anios y el modelo solo es valido entre 18 y 100.",
+  fuera_de_alcance: "El paciente tiene 12 años y el modelo solo es válido entre 18 y 100.",
   edad_desconocida: "La cabecera DICOM no declara una edad interpretable. No se asume que el paciente sea adulto: pide la edad al profesional.",
   dicom_invalido: "El fichero no es un DICOM legible: File is missing DICOM File Meta Information header",
   payload_excesivo: "5242881 bytes, maximo 5242880",

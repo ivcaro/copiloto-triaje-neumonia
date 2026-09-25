@@ -47,3 +47,19 @@ servidor/.env
 # hash de los pesos con los que se genero, para invalidarla al reentrenar.
 pruebas/crudas_prueba.csv
 pruebas/crudas_prueba.sha256
+
+# El corpus del arnes de reproduccion (`pruebas/reproducir_casos.py`).
+#
+# El §20 del spec de SP3 lo lista como entregable "en este repo", y aqui se
+# decide lo contrario, a proposito: un fichero del corpus tiene la forma exacta
+# de un dato clinico -codigo seudonimo, sintomas, signos y resultado-, y el §5.4
+# fija para eso una retencion con BORRADO REAL (7 dias `cuestionarios`, lo que
+# dure el proyecto `consultas`). De git no se borra nada: commitear el corpus
+# convierte cualquier retencion futura en una intencion.
+#
+# Hoy el corpus no lleva ni un dato de paciente real -las placas son RSNA,
+# publico y seudonimizado, y los sintomas son inventados-, asi que commitearlo
+# seria inofensivo. Se ignora igualmente porque la version que SI llevaria datos
+# reales tiene el mismo nombre y la misma forma, y la unica salvaguarda seria que
+# alguien se acordara. Se regenera en un minuto con --sin-bots.
+pruebas/corpus/

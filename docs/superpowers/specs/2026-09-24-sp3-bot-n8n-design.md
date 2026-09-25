@@ -648,7 +648,7 @@ que lleva el mismo JSON como texto.
 prefijo que antepone el SDK:
 
 ```
-Error executing tool clasificar_radiografia: fuera_de_alcance: El paciente tiene 12 anios y el modelo solo es valido entre 18 y 100.
+Error executing tool clasificar_radiografia: fuera_de_alcance: El paciente tiene 12 años y el modelo solo es válido entre 18 y 100.
 ```
 
 El código es el **segundo** campo. Se busca **dentro** del texto; **NO** se

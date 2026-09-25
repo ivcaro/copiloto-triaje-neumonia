@@ -117,7 +117,7 @@ class Motor:
         if not EDAD_MINIMA <= edad <= EDAD_MAXIMA:
             raise ErrorDeInferencia(
                 "fuera_de_alcance",
-                f"El paciente tiene {edad} anios y el modelo solo es valido "
+                f"El paciente tiene {edad} años y el modelo solo es valido "
                 f"entre {EDAD_MINIMA} y {EDAD_MAXIMA}.")
 
         # El arreglo ya esta leido: se reusa en vez de volver a decodificar el

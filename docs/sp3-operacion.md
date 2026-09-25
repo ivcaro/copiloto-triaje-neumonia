@@ -55,6 +55,29 @@ directo del esquema y deja de hacer falta. **También surte efecto en el
 mensaje siguiente**, incluso a mitad de una conversación — pero *no* le borra
 los signos que ya había recogido, que sería peor.
 
+### Si el script no arranca: las dos sentencias, literales
+
+El script es una comodidad; el alta y la baja son las dos sentencias del §11 del
+spec, y con el túnel abierto valen desde cualquier cliente de PostgreSQL. Están
+aquí porque el día que el script falle —psycopg sin instalar, el intérprete
+movido— hay que poder dar de alta a un clínico igualmente:
+
+```sql
+INSERT INTO profesionales (chat_id, nombre) VALUES (123456789, 'Dra. Apellido');
+```
+
+```sql
+UPDATE profesionales SET activo = false, baja_en = now(),
+       nombre = '(dado de baja)'
+ WHERE chat_id = 123456789;
+```
+
+La única diferencia con el script es que este, en el alta, añade
+`ON CONFLICT (chat_id) DO UPDATE` para que volver a dar de alta a quien ya
+estuvo —y se dio de baja— funcione en vez de chocar con la clave primaria. Con
+el `INSERT` de arriba, a alguien que ya tiene fila hay que reactivarlo con un
+`UPDATE ... SET activo = true, baja_en = NULL, nombre = ...`.
+
 ---
 
 ## 2. Probar el circuito entero
@@ -90,6 +113,140 @@ C:\Users\[retirado]\datasets\rsna-pneumonia\trabajo\crudo\stage_2_train_images\
 | El código caducado | inventa un código de 6 caracteres |
 
 `pruebas/seleccionar_casos.py` saca un ejemplo de cada perfil.
+
+### Lo visual: el guion que ninguna aserción cubre
+
+Las pruebas afirman sobre la base de datos, y por eso hay cosas que **solo se
+ven mirando**. Este guion son las ocho, en el orden en que salen al conducir la
+conversación una vez. Se hace **en el teléfono**, no en el escritorio: es donde
+lo va a usar un clínico y es donde las burbujas se parten.
+
+| # | Qué se mira | Qué está bien |
+| :-- | :--- | :--- |
+| 1 | El consentimiento del paciente | Se lee entero sin desplegar nada, y dice **«si le cuesta respirar, acuda a urgencias»** antes de los botones |
+| 2 | Los botones **Acepto / No acepto** | Dos botones, en su fila, sin cortar el texto |
+| 3 | Las 7 preguntas | Los botones caben en el ancho del móvil; ninguna etiqueta se parte a media palabra |
+| 4 | El código que entrega | Se lee **dictándolo en voz alta** sin dudar: sin `0`/`O`, sin `1`/`I`/`L` |
+| 5 | Los tres bloques del §8 | **Cribado**, **Evidencia de la imagen** y lo referido/explorado quedan en renglones separados. La etiqueta y la razón de verosimilitud **nunca** en el mismo renglón |
+| 6 | El aviso de discrepancia | El ⚠️ se ve como un aviso y no como parte de la frase anterior |
+| 7 | Las tildes y los grados | `38,2 °C`, `neumonía`, `razón` — si sale `neumonia` o `38,2 C`, algo se comió el UTF-8 por el camino |
+| 8 | El mensaje aparte del paciente | Cuando el paciente escribió algo, llega **detrás** del informe, empezando por «TODO ESTE MENSAJE ES TEXTO DEL PACIENTE» |
+
+El 5, el 6 y el 8 son los que importan de verdad: son los que hacen que el
+clínico no confunda lo que dice el sistema con lo que dice el paciente.
+
+### El arnés: el circuito entero, 49 veces y sin teclear
+
+Lo de arriba a mano vale para una vez. Para reproducir de golpe los casos
+límite reales —y dejarlos escritos para leerlos con calma— está
+`pruebas/reproducir_casos.py`. Lo que hace y por qué está en la cabecera del
+propio fichero; aquí va cómo se corre.
+
+**Necesita el copiloto alcanzable.** Por defecto busca el contenedor de prueba
+en el 18000, el mismo que usan las pruebas de contrato. En el VPS:
+
+```bash
+docker run -d --rm --name copiloto-prueba -p 18000:8000 -e UMBRAL=0.4258 -e AUC_VALIDACION=0.8827 -e OMP_NUM_THREADS=2 copiloto-mcp:0.1.0
+```
+
+y en tu Windows, si el contenedor está en el VPS, un túnel más:
+`ssh -N -L 18000:127.0.0.1:18000 usuario@vps`. O se apunta a otro sitio con
+`COPILOTO_URL`.
+
+**Sin bots** — no toca n8n, ni Telegram, ni la base. Llama al copiloto y
+redacta el mensaje con el código del propio workflow. Es lo que se puede correr
+sin el túnel ni los secretos, y tarda un minuto:
+
+```powershell
+cd "C:\Users\[retirado]\OneDrive\Desktop\Claude\Proyecto Integrador\copiloto-triaje"; C:\venv-copiloto\Scripts\python.exe pruebas/reproducir_casos.py --sin-bots
+```
+
+**Con los dos bots** — conduce las 49 conversaciones de verdad. Hacen falta el
+túnel de la base (§3) y cuatro variables; **son secretos y no se escriben en
+ningún fichero del repositorio**:
+
+```powershell
+$env:COPILOTO_BD_DSN = "host=127.0.0.1 port=15433 dbname=copiloto user=copiloto password=..."
+$env:TELEGRAM_SECRET_PRUEBA = "..."
+$env:TELEGRAM_TOKEN_PROFESIONAL = "..."
+$env:CHAT_SUBIDA_PLACAS = "<tu chat_id con el bot del profesional>"
+C:\venv-copiloto\Scripts\python.exe pruebas/reproducir_casos.py
+```
+
+**`CHAT_SUBIDA_PLACAS` tiene que ser un chat REAL** y es lo único que lo tiene que
+ser. Para conseguir un `file_id` hay que **subir** el fichero, y un bot de
+Telegram no puede escribir a un chat que no existe ni a uno que no le ha escrito
+antes: escríbele `/start` al bot del profesional y usa tu propio `chat_id` (te lo
+dice `pruebas/profesionales.py`). Ahí van a aparecer las 49 placas, una de ellas
+de 5,2 MB.
+
+Los `chat_id` que viajan **dentro** de los updates (`CHAT_PACIENTE_PRUEBA`,
+`CHAT_PROFESIONAL_PRUEBA`) sí pueden ser inventados, y por defecto lo son. Los
+bots intentarán contestarles y Telegram dirá «chat not found», y eso **no impide
+medir nada**: en el grafo, `Registrar` escribe la fila de `consultas` **antes** de
+que `Responder` intente enviar. Si quieres ver los mensajes llegar de verdad, pon
+un chat real también ahí — y cuenta con 49 informes en la conversación.
+
+El arnés comprueba las dos cosas antes de empezar —que el copiloto contesta y que
+el chat de subida existe— y aborta diciendo cuál falla. La comprobación del chat
+va **antes** de dar de alta el `chat_id` de pruebas en la lista blanca, para que
+un aborto no deje a nadie autorizado.
+
+Tarda unos **20 minutos**: son 17 mensajes por caso —16 updates y la subida de
+la placa— y una pausa de 1,2 s entre cada uno, porque Telegram limita a ~1 por
+segundo y chat, y un 429 no tira un mensaje: corta el chat un rato.
+
+Antes de empezar conviene una pasada corta: `--por-perfil 1` son **9 casos y
+tres minutos**, y si algo del entorno está mal se ve ahí en vez de a la
+media hora.
+
+**Lo que deja en la base, y hay que saberlo:** el arnés da de alta un `chat_id`
+de pruebas en `profesionales` y lo borra al terminar —si lo matas a mitad, se
+queda: bórralo con `pruebas/profesionales.py --baja`—, borra el contador de
+`limite_paciente` de su propio chat antes de cada caso (si no, el sexto
+cuestionario del día chocaría con el límite del §4.2), deja un cuestionario por
+caso en `cuestionarios` —que se borran solos a los 7 días— y **deja una fila
+por caso en `consultas`**, con síntomas inventados. Esas filas son
+indistinguibles de las reales salvo por su `chat_id`, y el resumen lo imprime
+al terminar junto con el `DELETE` para quitarlas.
+
+### Leer el corpus
+
+Sale en `pruebas/corpus/`, un fichero por caso, en carpetas numeradas **en
+orden de lectura**:
+
+```
+pruebas/corpus/
+  RESUMEN.txt                        <- empieza aquí
+  01-positiva_clara/
+  02-negativa_clara/
+  03-banda_contradictoria/           <- y sigue por aquí
+  04-con_comentario_del_paciente/
+  05-menor_edad/
+  06-edad_imposible/
+  07-edad_desconocida_FABRICADO/
+  08-fichero_corrupto_FABRICADO/
+  09-fichero_enorme_FABRICADO/
+  _fabricados/                       <- los tres DICOM modificados a propósito
+```
+
+`RESUMEN.txt` cabe en dos pantallas: los 49 casos a línea por caso, los
+rechazos por código, cuántos llevaron el aviso del §8, y las latencias. Cada
+fichero de caso lleva **arriba lo que sabemos de esa placa** —la edad de la
+cabecera, lo que RSNA anotó, lo que puntuó el modelo— y **debajo el mensaje
+literal** que recibió el profesional. No hay que abrir nada más, y no hay
+ningún JSON que mirar.
+
+**Las tres carpetas con `FABRICADO` en el nombre no son placas de RSNA.** Son
+una placa real modificada a propósito para llegar a tres ramas de error que
+ningún caso real alcanza: una sin la etiqueta de la edad, una truncada y una
+rellenada por encima de los 5 MiB. Lo dice el nombre de la carpeta, el nombre
+del fichero y el propio fichero dentro.
+
+**El corpus no se versiona** (está en `.gitignore`). Se regenera cuando haga
+falta, y guardar en el historial de git algo con la forma de un dato clínico
+—un código seudónimo, unos síntomas, unos signos y un resultado— es lo
+contrario de la retención del §5.4: de git no se borra nada.
 
 ---
 
