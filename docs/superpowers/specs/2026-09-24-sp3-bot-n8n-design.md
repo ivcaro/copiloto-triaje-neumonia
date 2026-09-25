@@ -467,6 +467,50 @@ evidencia lo dice de forma explícita:
 "sin opacidad probable" y la RV correspondiente. La plantilla es una sola; solo
 cambian los valores y el aviso.
 
+### El informe no contiene ni un carácter que haya escrito el paciente
+
+Esta regla nació de un fallo real y de dos intentos de arreglarlo que no
+bastaron. Merece la pena contar el camino, porque la conclusión no es
+evidente.
+
+El texto libre de la pregunta 7 se mostraba dentro del informe. Con 240
+caracteres, un paciente conseguía que sobre una placa de puntuación **0,0047**
+el clínico recibiera **dos** bloques `CRIBADO` y **dos** `EVIDENCIA`,
+tipográficamente idénticos, y que el falso —«opacidad probable, multiplica por
+77,3»— fuera el que quedaba pegado al descargo: el último que se lee.
+
+El primer arreglo quitaba al dato los saltos de línea y la raya `—` que separa
+los rótulos, para que `RÓTULO — ` solo lo pudiera producir el sistema. Se
+rodeó por tres vías: **`U+2015 HORIZONTAL BAR`**, que se ve idéntica y no
+estaba en la lista; **`U+0085 NEXT LINE`**, el único espacio Unicode que el
+`\s` de JavaScript no cubre y que UAX #14 clasifica como salto obligatorio; y
+—la que zanja el asunto— **447 caracteres sin ningún carácter de control**,
+que al envolverse la burbuja hacían que una fila *renderizada* empezara por un
+rótulo falso en 3 de 7 anchos de pantalla.
+
+Esa tercera no la arregla ningún filtro: **el salto lo mete el cliente de
+Telegram, no el dato.** Una lista de caracteres prohibidos va siempre un punto
+de código por detrás.
+
+**La regla, por tanto, se invierte:**
+
+> El mensaje del informe se compone **únicamente** de números validados, de
+> valores de una enumeración cerrada, y de literales del sistema. **Ningún
+> texto que haya escrito el paciente entra en él.**
+
+El texto libre viaja en un **mensaje aparte**, enviado a continuación, con su
+propia cabecera y sin filtrar. El paciente no pierde sus palabras y el clínico
+gana algo: deja de haber duda sobre quién escribió qué.
+
+La invariante que lo fija **no nombra ningún carácter**, y por eso sobrevive al
+siguiente homoglifo que alguien descubra.
+
+> **Para quien construya el dashboard del §15:** el texto libre sigue
+> guardándose sin neutralizar, que es lo correcto —quien presenta decide cómo—.
+> Pero eso significa que **el dashboard hereda el problema entero**, y en HTML
+> es peor: un filtro pensado para Telegram no toca `<`, `>`, `&` ni `"`.
+> Escapar para HTML es obligatorio ahí, y es otro problema que este.
+
 **Formato:** los números se muestran con la precisión de arriba —probabilidades
 con dos decimales, RV con uno o dos—, y el mensaje se manda con `parse_mode:
 MarkdownV2` **escapando** todo lo que venga de datos, o con `parse_mode` vacío
@@ -479,7 +523,7 @@ si el texto libre del paciente está presente (§4.4).
 | Situación | Código registrado | Qué dice el bot | Estado después |
 | :--- | :--- | :--- | :--- |
 | Envía **foto** en vez de archivo | `envio_como_foto` | "Telegram recomprime las fotos y destruye el DICOM. Envíela como archivo." | **se queda en el paso 5**, esperando el archivo |
-| No es un DICOM legible | `dicom_invalido` | relata el detalle del servidor | se queda en el paso 5 |
+| No es un DICOM legible | `dicom_invalido` | mensaje **propio**: el servidor se cae sobre esos bytes sin devolver codigo, asi que no hay detalle que relatar | se queda en el paso 5 |
 | **Edad fuera de 18-100** | `fuera_de_alcance` | el detalle del servidor, **sin ninguna cifra de probabilidad** | **termina**: se registra y se borra la sesión |
 | La cabecera no declara edad | `edad_desconocida` | el detalle del servidor, **sin ninguna cifra** | termina |
 | Base64 mal formado | `base64_invalido` | "No pude leer el archivo. Vuelva a enviarlo." | se queda en el paso 5 |
@@ -489,6 +533,21 @@ si el texto libre del paciente está presente (§4.4).
 | Fichero de Telegram > 20 MB | `fichero_no_descargable` | "Telegram no me deja descargar archivos de más de 20 MB." | se queda en el paso 5 |
 | Timeout o error de red | `copiloto_no_responde` | "El servicio de imagen no está disponible. Inténtelo en unos minutos." | se queda en el paso 5 |
 | `isError` con un código desconocido | `error_no_reconocido` | "El servicio devolvió un error que no sé interpretar. Se ha registrado." | termina, y el texto íntegro va a `consultas.error` |
+| **`chat_id` no autorizado** | `no_autorizado` | "No autorizado." y nada mas: sin pistas de que hay detras | **termina**; se registra el intento con su `chat_id`, que es de donde se leen los de alta (§11) |
+| No se pudo descargar el fichero de Telegram | `descarga_fallida` | mensaje propio y honesto; **no** el de los 20 MB, que solo vale cuando de verdad los supera | se queda en el paso 5 |
+
+**Son trece, y la cuenta importa:** un spec con once filas y un flujo con
+trece hace que la siguiente revision marque dos falsos positivos, o que alguien
+los quite del flujo para que cuadre. La distincion entre `dicom_invalido` y
+`error_no_reconocido` es la mas delicada de todas: cuando el servidor devuelve
+`isError` **sin ningun codigo**, se trata como fichero ilegible y la
+conversacion espera otro archivo. Eso acierta con un DICOM truncado -medido en
+siete cortes- pero **no distingue un fichero roto de una caida nuestra**: si el
+servidor se cayera por memoria o por un modelo que no carga, el profesional
+oiria "no pude leer esa radiografia" y reenviaria la placa para siempre. Lo que
+lo haria honesto es que el servidor no perdiera el mensaje, y eso es SP2. Por
+eso el texto crudo del servidor se registra **siempre** en `consultas.error`,
+sea cual sea la rama: es lo unico diagnosticable que queda.
 
 **Ninguna rama de error emite una cifra de probabilidad.** El rechazo por edad
 es una **decisión clínica del sistema**, no un fallo técnico, y debe llegar como
