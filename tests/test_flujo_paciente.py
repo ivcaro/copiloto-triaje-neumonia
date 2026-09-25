@@ -19,6 +19,8 @@ import json
 import os
 import pathlib
 import re
+import shutil
+import subprocess
 import time
 
 import pytest
@@ -189,16 +191,43 @@ class TestConducido:
         # anterior satisface la asercion y la prueba se vuelve verde sin que
         # el flujo haya hecho nada.
         fila = _esperar(bd_sp3,
-                        "SELECT codigo, expira_en FROM cuestionarios"
+                        "SELECT codigo, expira_en, respuestas FROM cuestionarios"
                         " WHERE creado_en > now() - interval '2 minutes'"
                         " ORDER BY creado_en DESC LIMIT 1")
-        assert fila is not None
-        codigo, expira = fila
+        assert fila is not None, (
+            "no nacio el codigo tras pulsar Omitir. Es el camino normal de "
+            "salida de la pregunta 7, y es por donde se rompio en la ronda 1: "
+            "el valor vacio desaparecia de los parametros del nodo Postgres")
+        codigo, expira, respuestas = fila
         assert len(codigo) == 6
         assert set(codigo) <= set("ABCDEFGHJKMNPQRSTUVWXYZ23456789")
+        # «Omitir» es ausencia de texto, no el texto "omitir". Si se guardara la
+        # cadena, el profesional leeria "omitir" como si el paciente lo hubiera
+        # escrito.
+        assert "texto_libre" in respuestas, respuestas
+        assert respuestas["texto_libre"] is None, respuestas["texto_libre"]
         assert bd_sp3.execute(
             "SELECT count(*) FROM sesiones_paciente WHERE chat_id = %s",
             (CHAT,)).fetchone()[0] == 0, "la sesion debia borrarse al completar"
+
+    def test_el_texto_libre_de_la_7_llega_entero_y_no_inyecta_nada(
+            self, webhook_n8n, bd_sp3):
+        """La otra salida de la pregunta 7. Con comas, porque el parametro del
+        nodo Postgres es una lista separada por comas."""
+        webhook_n8n(RUTA, _mensaje("/start"), SECRETO); time.sleep(2)
+        webhook_n8n(RUTA, _boton("consent:si"), SECRETO); time.sleep(2)
+        for dato in ("p1:no", "p2:seca", "p3:mas_7", "p4:si", "p5:no", "p6:si"):
+            webhook_n8n(RUTA, _boton(dato), SECRETO); time.sleep(1.5)
+        veneno = "me duele, mucho; ' OR 1=1 --  y tambien la espalda"
+        webhook_n8n(RUTA, _mensaje(veneno), SECRETO)
+
+        fila = _esperar(bd_sp3,
+                        "SELECT respuestas FROM cuestionarios"
+                        " WHERE creado_en > now() - interval '2 minutes'"
+                        " ORDER BY creado_en DESC LIMIT 1")
+        assert fila is not None
+        assert fila[0]["texto_libre"] == veneno, fila[0]["texto_libre"]
+        assert fila[0]["asma"] == "si", fila[0]
 
 
 # --------------------------------------------------------------------------
@@ -214,11 +243,28 @@ def test_el_flujo_del_paciente_no_habla_con_el_copiloto():
         assert prohibido not in texto, prohibido
 
 
-def test_el_flujo_del_paciente_no_tiene_ningun_nodo_que_salga_a_la_red():
-    """El complemento del anterior. Aquel prohibe unos literales; este prohibe
-    la CAPACIDAD: un flujo sin nodos HTTP ni MCP no puede consultar el modelo
-    ni aunque alguien escriba la URL de otra forma -por IP, o troceada-."""
-    tipos = {n["type"] for n in _flujo()["nodes"]}
+def test_el_flujo_del_paciente_no_tiene_como_salir_a_la_red():
+    """El complemento del anterior, y hay que ser exacto sobre su alcance.
+
+    QUE GARANTIZA: que nadie *arrastre un nodo sin pensar*. Prohibe los tipos
+    de nodo que hablan con el exterior -HTTP Request, cualquier nodo MCP- y
+    busca primitivas de red en el `jsCode` de los nodos Code. Esa es la
+    regresion realista: dentro de tres meses alguien amplia el flujo y mete un
+    HTTP Request, o un `$helpers.httpRequest` en un Code.
+
+    QUE **NO** GARANTIZA: no detiene a quien quiera evadirla a proposito. Un
+    nodo Code de n8n SI puede salir a la red, y este flujo tiene dos. Con el
+    nombre de la funcion construido en tiempo de ejecucion, o la URL troceada,
+    esta prueba pasa y la llamada ocurre. No es una frontera de seguridad y no
+    se debe presentar como tal: contra un cambio malicioso lo que hay es la
+    revision del codigo, no esta prueba.
+
+    Se escribe con todas las letras porque una prueba que promete mas de lo que
+    cumple es peor que no tenerla: da por comprobada la garantia clinica de D1
+    y nadie vuelve a mirarla.
+    """
+    flujo = _flujo()
+    tipos = {n["type"] for n in flujo["nodes"]}
     permitidos = {
         "n8n-nodes-base.webhook", "n8n-nodes-base.code",
         "n8n-nodes-base.postgres", "n8n-nodes-base.switch",
@@ -226,6 +272,17 @@ def test_el_flujo_del_paciente_no_tiene_ningun_nodo_que_salga_a_la_red():
         "n8n-nodes-base.noOp", "n8n-nodes-base.stickyNote",
     }
     assert tipos <= permitidos, tipos - permitidos
+
+    # Los nodos Code estan permitidos -el flujo los necesita- pero un Code
+    # alcanza la red. Se le mira el codigo.
+    primitivas = ("httpRequest", "fetch(", "require('http", 'require("http',
+                  "axios", "XMLHttpRequest", "$helpers", "net.", "dns.")
+    for nodo in flujo["nodes"]:
+        if nodo["type"] != "n8n-nodes-base.code":
+            continue
+        codigo = nodo["parameters"].get("jsCode", "")
+        for p in primitivas:
+            assert p not in codigo, (nodo["name"], p)
 
 
 def test_los_botones_de_cada_pregunta_son_los_del_spec():
@@ -265,6 +322,101 @@ def test_el_reparto_manda_cada_paso_a_la_pregunta_que_le_toca():
         prefijos = {d.split(":")[0] for _t, d in _botones(_nodo(flujo, destinos[0]))}
         assert prefijos == {f"p{i + 1}"}, (i + 1, destinos[0], prefijos)
     assert [c["node"] for c in salidas[7]] == ["Completar"]
+
+
+def test_las_reglas_del_reparto_encaminan_el_paso_a_su_propia_salida():
+    """La otra mitad del reparto, y la que faltaba.
+
+    La prueba de arriba solo mira las CONEXIONES: que la salida 3 vaya al nodo
+    de la pregunta 3. Pero que el paso 3 llegue a la SALIDA 3 lo deciden las
+    reglas del Switch, y esas no las miraba nadie. Cruzar dos `rightValue` deja
+    al paciente del paso 3 viendo la pregunta 4 para siempre: contesta, el
+    UPDATE no encuentra fila porque `paso` no coincide, y vuelve a ver la
+    misma. Un bucle, sin un solo error en ningun log.
+    """
+    reglas = _nodo(_flujo(), "Repartir pregunta")["parameters"]["rules"]["values"]
+    assert len(reglas) == 8, f"se esperaban 8 reglas, hay {len(reglas)}"
+    for i, regla in enumerate(reglas):
+        condiciones = regla["conditions"]["conditions"]
+        assert len(condiciones) == 1, (i, condiciones)
+        c = condiciones[0]
+        assert c["leftValue"] == "={{ $json.paso }}", (i, c["leftValue"])
+        assert c["operator"] == {"type": "number", "operation": "equals"}, (i, c["operator"])
+        assert c["rightValue"] == i + 1, (f"salida {i}", c["rightValue"])
+
+
+def test_guardar_respuesta_consume_la_clave_que_produce_decidir():
+    """La tabla del §4.4 vive en `Decidir`, pero si el nodo que ESCRIBE no la
+    usa, la tabla es decorativa. Fijar la clave a `disnea`, o deducirla del
+    prefijo del callback_data, dejaba la suite verde.
+
+    Se comprueba que los cinco parametros del UPDATE salen de donde deben: el
+    chat del update normalizado, y la clave, el valor y los dos pasos del nodo
+    `Decidir`. Nada literal.
+    """
+    nodo = _nodo(_flujo(), "Guardar respuesta")
+    crudo = nodo["parameters"]["options"]["queryReplacement"]
+    assert crudo.startswith("="), crudo
+    exprs = [e.strip() for e in re.findall(r"\{\{(.*?)\}\}", crudo)]
+    assert exprs == [
+        "$('Normalizar update').first().json.chat_id",
+        "$json.clave",
+        "$json.valor_cod",
+        "$json.paso",
+        "$json.paso_actual",
+    ], exprs
+    # Y que la consulta use cada uno de los cinco, sin literales colados.
+    consulta = nodo["parameters"]["query"]
+    assert set(re.findall(r"\$(\d)", consulta)) == {"1", "2", "3", "4", "5"}
+
+
+def test_ninguna_consulta_pide_mas_parametros_de_los_que_n8n_le_pasaria():
+    """El fallo bloqueante de la ronda 1, convertido en prueba estatica.
+
+    El nodo Postgres arma sus parametros con `stringToArray`, que parte la
+    cadena por comas, recorta cada trozo **y descarta los vacios**. Si una
+    consulta referencia `$5` y uno de los cinco valores sale vacio, n8n pasa
+    cuatro y Postgres responde `there is no parameter $5`. Paso de verdad: el
+    «Omitir» de la pregunta 7 mandaba cadena vacia para decir NULL, y el
+    paciente que pulsaba Omitir -la salida normal de la ultima pregunta- no
+    recibia su codigo ni ningun aviso.
+
+    Esto comprueba el recuento; que ningun valor pueda salir vacio lo comprueba
+    `tests/decidir.mjs`, que es donde se decide.
+    """
+    for nodo in _flujo()["nodes"]:
+        if nodo["type"] != "n8n-nodes-base.postgres":
+            continue
+        consulta = nodo["parameters"]["query"]
+        crudo = nodo["parameters"].get("options", {}).get("queryReplacement", "")
+        referenciados = max((int(m) for m in re.findall(r"\$(\d+)", consulta)), default=0)
+        pasados = len(re.findall(r"\{\{.*?\}\}", crudo))
+        assert referenciados == pasados, (nodo["name"], referenciados, pasados)
+
+
+def test_la_tabla_de_decision_se_comporta_como_dice_el_spec():
+    """Ejecuta el jsCode REAL de `Normalizar update` y `Decidir` con node.
+
+    Las pruebas estaticas comparan la TABLA de `Decidir` contra el §4.4, pero
+    no pueden decir nada de sus RAMAS. Y las ramas son donde estaban los
+    fallos: que /start a medias no borre las respuestas, que «Omitir» signifique
+    null y no la cadena 'omitir', que ningun parametro salga vacio, que el paso
+    8 se pueda reintentar. Todo eso hay que ejecutarlo, y el codigo es
+    JavaScript.
+
+    **Falla, no se salta, si no hay node.** Un skip se ve verde, y esta prueba
+    afirma la propiedad clinica de la tarea: cada respuesta en SU clave. Quien
+    toque este workflow tiene node, porque n8n corre sobre node.
+    """
+    node = shutil.which("node")
+    assert node, ("hace falta node para ejecutar el jsCode del workflow: "
+                  "instala Node.js, o corre `node tests/decidir.mjs` a mano")
+    arnes = pathlib.Path(__file__).resolve().parent / "decidir.mjs"
+    assert arnes.exists(), arnes
+    r = subprocess.run([node, str(arnes)], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=120)
+    assert r.returncode == 0, r.stdout[-4000:] + r.stderr[-2000:]
+    assert "TODO VERDE" in r.stdout, r.stdout[-2000:]
 
 
 def test_el_webhook_rechaza_por_cabecera_antes_de_ejecutar_nada():
