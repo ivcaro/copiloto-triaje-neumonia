@@ -81,6 +81,11 @@ SPEC_9 = {
 #                    acusa de haber mandado mas de 20 MB: para un DICOM de 131 KB
 #                    es una frase falsa, y una frase falsa manda al clinico a
 #                    buscar por donde no es.
+#
+# `no_autorizado` lleva termina=False aunque la tabla del §9 diga «termina»: en
+# esta columna `termina` significa BORRAR LA SESION, y a un profesional al que dan
+# de baja a mitad de conversacion se le perderian los signos ya recogidos. El §7
+# dice que deja de pasar en el mensaje siguiente, no que se le tire el estado.
 ANADIDOS_AL_9 = {"no_autorizado": False, "descarga_fallida": False}
 
 SINTOMAS_PRUEBA = {"fiebre": "si", "tos": "con_flema", "dias_evolucion": "3_a_7",
