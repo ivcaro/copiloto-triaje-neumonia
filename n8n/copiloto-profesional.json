@@ -1,0 +1,1201 @@
+{
+  "name": "🩺 Copiloto Triaje: Profesional (Telegram)",
+  "active": true,
+  "nodes": [
+    {
+      "id": "wh",
+      "name": "Webhook Telegram (profesional)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -880,
+        460
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "copiloto-profesional",
+        "authentication": "headerAuth",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "[retirado]",
+          "name": "copiloto-profesional: secret_token del webhook (pendiente de fijar)"
+        }
+      },
+      "notes": "El secret_token del §4.2, y por que NO es un Telegram Trigger.\n\nEste webhook es PUBLICO: cualquiera que sepa la URL puede hacerle POST, asi que el chat_id del cuerpo lo aporta quien llama y no prueba nada. En este flujo eso importa mas que en el del paciente, porque aqui el chat_id ES la lista blanca (D6): sin esta puerta, forjar un update con un chat_id autorizado bastaria para usar el modelo, y D6 seria decorativo.\n\nEl Telegram Trigger de n8n (v1.5) no expone el campo secret_token NI la cabecera de la peticion: con el, la comprobacion del §4.2 es imposible. Con un Webhook + Header Auth la hace n8n en la capa del webhook, antes de que corra un solo nodo, y el secreto vive en una credencial: no aparece en este JSON ni, por tanto, en el repositorio (§12).\n\nEfecto lateral bueno: un Webhook no llama a setWebhook al activarse, asi que activar esto no puede robarle el webhook a ningun bot del cliente (D9).\n\nEl webhook se registra a mano una vez:\n  curl -s \"https://api.telegram.org/bot<TOKEN_DE_[retirado]>/setWebhook\" -d url=https://n8n.[retirado].com/webhook/copiloto-profesional -d secret_token=<EL MISMO VALOR DE LA CREDENCIAL>"
+    },
+    {
+      "id": "norm",
+      "name": "Normalizar update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -660,
+        460
+      ],
+      "parameters": {
+        "jsCode": "// Si llegamos aqui, la cabecera X-Telegram-Bot-Api-Secret-Token ya era\n// valida: la comprobo n8n en el nodo Webhook (§4.2).\n//\n// Reduce el update a lo minimo que el flujo necesita. A diferencia del flujo\n// del paciente, aqui hay que distinguir DOCUMENTO de FOTO: Telegram recomprime\n// las fotos y destruye el DICOM (§9), asi que una foto no es \"otro\", es un\n// error con su propio codigo y su propio mensaje.\nconst e = $input.first().json;\nconst b = e.body || {};\nconst cb = b.callback_query;\nconst msg = b.message || b.edited_message;\n\nlet chat_id = null, tipo = 'otro', texto = null, dato = null;\nlet file_id = '', file_size = 0, file_name = '';\n\nif (cb) {\n  chat_id = (cb.message && cb.message.chat && cb.message.chat.id) ||\n            (cb.from && cb.from.id) || null;\n  tipo = 'boton';\n  dato = typeof cb.data === 'string' ? cb.data : '';\n} else if (msg) {\n  chat_id = (msg.chat && msg.chat.id) || null;\n  if (msg.document) {\n    // Un DICOM enviado como archivo. `document` es lo unico que conserva los\n    // bytes tal cual.\n    tipo = 'documento';\n    file_id = String(msg.document.file_id || '');\n    file_size = Number(msg.document.file_size || 0);\n    file_name = String(msg.document.file_name || '');\n  } else if (Array.isArray(msg.photo) && msg.photo.length) {\n    // Telegram ya la recomprimio a JPEG antes de que llegue aqui: no hay\n    // DICOM que recuperar, y la cabecera con la edad se perdio con el.\n    tipo = 'foto';\n  } else if (typeof msg.text === 'string' && msg.text.length > 0) {\n    tipo = 'texto';\n    texto = msg.text;\n  }\n  // Sticker, audio, video: se quedan en 'otro' y se repite la pregunta.\n}\n\n// Un update sin chat no nos toca. Devolver [] termina la rama sin hacer nada.\nif (chat_id === null || chat_id === undefined) { return []; }\n\n// `t0` es el reloj de la latencia de extremo a extremo del §16. Se toma aqui,\n// en el primer nodo que corre, y no en el que llama al copiloto: lo que se\n// quiere medir es lo que el profesional espera, no lo que tarda el modelo.\nreturn [{ json: { chat_id, tipo, texto, dato, file_id, file_size, file_name,\n                  t0: Date.now() } }];\n"
+      },
+      "notes": "Reduce el update a lo minimo. Distingue DOCUMENTO de FOTO: una foto no es 'otro', es el error `envio_como_foto` del §9 con su propio mensaje."
+    },
+    {
+      "id": "leer",
+      "name": "Leer sesion y permiso",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -440,
+        460
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- LEFT JOIN sobre (SELECT 1) para que SIEMPRE salga una fila, tambien cuando no\n-- hay sesion ni profesional: si el nodo devolviera 0 elementos, la rama moriria\n-- aqui y un chat no autorizado no recibiria ni su negativa ni su fila en\n-- `consultas`.\n--\n-- El permiso y la sesion se leen en la MISMA consulta a proposito. El §7 dice\n-- que la comprobacion del `chat_id` no es un paso del flujo sino una condicion\n-- de entrada; leerlos en dos nodos distintos abriria una ventana en la que la\n-- baja de un profesional cae entre las dos lecturas.\n--\n-- `sintomas` solo se trae en el paso 6 -el de la radiografia-, que es el unico\n-- mensaje que necesita las respuestas del paciente para redactar el §8. En los\n-- otros cinco pasos no se leen: §5.4, cuanto menos dato del paciente pase por\n-- nodos de n8n, menos hay que confiar en la retencion de la base del cliente.\nSELECT $1::bigint                     AS chat_id,\n       COALESCE(p.activo, false)      AS autorizado,\n       COALESCE(s.paso, 0)            AS paso,\n       (s.chat_id IS NOT NULL)        AS existe,\n       s.codigo                       AS codigo,\n       COALESCE(s.signos, '{}'::jsonb) AS signos,\n       CASE WHEN COALESCE(s.paso, 0) = 6 THEN q.respuestas END AS sintomas\n  FROM (SELECT 1) AS u\n  LEFT JOIN profesionales        p ON p.chat_id = $1::bigint\n  LEFT JOIN sesiones_profesional s ON s.chat_id = $1::bigint\n  LEFT JOIN cuestionarios        q ON q.codigo  = s.codigo",
+        "options": {
+          "queryReplacement": "={{ $('Normalizar update').first().json.chat_id }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "[retirado]",
+          "name": "copiloto-bd"
+        }
+      },
+      "notes": "La puerta de D6 y el estado de la conversacion, en una sola lectura."
+    },
+    {
+      "id": "dec",
+      "name": "Decidir",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -220,
+        460
+      ],
+      "parameters": {
+        "jsCode": "// LA TABLA DE LA CONVERSACION DEL PROFESIONAL. Fuente UNICA de: el paso, la\n// clave con la que se guarda cada signo, el rango que se acepta, el texto de la\n// pregunta y QUE TECLADO la acompana.\n//\n// Que el teclado salga de aqui y no de cada nodo de Telegram es el patron 2 de\n// la tarea 5: si el `callback_data` del boton y la clave que espera el que\n// guarda pudieran divergir, un «Si» de crepitantes acabaria en\n// `murmullo_disminuido` sin un solo error. El mensaje saldria perfecto.\n//\n// Los rangos son los del §4.4 del spec. Fuera de rango NO avanza de paso.\n//\n// Correspondencia con la prosa del §7/§9 del spec, que numera los pasos de otra\n// manera (ahi el 5 es \"pide la radiografia\"):\n//   paso 1 -> §7.1-2  pide el codigo del paciente      (§9 \"se queda en el 2\")\n//   paso 2 -> §7.4    temperatura\n//   paso 3 -> §7.4    frecuencia cardiaca\n//   paso 4 -> §7.4    crepitantes           (botones)\n//   paso 5 -> §7.4    murmullo disminuido   (botones)\n//   paso 6 -> §7.5    pide la radiografia              (§9 \"se queda en el 5\")\nconst PASOS = [\n  {paso: 1, clave: 'codigo',              tipo: 'codigo',    teclado: 'no',\n   pregunta: 'Envieme el codigo de 6 caracteres que le dio el paciente.'},\n  {paso: 2, clave: 'temperatura_c',       tipo: 'decimal',   teclado: 'no',\n   min: 30.0, max: 45.0,\n   pregunta: 'Temperatura en grados centigrados, entre 30,0 y 45,0. Por ejemplo 38,2.'},\n  {paso: 3, clave: 'frecuencia_cardiaca', tipo: 'entero',    teclado: 'no',\n   min: 20, max: 250,\n   pregunta: 'Frecuencia cardiaca en latidos por minuto: un entero entre 20 y 250.'},\n  {paso: 4, clave: 'crepitantes',         tipo: 'booleano',  teclado: 'crepitantes',\n   prefijo: 's4', pregunta: 'Se auscultan crepitantes?'},\n  {paso: 5, clave: 'murmullo_disminuido', tipo: 'booleano',  teclado: 'murmullo',\n   prefijo: 's5', pregunta: 'Hay murmullo vesicular disminuido?'},\n  {paso: 6, clave: 'placa',               tipo: 'documento', teclado: 'no',\n   pregunta: 'Envieme la radiografia COMO ARCHIVO (el clip, opcion Archivo), no como foto.\\n\\n' +\n             'Telegram recomprime las fotos: destruye el DICOM y con el la edad de la cabecera, que el modelo necesita.'},\n];\nconst ULTIMO = 6;\n\n// El alfabeto del §5.2: 31 caracteres, sin 0, O, 1, I ni L, porque el codigo se\n// dicta en voz alta en una consulta.\nconst ALFABETO = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';\n\n// Telegram no deja descargar por bot ficheros de mas de 20 MB (§9). Se\n// comprueba con el `file_size` que viene EN EL UPDATE, antes de pedirle nada a\n// Telegram: llamar a getFile para que falle gastaria una peticion y daria un\n// error de nodo en vez del mensaje del §9.\nconst MAXIMO_TELEGRAM = 20 * 1024 * 1024;\n\n// COMO VIAJA UN VALOR A SQL, Y POR QUE ASI. Igual que en el flujo del paciente:\n// el nodo Postgres arma sus parametros con `stringToArray`, que parte por COMAS\n// y DESCARTA LOS VACIOS. Un valor vacio no se empuja, la consulta sale con un\n// parametro menos y Postgres responde `there is no parameter $N`. Por eso todo\n// valor lleva un prefijo de un caracter y nunca puede quedar vacio:\n//     'N'          -> NULL\n//     'T' + base64 -> ese texto\n// Para los signos, el texto que viaja es el LITERAL JSON del valor ya tipado\n// (\"38.2\", \"104\", \"true\"), y la consulta lo pasa por `::jsonb`. Asi la\n// temperatura entra en el jsonb como numero y los crepitantes como booleano,\n// que es lo que el §5.3 especifica y lo que H6 espera.\nconst NULO = 'N';\nconst codificar = (v) => 'T' + Buffer.from(String(v), 'utf8').toString('base64');\n\nconst u = $('Normalizar update').first().json;\nconst s = $input.first().json;\n\nconst texto = (u.texto || '').trim();\nconst bajo = texto.toLowerCase();\nconst esComando = (c) =>\n  bajo === c || bajo.startsWith(c + ' ') || bajo.startsWith(c + '@');\n\nconst actual = PASOS.find((p) => p.paso === s.paso) || null;\n\nconst salida = {\n  chat_id: u.chat_id,\n  t0: u.t0,\n  accion: 'nada',\n  clave: '',\n  valor_cod: NULO,\n  codigo_cod: NULO,\n  paso: 0,                  // el paso que se va a preguntar o repetir\n  paso_actual: s.paso,      // el que la sesion tiene AHORA, para el UPDATE\n  reinicio: 'N',\n  pregunta: '',\n  teclado: 'no',\n  file_id: '',\n  // Los tres campos con los que `Desenlace` trabaja, iguales en los tres nodos\n  // que lo alimentan.\n  error_cod: NULO,\n  detalle: '',\n  resultado: null,\n  // Copiados tal cual para que `Desenlace` pueda redactar el §8 sin volver a la\n  // base. `Leer sesion y permiso` solo los trae en el paso 6 (§5.4: cuanto\n  // menos dato del paciente pase por nodos de n8n, mejor).\n  sintomas: s.sintomas || null,\n  signos: s.signos || {},\n  // El codigo del caso, para la cabecera del mensaje con el texto del\n  // paciente. Sale de la sesion, o sea de `cuestionarios`: alfabeto de 31\n  // caracteres del §5.2.\n  codigo: s.codigo || '',\n};\n\nconst preguntar = (paso, aviso) => {\n  const p = PASOS.find((x) => x.paso === paso);\n  salida.accion = 'preguntar';\n  salida.paso = paso;\n  salida.teclado = p ? p.teclado : 'no';\n  salida.pregunta = (aviso ? aviso + '\\n\\n' : '') + (p ? p.pregunta : '');\n};\n\nconst desenlace = (codigo, detalle) => {\n  salida.accion = 'desenlace';\n  salida.error_cod = codigo;\n  salida.detalle = detalle || '';\n};\n\n// ---------------------------------------------------------------------------\n// LA PUERTA. No es un paso del flujo, es una condicion de entrada (§7): un\n// profesional dado de baja a mitad de conversacion deja de pasar en el mensaje\n// SIGUIENTE, y su sesion se queda intacta, sin avanzar ni borrarse.\n// ---------------------------------------------------------------------------\nif (!s.autorizado) {\n  desenlace('no_autorizado', '');\n  return [{ json: salida }];\n}\n\nif (u.tipo === 'texto' && esComando('/reiniciar')) {\n  // Destructivo y pedido a proposito (§7): borra codigo y signos.\n  salida.accion = 'saludo';\n  salida.reinicio = 'S';\n  salida.paso = 1;\n  salida.pregunta = PASOS[0].pregunta;\n} else if (u.tipo === 'texto' && esComando('/start')) {\n  if (actual && s.paso > 1) {\n    // /start a mitad de conversacion NO borra los signos ya recogidos. El\n    // destructivo es /reiniciar. Este es el mismo arreglo que hubo que hacer en\n    // el flujo del paciente.\n    preguntar(actual.paso, '');\n  } else {\n    salida.accion = 'saludo';\n    salida.paso = 1;\n    salida.pregunta = PASOS[0].pregunta;\n  }\n} else if (!s.existe || !actual) {\n  // Sin sesion, cualquier mensaje suyo abre una: es un profesional autorizado,\n  // no hay consentimiento que pedir, y dejarlo sin respuesta seria un silencio.\n  salida.accion = 'saludo';\n  salida.paso = 1;\n  salida.pregunta = PASOS[0].pregunta;\n} else if (actual.tipo === 'codigo') {\n  if (u.tipo !== 'texto') {\n    preguntar(1, 'Esperaba el codigo escrito.');\n  } else {\n    const cod = texto.toUpperCase();\n    const valido = cod.length === 6 &&\n      cod.split('').every((c) => ALFABETO.indexOf(c) >= 0);\n    if (!valido) {\n      // Un texto que no tiene forma de codigo no se busca en la base ni se\n      // registra en `consultas`: es una errata, no un codigo inexistente.\n      // Registrar cada errata inflaria la tasa de rechazos del §16, que es la\n      // senal de salud operativa.\n      preguntar(1, 'Un codigo son 6 caracteres. El alfabeto no tiene O, 0, I, 1 ni L.');\n    } else {\n      salida.accion = 'buscar_codigo';\n      salida.codigo_cod = codificar(cod);\n      salida.paso = 2;\n      // La pregunta del paso 2 se resuelve AQUI, desde la tabla, aunque el\n      // mensaje lo redacte `Desenlace` junto a los sintomas: si `Desenlace`\n      // tuviera su propia copia del texto, las dos podrian divergir y el\n      // profesional veria un rango distinto segun por donde llegase.\n      salida.teclado = PASOS[1].teclado;\n      salida.pregunta = PASOS[1].pregunta;\n    }\n  }\n} else if (actual.tipo === 'documento') {\n  if (u.tipo === 'foto') {\n    // §9: se queda en este paso, esperando el archivo.\n    desenlace('envio_como_foto', '');\n  } else if (u.tipo === 'documento' && u.file_size > MAXIMO_TELEGRAM) {\n    desenlace('fichero_no_descargable', '');\n  } else if (u.tipo === 'documento') {\n    salida.accion = 'clasificar';\n    salida.file_id = u.file_id;\n    salida.paso = ULTIMO;\n  } else {\n    preguntar(ULTIMO, 'Esperaba un archivo.');\n  }\n} else if (actual.tipo === 'booleano') {\n  if (u.tipo !== 'boton') {\n    preguntar(actual.paso, 'Use los botones, por favor.');\n  } else {\n    const m = /^(s[0-9]+):(si|no)$/.exec(u.dato || '');\n    if (!m) {\n      salida.accion = 'nada';        // callback ajeno o forjado\n    } else if (m[1] !== actual.prefijo) {\n      // Boton de OTRA pregunta: un teclado viejo que sigue en la pantalla. Si\n      // se aceptara, el «Si» de crepitantes se guardaria en\n      // `murmullo_disminuido`. Este es EL fallo silencioso de la tarea.\n      preguntar(actual.paso, '');\n    } else {\n      salida.accion = 'guardar_signo';\n      salida.clave = actual.clave;\n      salida.valor_cod = codificar(m[2] === 'si' ? 'true' : 'false');\n      salida.paso = actual.paso + 1;\n      const sig = PASOS.find((x) => x.paso === actual.paso + 1);\n      salida.teclado = sig ? sig.teclado : 'no';\n      salida.pregunta = sig ? sig.pregunta : '';\n    }\n  }\n} else {\n  // decimal o entero: temperatura y frecuencia cardiaca.\n  if (u.tipo !== 'texto') {\n    preguntar(actual.paso, 'Esperaba un numero escrito.');\n  } else {\n    // Un 38,2 y un 38.2 son el mismo valor (§4.4): se normaliza a punto antes\n    // de comparar y de guardar.\n    const crudo = texto.replace(',', '.');\n    const esNumero = actual.tipo === 'entero'\n      ? /^[0-9]+$/.test(crudo)\n      : /^[0-9]+(\\.[0-9]+)?$/.test(crudo);\n    const n = Number(crudo);\n    if (!esNumero || !Number.isFinite(n)) {\n      preguntar(actual.paso, 'Eso no lo he entendido como un numero.');\n    } else if (n < actual.min || n > actual.max) {\n      const fmt = (x) => String(x).replace('.', ',');\n      preguntar(actual.paso,\n        'Fuera del rango ' + fmt(actual.min) + ' a ' + fmt(actual.max) + '.');\n    } else {\n      salida.accion = 'guardar_signo';\n      salida.clave = actual.clave;\n      // JSON.stringify de un numero da el literal JSON (\"38.2\", \"104\"), que la\n      // consulta convierte con ::jsonb en un numero de verdad, no en una\n      // cadena. Sin esto H6 recibiria \"38.2\" con comillas.\n      salida.valor_cod = codificar(JSON.stringify(n));\n      salida.paso = actual.paso + 1;\n      const sig = PASOS.find((x) => x.paso === actual.paso + 1);\n      salida.teclado = sig ? sig.teclado : 'no';\n      salida.pregunta = sig ? sig.pregunta : '';\n    }\n  }\n}\n\nreturn [{ json: salida }];\n"
+      },
+      "notes": "La tabla unica paso -> clave, rango, pregunta y teclado. De aqui sale tambien el callback_data que los nodos de botones repiten, para que el teclado y el que guarda no puedan divergir."
+    },
+    {
+      "id": "racc",
+      "name": "Repartir accion",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        0,
+        460
+      ],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "racc0",
+                    "leftValue": "={{ $json.accion }}",
+                    "rightValue": "saludo",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "saludo"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "racc1",
+                    "leftValue": "={{ $json.accion }}",
+                    "rightValue": "buscar_codigo",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "buscar_codigo"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "racc2",
+                    "leftValue": "={{ $json.accion }}",
+                    "rightValue": "guardar_signo",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "guardar_signo"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "racc3",
+                    "leftValue": "={{ $json.accion }}",
+                    "rightValue": "preguntar",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "preguntar"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "racc4",
+                    "leftValue": "={{ $json.accion }}",
+                    "rightValue": "clasificar",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "clasificar"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "racc5",
+                    "leftValue": "={{ $json.accion }}",
+                    "rightValue": "desenlace",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "desenlace"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "accion = 'nada' no encaja en ninguna regla y no hay salida de reserva: el update se descarta sin escribir ni contestar. Ahi van los callbacks forjados."
+    },
+    {
+      "id": "abrir",
+      "name": "Abrir sesion",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        260,
+        100
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Abre la sesion del profesional. $2 distingue las dos entradas:\n--   'S' -> /reiniciar: destructivo a proposito (§7). Borra codigo y signos.\n--   'N' -> /start o el primer mensaje: si ya hay sesion NO la toca, para no\n--          perder en silencio los signos ya recogidos. El destructivo es\n--          /reiniciar, y esa distincion ya hubo que arreglarla en el flujo del\n--          paciente.\nINSERT INTO sesiones_profesional (chat_id, paso, codigo, signos)\nVALUES ($1::bigint, 1, NULL, '{}'::jsonb)\nON CONFLICT (chat_id) DO UPDATE\n   SET paso   = CASE WHEN $2::text = 'S' THEN 1 ELSE sesiones_profesional.paso END,\n       codigo = CASE WHEN $2::text = 'S' THEN NULL ELSE sesiones_profesional.codigo END,\n       signos = CASE WHEN $2::text = 'S' THEN '{}'::jsonb ELSE sesiones_profesional.signos END,\n       actualizado_en = now()\nRETURNING paso",
+        "options": {
+          "queryReplacement": "={{ $('Normalizar update').first().json.chat_id }},{{ $json.reinicio }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "[retirado]",
+          "name": "copiloto-bd"
+        }
+      }
+    },
+    {
+      "id": "buscar",
+      "name": "Buscar cuestionario",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        260,
+        240
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Busca el codigo y, si existe y no ha caducado, lo ata a la sesion. Todo en\n-- una sentencia: o el codigo queda guardado y se devuelven los sintomas, o no\n-- pasa nada.\n--\n-- No hace falta un IF detras: la propia consulta dice por `error_cod` si el\n-- codigo valia, y devuelve ya la forma que `Desenlace` consume. Un IF aparte\n-- seria un segundo sitio donde decidir lo mismo.\n--\n-- El codigo llega con el prefijo de un caracter del §\"COMO VIAJA UN VALOR A SQL\"\n-- ('T' + base64) porque `stringToArray` de n8n descarta los parametros vacios y\n-- parte por comas; se descodifica DENTRO de la consulta, que sigue siendo\n-- parametrizada.\nWITH q AS (\n  SELECT codigo, respuestas\n    FROM cuestionarios\n   WHERE codigo = convert_from(decode(substr($2::text, 2), 'base64'), 'UTF8')\n     AND expira_en > now()\n),\nupd AS (\n  UPDATE sesiones_profesional s\n     SET codigo = q.codigo, paso = 2, actualizado_en = now()\n    FROM q\n   WHERE s.chat_id = $1::bigint\n     AND s.paso = 1\n  RETURNING s.codigo\n)\nSELECT $1::bigint                       AS chat_id,\n       (SELECT codigo FROM upd)         AS codigo,\n       (SELECT respuestas FROM q)       AS sintomas,\n       '{}'::jsonb                      AS signos,\n       CASE WHEN EXISTS (SELECT 1 FROM upd) THEN 'N'\n            ELSE 'codigo_invalido' END  AS error_cod,\n       ''                               AS detalle",
+        "options": {
+          "queryReplacement": "={{ $('Normalizar update').first().json.chat_id }},{{ $json.codigo_cod }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "[retirado]",
+          "name": "copiloto-bd"
+        }
+      },
+      "notes": "Comprueba `expira_en` (§7.2) y devuelve ya la forma que `Desenlace` consume, incluido `codigo_invalido` cuando no vale."
+    },
+    {
+      "id": "signo",
+      "name": "Guardar signo",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        260,
+        380
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- El signo se FUSIONA en el jsonb con `||`: no hay leer-modificar-escribir, asi\n-- que dos mensajes seguidos no pueden perderse el uno al otro.\n--\n-- El valor llega como LITERAL JSON en base64 (\"38.2\", \"104\", \"true\") y se pasa\n-- por `::jsonb`, de modo que la temperatura entra como numero y los crepitantes\n-- como booleano (§5.3). Sin el `::jsonb` H6 recibiria \"38.2\" entre comillas.\n--\n-- `AND paso = $5` hace el UPDATE idempotente: un doble toque en el mismo boton\n-- no encuentra fila la segunda vez, y no se salta un signo.\nUPDATE sesiones_profesional\n   SET signos = signos || jsonb_build_object(\n         $2::text,\n         convert_from(decode(substr($3::text, 2), 'base64'), 'UTF8')::jsonb),\n       paso = $4::smallint,\n       actualizado_en = now()\n WHERE chat_id = $1::bigint\n   AND paso = $5::smallint\nRETURNING paso",
+        "options": {
+          "queryReplacement": "={{ $('Normalizar update').first().json.chat_id }},{{ $json.clave }},{{ $json.valor_cod }},{{ $json.paso }},{{ $json.paso_actual }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "[retirado]",
+          "name": "copiloto-bd"
+        }
+      },
+      "notes": "El nodo que sostiene la propiedad clinica de la tarea: cada signo en SU clave. La clave la pone `Decidir` desde la tabla del §4.4; aqui no se deduce de nada."
+    },
+    {
+      "id": "rpre",
+      "name": "Repartir pregunta",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        520,
+        240
+      ],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "rpre0",
+                    "leftValue": "={{ $('Decidir').first().json.paso }}",
+                    "rightValue": 1,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "1"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "rpre1",
+                    "leftValue": "={{ $('Decidir').first().json.paso }}",
+                    "rightValue": 2,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "2"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "rpre2",
+                    "leftValue": "={{ $('Decidir').first().json.paso }}",
+                    "rightValue": 3,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "3"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "rpre3",
+                    "leftValue": "={{ $('Decidir').first().json.paso }}",
+                    "rightValue": 4,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "4"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "rpre4",
+                    "leftValue": "={{ $('Decidir').first().json.paso }}",
+                    "rightValue": 5,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "5"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "rpre5",
+                    "leftValue": "={{ $('Decidir').first().json.paso }}",
+                    "rightValue": 6,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "6"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Las tres entradas -abrir sesion, guardar un signo y repetir- se unen aqui y se reparten por el MISMO paso que calculo `Decidir`. Asi no hay dos sitios que puedan decidir que pregunta toca."
+    },
+    {
+      "id": "p1",
+      "name": "Pedir codigo",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        780,
+        -140
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Normalizar update').first().json.chat_id }}",
+        "text": "={{ $('Decidir').first().json.pregunta }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "[retirado]",
+          "name": "[retirado]"
+        }
+      }
+    },
+    {
+      "id": "p2",
+      "name": "Pedir temperatura",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        780,
+        -20
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Normalizar update').first().json.chat_id }}",
+        "text": "={{ $('Decidir').first().json.pregunta }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "[retirado]",
+          "name": "[retirado]"
+        }
+      }
+    },
+    {
+      "id": "p3",
+      "name": "Pedir frecuencia",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        780,
+        100
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Normalizar update').first().json.chat_id }}",
+        "text": "={{ $('Decidir').first().json.pregunta }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "[retirado]",
+          "name": "[retirado]"
+        }
+      }
+    },
+    {
+      "id": "p4",
+      "name": "Pedir crepitantes",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        780,
+        220
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Normalizar update').first().json.chat_id }}",
+        "text": "={{ $('Decidir').first().json.pregunta }}",
+        "additionalFields": {
+          "appendAttribution": false
+        },
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "Sí",
+                    "additionalFields": {
+                      "callback_data": "s4:si"
+                    }
+                  },
+                  {
+                    "text": "No",
+                    "additionalFields": {
+                      "callback_data": "s4:no"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "[retirado]",
+          "name": "[retirado]"
+        }
+      },
+      "notes": "El prefijo `s4` sale de la tabla de `Decidir`, y `Decidir` rechaza un `s4:*` cuando la sesion esta en el paso 5. Sin el prefijo, un teclado viejo que siga en la pantalla guardaria el «Si» de crepitantes dentro de `murmullo_disminuido`, y el mensaje final saldria perfecto."
+    },
+    {
+      "id": "p5",
+      "name": "Pedir murmullo",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        780,
+        340
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Normalizar update').first().json.chat_id }}",
+        "text": "={{ $('Decidir').first().json.pregunta }}",
+        "additionalFields": {
+          "appendAttribution": false
+        },
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "Sí",
+                    "additionalFields": {
+                      "callback_data": "s5:si"
+                    }
+                  },
+                  {
+                    "text": "No",
+                    "additionalFields": {
+                      "callback_data": "s5:no"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "[retirado]",
+          "name": "[retirado]"
+        }
+      }
+    },
+    {
+      "id": "p6",
+      "name": "Pedir placa",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        780,
+        460
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Normalizar update').first().json.chat_id }}",
+        "text": "={{ $('Decidir').first().json.pregunta }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "[retirado]",
+          "name": "[retirado]"
+        }
+      }
+    },
+    {
+      "id": "baja",
+      "name": "Descargar fichero",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        700
+      ],
+      "parameters": {
+        "resource": "file",
+        "operation": "get",
+        "fileId": "={{ $json.file_id }}",
+        "download": true
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "[retirado]",
+          "name": "[retirado]"
+        }
+      },
+      "notes": "getFile + descarga con la credencial del bot del profesional. Los ficheros de mas de 20 MB no llegan aqui: `Decidir` los corta antes mirando el `file_size` del propio update, para que el §9 pueda contestar `fichero_no_descargable` en vez de dejar que el nodo falle.",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "fallo",
+      "name": "Descarga fallida",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        860
+      ],
+      "parameters": {
+        "jsCode": "// La salida de ERROR de `Descargar fichero`.\n//\n// Sin esta rama, un fallo de Telegram al bajar el fichero -un 5xx suyo, un\n// file_id que ya no resuelve- dejaba al profesional SIN NINGUNA respuesta: el\n// workflow moria en ese nodo, y como el §5.4 obliga a\n// `saveDataErrorExecution: none`, tampoco quedaba rastro de la ejecucion. En una\n// herramienta clinica el silencio es el peor desenlace posible: el §9 existe\n// precisamente para que toda situacion acabe en un mensaje y en un estado\n// conocido.\n//\n// El codigo es `descarga_fallida`, que NO esta en el §9 y hace falta que este.\n// Antes reusaba `fichero_no_descargable`, y ese mensaje dice «Telegram no me deja\n// descargar archivos de mas de 20 MB»: para un DICOM de 131 KB es una frase falsa,\n// y una frase falsa manda al clinico a revisar el tamano del fichero en vez de\n// avisar de que el servicio esta fallando. El estado despues es el mismo que el\n// §9 da a los errores de fichero: se queda en el paso de la radiografia.\nconst d = $('Decidir').first().json;\nreturn [{ json: {\n  chat_id: d.chat_id,\n  t0: d.t0,\n  sintomas: d.sintomas || null,\n  signos: d.signos || {},\n  error_cod: 'descarga_fallida',\n  detalle: '',\n  resultado: null,\n} }];\n"
+      },
+      "notes": "La salida de error de `Descargar fichero`. Sin ella, un fallo de Telegram dejaba al profesional sin ninguna respuesta y sin rastro, porque el §5.4 obliga a no guardar los datos de ejecucion."
+    },
+    {
+      "id": "b64",
+      "name": "A base64",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        700
+      ],
+      "parameters": {
+        "jsCode": "// Del binario que bajo de Telegram al base64 que espera el copiloto (§10.1).\n//\n// TRES CAMINOS, y el orden importa. El ayudante `getBinaryDataBuffer` es el unico\n// que funciona igual con el almacenamiento en memoria y con el de sistema de\n// ficheros -y el modo lo decide la instalacion del cliente, no este flujo-, pero\n// no esta expuesto igual en todas las versiones de n8n: en unas el accesor es\n// `helpers` suelto y en otras `this.helpers`, y en un Code node `this` puede\n// venir sin definir, con lo que `this.helpers` lanza. Se prueban los dos, y solo\n// si ninguno responde se cae a leer `binary.data.data`, que es correcto con\n// almacenamiento en memoria y devuelve vacio con el de disco.\n//\n// `via` dice por donde se resolvio. No es adorno: es lo unico que permite saber,\n// desde fuera, si en la instalacion del cliente esta corriendo el camino bueno o\n// el de reserva. Con el se midio en el n8n real (ver tests/profesional.mjs).\nlet ayudantes = null;\ntry {\n  if (typeof helpers !== 'undefined' && helpers &&\n      typeof helpers.getBinaryDataBuffer === 'function') {\n    ayudantes = helpers;\n  }\n} catch (err) { ayudantes = null; }\nif (!ayudantes) {\n  try {\n    if (this && this.helpers &&\n        typeof this.helpers.getBinaryDataBuffer === 'function') {\n      ayudantes = this.helpers;\n    }\n  } catch (err) { ayudantes = null; }\n}\n\nlet b64 = '';\nlet via = 'nada';\nif (ayudantes) {\n  try {\n    b64 = (await ayudantes.getBinaryDataBuffer(0, 'data')).toString('base64');\n    via = 'ayudante';\n  } catch (err) { b64 = ''; via = 'nada'; }\n}\nif (!b64) {\n  const bin = $input.first().binary;\n  b64 = (bin && bin.data && bin.data.data) || '';\n  if (b64) { via = 'binario'; }\n}\n\n// Si no hubiera bytes por ningun camino, se manda la cadena vacia y el servidor\n// contesta con su propio codigo del §9 -`dicom_invalido`-, que es mas honesto que\n// inventar aqui un diagnostico de por que no habia fichero.\nconst d = $('Decidir').first().json;\n\n// EL CUERPO JSON-RPC SE ARMA AQUI, no en una expresion del nodo HTTP.\n//\n// Medido contra el n8n real el 25-sep-2026: poner\n// `={{ JSON.stringify({jsonrpc:'2.0',...}) }}` en el campo JSON del nodo HTTP\n// falla con «invalid syntax» y la peticion no llega a salir. El motor de\n// expresiones delimita con `{{` y `}}`, y un objeto literal dentro deja\n// secuencias `}}}` que el separador corta en el sitio equivocado. El sintoma\n// habria sido que TODAS las radiografias contestaran `copiloto_no_responde`.\n//\n// Con el cuerpo ya serializado aqui, la expresion del nodo es un solo campo sin\n// llaves, y el JSON lo construye JavaScript, que es donde se puede probar.\nconst cuerpo_jsonrpc = JSON.stringify({\n  jsonrpc: '2.0',\n  id: 1,\n  method: 'tools/call',\n  params: {name: 'clasificar_radiografia', arguments: {dicom_base64: b64}},\n});\n\n// El base64 NO sale por ningun otro campo: solo dentro del cuerpo que va a la\n// peticion. Con `saveDataSuccessExecution` y `saveDataErrorExecution` en `none`\n// nada de esto se persiste, y cuantos menos campos lo lleven, menos hay que\n// confiar en ese ajuste (§5.4).\nreturn [{ json: {chat_id: d.chat_id, t0: d.t0, via, cuerpo_jsonrpc} }];\n"
+      }
+    },
+    {
+      "id": "http",
+      "name": "Llamar al copiloto",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        700,
+        700
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://copiloto-mcp:8000/mcp",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json, text/event-stream"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.cuerpo_jsonrpc }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text",
+              "outputPropertyName": "cuerpo"
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput",
+      "notes": "§10.1, verificado contra el contenedor real el 25-sep-2026.\n\nResponse Format = Text y NO JSON: la respuesta es un evento SSE ('event: message' + 'data: {...}'), y un parseo automatico a JSON fallaria.\n\nNever Error + Include Response Headers and Status: sin esos dos, un HTTP 413 -el limite del TRANSPORTE del §10.4, que no es el del tool- seria un fallo de nodo y no una rama del §9. Con ellos llega por la salida normal con su statusCode, y `Leer respuesta` lo distingue. Medido: 6 MiB devuelve 413 con el cuerpo 'Request body too large', sin SSE y sin JSON-RPC.\n\nUn solo reintento (maxTries 2) y solo ante fallo de transporte: con Never Error, un 413 o un 500 ya NO cuentan como fallo, asi que no se reintentan. Un `isError` llega con HTTP 200 y tampoco. Es lo que pide el §10.1.\n\nLa salida de error del nodo -timeout, conexion rechazada- va al MISMO `Leer respuesta`, que la reconoce porque no trae statusCode."
+    },
+    {
+      "id": "leerresp",
+      "name": "Leer respuesta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        700
+      ],
+      "parameters": {
+        "jsCode": "// Lee la respuesta del copiloto. Todo lo verificado contra el contenedor real\n// esta en el §10 del spec, y se volvio a medir el 25-sep-2026 antes de escribir\n// esto:\n//\n//   exito      HTTP 200, cuerpo SSE: \"event: message\\r\\ndata: {...}\\r\\n\\r\\n\",\n//              con result.structuredContent y result.isError = false.\n//   isError    HTTP 200, el MISMO envoltorio SSE, sin structuredContent, y el\n//              texto en result.content[0].text con el prefijo del SDK:\n//              \"Error executing tool clasificar_radiografia: <codigo>: <detalle>\"\n//   413        HTTP 413 y cuerpo \"Request body too large\": NO hay SSE ni\n//              JSON-RPC. Buscar `data:` aqui reventaria (§10.4).\n//\n// Este nodo NO decide que se le dice al profesional: solo traduce la respuesta a\n// (error_cod, detalle, resultado). El mensaje lo redacta `Desenlace`, que es el\n// unico sitio donde viven el §8 y la tabla del §9.\nconst d = $('Decidir').first().json;\nconst e = $input.first().json;\n\n// Los CODIGOS que el servidor puede poner al principio de su mensaje. Se buscan\n// DENTRO del texto (§10.3): partir por el primer ':' devolveria\n// \"Error executing tool clasificar_radiografia\" para todos por igual, que fue\n// exactamente el fallo que el §10.3 existe para impedir.\n// El valor dice si ese detalle SE PUEDE RELATAR al profesional, y la decision es\n// por PROCEDENCIA, no por contenido. Es la regla del §8 aplicada aqui:\n//\n//   se relata lo que compuso NUESTRO codigo; no se relata lo que compuso un tercero.\n//\n// Antes esto lo guardaba una lista negra de palabras (`HUELE_A_PROBABILIDAD`), que\n// es justo el patron que el §8 abandono, y se colaban tres cadenas forjadas:\n// «TRIAJE ― opacidad probable (puntuación 0.9900 ≥ umbral 0.4258)», su version con\n// А y О cirilicas, y «HALLAZGO ― opacidad probable. Remita a urgencias.». Solo caia\n// el literal con «CRIBADO» y comas decimales. Y el origen importa: el detalle de\n// `dicom_invalido` lo arma `inferencia.py` con el texto de la excepcion de pydicom\n// sobre BYTES AJENOS, asi que quien suministra el DICOM influye en el.\n//\n// La clasificacion sale de leer las dos fuentes, y\n// `test_flujo_profesional.py` la ata a ellas: un mensaje que interpole `{exc}` NO\n// se puede relatar.\nconst CODIGOS_DEL_SERVIDOR = {\n  // aplicacion.py: f\"base64_invalido: {exc}\" -> el texto es de binascii.\n  base64_invalido: false,\n  // inferencia.py: f\"El fichero no es un DICOM legible: {exc}\" -> de pydicom,\n  // sobre los bytes que manda quien sea. Este era el agujero.\n  dicom_invalido: false,\n  // inferencia.py: literal entero, sin interpolar nada.\n  edad_desconocida: true,\n  // inferencia.py: literal + `edad`, que es lo que devuelve `edad_en_anios` y es\n  // `int(digitos)`: un entero y nada mas.\n  fuera_de_alcance: true,\n  // aplicacion.py: literal + dos enteros.\n  payload_excesivo: true,\n};\n\n// Lo maximo que se relata del servidor. Telegram corta el mensaje en 4 096\n// caracteres y devuelve un error, o sea que el profesional no recibe nada: un\n// detalle sin tope convierte una caida del copiloto en un silencio.\nconst TOPE_DETALLE = 500;\n\nconst base = {\n  chat_id: d.chat_id,\n  t0: d.t0,\n  codigo: d.codigo || '',\n  sintomas: d.sintomas || null,\n  signos: d.signos || {},\n  error_cod: 'N',\n  // EL CONTRATO DE LOS DOS CAMPOS, que es lo que sostiene la regla del §9:\n  //\n  //   `detalle`  texto que compuso NUESTRO codigo, y por eso es lo unico que\n  //              `Desenlace` le puede relatar al profesional. Va vacio cuando lo\n  //              que dijo el servidor lo armo interpolando algo de un tercero.\n  //   `crudo`    lo que el servidor dijo, sin tocar. Va SIEMPRE a\n  //              `consultas.error` detras del codigo, y no se ensena.\n  //\n  // Antes eran el mismo campo, y ademas en la rama sin codigo se sustituia por un\n  // texto fabricado: para un DICOM truncado no se perdia nada, pero para cualquier\n  // otra caida sin codigo se perdia lo unico diagnosticable.\n  detalle: '',\n  crudo: '',\n  resultado: null,\n};\n\nconst salir = (codigo, detalle, crudo) => [{ json: Object.assign({}, base,\n  { error_cod: codigo, detalle: detalle || '', crudo: crudo || detalle || '' }) }];\n\n// `cuerpo` es el nombre que el nodo HTTP Request tiene configurado en\n// «Put Output in Field»; los otros son por si alguien cambia ese ajuste y no\n// este nodo. Sin esta red, un renombre dejaria el flujo diciendo\n// \"no se interpretar\" para TODAS las radiografias, y el mensaje seria cierto.\n// Se lee ANTES de mirar el statusCode porque las tres ramas de error lo\n// registran: el cuerpo del 413 es «Request body too large», y el de un 502 del\n// proxy es lo unico que dira que el problema no era el copiloto.\nconst cuerpoCrudo = typeof e.cuerpo === 'string' ? e.cuerpo\n  : (typeof e.data === 'string' ? e.data\n  : (typeof e.body === 'string' ? e.body : ''));\n\n// El nodo HTTP Request lleva `Never Error`, asi que un 413 o un 500 llegan por\n// la salida NORMAL con su statusCode. Por la salida de ERROR solo llegan los\n// fallos de transporte -timeout, conexion rechazada, DNS-, y esos items no\n// traen statusCode: es asi como se distinguen, sin adivinar por el texto.\nif (typeof e.statusCode !== 'number') {\n  return salir('copiloto_no_responde', '', 'sin statusCode: ' +\n               String((e.error && (e.error.message || e.error)) || 'sin detalle')\n               .slice(0, 200));\n}\nif (e.statusCode === 413) {\n  // El limite del TRANSPORTE, que no es el mismo que el del tool (§10.4).\n  return salir('payload_excesivo_transporte', '',\n               'HTTP 413: ' + cuerpoCrudo.slice(0, 200));\n}\nif (e.statusCode !== 200 || !cuerpoCrudo) {\n  // Cualquier respuesta que no sea 200 con cuerpo se trata como error y NO se\n  // intenta parsear (§10.4).\n  return salir('copiloto_no_responde', '',\n               'HTTP ' + e.statusCode + ': ' + cuerpoCrudo.slice(0, 200));\n}\n\n// El JSON viaja en la linea `data:` del evento SSE, no suelto (§10.2).\nlet sobre = null;\nfor (const linea of cuerpoCrudo.split(/\\r?\\n/)) {\n  if (linea.startsWith('data:')) {\n    try { sobre = JSON.parse(linea.slice(5).trim()); } catch (err) { sobre = null; }\n    if (sobre) { break; }\n  }\n}\nconst res = sobre && sobre.result;\nif (!res) {\n  // 200 con algo que no es el SSE que el §10.2 describe. Termina y el texto\n  // integro va a `consultas.error`, que es lo que el §9 manda hacer con lo que\n  // no se sabe interpretar.\n  return salir('error_no_reconocido', cuerpoCrudo.slice(0, 500));\n}\n\nif (res.isError) {\n  const texto = (res.content && res.content[0] && res.content[0].text) || '';\n  for (const codigo of Object.keys(CODIGOS_DEL_SERVIDOR)) {\n    const i = texto.indexOf(codigo + ':');\n    if (i >= 0) {\n      // Acotado EN EL ORIGEN. Sin esto, un detalle de 20 000 caracteres -un\n      // volcado de pila, un mensaje de una libreria- daba un primer mensaje de\n      // 20 031 contra el limite de 4 096 de Telegram, y el profesional NO RECIBIA\n      // NADA. El mismo desenlace que el agujero de `ERRORES[codigo]`, por otra\n      // puerta, y alcanzable justo por el caso que el §9 mas teme: una caida del\n      // servidor.\n      const dice = texto.slice(i + codigo.length + 1).trim().slice(0, TOPE_DETALLE);\n      // `detalle` es, POR CONTRATO, texto que compuso nuestro codigo: es lo unico\n      // que `Desenlace` puede relatarle al profesional. Cuando el servidor lo armo\n      // interpolando la excepcion de un tercero, va vacio y el profesional recibe\n      // la redaccion del §9, que es del sistema. El texto crudo NO se pierde: va\n      // entero a `consultas.error`, que es donde se diagnostica.\n      return salir(codigo, CODIGOS_DEL_SERVIDOR[codigo] ? dice : '', dice);\n    }\n  }\n  // UN isError SIN NINGUN CODIGO NO ES «un codigo desconocido».\n  //\n  // Medido contra el contenedor el 25-sep-2026 con la misma placa truncada al\n  // 1, 5, 10, 25, 50, 75 y 99 %: un DICOM cortado hace saltar en el servidor una\n  // excepcion que su `except (InvalidDicomError, ValueError, TypeError)` no\n  // atrapa, el SDK la envuelve y DESCARTA el mensaje, y lo que llega es\n  // exactamente «Error executing tool clasificar_radiografia», sin `codigo:`.\n  //\n  // El §9 reserva `error_no_reconocido` para «isError con un codigo\n  // desconocido», y lo hace TERMINAR. Aplicarlo aqui cerraba la conversacion de\n  // un profesional cuyo unico problema es que el fichero llego a medias -el\n  // perfil «fichero corrupto» del §13.1, que la tarea 8 va a generar-. La\n  // situacion real es que no se pudo leer esa radiografia: `dicom_invalido`, y\n  // se queda esperando el archivo.\n  //\n  // La distincion es la que hay entre «el servidor me dijo algo que no entiendo»\n  // -hay codigo, no lo conozco, y eso es un desajuste de contrato que merece\n  // terminar y registrarse- y «el servidor se cayo procesando lo que le mande»,\n  // que es una radiografia que no vale. El texto integro se registra igual, con\n  // el prefijo del codigo, para que se pueda diagnosticar despues.\n  const SIN_CODIGO = /^Error executing tool [A-Za-z0-9_]+\\.?\\s*$/;\n  if (texto === '' || SIN_CODIGO.test(texto)) {\n    return salir('dicom_invalido', 'No pude interpretar el contenido del '\n                 + 'fichero. Si lo recortó al enviarlo, vuelva a exportarlo '\n                 + 'completo.',\n                 // El texto del servidor NO se pierde aunque el mensaje que se\n                 // ensena sea otro: si algun dia la caida no es del fichero, esto\n                 // es lo unico que quedara para averiguarlo.\n                 texto === '' ? '(el servidor no dijo nada)' : texto);\n  }\n  return salir('error_no_reconocido', texto.slice(0, 500));\n}\n\n// Exito. `structuredContent` es lo que se guarda tal cual en\n// `consultas.resultado` (§5.3). Si no viniera, el mismo JSON esta como texto en\n// result.content[0].text (§10.2).\nlet r = res.structuredContent || null;\nif (!r) {\n  try { r = JSON.parse((res.content && res.content[0] && res.content[0].text) || ''); }\n  catch (err) { r = null; }\n}\n// Se exigen TODOS los campos que el §8 imprime, y con su tipo. Antes solo se\n// comprobaban tres, y un `structuredContent` al que le faltara `umbral` -o que lo\n// trajera como cadena- llegaba al redactor y salia «umbral NaN» en un informe\n// clinico. Un campo que falta no es una cifra que se pueda mostrar: es una\n// respuesta que no se sabe interpretar.\n//\n// Y `clasificacion` tiene que ser una de las DOS que el servidor puede emitir.\n// Cualquier otra cosa no se traduce a una etiqueta, y adivinarla -tratando todo\n// lo que no sea `opacidad_probable` como negativo- es lo que hacia que el\n// mensaje pudiera decir «sin opacidad probable» con una puntuacion por encima\n// del umbral.\nconst NUMEROS = ['probabilidad_cruda', 'probabilidad_calibrada',\n                 'razon_de_verosimilitud', 'umbral'];\nconst ETIQUETAS = ['opacidad_probable', 'sin_opacidad_probable'];\nconst completo = r && NUMEROS.every((k) => typeof r[k] === 'number' &&\n                                           Number.isFinite(r[k])) &&\n                 ETIQUETAS.indexOf(r.clasificacion) >= 0;\nif (!completo) {\n  return salir('error_no_reconocido', cuerpoCrudo.slice(0, 500));\n}\n\nreturn [{ json: Object.assign({}, base, { resultado: r }) }];\n"
+      },
+      "notes": "Saca el JSON de la linea `data:` del SSE y, si hay isError, busca el codigo DENTRO del texto: partir por el primer ':' devolveria 'Error executing tool clasificar_radiografia' para todos los codigos por igual (§10.3)."
+    },
+    {
+      "id": "desen",
+      "name": "Desenlace",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        460
+      ],
+      "parameters": {
+        "jsCode": "// EL UNICO SITIO DONDE SE REDACTA UN DESENLACE. Aqui viven el §8 (como se\n// presenta el resultado) y la tabla del §9 (las ramas de error, con lo que dice\n// el bot y en que estado queda la conversacion despues).\n//\n// Que sean un solo nodo, y no un Switch de once ramas con once nodos de\n// Telegram, es deliberado: con once nodos, \"ninguna rama de error emite una\n// cifra de probabilidad\" es una propiedad que hay que comprobar once veces y que\n// se rompe la primera vez que alguien anade la doceava. Aqui es una sola linea,\n// y `tests/profesional.mjs` la ejecuta contra los valores reales medidos del\n// contenedor.\n//\n// Cuatro nodos lo alimentan, y los cuatro producen la misma forma\n// (error_cod, detalle, crudo, resultado, sintomas, signos):\n//   - `Decidir`            -> no_autorizado, envio_como_foto, fichero_no_descargable\n//   - `Buscar cuestionario`-> el caso encontrado, o codigo_invalido\n//   - `Leer respuesta`     -> el resultado del copiloto, o su error\n//   - `Descarga fallida`   -> descarga_fallida\n//\n// =========================================================================\n// LA REGLA DEL INFORME, Y POR QUE ESTA ESCRITA AL REVES QUE ANTES\n// =========================================================================\n//\n// **El mensaje del informe se genera SOLO a partir de numeros validados, de\n// valores de una enumeracion cerrada, y de literales de este fichero. No lleva\n// ni un caracter que haya escrito el paciente.**\n//\n// La version anterior hacia lo contrario: metia el texto del paciente en el\n// informe y le quitaba los caracteres peligrosos. Esa defensa se rodeo por tres\n// vias, y la tercera es la que decide:\n//\n//   1. `U+2015 HORIZONTAL BAR` se ve identica a la raya `U+2014` y pasaba el\n//      filtro, como todos los demas homoglifos menos uno. (Medido con node v24 /\n//      Unicode 17: los caracteres con la propiedad Dash son 31, no 47.)\n//   2. `U+0085 NEXT LINE` es el unico espacio Unicode que el `\\s` de JavaScript\n//      no cubre, y es clase BK -salto obligatorio- en UAX #14.\n//   3. **Sin ningun caracter de control.** 447 caracteres y siete copias del\n//      rotulo: al envolverse la burbuja, una fila renderizada empieza por el\n//      rotulo en 3 de 7 anchos de pantalla.\n//\n// La tercera no la arregla ningun filtro de caracteres: «cabe en una linea» es\n// cierto en la cadena y falso en la pantalla, porque el salto lo mete el cliente\n// de Telegram y no el dato. Alargar la lista negra era perseguir homoglifos para\n// siempre.\n//\n// Invertida, la regla no menciona ningun caracter, y eso es lo que la hace\n// sostenible: si manana alguien inventa otro homoglifo, da igual.\n//\n// El paciente no pierde nada: su texto se manda ENTERO Y SIN FILTRAR en un\n// mensaje aparte, detras de UNA linea del sistema en la posicion 0 y de nada mas\n// (ver `textoDelPaciente` y el bloque que lo precede, que explica por que una\n// linea y no dos). Y el clinico gana algo, que es que deja de haber duda sobre\n// quien escribio que.\n\n// --------------------------------------------------------------------------\n// §9. Situacion -> codigo, que dice el bot, y si la conversacion TERMINA.\n//\n// `relata` = se anade el `detalle` SI LO HAY. Y si lo hay lo decide `Leer\n// respuesta` por PROCEDENCIA: solo llena `detalle` cuando el texto lo compuso\n// nuestro codigo, nunca cuando el servidor lo armo interpolando la excepcion de una\n// libreria sobre bytes ajenos (§9: no se reconstruye la frase ni se interpola la\n// edad por nuestra cuenta; la edad no viene en ningun campo estructurado cuando hay\n// error, solo dentro del texto).\n//\n// Por eso `dicom_invalido` lleva `relata: true` y sin embargo NO relata nada\n// cuando el servidor devolvio codigo: su detalle es de pydicom. Lo que si relata es\n// la frase que compone `Leer respuesta` en la rama SIN codigo, que es nuestra.\n// --------------------------------------------------------------------------\nconst ERRORES = {\n  // El rechazo de D6. Va a `consultas` igual: el §5.1 guarda tambien los\n  // rechazos, y la tasa es la senal del §16.\n  //\n  // El mensaje es escueto A PROPOSITO: quien llega aqui ha pasado el\n  // `secret_token` del §4.2 sin estar en la lista blanca, asi que no se le dan\n  // pistas de que hay detras. El §9 lo pide asi.\n  //\n  // `termina: false` y no `true`, aunque la tabla del §9 diga «termina»: en esta\n  // columna `termina` significa BORRAR LA SESION, y a un profesional al que dan\n  // de baja a mitad de conversacion se le perderian los signos que ya habia\n  // recogido. El §7 dice que deja de pasar en el mensaje siguiente, no que se le\n  // tire el estado; si lo reponen, la conversacion sigue donde estaba. Para un\n  // intruso da igual: no tiene sesion que borrar.\n  no_autorizado: {termina: false, relata: false, texto: 'No autorizado.'},\n  envio_como_foto: {termina: false, relata: false, texto:\n    'Telegram recomprime las fotos y destruye el DICOM. Envíela como archivo.\\n\\n' +\n    'Sigo esperando el archivo.'},\n  dicom_invalido: {termina: false, relata: true, texto:\n    'No pude leer esa radiografía.'},\n  fuera_de_alcance: {termina: true, relata: true, texto:\n    'NO PROCEDE — fuera del alcance del modelo.'},\n  edad_desconocida: {termina: true, relata: true, texto:\n    'NO PROCEDE — no se puede saber la edad.'},\n  base64_invalido: {termina: false, relata: false, texto:\n    'No pude leer el archivo. Vuelva a enviarlo.'},\n  payload_excesivo: {termina: false, relata: false, texto:\n    'El archivo supera los 5 MB.'},\n  payload_excesivo_transporte: {termina: false, relata: false, texto:\n    'El archivo supera los 5 MB.'},\n  codigo_invalido: {termina: false, relata: false, texto:\n    'Ese código no existe o caducó. Pida al paciente que repita el cuestionario.'},\n  fichero_no_descargable: {termina: false, relata: false, texto:\n    'Telegram no me deja descargar archivos de más de 20 MB.'},\n  // NO esta en el §9, y hace falta. Antes esta situacion -Telegram acepta el\n  // update pero luego falla al entregar el fichero- reusaba\n  // `fichero_no_descargable`, cuyo mensaje acusa al profesional de haber mandado\n  // mas de 20 MB. Para un DICOM de 131 KB eso es una frase falsa, y una frase\n  // falsa manda al clinico a buscar por donde no es.\n  descarga_fallida: {termina: false, relata: false, texto:\n    'No pude descargar el archivo de Telegram. Vuelva a enviarlo.\\n\\n' +\n    'Si vuelve a pasar, no es cosa del archivo: avise al responsable.'},\n  copiloto_no_responde: {termina: false, relata: false, texto:\n    'El servicio de imagen no está disponible. Inténtelo en unos minutos.'},\n  error_no_reconocido: {termina: true, relata: false, texto:\n    'El servicio devolvió un error que no sé interpretar. Se ha registrado.'},\n};\n\n// La coletilla de los dos rechazos por edad. §9: el rechazo por edad es una\n// DECISION CLINICA del sistema, no un fallo tecnico, y tiene que llegar como\n// tal. Si se filtrara un numero junto al rechazo, alguien lo usaria.\nconst COLETILLA_EDAD =\n  'No hay resultado que dar: el modelo se validó entre 18 y 100 años, y ' +\n  'aplicarlo fuera de ahí no significaría nada. Decida clínicamente.';\n\n// AQUI HABIA UNA LISTA NEGRA DE PALABRAS, Y ESTA QUITADA A PROPOSITO.\n//\n// `HUELE_A_PROBABILIDAD` buscaba «probabilidad», «cribado», «multiplica por» y una\n// coma decimal en el mensaje de error, y se colaban tres cadenas forjadas medidas\n// contra este nodo: «TRIAJE ― opacidad probable (puntuación 0.9900 ≥ umbral\n// 0.4258)», su version con А y О cirilicas, y «HALLAZGO ― opacidad probable.\n// Remita a urgencias.». Solo caia el literal con «CRIBADO» y comas decimales. Era\n// el mismo patron que el §8 abandono, en la ultima esquina donde quedaba.\n//\n// Lo que garantiza ahora que ninguna rama de error emita una cifra de probabilidad\n// es la PROCEDENCIA, igual que en el informe:\n//\n//   el mensaje de una rama de error se compone de literales de este fichero y,\n//   para los codigos con `relata`, de un `detalle` que POR CONTRATO compuso\n//   nuestro codigo (ver el contrato de `detalle` y `crudo` en `Leer respuesta`).\n//\n// Y de lo que nuestro codigo compone se sabe exactamente que lleva: el detalle de\n// `fuera_de_alcance` es un literal mas `edad`, que es un entero; el de\n// `edad_desconocida` es un literal entero. Una cifra de probabilidad no puede\n// salir de ahi, y no hay nada que buscar en el texto.\n\n// --------------------------------------------------------------------------\n// §4.4: como se le ensena al profesional lo que refirio el paciente.\n//\n// Esta tabla es LA ENUMERACION CERRADA de la regla del informe: al bloque\n// REFERIDO POR EL PACIENTE solo llegan cadenas que estan escritas AQUI. Un valor\n// que no este se declara como no reconocido y su contenido se va al mensaje del\n// paciente, donde no puede hacerse pasar por nada.\n//\n// El asma conserva sus TRES estados a proposito: convertir `no_se` en un booleano\n// seria fabricar el dato, y H6 tiene que decidirlo explicitamente.\n// --------------------------------------------------------------------------\nconst SINTOMAS = {\n  fiebre:         {si: 'fiebre sí', no: 'sin fiebre', no_se: 'fiebre: no sabe'},\n  tos:            {con_flema: 'tos con flema', seca: 'tos seca', no: 'sin tos'},\n  dias_evolucion: {menos_3: 'menos de 3 días', '3_a_7': '3 a 7 días', mas_7: 'más de 7 días'},\n  disnea:         {si: 'le falta el aire', no: 'sin falta de aire'},\n  dolor_toracico: {si: 'dolor torácico al respirar', no: 'sin dolor torácico'},\n  asma:           {si: 'asma sí', no: 'sin asma', no_se: 'asma: no sabe'},\n};\nconst ORDEN_SINTOMAS = ['fiebre', 'tos', 'dias_evolucion', 'disnea',\n                        'dolor_toracico', 'asma'];\n\n// CONSULTAR UNA TABLA CON UNA CLAVE QUE VIENE DE FUERA: por propiedad PROPIA y\n// comprobando el tipo de lo que sale. Con `tabla[v]` a secas, un valor como\n// `constructor`, `toString` o `__proto__` alcanza `Object.prototype`, y con el\n// informe imprimiendo «function Object() { [native code] }» en vez del dato.\n//\n// Las tres comprobaciones NO son redundantes, aunque hoy se solapen, y cada una\n// tiene su prueba de mutacion en `tests/profesional.mjs` -se le quita esa linea al\n// codigo real y la prueba TIENE que ponerse roja-:\n//\n//   `typeof v !== 'string'`  una clave que no es cadena (un numero, un array, un\n//                            objeto) se convertiria a texto para indexar y podria\n//                            acertar con una propiedad heredada.\n//   `!propio.call(tabla, v)` lo heredado no cuenta como valor de la enumeracion.\n//   `typeof s !== 'string'`  lo que salga de la tabla tiene que ser una frase. Hoy\n//                            la enumeracion solo tiene cadenas, asi que esta linea\n//                            no se dispara nunca; existe para que el dia que\n//                            alguien anida un objeto o un array a la tabla -para\n//                            agrupar valores, por ejemplo- el informe no imprima\n//                            «[object Object]».\n//\n// Esta misma disciplina se aplica a `ERRORES[codigo]` mas abajo, y por la misma\n// razon: con un `error_cod` de «constructor» la fila salia de Object.prototype,\n// `fila.texto` era undefined, y el profesional NO RECIBIA NADA.\n// EL CODIGO DEL CASO, validado donde se usa.\n//\n// Hoy solo puede venir de `generar_codigo()` y del alfabeto de 31 caracteres del\n// §5.2, pero eso es una propiedad de OTRO sitio: la columna no tiene CHECK, y el\n// dia que alguien inserte un cuestionario a mano o lo importe, esto imprimiria lo\n// que le den. Un identificador que se imprime sin validar es el mismo patron que\n// ya fallo dos veces en este nodo.\nconst ALFABETO_CODIGO = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';\nfunction codigoODesconocido(v) {\n  const s = String(v == null ? '' : v);\n  if (s.length !== 6) { return '(código no reconocido)'; }\n  for (const c of s) {\n    if (ALFABETO_CODIGO.indexOf(c) < 0) { return '(código no reconocido)'; }\n  }\n  return s;\n}\n\nconst propio = Object.prototype.hasOwnProperty;\nfunction dePaleta(tabla, v) {\n  if (typeof v !== 'string') { return null; }\n  if (!propio.call(tabla, v)) { return null; }\n  const s = tabla[v];\n  return typeof s === 'string' ? s : null;\n}\n\n// Lo maximo que se relata de un detalle del servidor. Telegram rechaza un mensaje\n// de mas de 4 096 caracteres, y un mensaje rechazado es un profesional que NO\n// RECIBE NADA. Todo lo demas de estos mensajes esta acotado por construccion\n// -literales, numeros, valores de la enumeracion-: el detalle era el unico cabo\n// suelto, y llegaba justo por la rama de una caida del servidor.\nconst TOPE_DETALLE = 500;\n\n// RECORTAR. Dos lineas, y cada una arregla una cosa DISTINTA: conviene no\n// confundirlas, porque una prueba que las mezcle no sujeta ninguna.\n//\n//  1. `Array.from(...)` recorta por PUNTOS DE CODIGO y no por unidades UTF-16.\n//     Eso es lo que hace que «500» signifique 500 caracteres: con `slice(0, 500)`\n//     a secas, 500 emoji se quedaban en 250 porque cada uno ocupa dos unidades.\n//     Es fidelidad, no seguridad.\n//  2. El subrogado alto suelto del final se cae. Eso es lo que garantiza que la\n//     cadena este BIEN FORMADA, y hace falta aunque se recorte por puntos de\n//     codigo: el bot del paciente guarda con `texto.slice(0, 500)`, o sea por\n//     unidades, asi que lo que llega de la base PUEDE venir ya partido. Con\n//     `\"a\".repeat(499) + \"😀\"` el paciente rompia a voluntad lo que el primer\n//     mensaje promete.\nfunction recortar(s, n) {\n  let r = Array.from(String(s)).slice(0, n).join('');\n  const ultimo = r.charCodeAt(r.length - 1);\n  if (ultimo >= 0xD800 && ultimo <= 0xDBFF) { r = r.slice(0, -1); }\n  return r;\n}\n\n// Numeros en castellano: coma decimal, y el numero de decimales que el §8 fija.\nconst dec = (x, n) => Number(x).toFixed(n).replace('.', ',');\n\n// Una probabilidad con dos decimales, PERO sin llegar nunca a 0,00 ni a 1,00.\n//\n// El §8 dice «probabilidades con dos decimales» a secas, y eso aqui se rompe:\n// el calibrador desplegado acota la probabilidad a los extremos SOSTENIDOS de\n// su curva -0,0046 y 0,9565-, precisamente para que ninguna radiografia\n// justifique mas certeza que la que las 3 810 placas de validacion sostienen.\n// Con dos decimales a secas, 344 de las 3 811 placas de prueba (9,03 %, medido\n// el 25-sep-2026) se presentarian como «probabilidad calibrada 0,00»: certeza\n// de ausencia, que es exactamente lo que esa cota existe para no fabricar.\n// (El recuento se hace calibrando la cruda SIN redondear, que es lo que\n// `inferencia.py` calibra; con la cruda de 4 decimales que viaja en la respuesta\n// saldrian 345, y esa es la cifra equivocada.)\nconst prob = (x) => {\n  const v = Number(x);\n  if (v > 0 && v < 0.005) { return '< 0,01'; }\n  if (v < 1 && v > 0.995) { return '> 0,99'; }\n  return dec(v, 2);\n};\n\n// Los valores del cuestionario que la enumeracion del §4.4 no contempla. Se\n// devuelven aparte para que el informe pueda decir que hay uno sin imprimirlo, y\n// para que su contenido viaje al mensaje del paciente, que es donde puede ir sin\n// hacerse pasar por nada.\nfunction redactarSintomas(s) {\n  if (!s) { return 'REFERIDO POR EL PACIENTE — (el cuestionario ya no está)'; }\n  const trozos = ORDEN_SINTOMAS.map(function (clave) {\n    const frase = dePaleta(SINTOMAS[clave], s[clave]);\n    // Cuando el valor no esta en la enumeracion se dice ESO, y no el valor: el\n    // informe no imprime nada que no salga de esta tabla.\n    //\n    // El valor crudo NO se ensena en ningun mensaje. Antes iba al segundo, con un\n    // rotulo que lo explicaba; ese rotulo era una afirmacion del sistema dentro\n    // de una burbuja que el paciente controla, o sea justo lo que esta ronda ha\n    // quitado. Queda guardado en `cuestionarios.respuestas` y en\n    // `consultas.sintomas`, que es donde H7 lo necesita, y el informe dice QUE\n    // pregunta no se puede usar, que es la parte accionable: el clinico se lo\n    // pregunta al paciente, que lo tiene delante. Hoy la situacion es\n    // inalcanzable, porque el bot del paciente solo guarda valores de la tabla.\n    return frase === null ? clave + ': (valor no reconocido)' : frase;\n  });\n  return 'REFERIDO POR EL PACIENTE — ' + trozos.join(', ');\n}\n\n// Los cuatro signos del §4.4, con sus tipos. `Decidir` valida los rangos y la\n// consulta los guarda con `::jsonb` con su tipo, asi que aqui solo se comprueba\n// que siguen siendo lo que eran: un signo que llegara como cadena daria «NaN °C»\n// en un informe clinico.\nfunction signosValidos(g) {\n  return !!g && typeof g.temperatura_c === 'number' &&\n         Number.isFinite(g.temperatura_c) &&\n         typeof g.frecuencia_cardiaca === 'number' &&\n         Number.isFinite(g.frecuencia_cardiaca) &&\n         typeof g.crepitantes === 'boolean' &&\n         typeof g.murmullo_disminuido === 'boolean';\n}\n\nfunction redactarSignos(g) {\n  if (!signosValidos(g)) { return 'EXPLORADO — (sin datos completos)'; }\n  return 'EXPLORADO — ' + [\n    dec(g.temperatura_c, 1) + ' °C',\n    dec(g.frecuencia_cardiaca, 0) + ' lpm',\n    'crepitantes ' + (g.crepitantes ? 'sí' : 'no'),\n    g.murmullo_disminuido ? 'murmullo disminuido' : 'murmullo normal',\n  ].join(', ');\n}\n\n// --------------------------------------------------------------------------\n// EL SEGUNDO MENSAJE: SOLO EL TEXTO DEL PACIENTE. NI UN CARACTER MIO.\n//\n// La version anterior le ponia cabecera y cierre para atribuirlo. Se rodeo: con\n// 498 de sus 500 caracteres, el paciente escribe el cierre -«Fin de lo que\n// escribió el paciente.»- y detras un informe positivo completo. El cierre de\n// verdad queda debajo, y sobre una placa de 0,0047 vuelven a haber dos CRIBADO.\n// La forma aguda es peor: en el paso 1→2, con 361 caracteres, el unico bloque con\n// forma de cribado de toda la conversacion es el suyo, ANTES de que se haya\n// mandado ninguna placa.\n//\n// El fondo del problema: **cualquier delimitador que escriba el sistema, el\n// paciente tambien puede escribirlo.** Lo unico que NO puede fabricar es el limite\n// del mensaje: no puede crear una burbuja.\n//\n// Pero de ahi se saco una conclusion de mas. Lo que se rodeo fue el CIERRE, y se\n// tiraron los dos cuando solo uno habia fallado: si el paciente no puede fabricar\n// el limite del mensaje, **tampoco puede ponerse delante del primer byte**. La\n// posicion 0 es tan suya del sistema como el limite.\n//\n// Y sin cabecera hay superficies donde la burbuja se ve SOLA -notificacion push,\n// vista previa en la lista de chats, reenvio, cita, fijado, busqueda- y ahi su\n// atribucion era CERO, con la interfaz rotulandola «[retirado]». El camino\n// realista al dano es que el clinico reenvie esa burbuja a un colega.\n//\n// Estructura final:\n//   - UNA linea literal en la POSICION 0, y nada mas. Sin cierre, que es lo que\n//     se demostro falsificable.\n//   - El aviso del primer mensaje, que sigue siendo el canal que el paciente no\n//     puede tocar, y que dice que todo lo que venga detras de esa linea es suyo.\n//\n// La invariante sigue siendo por igualdad: el mensaje es EXACTAMENTE la cabecera\n// mas el texto recortado. Nada entre medias, nada detras.\n//\n// Sin `parse_mode`, como todo el flujo: un `*` o un `_` suelto no puede romper el\n// envio ni inyectar formato (§4.4).\n// --------------------------------------------------------------------------\nconst LIMITE_TEXTO_LIBRE = 500;     // §4.4\n\n// LA CABECERA. Ocupa la posicion 0 y ocupa una sola linea. Va con lo importante\n// delante -«TEXTO DEL PACIENTE»- porque en una notificacion push o en la lista de\n// chats el sistema corta por donde quiere, y lo que tiene que sobrevivir al corte\n// es de quien son esas palabras.\n// Declara su ALCANCE, no solo se presenta. Un rotulo que solo nombra lo que viene\n// deja un residuo: con 267 caracteres el paciente escribe «Fin de lo que escribió\n// el paciente.» y un informe falso detras. En el chat es inofensivo -la burbuja 1 ya\n// aviso- pero en un REENVIO visto en frio, no. Diciendo «todo este mensaje» la\n// cabecera cubre lo que venga detras sin anadir ningun mecanismo. La alternativa\n// -marcar linea por linea- obligaria a volver a definir «que es una linea», y con\n// U+2028, U+0085, el retorno de carro y las tabulaciones verticales llegando\n// crudos, eso es la ronda 2 otra vez.\nconst CABECERA_PACIENTE = 'TODO ESTE MENSAJE ES TEXTO DEL PACIENTE, no el informe:\\n';\n\n// El aviso, que va en el PRIMER mensaje. Este es el canal que el paciente no puede\n// tocar, y por eso es el que explica la cabecera y no al contrario.\nconst AVISA_DEL_SEGUNDO =\n  'El paciente escribió un comentario. Llega en el mensaje siguiente, que empieza ' +\n  'por «TODO ESTE MENSAJE ES TEXTO DEL PACIENTE»: nada de lo que hay ahí es mío.';\n\nfunction textoDelPaciente(s) {\n  const libre = s && s.texto_libre;\n  if (typeof libre !== 'string') { return ''; }\n  // SE DECIDE CON LO QUE SE MANDA, no con el original. Antes la guarda miraba\n  // `libre.trim()` y se mandaba `libre.slice(0, 500)`: con 600 espacios y una `x`\n  // detras, el informe prometia un comentario y la burbuja eran 500 espacios.\n  const recortado = recortar(libre, LIMITE_TEXTO_LIBRE);\n  if (recortado.trim() === '') { return ''; }\n  return CABECERA_PACIENTE + recortado;\n}\n\n// --------------------------------------------------------------------------\n// §8. TRES BLOQUES ROTULADOS, y nunca la etiqueta y la razon de verosimilitud\n// en el mismo renglon.\n//\n// La etiqueta sale de `probabilidad_cruda >= umbral`; la RV sale de la curva\n// isotonica. SON ESCALAS DISTINTAS. En `cruda ∈ [0,4258 ; 0,5786]` la etiqueta\n// es positiva y la RV es menor que 1: el cribado marca la placa y la evidencia\n// bayesiana BAJA las probabilidades. Medido sobre el conjunto de prueba el\n// 25-sep-2026: 379 de 3 811 placas (9,94 %), que son el 23,3 % de todo lo que el\n// cribado etiqueta como positivo -una de cada cuatro veces que hay un positivo-,\n// y de esas el 80,5 % no tenia opacidad. El aviso no es un caso raro.\n//\n// Sin este nodo, juntarlas en un renglon le da al clinico dos afirmaciones\n// contradictorias sin pista de cual manda.\n// --------------------------------------------------------------------------\n// El punto de operacion del §8. Solo se afirma si el `umbral` que devuelve el\n// servidor es el que se midio: con otro umbral, sens. y esp. son de OTRO punto\n// de la ROC y afirmarlas seria inventarlas.\nconst UMBRAL_MEDIDO = 0.4258;\nconst SENSIBILIDAD = 0.88;\nconst ESPECIFICIDAD = 0.70;\n\nconst DESCARGO = 'La combinación de imagen y clínica llega en la siguiente ' +\n                 'entrega. Esto no es un diagnóstico.';\n\n// Las dos etiquetas que `inferencia.py` puede emitir. `Leer respuesta` rechaza\n// cualquier otra, asi que aqui no hay tercer caso posible.\nconst POSITIVA = 'opacidad_probable';\n\nfunction redactarResultado(r, sintomas, signos, hayComentario) {\n  const positivo = r.clasificacion === POSITIVA;\n  const rv = r.razon_de_verosimilitud;\n  // La RV con uno o dos decimales, como el §8: dos por debajo de 10, uno por\n  // encima, que es donde el segundo decimal ya no informa de nada.\n  const rvTexto = dec(rv, rv < 10 ? 2 : 1);\n\n  // La puntuacion con CUATRO decimales, no dos.\n  //\n  // El §8 dice «probabilidades con dos decimales», pero la puntuacion cruda NO\n  // es una probabilidad -es justo lo que esta seccion existe para separar- y\n  // ensenarla con dos decimales al lado de un umbral de cuatro produce\n  // desigualdades visiblemente falsas: medido sobre el conjunto de prueba,\n  // 3 de las 3 811 placas son negativas y saldrian como\n  // «puntuación 0,43 < umbral 0,4258». Con cuatro decimales, ninguna.\n  //\n  // Y el comparador se saca de COMPARAR LOS DOS NUMEROS QUE SE ENSENAN, no de la\n  // etiqueta. Sacarlo de la etiqueta hace que la frase pueda ser aritmeticamente\n  // falsa: con una `clasificacion` que el servidor no deberia mandar, el mensaje\n  // decia «sin opacidad probable» y «0,5649 < 0,4258» a la vez. Asi la\n  // desigualdad es siempre cierta sobre lo que se ve.\n  //\n  // ¿Puede entonces contradecir a la etiqueta? Medido sobre las 3 811 placas:\n  // NO, ni una. `inferencia.py` decide la etiqueta con la cruda sin redondear y\n  // publica la cruda redondeada a 4; con 4 decimales mostrados las dos\n  // decisiones coinciden en todas. Con 2 decimales, en cambio, 3 placas\n  // negativas leerian «>= umbral».\n  const comparador = r.probabilidad_cruda >= r.umbral ? '≥' : '<';\n  let punto = 'puntuación ' + dec(r.probabilidad_cruda, 4) + ' ' + comparador +\n              ' umbral ' + dec(r.umbral, 4);\n  if (Math.abs(r.umbral - UMBRAL_MEDIDO) < 1e-9) {\n    punto += '; punto orientado a detectar, sens. ' + dec(SENSIBILIDAD, 2) +\n             ' / esp. ' + dec(ESPECIFICIDAD, 2);\n  }\n\n  const bloques = [];\n  bloques.push('CRIBADO — ' + (positivo ? 'opacidad probable' : 'sin opacidad probable') +\n               '\\n(' + punto + ')');\n\n  let evidencia = 'EVIDENCIA DE LA IMAGEN — ' + (rv >= 1\n    ? 'multiplica por ' + rvTexto + ' las probabilidades a favor de neumonía'\n    : 'reduce a ' + rvTexto + '× las probabilidades a favor de neumonía') +\n    ' (probabilidad calibrada ' + prob(r.probabilidad_calibrada) + ')';\n  if (positivo && rv < 1) {\n    // EL AVISO. Criterio 6 de aceptacion.\n    evidencia += '\\n⚠️ El cribado marca esta placa por estar orientado a ' +\n      'detectar, pero la imagen en sí no apoya el diagnóstico. Decide la clínica.';\n  }\n  bloques.push(evidencia);\n\n  // Enumeracion cerrada y numeros validados. Ni un caracter del paciente.\n  bloques.push(redactarSintomas(sintomas) + '\\n' + redactarSignos(signos));\n  bloques.push(DESCARGO);\n  // Y EL AVISO DEL SEGUNDO MENSAJE CIERRA ESTE, cuando hay comentario. Al final a\n  // proposito: es lo ultimo que el clinico lee antes de que le llegue la otra\n  // burbuja. Si no hay comentario no se manda segundo mensaje y el informe NO lo\n  // menciona, para que la frase no pierda significado por repetirse en vacio.\n  if (hayComentario) { bloques.push(AVISA_DEL_SEGUNDO); }\n  return bloques.join('\\n\\n');\n}\n\n// --------------------------------------------------------------------------\nconst u = $('Normalizar update').first().json;\nconst d = $('Decidir').first().json;\nconst e = $input.first().json;\n\nconst NULO = 'N';\nconst codificar = (v) => 'T' + Buffer.from(String(v), 'utf8').toString('base64');\n\nconst salida = {\n  chat_id: u.chat_id,\n  texto: '',              // el informe, o el mensaje de la rama de error\n  texto_paciente: '',     // el mensaje aparte; vacio = no se manda\n  error_cod: NULO,        // lo que va a consultas.error, ya codificado\n  resultado_cod: NULO,    // lo que va a consultas.resultado, ya codificado\n  termina: 'N',           // 'S' borra la sesion\n  registrar: 'S',         // 'N' no escribe fila en consultas\n  // El reloj del §16. Nunca vacio: `stringToArray` descarta los vacios.\n  ms: Math.max(0, Date.now() - Number(u.t0 || Date.now())),\n};\n\nconst codigo = e.error_cod && e.error_cod !== NULO ? String(e.error_cod) : '';\n// Lo que el servidor dijo, sin tocar. Va SIEMPRE a `consultas.error` detras del\n// codigo, y no solo cuando el codigo es `error_no_reconocido`: si el copiloto se\n// cae por algo que no es el fichero -memoria, un modelo que no carga-, el texto\n// crudo es lo unico diagnosticable que hay, y antes se perdia.\n// Se acepta `detalle` como reserva: los nodos que no hablan con el copiloto\n// -Decidir, Buscar cuestionario, Descarga fallida- no tienen texto crudo de\n// servidor, y asi cualquier alimentador futuro que solo ponga `detalle` sigue\n// dejando registrado lo que sabia.\nconst crudo = String(e.crudo || e.detalle || '').slice(0, 500);\n\nif (codigo) {\n  const fila = propio.call(ERRORES, codigo) ? ERRORES[codigo] : null;\n  if (!fila) {\n    // Un codigo que esta tabla no conoce. No se inventa un mensaje: se usa el\n    // del §9 para lo que no se sabe interpretar.\n    salida.texto = ERRORES.error_no_reconocido.texto;\n    salida.error_cod = codificar('error_no_reconocido: ' + codigo +\n                                 (crudo ? ' | ' + crudo : ''));\n    salida.termina = 'S';\n  } else {\n    let texto = fila.texto;\n    if (fila.relata && e.detalle) {\n      // ACOTADO. `Leer respuesta` ya lo acota en el origen, y aqui otra vez porque\n      // este nodo lo alimentan cuatro sitios y basta que uno no lo haga. Sin tope,\n      // un detalle de 20 000 caracteres daba un mensaje de 20 031 contra el limite\n      // de 4 096 de Telegram y el profesional NO RECIBIA NADA: una caida del\n      // copiloto convertida en silencio, que es el desenlace que el §9 existe para\n      // que no ocurra.\n      texto += '\\n\\n' + recortar(e.detalle, TOPE_DETALLE);\n    }\n    if (codigo === 'fuera_de_alcance' || codigo === 'edad_desconocida') {\n      texto += '\\n\\n' + COLETILLA_EDAD;\n    }\n    // `consultas.error` empieza SIEMPRE por el codigo -el §16 agrupa por el, y\n    // se saca con split_part(error, ':', 1)- y detras va el texto crudo del\n    // servidor cuando lo hay.\n    salida.error_cod = codificar(codigo + (crudo ? ': ' + crudo : ''));\n    salida.termina = fila.termina ? 'S' : 'N';\n    salida.texto = texto;\n  }\n  // Un mensaje de error NUNCA va acompanado de un `resultado`. Esto si es una\n  // linea y no una regla de procedencia, porque no depende de ningun texto: o hay\n  // desenlace clinico o hay rechazo, y nunca los dos.\n  salida.resultado_cod = NULO;\n} else if (e.resultado) {\n  const sintomas = e.sintomas || d.sintomas;\n  salida.texto_paciente = textoDelPaciente(sintomas);\n  salida.texto = redactarResultado(e.resultado, sintomas, e.signos || d.signos,\n                                   salida.texto_paciente !== '');\n  salida.resultado_cod = codificar(JSON.stringify(e.resultado));\n  salida.termina = 'S';\n} else {\n  // El caso encontrado: se le ensenan los sintomas referidos y se le pide el\n  // primer signo. No es un desenlace clinico, asi que NO escribe en\n  // `consultas`: la fila nace cuando hay resultado o rechazo.\n  salida.texto_paciente = textoDelPaciente(e.sintomas);\n  salida.texto = 'Caso ' + codigoODesconocido(e.codigo) + '\\n\\n' +\n                 redactarSintomas(e.sintomas) + '\\n\\n' + d.pregunta +\n                 (salida.texto_paciente !== '' ? '\\n\\n' + AVISA_DEL_SEGUNDO : '');\n  salida.registrar = 'N';\n}\n\nreturn [{ json: salida }];\n"
+      },
+      "notes": "El §8 y la tabla del §9, en un solo nodo. Los tres bloques rotulados, el aviso cuando la etiqueta es positiva y la RV es menor que 1, y la red que impide que una rama de error emita una cifra de probabilidad."
+    },
+    {
+      "id": "reg",
+      "name": "Registrar",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1380,
+        460
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- EL UNICO NODO QUE ESCRIBE EN `consultas`, y el unico que borra la sesion del\n-- profesional. Que sea uno solo es lo que hace que «la fila se escribe UNA sola\n-- vez, con el desenlace final» (§10.1) sea una propiedad del grafo y no una\n-- intencion: el dashboard no puede contar dos veces la misma consulta porque no\n-- hay un segundo sitio donde contarla.\n--\n-- Los sintomas se COPIAN aqui (D12). `cuestionarios` se borra a los 7 dias: sin\n-- la copia, H7 se queda sin nada que validar, y solo perduran los casos que un\n-- clinico de verdad uso.\n--\n-- La `s` de arriba siempre da UNA fila, tambien para un chat sin sesion -el\n-- rechazo por no autorizado-, para que ese rechazo tambien quede registrado\n-- (§5.1: un sistema que solo registra sus exitos no se puede validar).\n--\n-- $6 decide si se escribe fila: el mensaje que solo ensena el caso al\n-- profesional no es un desenlace clinico y no debe nacer en `consultas`.\n-- $5 decide si la conversacion TERMINA, que es la ultima columna del §9.\nWITH s AS (\n  SELECT $1::bigint AS chat_id, ses.codigo, ses.signos\n    FROM (SELECT 1) u\n    LEFT JOIN sesiones_profesional ses ON ses.chat_id = $1::bigint\n),\nins AS (\n  INSERT INTO consultas (codigo, chat_id, sintomas, signos, resultado, error,\n                         ms_extremo)\n  SELECT s.codigo, s.chat_id,\n         (SELECT q.respuestas FROM cuestionarios q WHERE q.codigo = s.codigo),\n         s.signos,\n         CASE WHEN $2::text = 'N' THEN NULL\n              ELSE convert_from(decode(substr($2::text, 2), 'base64'),\n                                'UTF8')::jsonb END,\n         CASE WHEN $3::text = 'N' THEN NULL\n              ELSE convert_from(decode(substr($3::text, 2), 'base64'),\n                                'UTF8') END,\n         $4::int\n    FROM s\n   WHERE $6::text = 'S'\n  RETURNING id\n),\nfin AS (\n  DELETE FROM sesiones_profesional d\n   USING s\n   WHERE d.chat_id = s.chat_id\n     AND $5::text = 'S'\n  RETURNING 1\n)\nSELECT (SELECT count(*) FROM ins)::int AS filas,\n       (SELECT count(*) FROM fin)::int AS borradas",
+        "options": {
+          "queryReplacement": "={{ $('Normalizar update').first().json.chat_id }},{{ $json.resultado_cod }},{{ $json.error_cod }},{{ $json.ms }},{{ $json.termina }},{{ $json.registrar }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "[retirado]",
+          "name": "copiloto-bd"
+        }
+      }
+    },
+    {
+      "id": "hay_txt",
+      "name": "Hay texto del paciente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1820,
+        460
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "tp1",
+              "leftValue": "={{ $('Desenlace').first().json.texto_paciente }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "notes": "El texto del paciente NO va dentro del informe (ver el nodo `Desenlace`): va en este mensaje aparte, y solo cuando hay algo que mandar. La rama falsa no tiene salida, asi que un caso sin texto libre recibe un solo mensaje."
+    },
+    {
+      "id": "txt_pac",
+      "name": "Enviar texto del paciente",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2040,
+        380
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Normalizar update').first().json.chat_id }}",
+        "text": "={{ $('Desenlace').first().json.texto_paciente }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "[retirado]",
+          "name": "[retirado]"
+        }
+      },
+      "notes": "EL MENSAJE APARTE. Va SIN FILTRAR y entero, porque ya no tiene que defender nada: el informe clinico no contiene ni un caracter que haya escrito el paciente, asi que lo que aqui venga no puede hacerse pasar por parte de el. Lleva cabecera y cierre del sistema, y la cabecera dice que el informe es el mensaje anterior. Sin parse_mode, como todo el flujo."
+    },
+    {
+      "id": "resp",
+      "name": "Responder",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1600,
+        460
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Normalizar update').first().json.chat_id }}",
+        "text": "={{ $('Desenlace').first().json.texto }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "[retirado]",
+          "name": "[retirado]"
+        }
+      },
+      "notes": "Sin parse_mode, como todo el flujo del paciente. Este mensaje lleva texto que escribio el paciente (§4.4) y numeros del modelo: con MarkdownV2 un `*` o un `_` suelto romperia el formato o permitiria inyectarlo. Los tres bloques del §8 se rotulan en mayusculas, que es el unico enfasis que no necesita formato."
+    }
+  ],
+  "connections": {
+    "Webhook Telegram (profesional)": {
+      "main": [
+        [
+          {
+            "node": "Normalizar update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar update": {
+      "main": [
+        [
+          {
+            "node": "Leer sesion y permiso",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer sesion y permiso": {
+      "main": [
+        [
+          {
+            "node": "Decidir",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decidir": {
+      "main": [
+        [
+          {
+            "node": "Repartir accion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Repartir accion": {
+      "main": [
+        [
+          {
+            "node": "Abrir sesion",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Buscar cuestionario",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Guardar signo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Repartir pregunta",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Descargar fichero",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Desenlace",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Abrir sesion": {
+      "main": [
+        [
+          {
+            "node": "Repartir pregunta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar signo": {
+      "main": [
+        [
+          {
+            "node": "Repartir pregunta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar cuestionario": {
+      "main": [
+        [
+          {
+            "node": "Desenlace",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Repartir pregunta": {
+      "main": [
+        [
+          {
+            "node": "Pedir codigo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pedir temperatura",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pedir frecuencia",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pedir crepitantes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pedir murmullo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pedir placa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descargar fichero": {
+      "main": [
+        [
+          {
+            "node": "A base64",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Descarga fallida",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descarga fallida": {
+      "main": [
+        [
+          {
+            "node": "Desenlace",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A base64": {
+      "main": [
+        [
+          {
+            "node": "Llamar al copiloto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Llamar al copiloto": {
+      "main": [
+        [
+          {
+            "node": "Leer respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Leer respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer respuesta": {
+      "main": [
+        [
+          {
+            "node": "Desenlace",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Desenlace": {
+      "main": [
+        [
+          {
+            "node": "Registrar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar": {
+      "main": [
+        [
+          {
+            "node": "Responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Responder": {
+      "main": [
+        [
+          {
+            "node": "Hay texto del paciente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hay texto del paciente?": {
+      "main": [
+        [
+          {
+            "node": "Enviar texto del paciente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Guayaquil",
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false,
+    "saveExecutionProgress": false,
+    "executionTimeout": 120
+  }
+}
