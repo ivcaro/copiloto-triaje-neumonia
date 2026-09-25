@@ -53,8 +53,21 @@ ENTORNO
     TELEGRAM_TOKEN_PROFESIONAL   el token del bot del PROFESIONAL, no el de
                                  pruebas: un file_id solo lo resuelve el bot que
                                  lo obtuvo
-    CHAT_PACIENTE_PRUEBA         por defecto 999000201
-    CHAT_PROFESIONAL_PRUEBA      por defecto 999000210
+    CHAT_PACIENTE_PRUEBA         por defecto 999000201. Puede ser inventado
+    CHAT_PROFESIONAL_PRUEBA      por defecto 999000210. Puede ser inventado
+    CHAT_SUBIDA_PLACAS           **tiene que ser un chat REAL** que ya le haya
+                                 escrito al bot del profesional. Es donde se
+                                 suben las placas para conseguir un `file_id`, y
+                                 un bot no puede escribir a un chat que no
+                                 existe. Por defecto, el del profesional -que si
+                                 es el inventado, hara que el arnes aborte con el
+                                 motivo antes de empezar-
+
+Los dos `chat_id` de los updates pueden ser inventados porque lo unico que se
+mira del desenlace es la fila de `consultas`, y el grafo escribe esa fila
+(`Registrar`) ANTES de contestar por Telegram (`Responder`): que el envio falle
+con «chat not found» no impide medir nada. Si quieres VER los mensajes llegar,
+pon un chat real en CHAT_PROFESIONAL_PRUEBA y prepárate para 49 informes.
 
 Ningun secreto se escribe en el repositorio ni se imprime.
 
@@ -389,16 +402,49 @@ class Bots:
     """Conduce las dos conversaciones contra un n8n vivo."""
 
     def __init__(self, base, secreto, token, bd, chat_paciente,
-                 chat_profesional, ruta_paciente, ruta_profesional):
+                 chat_profesional, chat_subida, ruta_paciente,
+                 ruta_profesional):
         self.base = base.rstrip("/")
         self.secreto = secreto
         self.token = token
         self.bd = bd
         self.paciente = chat_paciente
         self.profesional = chat_profesional
+        # El chat donde se SUBEN las placas para conseguir un `file_id`, que no
+        # tiene por que ser el de los updates fabricados. Ver `subir_placa`.
+        self.subida = chat_subida
         self.ruta_paciente = ruta_paciente
         self.ruta_profesional = ruta_profesional
         self.contador = 0
+
+    def comprobar_el_chat_de_subida(self):
+        """Que el bot del profesional pueda escribir en el chat de subida.
+
+        Un bot de Telegram NO puede escribir a un `chat_id` que no exista o que
+        no haya empezado una conversacion con el: `sendDocument` contesta 400
+        `chat not found`. Sin esta comprobacion, eso se descubre a los veinte
+        segundos del primer caso y en forma de traza.
+        """
+        pet = urllib.request.Request(
+            f"https://api.telegram.org/bot{self.token}/getChat"
+            f"?chat_id={self.subida}")
+        try:
+            with urllib.request.urlopen(pet, timeout=30) as r:
+                if json.loads(r.read().decode()).get("ok"):
+                    return
+        except urllib.error.HTTPError as e:
+            detalle = e.read().decode("utf-8", "replace")[:200]
+            raise SystemExit(
+                f"el bot del profesional no puede usar el chat {self.subida} "
+                f"para subir las placas (HTTP {e.code}: {detalle}).\n"
+                f"Tiene que ser un chat REAL que ya le haya escrito al bot: un "
+                f"`file_id` solo existe si alguien subio el fichero, y un bot no "
+                f"puede escribir primero. Pon uno en CHAT_SUBIDA_PLACAS.")
+        except Exception as exc:
+            raise SystemExit(f"no se alcanza la API de Telegram: "
+                             f"{type(exc).__name__}: {exc}")
+        raise SystemExit(f"Telegram no reconoce el chat {self.subida}. Pon un "
+                         f"chat real en CHAT_SUBIDA_PLACAS.")
 
     # -- transporte ------------------------------------------------------
     def _post(self, ruta, cuerpo):
@@ -508,11 +554,18 @@ class Bots:
         resuelve el bot que lo obtuvo, asi que uno conseguido con otro token
         haria que el `getFile` del flujo contestara `wrong file identifier` y el
         arnes estaria midiendo eso.
+
+        Y a `self.subida`, que NO tiene por que ser el chat de los updates
+        fabricados: un `file_id` no esta atado a ningun chat -es del bot-,
+        mientras que subir un fichero SI exige un chat real. Asi el chat_id que
+        viaja en los updates puede seguir siendo uno inventado, que es lo
+        correcto para no meter trafico de pruebas en la conversacion de un
+        clinico de verdad.
         """
         limite = "----" + uuid.uuid4().hex
         datos = pathlib.Path(ruta).read_bytes()
         cuerpo = (f"--{limite}\r\nContent-Disposition: form-data; "
-                  f'name="chat_id"\r\n\r\n{self.profesional}\r\n').encode()
+                  f'name="chat_id"\r\n\r\n{self.subida}\r\n').encode()
         cuerpo += (f"--{limite}\r\nContent-Disposition: form-data; "
                    f'name="document"; filename="{pathlib.Path(ruta).name}"\r\n'
                    "Content-Type: application/octet-stream\r\n\r\n").encode()
@@ -561,7 +614,12 @@ class Bots:
                              intentos=20) != siguiente:
                 return None, f"el boton {dato} no avanzo al paso {siguiente}"
 
-        file_id, tamano = self.subir_placa(ruta_dcm)
+        try:
+            file_id, tamano = self.subir_placa(ruta_dcm)
+        except Exception as exc:
+            # Una subida fallida no puede tirar la corrida entera: son veinte
+            # minutos y 49 casos, y el resto sigue siendo util.
+            return None, f"no se pudo subir la placa: {type(exc).__name__}: {exc}"
         self._post(ruta, self._documento(chat, file_id, tamano))
         if self._esperar("SELECT count(*) FROM consultas WHERE id > %s"
                          " AND chat_id = %s", (antes, chat), 1,
@@ -983,13 +1041,6 @@ def main() -> int:
     chat_profesional = int(os.environ.get("CHAT_PROFESIONAL_PRUEBA", 999000210))
     if con_bots:
         bd = _conectar(os.environ["COPILOTO_BD_DSN"])
-        profesional_existia = bd.execute(
-            "SELECT count(*) FROM profesionales WHERE chat_id = %s",
-            (chat_profesional,)).fetchone()[0] > 0
-        bd.execute(
-            "INSERT INTO profesionales (chat_id, nombre) VALUES (%s, %s)"
-            " ON CONFLICT (chat_id) DO UPDATE SET activo = true, baja_en = NULL",
-            (chat_profesional, "(arnes de reproduccion)"))
         bots = Bots(
             base=os.environ.get("N8N_URL", "https://n8n.[retirado].com"),
             secreto=os.environ["TELEGRAM_SECRET_PRUEBA"],
@@ -997,10 +1048,23 @@ def main() -> int:
             bd=bd,
             chat_paciente=int(os.environ.get("CHAT_PACIENTE_PRUEBA", 999000201)),
             chat_profesional=chat_profesional,
+            chat_subida=int(os.environ.get("CHAT_SUBIDA_PLACAS",
+                                           chat_profesional)),
             ruta_paciente=os.environ.get("WEBHOOK_PACIENTE",
                                          "copiloto-paciente"),
             ruta_profesional=os.environ.get("WEBHOOK_PROFESIONAL",
                                             "copiloto-profesional"))
+        # ANTES de tocar la lista blanca: si esto aborta, no se ha dado de alta a
+        # nadie y no hay nada que limpiar. Al reves quedaria un chat_id de pruebas
+        # autorizado en la unica puerta del bot del profesional (D6).
+        bots.comprobar_el_chat_de_subida()
+        profesional_existia = bd.execute(
+            "SELECT count(*) FROM profesionales WHERE chat_id = %s",
+            (chat_profesional,)).fetchone()[0] > 0
+        bd.execute(
+            "INSERT INTO profesionales (chat_id, nombre) VALUES (%s, %s)"
+            " ON CONFLICT (chat_id) DO UPDATE SET activo = true, baja_en = NULL",
+            (chat_profesional, "(arnes de reproduccion)"))
 
     try:
         filas = []

@@ -169,9 +169,28 @@ ningún fichero del repositorio**:
 $env:COPILOTO_BD_DSN = "host=127.0.0.1 port=15433 dbname=copiloto user=copiloto password=..."
 $env:TELEGRAM_SECRET_PRUEBA = "..."
 $env:TELEGRAM_TOKEN_PROFESIONAL = "..."
-$env:N8N_URL = "https://n8n.[retirado].com"
+$env:CHAT_SUBIDA_PLACAS = "<tu chat_id con el bot del profesional>"
 C:\venv-copiloto\Scripts\python.exe pruebas/reproducir_casos.py
 ```
+
+**`CHAT_SUBIDA_PLACAS` tiene que ser un chat REAL** y es lo único que lo tiene que
+ser. Para conseguir un `file_id` hay que **subir** el fichero, y un bot de
+Telegram no puede escribir a un chat que no existe ni a uno que no le ha escrito
+antes: escríbele `/start` al bot del profesional y usa tu propio `chat_id` (te lo
+dice `pruebas/profesionales.py`). Ahí van a aparecer las 49 placas, una de ellas
+de 5,2 MB.
+
+Los `chat_id` que viajan **dentro** de los updates (`CHAT_PACIENTE_PRUEBA`,
+`CHAT_PROFESIONAL_PRUEBA`) sí pueden ser inventados, y por defecto lo son. Los
+bots intentarán contestarles y Telegram dirá «chat not found», y eso **no impide
+medir nada**: en el grafo, `Registrar` escribe la fila de `consultas` **antes** de
+que `Responder` intente enviar. Si quieres ver los mensajes llegar de verdad, pon
+un chat real también ahí — y cuenta con 49 informes en la conversación.
+
+El arnés comprueba las dos cosas antes de empezar —que el copiloto contesta y que
+el chat de subida existe— y aborta diciendo cuál falla. La comprobación del chat
+va **antes** de dar de alta el `chat_id` de pruebas en la lista blanca, para que
+un aborto no deje a nadie autorizado.
 
 Tarda unos **20 minutos**: son 17 mensajes por caso —16 updates y la subida de
 la placa— y una pausa de 1,2 s entre cada uno, porque Telegram limita a ~1 por
