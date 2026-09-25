@@ -768,7 +768,26 @@ de limpiar, comprueba a diario y **avisa por Telegram al equipo** si:
 - alguno de los tres workflows quedó **desactivado**;
 - la tasa de `dicom_invalido` de los últimos 7 días supera el 20 % (algo pasa
   con cómo mandan las placas);
-- hay cuestionarios caducados sin borrar (la limpieza falló).
+- hay cuestionarios caducados sin borrar (la limpieza falló);
+- **el webhook de alguno de los dos bots dejó de apuntar a donde debe.**
+
+La última merece su explicación, porque es el precio de una decisión y no un
+descuido. Los flujos usan un nodo **Webhook** y no un **Telegram Trigger**, y
+esa elección está medida: el Telegram Trigger (v1.5) **no expone el
+`secret_token` ni la cabecera de la petición**, así que con él la comprobación
+del §4.2 es imposible, y su URL —el `webhookId`, un UUID— **se commitea al
+repositorio dentro del JSON exportado**, con lo que el único secreto del
+sistema acabaría versionado. Con Webhook + Header Auth el secreto vive en una
+credencial y no sale de n8n.
+
+El coste de esa elección es que el registro en Telegram se hace **a mano una
+vez**, y por tanto puede desincronizarse en silencio: si alguien reactiva el
+flujo o cambia la ruta, Telegram sigue apuntando al sitio viejo y el bot deja
+de responder sin que salte nada. El Telegram Trigger da esa garantía gratis;
+aquí se compra con un nodo.
+
+Por eso el mantenimiento llama a diario a `getWebhookInfo` de los dos bots y
+avisa si la `url` no es la esperada o si `last_error_message` trae algo.
 
 ---
 

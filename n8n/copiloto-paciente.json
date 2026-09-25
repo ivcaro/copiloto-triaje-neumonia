@@ -1,0 +1,1406 @@
+{
+  "name": "🩺 Copiloto Triaje: Paciente (Telegram)",
+  "active": true,
+  "nodes": [
+    {
+      "id": "wh",
+      "name": "Webhook Telegram (paciente)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -680,
+        420
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "copiloto-paciente",
+        "authentication": "headerAuth",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "[retirado]",
+          "name": "copiloto-paciente: secret_token del webhook (pendiente de fijar)"
+        }
+      },
+      "notes": "El secret_token del §4.2, y por que NO es un Telegram Trigger.\n\nEste webhook es PUBLICO: cualquiera que sepa la URL puede hacerle POST, asi que el chat_id del cuerpo lo aporta quien llama y no prueba nada.\n\nEl Telegram Trigger de n8n (v1.5) no expone el campo secret_token NI la cabecera de la peticion: solo entrega el cuerpo del update. Con el, la comprobacion del §4.2 es imposible. Con un Webhook + Header Auth la hace n8n en la capa del webhook, antes de que corra un solo nodo, y el secreto vive en una credencial: no aparece en este JSON ni, por tanto, en el repositorio (§12).\n\nEfecto lateral bueno: un Webhook no llama a setWebhook al activarse, asi que activar esto no puede robarle el webhook a ningun bot del cliente (D9).\n\nEl webhook se registra a mano una vez:\n  curl -s \"https://api.telegram.org/bot<TOKEN>/setWebhook\" -d url=https://n8n.[retirado].com/webhook/copiloto-paciente -d secret_token=<EL MISMO VALOR DE LA CREDENCIAL>",
+      "webhookId": "2569e6f7-3420-452f-bf65-519ecfd12b9f"
+    },
+    {
+      "id": "norm",
+      "name": "Normalizar update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -460,
+        420
+      ],
+      "parameters": {
+        "jsCode": "// Si llegamos aqui, la cabecera X-Telegram-Bot-Api-Secret-Token ya era\n// valida: la comprobo n8n en el nodo Webhook (§4.2).\nconst e = $input.first().json;\nconst b = e.body || {};\nconst cb = b.callback_query;\nconst msg = b.message || b.edited_message;\n\nlet chat_id = null, tipo = 'otro', texto = null, dato = null;\n\nif (cb) {\n  chat_id = (cb.message && cb.message.chat && cb.message.chat.id) ||\n            (cb.from && cb.from.id) || null;\n  tipo = 'boton';\n  dato = typeof cb.data === 'string' ? cb.data : '';\n} else if (msg) {\n  chat_id = (msg.chat && msg.chat.id) || null;\n  if (typeof msg.text === 'string' && msg.text.length > 0) {\n    tipo = 'texto';\n    texto = msg.text;\n  }\n  // Sin texto (foto, sticker, audio) se queda en tipo 'otro': se repetira la\n  // pregunta actual, no se interpretara como respuesta.\n}\n\n// Un update sin chat no nos toca. Devolver [] termina la rama sin hacer nada.\nif (chat_id === null || chat_id === undefined) { return []; }\n\nreturn [{ json: { chat_id, tipo, texto, dato } }];\n"
+      },
+      "notes": "Reduce el update de Telegram a cuatro campos. No copia el resto del update a ningun sitio: cuanto menos dato del paciente pase por nodos de n8n, menos hay que confiar en el §5.4."
+    },
+    {
+      "id": "leer",
+      "name": "Leer sesion",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -240,
+        420
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- LEFT JOIN sobre (SELECT 1) para que SIEMPRE salga una fila, tambien\n-- cuando no hay sesion: si el nodo devolviera 0 elementos, la rama moriria\n-- aqui y un /start nuevo no recibiria el consentimiento.\n--\n-- No se lee `respuestas`: para decidir no hace falta, y asi el contenido del\n-- cuestionario no viaja por un nodo mas de n8n (§5.4).\nSELECT $1::bigint                    AS chat_id,\n       COALESCE(s.paso, 0)           AS paso,\n       (s.chat_id IS NOT NULL)       AS existe,\n       (s.consentido_en IS NOT NULL) AS consentido\n  FROM (SELECT 1) AS u\n  LEFT JOIN sesiones_paciente s ON s.chat_id = $1::bigint",
+        "options": {
+          "queryReplacement": "={{ $('Normalizar update').first().json.chat_id }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "[retirado]",
+          "name": "copiloto-bd"
+        }
+      }
+    },
+    {
+      "id": "decidir",
+      "name": "Decidir",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -20,
+        420
+      ],
+      "parameters": {
+        "jsCode": "// LA TABLA DE LAS 7 PREGUNTAS DEL §4.4 DEL SPEC.\n//\n// Es la UNICA fuente de la que sale (a) la clave con la que se guarda cada\n// respuesta y (b) los valores que se aceptan. Los teclados de los nodos\n// `Pregunta 1..7` repiten los mismos callback_data, y\n// tests/test_flujo_paciente.py compara AMBAS cosas contra el §4.4 leyendo el\n// JSON exportado, comprueba que `Guardar respuesta` consume ESTA clave y no\n// otra, y ejecuta este mismo codigo con node.\n//\n// Por que tanto cuidado: una respuesta guardada en la clave de OTRA pregunta\n// no da error. Entra en el jsonb, viaja al profesional, y sale como una\n// probabilidad previa equivocada en H6 que nadie ve.\nconst PREGUNTAS = [\n  {n: 1, clave: 'fiebre',         valores: ['si', 'no', 'no_se']},\n  {n: 2, clave: 'tos',            valores: ['con_flema', 'seca', 'no']},\n  {n: 3, clave: 'dias_evolucion', valores: ['menos_3', '3_a_7', 'mas_7']},\n  {n: 4, clave: 'disnea',         valores: ['si', 'no']},\n  {n: 5, clave: 'dolor_toracico', valores: ['si', 'no']},\n  {n: 6, clave: 'asma',           valores: ['si', 'no', 'no_se']},\n  {n: 7, clave: 'texto_libre',    valores: ['omitir']},\n];\nconst ULTIMA = 7;\nconst COMPLETO = 8;   // contestadas las 7; solo falta generar el codigo\n\nconst u = $('Normalizar update').first().json;\nconst s = $input.first().json;\n\nconst texto = (u.texto || '').trim();\nconst bajo = texto.toLowerCase();\nconst esComando = (c) =>\n  bajo === c || bajo.startsWith(c + ' ') || bajo.startsWith(c + '@');\n\n// COMO VIAJA EL VALOR A SQL, Y POR QUE ASI.\n//\n// El nodo Postgres construye sus parametros con `stringToArray`, que parte la\n// cadena por COMAS, recorta cada trozo Y DESCARTA LOS VACIOS. Las dos mitades\n// de eso muerden:\n//\n//  - por las comas: un texto libre con una coma se partiria en dos\n//    parametros. Se resuelve mandando el valor en base64, cuyo alfabeto no\n//    tiene comas. Se decodifica dentro de la consulta, que sigue siendo\n//    parametrizada: desde Telegram no se puede inyectar SQL.\n//\n//  - por los vacios: un valor vacio NO se empuja, asi que la consulta saldria\n//    con 4 parametros referenciando `$5` y Postgres responderia\n//    `there is no parameter $5`. Paso exactamente eso con el «Omitir» de la\n//    pregunta 7, que mandaba cadena vacia para decir NULL. Por eso el valor va\n//    SIEMPRE con un prefijo de un caracter y nunca puede quedar vacio:\n//        'N'          -> guardar NULL\n//        'T' + base64 -> guardar ese texto\n//    Un texto nunca produce 'N', porque siempre empieza por 'T'.\nconst NULO = 'N';\nconst codificar = (v) => 'T' + Buffer.from(v, 'utf8').toString('base64');\n\nconst salida = {\n  chat_id: u.chat_id,\n  accion: 'nada',\n  clave: '',\n  valor_cod: '',\n  paso: 0,             // el paso que se va a preguntar o a repetir\n  paso_actual: s.paso, // el que la sesion tiene AHORA, para el UPDATE\n};\n\nconst actual = PREGUNTAS.find((p) => p.n === s.paso);\nconst esperandoCodigo = s.existe && s.consentido && s.paso === COMPLETO;\n\nif (u.tipo === 'texto' && esComando('/reiniciar')) {\n  // Destructivo, y pedido a proposito: borra la sesion y vuelve al consentimiento (§6).\n  salida.accion = 'consentimiento';\n} else if (esperandoCodigo) {\n  // Contesto las 7 y la generacion del codigo fallo. Cualquier mensaje suyo\n  // REINTENTA `Completar`: la salida 8 del `Repartir pregunta` va ahi. Sin\n  // esto el paso 8 seria un callejon sin salida y la unica escapatoria seria\n  // /reiniciar, que le borraria las siete respuestas.\n  salida.accion = 'repetir';\n  salida.paso = COMPLETO;\n} else if (u.tipo === 'texto' && esComando('/start')) {\n  // /start con un cuestionario A MEDIAS no lo borra: repite la pregunta en la\n  // que estaba. Borrarlo aqui perderia en silencio las respuestas ya dadas, y\n  // el spec no pide que /start sea destructivo: el que lo es es /reiniciar.\n  if (actual && s.consentido) {\n    salida.accion = 'repetir';\n    salida.paso = actual.n;\n  } else {\n    salida.accion = 'consentimiento';\n  }\n} else if (u.tipo === 'boton' && u.dato === 'consent:no') {\n  salida.accion = 'despedida';\n} else if (u.tipo === 'boton' && u.dato === 'consent:si') {\n  // Si YA hay sesion, este boton es viejo o es un doble toque. Aceptarlo\n  // reiniciaria el cuestionario y borraria las respuestas ya dadas.\n  salida.accion = s.existe ? (actual ? 'repetir' : 'nada') : 'aceptar';\n  salida.paso = actual ? actual.n : 0;\n} else if (!s.existe || !s.consentido || !actual) {\n  // Sin consentimiento no se guarda NADA (D11), y sin sesion no hay pregunta\n  // que repetir: contestar aqui seria hablarle a quien no ha dicho /start.\n  salida.accion = 'nada';\n} else if (u.tipo === 'boton') {\n  const m = /^p([1-7]):(.+)$/.exec(u.dato || '');\n  if (!m) {\n    salida.accion = 'nada';            // callback ajeno o forjado\n  } else if (Number(m[1]) !== actual.n || actual.valores.indexOf(m[2]) < 0) {\n    salida.accion = 'repetir';         // boton de otra pregunta o valor que\n    salida.paso = actual.n;            // el §4.4 no permite\n  } else {\n    salida.accion = 'guardar';\n    salida.clave = actual.clave;\n    // 'omitir' en la 7 significa texto_libre = null, no la cadena 'omitir'.\n    salida.valor_cod =\n      (actual.n === ULTIMA && m[2] === 'omitir') ? NULO : codificar(m[2]);\n    salida.paso = actual.n + 1;\n  }\n} else if (u.tipo === 'texto' && actual.n === ULTIMA) {\n  // La 7 es la unica que admite texto libre. Se recorta a 500 caracteres\n  // (§4.4) y no alimenta ningun calculo (D4). Un mensaje de solo espacios se\n  // guarda como NULL: una cadena vacia no es ni texto ni ausencia de texto.\n  salida.accion = 'guardar';\n  salida.clave = actual.clave;\n  salida.valor_cod = texto ? codificar(texto.slice(0, 500)) : NULO;\n  salida.paso = ULTIMA + 1;\n} else {\n  // Texto donde se esperaba un boton, una foto, un sticker: se repite la\n  // pregunta actual (§6).\n  salida.accion = 'repetir';\n  salida.paso = actual.n;\n}\n\nreturn [{ json: salida }];\n"
+      },
+      "notes": "El unico nodo con logica de conversacion. Lo que decide y por que esta en los comentarios del codigo."
+    },
+    {
+      "id": "rep_acc",
+      "name": "Repartir accion",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        200,
+        420
+      ],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "a1",
+                    "leftValue": "={{ $json.accion }}",
+                    "rightValue": "consentimiento",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "consentimiento"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "a2",
+                    "leftValue": "={{ $json.accion }}",
+                    "rightValue": "aceptar",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "aceptar"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "a3",
+                    "leftValue": "={{ $json.accion }}",
+                    "rightValue": "despedida",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "despedida"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "a4",
+                    "leftValue": "={{ $json.accion }}",
+                    "rightValue": "guardar",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "guardar"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "a5",
+                    "leftValue": "={{ $json.accion }}",
+                    "rightValue": "repetir",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "repetir"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "accion = 'nada' no encaja en ninguna regla y no hay salida de reserva: el update se descarta sin escribir ni contestar. Es la rama a la que van los callbacks forjados y los updates de quien no ha consentido."
+    },
+    {
+      "id": "borrar",
+      "name": "Borrar sesion",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        420,
+        60
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Aqui llegan /start y /reiniciar. Un DELETE que no encuentra fila no\n-- escribe nada: quien nunca acepto sigue sin dejar rastro en ninguna tabla\n-- (criterio 1 del §21).\n-- El SELECT de fuera garantiza UNA fila de salida siempre, para que el\n-- mensaje de consentimiento tambien se envie la primera vez.\nWITH d AS (\n  DELETE FROM sesiones_paciente WHERE chat_id = $1::bigint RETURNING 1\n)\nSELECT $1::bigint AS chat_id, (SELECT count(*) FROM d)::int AS borradas",
+        "options": {
+          "queryReplacement": "={{ $('Normalizar update').first().json.chat_id }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "[retirado]",
+          "name": "copiloto-bd"
+        }
+      }
+    },
+    {
+      "id": "cons",
+      "name": "Pedir consentimiento",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        640,
+        60
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Normalizar update').first().json.chat_id }}",
+        "text": "Antes de empezar necesito su permiso.\n\nLe voy a hacer 7 preguntas sobre cómo se siente. Con sus respuestas:\n\n• Las guardo 7 días y después se borran.\n• NO guardo su nombre ni su número de teléfono. Solo un código de 6 letras.\n• Solo las verá el médico a quien usted le dé ese código.\n• Esto NO es un diagnóstico: es una ayuda para su médico.\n\nSi le cuesta respirar, le duele mucho el pecho o se siente muy mal, acuda a urgencias AHORA. No espere a terminar esto.\n\n¿Acepta que guarde sus respuestas?",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "Acepto",
+                    "additionalFields": {
+                      "callback_data": "consent:si"
+                    }
+                  },
+                  {
+                    "text": "No acepto",
+                    "additionalFields": {
+                      "callback_data": "consent:no"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "[retirado]",
+          "name": "[retirado]"
+        }
+      },
+      "notes": "D11: el consentimiento va ANTES de escribir una sola fila. Dice qué se guarda, cuánto tiempo, quién lo ve, que no es un diagnóstico, y que si le cuesta respirar vaya a urgencias (§6).",
+      "webhookId": "b5efc52c-2868-4fca-b449-13cc70ec879c"
+    },
+    {
+      "id": "desp",
+      "name": "Despedida",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        420,
+        400
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Normalizar update').first().json.chat_id }}",
+        "text": "Entendido. No he guardado nada.\n\nSi cambia de opinión, escriba /start.\n\nY recuerde: si le cuesta respirar o se siente muy mal, acuda a urgencias.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "[retirado]",
+          "name": "[retirado]"
+        }
+      },
+      "notes": "Esta rama NO toca la base de datos. Es el criterio 1 del §21: quien no acepta no deja ninguna fila en ninguna tabla.",
+      "webhookId": "bdb54506-7d69-4e74-aa25-6f6002374048"
+    },
+    {
+      "id": "crear",
+      "name": "Crear sesion",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        420,
+        220
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- El limite de 5/dia del §4.2 se comprueba AL EMPEZAR y no al terminar: es\n-- mas honesto decirselo antes que hacerle contestar siete preguntas para\n-- negarle el codigo al final. Sigue contando COMPLETADOS, porque el contador\n-- solo sube en el nodo `Completar`.\n--\n-- ON CONFLICT DO NOTHING y no DO UPDATE: si dos toques simultaneos en\n-- «Acepto» llegaran a la vez, un DO UPDATE reiniciaria paso y respuestas del\n-- cuestionario que el primero ya empezo.\nWITH hoy AS (\n  SELECT COALESCE((SELECT cuantos FROM limite_paciente\n                    WHERE chat_id = $1::bigint\n                      AND dia = (now() AT TIME ZONE 'America/Guayaquil')::date), 0)\n         AS completados\n),\ns AS (\n  INSERT INTO sesiones_paciente (chat_id, paso, consentido_en, respuestas)\n  SELECT $1::bigint, 1, now(), '{}'::jsonb FROM hoy WHERE hoy.completados < 5\n  ON CONFLICT (chat_id) DO NOTHING\n  RETURNING chat_id\n),\ni AS (\n  INSERT INTO cuestionarios_iniciados (dia, cuantos)\n  SELECT (now() AT TIME ZONE 'America/Guayaquil')::date, 1 FROM s\n  ON CONFLICT (dia) DO UPDATE SET cuantos = cuestionarios_iniciados.cuantos + 1\n  RETURNING cuantos\n)\nSELECT 1::smallint                   AS paso,\n       (SELECT count(*) FROM s)::int AS creada,\n       (SELECT completados FROM hoy) AS completados_hoy,\n       (SELECT cuantos FROM i)       AS iniciados",
+        "options": {
+          "queryReplacement": "={{ $('Normalizar update').first().json.chat_id }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "[retirado]",
+          "name": "copiloto-bd"
+        }
+      },
+      "notes": "Crea la sesion con su consentido_en y sube cuestionarios_iniciados, las dos cosas del paso 1 del §6, en una sola transaccion."
+    },
+    {
+      "id": "ses_ok",
+      "name": "Sesion creada?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        640,
+        220
+      ],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "s1",
+                    "leftValue": "={{ $json.creada }}",
+                    "rightValue": 0,
+                    "operator": {
+                      "type": "number",
+                      "operation": "gt"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "creada"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "s2",
+                    "leftValue": "={{ $json.completados_hoy }}",
+                    "rightValue": 5,
+                    "operator": {
+                      "type": "number",
+                      "operation": "gte"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "limite"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "La tercera posibilidad -no se creo y no es por el limite- es haber perdido una carrera contra otro toque simultaneo en «Acepto»: el ganador ya envio la pregunta 1, asi que aqui no hay salida y no se contesta dos veces."
+    },
+    {
+      "id": "limite",
+      "name": "Limite alcanzado",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        860,
+        320
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Normalizar update').first().json.chat_id }}",
+        "text": "Ya ha completado 5 cuestionarios hoy, que es el máximo.\n\nPuede volver a intentarlo mañana. Si se siente mal ahora, no espere: acuda a su médico o a urgencias.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "[retirado]",
+          "name": "[retirado]"
+        }
+      },
+      "webhookId": "66ec174b-1621-45b0-8908-ddc8ab04cfb4"
+    },
+    {
+      "id": "guardar",
+      "name": "Guardar respuesta",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        420,
+        560
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- La respuesta se FUSIONA en el jsonb con `||`, no se reescribe el objeto\n-- entero: asi no hay leer-modificar-escribir y dos updates no pueden\n-- perderse el uno al otro.\n--\n-- El valor llega con un prefijo de un caracter y se decodifica DENTRO de la\n-- consulta: 'N' es NULL, y 'T' + base64 es ese texto. El porque esta en el\n-- nodo `Decidir`, y en corto es que el nodo Postgres arma sus parametros con\n-- `stringToArray`, que parte por comas Y DESCARTA LOS VACIOS: un valor vacio\n-- desaparece y la consulta sale con 4 parametros referenciando $5.\n-- La consulta sigue siendo parametrizada: desde Telegram no se inyecta SQL.\n--\n-- `AND paso = $5` hace el UPDATE idempotente: un doble toque en el mismo\n-- boton no encuentra fila la segunda vez, y no se salta una pregunta.\nUPDATE sesiones_paciente\n   SET respuestas = respuestas || jsonb_build_object(\n         $2::text,\n         CASE WHEN $3::text = 'N' THEN NULL\n              ELSE convert_from(decode(substr($3::text, 2), 'base64'), 'UTF8')\n              END),\n       paso = $4::smallint,\n       actualizado_en = now()\n WHERE chat_id = $1::bigint\n   AND paso = $5::smallint\nRETURNING paso",
+        "options": {
+          "queryReplacement": "={{ $('Normalizar update').first().json.chat_id }},{{ $json.clave }},{{ $json.valor_cod }},{{ $json.paso }},{{ $json.paso_actual }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "[retirado]",
+          "name": "copiloto-bd"
+        }
+      },
+      "notes": "El nodo que sostiene la propiedad clinica de esta tarea: cada respuesta en SU clave. La clave la pone el nodo `Decidir` desde la tabla del §4.4; aqui no se deduce de nada."
+    },
+    {
+      "id": "rep_preg",
+      "name": "Repartir pregunta",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        860,
+        620
+      ],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "q1",
+                    "leftValue": "={{ $json.paso }}",
+                    "rightValue": 1,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "1"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "q2",
+                    "leftValue": "={{ $json.paso }}",
+                    "rightValue": 2,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "2"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "q3",
+                    "leftValue": "={{ $json.paso }}",
+                    "rightValue": 3,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "3"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "q4",
+                    "leftValue": "={{ $json.paso }}",
+                    "rightValue": 4,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "4"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "q5",
+                    "leftValue": "={{ $json.paso }}",
+                    "rightValue": 5,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "5"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "q6",
+                    "leftValue": "={{ $json.paso }}",
+                    "rightValue": 6,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "6"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "q7",
+                    "leftValue": "={{ $json.paso }}",
+                    "rightValue": 7,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "7"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "q8",
+                    "leftValue": "={{ $json.paso }}",
+                    "rightValue": 8,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "completar"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Reparte por el paso que la sesion tiene EN LA BASE, no por lo que el update dijera. Le llegan tres caminos: la sesion recien creada (paso 1), la respuesta ya guardada (paso siguiente) y el `repetir` del nodo Decidir (paso actual). Una prueba comprueba sobre el JSON exportado que la salida N va al nodo cuyos botones son pN: mandar el paso 3 a la pregunta 4 no daria error, guardaria la respuesta en la clave de otra."
+    },
+    {
+      "id": "p1",
+      "name": "Pregunta 1",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1080,
+        200
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Normalizar update').first().json.chat_id }}",
+        "text": "1 de 7. ¿Ha sentido fiebre estos días?",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "Sí",
+                    "additionalFields": {
+                      "callback_data": "p1:si"
+                    }
+                  },
+                  {
+                    "text": "No",
+                    "additionalFields": {
+                      "callback_data": "p1:no"
+                    }
+                  },
+                  {
+                    "text": "No lo sé",
+                    "additionalFields": {
+                      "callback_data": "p1:no_se"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "[retirado]",
+          "name": "[retirado]"
+        }
+      },
+      "webhookId": "5c762070-6102-4d25-8fbb-da7d01831900"
+    },
+    {
+      "id": "p2",
+      "name": "Pregunta 2",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1080,
+        320
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Normalizar update').first().json.chat_id }}",
+        "text": "2 de 7. ¿Tiene tos?",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "Sí, con flema",
+                    "additionalFields": {
+                      "callback_data": "p2:con_flema"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "Sí, seca",
+                    "additionalFields": {
+                      "callback_data": "p2:seca"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "No tengo tos",
+                    "additionalFields": {
+                      "callback_data": "p2:no"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "[retirado]",
+          "name": "[retirado]"
+        }
+      },
+      "webhookId": "846f9b73-cd9f-4d72-987d-5204847fb38d"
+    },
+    {
+      "id": "p3",
+      "name": "Pregunta 3",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1080,
+        440
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Normalizar update').first().json.chat_id }}",
+        "text": "3 de 7. ¿Desde hace cuánto se siente así?",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "Menos de 3 días",
+                    "additionalFields": {
+                      "callback_data": "p3:menos_3"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "Entre 3 y 7 días",
+                    "additionalFields": {
+                      "callback_data": "p3:3_a_7"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "Más de 7 días",
+                    "additionalFields": {
+                      "callback_data": "p3:mas_7"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "[retirado]",
+          "name": "[retirado]"
+        }
+      },
+      "webhookId": "dfe7a5d2-79df-4971-bd90-aff760677ff3"
+    },
+    {
+      "id": "p4",
+      "name": "Pregunta 4",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1080,
+        560
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Normalizar update').first().json.chat_id }}",
+        "text": "4 de 7. ¿Le falta el aire?",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "Sí",
+                    "additionalFields": {
+                      "callback_data": "p4:si"
+                    }
+                  },
+                  {
+                    "text": "No",
+                    "additionalFields": {
+                      "callback_data": "p4:no"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "[retirado]",
+          "name": "[retirado]"
+        }
+      },
+      "webhookId": "ef7341b1-32a6-437d-a62c-672eef072b9a"
+    },
+    {
+      "id": "p5",
+      "name": "Pregunta 5",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1080,
+        680
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Normalizar update').first().json.chat_id }}",
+        "text": "5 de 7. ¿Le duele el pecho al respirar?",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "Sí",
+                    "additionalFields": {
+                      "callback_data": "p5:si"
+                    }
+                  },
+                  {
+                    "text": "No",
+                    "additionalFields": {
+                      "callback_data": "p5:no"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "[retirado]",
+          "name": "[retirado]"
+        }
+      },
+      "webhookId": "bf18e8cc-7311-4370-9592-a685f8ad722c"
+    },
+    {
+      "id": "p6",
+      "name": "Pregunta 6",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1080,
+        800
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Normalizar update').first().json.chat_id }}",
+        "text": "6 de 7. ¿Tiene asma diagnosticada por un médico?",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "Sí",
+                    "additionalFields": {
+                      "callback_data": "p6:si"
+                    }
+                  },
+                  {
+                    "text": "No",
+                    "additionalFields": {
+                      "callback_data": "p6:no"
+                    }
+                  },
+                  {
+                    "text": "No lo sé",
+                    "additionalFields": {
+                      "callback_data": "p6:no_se"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "[retirado]",
+          "name": "[retirado]"
+        }
+      },
+      "notes": "El asma es el unico de los cinco predictores de Heckerling que aporta el paciente, y el unico con tres estados. `no_se` se CONSERVA: convertirlo en un booleano seria fabricar el dato. H6 tiene que decidir explicitamente que hace con el (§4.4).",
+      "webhookId": "c21d869d-70d4-4c3f-9db8-68336cf7adb6"
+    },
+    {
+      "id": "p7",
+      "name": "Pregunta 7",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1080,
+        920
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Normalizar update').first().json.chat_id }}",
+        "text": "7 de 7. ¿Algo más que quiera contarle a su médico?\n\nEscríbalo en un mensaje, o pulse Omitir.",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "Omitir",
+                    "additionalFields": {
+                      "callback_data": "p7:omitir"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "[retirado]",
+          "name": "[retirado]"
+        }
+      },
+      "notes": "La unica pregunta que acepta texto. No alimenta ningun calculo (D4), se recorta a 500 caracteres, y se guarda tal cual: el profesional la vera como texto plano, sin parse_mode.",
+      "webhookId": "be4c2cc2-9020-4cbe-8c0c-471eaea43b25"
+    },
+    {
+      "id": "compl",
+      "name": "Completar",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1080,
+        1060
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Todo en UNA sentencia, o sea UNA transaccion: el codigo nace, el\n-- cuestionario se guarda, el contador del limite sube y la sesion muere\n-- juntos, o no pasa nada. El codigo lo genera PostgreSQL (§5.2) para que\n-- generarlo y comprobar que esta libre ocurran en la misma transaccion.\n--\n-- `generate_series(1, 3)` es el «reintenta; a la tercera, falla» del §5.2:\n-- generar_codigo() es VOLATILE, asi que da tres candidatos distintos y se\n-- coge el primero que no exista ya.\n--\n-- El DELETE va con `USING nuevo`, asi que solo borra si el INSERT ocurrio.\n-- Si los tres candidatos colisionaran -con 887 millones de combinaciones no\n-- va a pasar- la sesion NO se pierde: se queda en el paso 8, el paciente\n-- recibe el aviso del nodo `Error al generar codigo`, y CUALQUIER mensaje que\n-- mande despues vuelve a entrar aqui, porque `Decidir` manda el paso 8 a la\n-- salida 8 del `Repartir pregunta`. El reintento es real, no una intencion:\n-- antes el paso 8 era un callejon sin salida y esta linea mentia.\nWITH ses AS (\n  SELECT respuestas, consentido_en FROM sesiones_paciente\n   WHERE chat_id = $1::bigint\n),\nlibre AS (\n  SELECT g.c FROM (SELECT generar_codigo() AS c FROM generate_series(1, 3)) g\n   WHERE NOT EXISTS (SELECT 1 FROM cuestionarios q WHERE q.codigo = g.c)\n   LIMIT 1\n),\nnuevo AS (\n  INSERT INTO cuestionarios (codigo, respuestas, consentido_en, expira_en)\n  SELECT libre.c, ses.respuestas, ses.consentido_en, now() + interval '7 days'\n    FROM ses, libre\n  RETURNING codigo, expira_en\n),\nlim AS (\n  INSERT INTO limite_paciente (chat_id, dia, cuantos)\n  SELECT $1::bigint, (now() AT TIME ZONE 'America/Guayaquil')::date, 1\n    FROM nuevo\n  ON CONFLICT (chat_id, dia) DO UPDATE SET cuantos = limite_paciente.cuantos + 1\n  RETURNING cuantos\n),\nfin AS (\n  DELETE FROM sesiones_paciente s USING nuevo n\n   WHERE s.chat_id = $1::bigint\n  RETURNING 1\n)\nSELECT (SELECT codigo FROM nuevo) AS codigo,\n       (SELECT to_char(expira_en AT TIME ZONE 'America/Guayaquil', 'DD/MM/YYYY')\n          FROM nuevo) AS expira,\n       (SELECT count(*) FROM fin)::int AS borradas,\n       (SELECT cuantos FROM lim) AS completados_hoy",
+        "options": {
+          "queryReplacement": "={{ $('Normalizar update').first().json.chat_id }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "[retirado]",
+          "name": "copiloto-bd"
+        }
+      }
+    },
+    {
+      "id": "hay_cod",
+      "name": "Hay codigo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1300,
+        1060
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "h1",
+              "leftValue": "={{ $json.codigo }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "entregar",
+      "name": "Entregar codigo",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1520,
+        1000
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Normalizar update').first().json.chat_id }}",
+        "text": "=Ya está. Su código es:\n\n{{ $json.codigo }}\n\nEnséñeselo a su médico junto con su radiografía. Caduca en 7 días, el {{ $json.expira }}.\n\nEsto no es un diagnóstico. Si se siente peor, acuda a urgencias.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "[retirado]",
+          "name": "[retirado]"
+        }
+      },
+      "notes": "Sin parse_mode, como todos los mensajes de este flujo. El codigo sale de un alfabeto de 31 caracteres sin metacaracteres de Markdown, pero renunciar al formato en TODO el flujo del paciente elimina de golpe la clase entera de fallos por formato: ninguno de estos mensajes puede romperse ni inyectar formato. El §6 lo enseña en negrita; la diferencia es cosmetica.",
+      "webhookId": "9d18e9be-41e3-41f8-9eda-f45f01ab7dac"
+    },
+    {
+      "id": "err_cod",
+      "name": "Error al generar codigo",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1520,
+        1140
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Normalizar update').first().json.chat_id }}",
+        "text": "No he podido generar su código. Ha sido un fallo mío, no suyo.\n\nSus siete respuestas siguen guardadas. Escríbame cualquier cosa y lo intento otra vez.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "[retirado]",
+          "name": "[retirado]"
+        }
+      },
+      "notes": "Existe para que un fallo de generacion no sea silencioso. La sesion no se ha borrado, asi que el paciente puede reintentar.",
+      "webhookId": "5db742f8-b852-4e20-87e8-16c81b23affc"
+    }
+  ],
+  "connections": {
+    "Webhook Telegram (paciente)": {
+      "main": [
+        [
+          {
+            "node": "Normalizar update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar update": {
+      "main": [
+        [
+          {
+            "node": "Leer sesion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer sesion": {
+      "main": [
+        [
+          {
+            "node": "Decidir",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decidir": {
+      "main": [
+        [
+          {
+            "node": "Repartir accion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Repartir accion": {
+      "main": [
+        [
+          {
+            "node": "Borrar sesion",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Crear sesion",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Despedida",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Guardar respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Repartir pregunta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Borrar sesion": {
+      "main": [
+        [
+          {
+            "node": "Pedir consentimiento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crear sesion": {
+      "main": [
+        [
+          {
+            "node": "Sesion creada?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sesion creada?": {
+      "main": [
+        [
+          {
+            "node": "Repartir pregunta",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Limite alcanzado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar respuesta": {
+      "main": [
+        [
+          {
+            "node": "Repartir pregunta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Repartir pregunta": {
+      "main": [
+        [
+          {
+            "node": "Pregunta 1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pregunta 2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pregunta 3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pregunta 4",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pregunta 5",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pregunta 6",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pregunta 7",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Completar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Completar": {
+      "main": [
+        [
+          {
+            "node": "Hay codigo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hay codigo?": {
+      "main": [
+        [
+          {
+            "node": "Entregar codigo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error al generar codigo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Guayaquil",
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false,
+    "saveExecutionProgress": false,
+    "executionTimeout": 60
+  }
+}
