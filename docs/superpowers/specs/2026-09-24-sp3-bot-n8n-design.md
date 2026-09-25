@@ -517,7 +517,21 @@ siempre un punto de código por detrás. La pregunta que sirve es:
 > **¿De dónde puede venir cada byte de este mensaje?**
 
 Si la respuesta para algún byte es «de alguien de fuera», ese mensaje no puede
-contener afirmaciones del sistema. Esa pregunta habría encontrado los tres
+contener afirmaciones del sistema.
+
+**Y hay una segunda pregunta, que costó otras tres rondas descubrir.** De las
+cinco que llevó cerrar esta sección, en **cuatro** el fallo no estuvo en la
+estructura nueva sino en **una esquina que había quedado fuera del cambio
+anterior**: el cierre después del informe, el detalle del servidor después del
+cierre, la cabecera después del detalle. Cada arreglo era correcto y cada uno
+dejaba un sitio con la misma forma sin tocar.
+
+> **¿Qué otros sitios tienen esta misma forma?**
+
+Se hace **en cuanto se arregla uno**, no cuando el siguiente explota. En este
+flujo los sitios que aún mezclan dato ajeno con afirmación propia están
+enumerados; fuera de él, los dos que quedan son el **dashboard del §15** y lo
+que **H6** escriba en `cuestionarios`. Esa pregunta habría encontrado los tres
 fallos —el bloque falso, el cierre falsificable, y el que el filtro no veía— a
 la primera, y sirve igual para el dashboard del §15, para H6, y para cualquier
 sitio donde este proyecto vuelva a mezclar dato ajeno con afirmación propia.
@@ -660,6 +674,26 @@ error, se registra con su código de §9 y no se intenta parsear.
 
 En la práctica los DICOM de RSNA tienen 131 KB de mediana, así que nada de esto
 debería activarse: está aquí para que, si se activa, el bot diga algo cierto.
+
+### 10.4 bis. Los códigos de error son parte del contrato
+
+El bot clasifica cada código del servidor en **relatable** o **no relatable**
+según quién compuso su texto (§9): se le enseña al clínico lo que compuso
+nuestro propio código a partir de datos validados, y no lo que compuso una
+librería de terceros sobre bytes ajenos.
+
+Esa tabla vive en el bot y **se ata a las fuentes de Python con una prueba**,
+pero hay algo que la prueba no puede cubrir: **si SP2 añadiera un sexto
+código, el bot no lo tendría** y caería en `error_no_reconocido`, que termina
+la conversación. Es el fallo cerrado y no el abierto, pero es una sorpresa
+esperando.
+
+Los cinco de hoy: `dicom_invalido` y `base64_invalido` **no relatables** —los
+dos interpolan el texto de una excepción ajena—; `edad_desconocida`,
+`fuera_de_alcance` y `payload_excesivo` **relatables**, porque son literales
+más enteros ya validados.
+
+**Quien toque los errores de SP2 tiene que venir aquí.**
 
 ### 10.5. La razón de verosimilitud viene acotada
 
