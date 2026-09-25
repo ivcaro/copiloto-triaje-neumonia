@@ -71,6 +71,18 @@ SPEC_9 = {
     "error_no_reconocido": True,
 }
 
+# Codigos que NO estan en el §9 y que el flujo necesita. Se listan aparte para que
+# se vea que son un anadido, no un descuido de lectura del spec:
+#
+#   no_autorizado    el rechazo de D6. El §5.1 guarda tambien los rechazos y la
+#                    tasa es la senal del §16, asi que necesita codigo.
+#   descarga_fallida Telegram acepta el update y luego falla al entregar el
+#                    fichero. Antes reusaba `fichero_no_descargable`, cuyo mensaje
+#                    acusa de haber mandado mas de 20 MB: para un DICOM de 131 KB
+#                    es una frase falsa, y una frase falsa manda al clinico a
+#                    buscar por donde no es.
+ANADIDOS_AL_9 = {"no_autorizado": False, "descarga_fallida": False}
+
 SINTOMAS_PRUEBA = {"fiebre": "si", "tos": "con_flema", "dias_evolucion": "3_a_7",
                    "disnea": "no", "dolor_toracico": "si", "asma": "no_se",
                    "texto_libre": None}
@@ -557,9 +569,9 @@ def test_las_once_ramas_del_error_estan_y_dicen_si_la_conversacion_termina():
                             fuente, re.M))
     faltan = set(SPEC_9) - set(tabla)
     assert not faltan, faltan
-    assert tabla == {k: ("true" if v else "false")
-                     for k, v in SPEC_9.items()} | {"no_autorizado": "false"}, \
-        tabla
+    esperado = {k: ("true" if v else "false")
+                for k, v in (SPEC_9 | ANADIDOS_AL_9).items()}
+    assert tabla == esperado, tabla
 
 
 def test_ninguna_rama_de_error_puede_emitir_una_cifra_de_probabilidad():
@@ -579,6 +591,64 @@ def test_ninguna_rama_de_error_puede_emitir_una_cifra_de_probabilidad():
     assert "probabilidad_calibrada" not in fuera
     # Y la red que lo comprueba en tiempo de ejecucion tiene que seguir ahi.
     assert "HUELE_A_PROBABILIDAD" in fuente
+
+
+def test_ningun_mensaje_lleva_parse_mode():
+    """Tras el agujero de los rotulos, la ausencia de `parse_mode` es parte de la
+    defensa y no solo una preferencia, asi que se ata.
+
+    Estos mensajes llevan texto que escribio el paciente (§4.4) y numeros del
+    modelo. Con `MarkdownV2` un `*` o un `_` suelto rompe el envio o permite
+    inyectar formato; y con formato disponible, los rotulos en mayusculas dejarian
+    de ser la unica forma de rotular.
+    """
+    for nodo in _flujo()["nodes"]:
+        if nodo["type"] != "n8n-nodes-base.telegram":
+            continue
+        p = nodo["parameters"]
+        assert "parse_mode" not in json.dumps(p), nodo["name"]
+        if p.get("operation") != "sendMessage":
+            continue      # `Descargar fichero` no manda nada
+        extras = p.get("additionalFields", {})
+        assert "parse_mode" not in extras, (nodo["name"], extras)
+        assert extras.get("appendAttribution") is False, nodo["name"]
+
+
+def test_el_rotulo_es_un_canal_que_solo_escribe_el_sistema():
+    """El agujero que abrio renunciar a la negrita, cerrado.
+
+    Con `parse_mode` vacio los bloques del §8 se rotulan con MAYUSCULAS + RAYA +
+    salto de linea, y eso deja que **el texto del paciente escriba un rotulo**:
+    240 caracteres en la pregunta 7 bastaban para que el informe de una placa
+    negativa llevara dos bloques CRIBADO y dos EVIDENCIA, y para que el falso
+    fuera el ultimo que el clinico leia.
+
+    Lo que lo cierra: el dato del paciente pasa por `neutralizar`, que le quita los
+    saltos de linea y la raya. La raya es el separador de los rotulos, asi que
+    quitarsela al dato hace que `ROTULO — ` sea literalmente algo que solo el
+    sistema puede producir. Es el sustituto de la negrita.
+
+    El comportamiento lo comprueba `tests/profesional.mjs` con el payload literal;
+    esto ata que las DOS entradas de datos del paciente pasen por el filtro, que es
+    lo que una prueba de comportamiento no puede garantizar para el futuro.
+    """
+    fuente = _nodo(_flujo(), "Desenlace")["parameters"]["jsCode"]
+    assert "function neutralizar" in fuente
+    # El texto libre de la pregunta 7.
+    assert re.search(r"const limpio = neutralizar\(libre\)", fuente), \
+        "el texto libre tiene que pasar por el filtro"
+    # Y los valores de los sintomas, cuyo camino de reserva imprime la cadena tal
+    # cual.
+    assert re.search(r"neutralizar\(v\)\)", fuente), \
+        "el valor de reserva de los sintomas tiene que pasar por el filtro"
+    # Los tres caracteres que se le quitan, por codigo y no por escape: un U+2028
+    # escrito como escape que un editor deje como caracter de verdad rompe el nodo.
+    for codigo in ("8232", "8233", "8212", "9888"):
+        assert codigo in fuente, codigo
+    assert " " not in fuente and " " not in fuente, \
+        "un separador de linea LITERAL en el codigo deja el nodo sin compilar"
+    # Y el descargo es lo ultimo, siempre.
+    assert "bloques.push(DESCARGO)" in fuente
 
 
 def test_los_tres_bloques_del_spec_estan_rotulados_y_separados():

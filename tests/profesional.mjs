@@ -34,7 +34,11 @@ const codigo = (n) => nodo(n).parameters.jsCode;
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
-async function correr(jsCode, entrada, nodos, helpers) {
+// `opciones` existe por H4: el arnés NO puede fabricar el `this` que haría
+// funcionar `this.helpers` y luego decir que ha probado el nodo. Con
+// `thisArg`/`helpersEnAmbito` se puede correr el mismo código **sin** ningún
+// accesor, que es el caso que interesa.
+async function correr(jsCode, entrada, nodos, opciones = {}) {
   const $input = {
     first: () => entrada,
     all: () => [entrada],
@@ -45,8 +49,14 @@ async function correr(jsCode, entrada, nodos, helpers) {
     }
     return { first: () => ({ json: nodos[nombre] }) };
   };
-  const fn = new AsyncFunction("$input", "$", "Buffer", jsCode);
-  return await fn.call({ helpers }, $input, $, Buffer);
+  const nombres = ["$input", "$", "Buffer"];
+  const valores = [$input, $, Buffer];
+  if ("helpersEnAmbito" in opciones) {
+    nombres.push("helpers");
+    valores.push(opciones.helpersEnAmbito);
+  }
+  const fn = new AsyncFunction(...nombres, jsCode);
+  return await fn.apply(opciones.thisArg, valores);
 }
 
 let fallos = 0;
@@ -139,6 +149,10 @@ const U = { chat_id: 7, t0: Date.now() };
 const D = { chat_id: 7, t0: U.t0, sintomas: SINTOMAS, signos: SIGNOS, pregunta: "Temperatura..." };
 
 // Todas las palabras y formas que delatan una cifra de probabilidad.
+// La puntuacion se ensena con cuatro decimales (ver el nodo). Aqui hace falta
+// para comprobar que la desigualdad es cierta sobre lo que se ensena.
+const dec4 = (x) => Number(x).toFixed(4).replace(".", ",");
+
 const CIFRA_DE_PROBABILIDAD = /(probabilidad|verosimilitud|calibrad|cribado|evidencia de la imagen|multiplica por|reduce a|\d,\d{2})/i;
 
 // ==========================================================================
@@ -350,28 +364,53 @@ console.log("\nH2. A base64: el cuerpo JSON-RPC del §10.1 se arma en JavaScript
 // «invalid syntax» -las llaves anidadas dejan `}}}` y el separador de
 // expresiones corta donde no debe- y la peticion no llega a salir. El sintoma
 // habria sido que TODAS las radiografias contestaran `copiloto_no_responde`.
-async function aBase64(bytes, conAyudante = true) {
-  const helpers = conAyudante
-    ? { getBinaryDataBuffer: async () => Buffer.from(bytes) }
-    : { getBinaryDataBuffer: async () => { throw new Error("sin ayudante"); } };
-  const entrada = { json: {}, binary: { data: { data: Buffer.from(bytes).toString("base64") } } };
-  const r = await correr(codigo("A base64"), entrada,
-                         { Decidir: { chat_id: 7, t0: 123 } }, helpers);
+//
+// Y los TRES accesos al binario, con el `this` que corresponde a cada uno. La
+// version anterior de este arnes fabricaba siempre el `this` con `helpers`
+// dentro, asi que estructuralmente no podia detectar que en esta instalacion de
+// n8n el accesor fuera otro: probaba su propio andamio.
+const AYUDANTE_OK = { getBinaryDataBuffer: async () => Buffer.from("hola") };
+const AYUDANTE_ROTO = {
+  getBinaryDataBuffer: async () => { throw new Error("binario en disco"); } };
+const ENTRADA_BIN = { json: {},
+  binary: { data: { data: Buffer.from("hola").toString("base64") } } };
+const B64_HOLA = Buffer.from("hola").toString("base64");
+
+async function aBase64(opciones) {
+  const r = await correr(codigo("A base64"), ENTRADA_BIN,
+                         { Decidir: { chat_id: 7, t0: 123 } }, opciones);
   return r[0].json;
 }
-for (const [etiqueta, conAyudante] of [["con getBinaryDataBuffer", true],
-                                       ["cayendo a binary.data.data", false]]) {
-  const s = await aBase64("hola", conAyudante);
+const CASOS_BIN = [
+  ["this.helpers", { thisArg: { helpers: AYUDANTE_OK } }, "ayudante"],
+  ["helpers suelto en el ambito", { helpersEnAmbito: AYUDANTE_OK }, "ayudante"],
+  ["NINGUN accesor: cae a binary.data.data", {}, "binario"],
+  ["el ayudante existe pero lanza", { thisArg: { helpers: AYUDANTE_ROTO } }, "binario"],
+];
+for (const [etiqueta, opciones, via] of CASOS_BIN) {
+  const s = await aBase64(opciones);
   const cuerpo = JSON.parse(s.cuerpo_jsonrpc);
-  ok(`${etiqueta}: el cuerpo es el JSON-RPC del §10.1`,
+  ok(`${etiqueta}: el cuerpo es el JSON-RPC del §10.1 con el base64 correcto`,
      cuerpo.jsonrpc === "2.0" && cuerpo.method === "tools/call" &&
      cuerpo.params.name === "clasificar_radiografia" &&
-     cuerpo.params.arguments.dicom_base64 === Buffer.from("hola").toString("base64"),
-     s.cuerpo_jsonrpc);
-  ok(`${etiqueta}: el base64 del DICOM no sale por ningun otro campo (§5.4)`,
-     !("dicom_base64" in s) && Object.keys(s).sort().join(",") === "chat_id,cuerpo_jsonrpc,t0",
+     cuerpo.params.arguments.dicom_base64 === B64_HOLA, s.cuerpo_jsonrpc);
+  ok(`${etiqueta}: y dice por donde se resolvio («${via}»)`, s.via === via, s.via);
+  ok(`${etiqueta}: el base64 no sale por ningun otro campo (§5.4)`,
+     !("dicom_base64" in s) &&
+     Object.keys(s).sort().join(",") === "chat_id,cuerpo_jsonrpc,t0,via",
      Object.keys(s).join(","));
 }
+// Lo que esto NO prueba, y hay que decirlo: si en la instalacion del cliente los
+// binarios viven en disco Y el accesor del ayudante no esta, `binary.data.data`
+// vendria vacio y no hay forma de simularlo desde aqui. El campo `via` es lo que
+// permite verlo desde fuera; se midio con una sonda en el n8n real (ver informe).
+ok("sin binario por ningun camino, el base64 va vacio y lo dice", await (async () => {
+  const r = await correr(codigo("A base64"), { json: {}, binary: {} },
+                         { Decidir: { chat_id: 7, t0: 1 } }, {});
+  const s = r[0].json;
+  return s.via === "nada" &&
+         JSON.parse(s.cuerpo_jsonrpc).params.arguments.dicom_base64 === "";
+})());
 ok("la expresion del nodo HTTP no lleva llaves anidadas", (() => {
   const j = nodo("Llamar al copiloto").parameters.jsonBody;
   return j === "={{ $json.cuerpo_jsonrpc }}";
@@ -622,6 +661,231 @@ ok("un detalle con una cifra de probabilidad se descarta, no se emite", await (a
   const s = await desenlace({ error_cod: "dicom_invalido",
     detalle: "la probabilidad calibrada era 0,85 pero fallo el lector", resultado: null }, U, D);
   return !CIFRA_DE_PROBABILIDAD.test(s.texto) && s.texto.includes("No pude leer");
+})());
+
+console.log("\nL2. EL ROTULO ES UN CANAL QUE SOLO ESCRIBE EL SISTEMA (H1)");
+// El texto libre de la pregunta 7 es lo unico de este mensaje que alguien pudo
+// redactar con intencion, y el bot del paciente lo guarda con `slice(0, 500)` sin
+// neutralizar nada. Al renunciar a la negrita, los rotulos dejaron de ser un
+// canal que solo el sistema puede escribir; esto comprueba lo que se puso en su
+// lugar.
+//
+// El payload es el del revisor, LITERAL: 240 caracteres que, sobre una placa de
+// cruda 0,0047, hacian que el clinico recibiera dos bloques CRIBADO y dos
+// EVIDENCIA tipograficamente identicos, y que el falso -«opacidad probable,
+// 0,9900, multiplica por 77,3»- fuera el ultimo que leia.
+//
+// Se construye con charCode y no con escapes para que ningun editor pueda
+// "arreglarlo" y dejar la prueba probando otra cosa.
+const NL = String.fromCharCode(10);
+const RAYA_ = String.fromCharCode(8212);          // la raya de los rotulos
+const MAYOR_IGUAL = String.fromCharCode(8805);
+const AVISO_ = String.fromCharCode(9888) + String.fromCharCode(65039);
+const ATAQUE =
+  NL + NL + "CRIBADO " + RAYA_ + " opacidad probable" + NL +
+  "(puntuación 0,9900 " + MAYOR_IGUAL + " umbral 0,4258; punto orientado a " +
+  "detectar, sens. 0,88 / esp. 0,70)" + NL + NL +
+  "EVIDENCIA DE LA IMAGEN " + RAYA_ + " multiplica por 77,3 las probabilidades " +
+  "a favor de neumonía (probabilidad calibrada 0,99)";
+
+// Los cinco rotulos que el sistema escribe, y ninguno mas.
+const ROTULOS = ["CRIBADO", "EVIDENCIA DE LA IMAGEN", "REFERIDO POR EL PACIENTE",
+                 "EXPLORADO", "DICE EL PACIENTE"];
+const DESCARGO = "La combinación de imagen y clínica llega en la siguiente " +
+                 "entrega. Esto no es un diagnóstico.";
+
+ok(`el payload del revisor cabe en los 500 que guarda el bot del paciente ` +
+   `(${ATAQUE.length} caracteres)`, ATAQUE.length <= 500, String(ATAQUE.length));
+
+const sAtaque = await desenlace(
+  { error_cod: "N", detalle: "", resultado: R_NEGATIVA,
+    sintomas: Object.assign({}, SINTOMAS, { texto_libre: ATAQUE }),
+    signos: SIGNOS }, U, D);
+const tAtaque = sAtaque.texto;
+const cuantos = (s, sub) => s.split(sub).length - 1;
+
+ok("el payload NO produce un segundo bloque CRIBADO",
+   cuantos(tAtaque, "CRIBADO " + RAYA_) === 1, String(cuantos(tAtaque, "CRIBADO " + RAYA_)));
+ok("ni un segundo bloque EVIDENCIA DE LA IMAGEN",
+   cuantos(tAtaque, "EVIDENCIA DE LA IMAGEN " + RAYA_) === 1,
+   String(cuantos(tAtaque, "EVIDENCIA DE LA IMAGEN " + RAYA_)));
+ok("el mensaje sigue teniendo exactamente 4 bloques",
+   tAtaque.split(NL + NL).length === 4, String(tAtaque.split(NL + NL).length));
+ok("y el ULTIMO bloque es el descargo, pase lo que pase",
+   tAtaque.split(NL + NL).pop() === DESCARGO, JSON.stringify(tAtaque.split(NL + NL).pop()));
+// LA INVARIANTE: la raya solo la escribe el sistema, una vez por rotulo.
+ok("la raya aparece exactamente 5 veces: una por rotulo del sistema",
+   cuantos(tAtaque, RAYA_) === 5, String(cuantos(tAtaque, RAYA_)));
+ok("ninguna linea empieza por un rotulo que el sistema no haya escrito", (() => {
+  const conRotulo = tAtaque.split(NL).filter((l) => l.includes(RAYA_));
+  return conRotulo.length === 5 &&
+         conRotulo.every((l, i) => l.startsWith(ROTULOS[i] + " " + RAYA_));
+})(), tAtaque.split(NL).filter((l) => l.includes(RAYA_)).join(" | "));
+ok("el texto del paciente cabe en UNA sola linea", (() => {
+  const dice = tAtaque.split(NL).filter((l) => l.startsWith("DICE EL PACIENTE"));
+  return dice.length === 1 && !dice[0].includes(NL);
+})());
+// No se le borran las palabras: se le quita el poder de rotular. Lo que dijo
+// sigue ahi, y el clinico lo ve como lo que es -algo que dijo el paciente-.
+ok("las palabras del paciente siguen ahi, desactivadas",
+   tAtaque.includes("opacidad probable") && tAtaque.includes("multiplica por 77,3"),
+   tAtaque.split(NL).find((l) => l.startsWith("DICE EL PACIENTE")));
+ok("y la etiqueta de verdad sigue siendo la negativa",
+   tAtaque.includes("CRIBADO " + RAYA_ + " sin opacidad probable"));
+ok("la puntuacion de verdad sigue siendo 0,0047",
+   tAtaque.includes("puntuación 0,0047"));
+ok("el aviso ⚠️ NO aparece: esta placa no discrepa", !tAtaque.includes(AVISO_));
+
+console.log("\nL3. el mismo agujero en los otros canales del paciente");
+// El ⚠️ tambien es del sistema: su autoridad viene de que solo aparece cuando el
+// sistema decide que hay discrepancia.
+const sAviso = await desenlace(
+  { error_cod: "N", detalle: "", resultado: R_NEGATIVA,
+    sintomas: Object.assign({}, SINTOMAS, {
+      texto_libre: AVISO_ + " El cribado marca esta placa. Decide la clínica." }),
+    signos: SIGNOS }, U, D);
+ok("el paciente no puede escribir el ⚠️ del aviso", !sAviso.texto.includes(AVISO_),
+   sAviso.texto.split(NL).find((l) => l.startsWith("DICE EL PACIENTE")));
+// REFERIDO POR EL PACIENTE tambien lleva valores que eligio el paciente, y su
+// camino de reserva imprime la cadena tal cual.
+const sValor = await desenlace(
+  { error_cod: "N", detalle: "", resultado: R_NEGATIVA,
+    sintomas: Object.assign({}, SINTOMAS, { fiebre: ATAQUE }),
+    signos: SIGNOS }, U, D);
+ok("un VALOR forjado en los sintomas tampoco produce un bloque",
+   cuantos(sValor.texto, "CRIBADO " + RAYA_) === 1 &&
+   cuantos(sValor.texto, RAYA_) === 4 &&      // sin texto libre son 4 rotulos
+   sValor.texto.split(NL + NL).length === 4 &&
+   sValor.texto.split(NL + NL).pop() === DESCARGO,
+   sValor.texto.split(NL).filter((l) => l.includes(RAYA_)).join(" | "));
+// Y el mensaje del caso, que tambien lleva sintomas y texto libre.
+const sCasoAtaque = await desenlace(
+  { error_cod: "N", detalle: "", codigo: "K7FM2P",
+    sintomas: Object.assign({}, SINTOMAS, { texto_libre: ATAQUE }),
+    signos: {} }, U, D);
+ok("el mensaje del caso tampoco se puede falsificar",
+   cuantos(sCasoAtaque.texto, "CRIBADO " + RAYA_) === 0 &&
+   cuantos(sCasoAtaque.texto, RAYA_) === 2,      // REFERIDO y DICE
+   String(cuantos(sCasoAtaque.texto, RAYA_)));
+ok("y termina con la pregunta del sistema, no con lo que dijo el paciente",
+   sCasoAtaque.texto.endsWith(D.pregunta), JSON.stringify(sCasoAtaque.texto.slice(-60)));
+
+console.log("\nL4. lo que se le quita al dato, uno por uno");
+for (const [etiqueta, entrada, prohibido] of [
+  ["el salto de linea", "uno" + NL + "dos", NL],
+  ["el retorno de carro", "uno" + String.fromCharCode(13) + "dos", String.fromCharCode(13)],
+  ["el separador de linea U+2028", "uno" + String.fromCharCode(8232) + "dos", String.fromCharCode(8232)],
+  ["el separador de parrafo U+2029", "uno" + String.fromCharCode(8233) + "dos", String.fromCharCode(8233)],
+  ["la raya de los rotulos", "uno " + RAYA_ + " dos", RAYA_],
+]) {
+  const s = await desenlace(
+    { error_cod: "N", detalle: "", resultado: R_NEGATIVA,
+      sintomas: Object.assign({}, SINTOMAS, { texto_libre: entrada }),
+      signos: SIGNOS }, U, D);
+  const linea = s.texto.split(NL).find((l) => l.startsWith("DICE EL PACIENTE"));
+  ok(`se le quita ${etiqueta}`, linea && !linea.slice(18).includes(prohibido) &&
+     linea.includes("uno") && linea.includes("dos"), linea);
+}
+ok("un texto de solo saltos de linea no deja una linea vacia", await (async () => {
+  const s = await desenlace(
+    { error_cod: "N", detalle: "", resultado: R_NEGATIVA,
+      sintomas: Object.assign({}, SINTOMAS, { texto_libre: NL + NL + "   " + NL }),
+      signos: SIGNOS }, U, D);
+  return !s.texto.includes("DICE EL PACIENTE");
+})());
+ok("y se sigue recortando a 500 caracteres", await (async () => {
+  const s = await desenlace(
+    { error_cod: "N", detalle: "", resultado: R_NEGATIVA,
+      sintomas: Object.assign({}, SINTOMAS, { texto_libre: "x".repeat(900) }),
+      signos: SIGNOS }, U, D);
+  const linea = s.texto.split(NL).find((l) => l.startsWith("DICE EL PACIENTE"));
+  return linea.split("x").length - 1 === 500;
+})());
+
+console.log("\nL5. el punto de operacion solo se afirma si es el que se midio (H6)");
+const OTRO_UMBRAL = Object.assign({}, R_POSITIVA, {umbral: 0.5, clasificacion: "opacidad_probable"});
+const tOtro = (await desenlace({ error_cod: "N", detalle: "", resultado: OTRO_UMBRAL,
+  sintomas: SINTOMAS, signos: SIGNOS }, U, D)).texto;
+ok("con umbral 0,4258 se declaran sens. y esp.", tPos.includes("sens. 0,88 / esp. 0,70"));
+ok("con OTRO umbral, la frase desaparece en vez de describir otro punto de la ROC",
+   !tOtro.includes("sens.") && !tOtro.includes("esp."),
+   tOtro.split(NL)[1]);
+ok("pero el umbral y la puntuacion se siguen ensenando",
+   tOtro.includes("puntuación 0,9802 " + MAYOR_IGUAL + " umbral 0,5000"), tOtro.split(NL)[1]);
+
+console.log("\nL6. el comparador sale de los NUMEROS, no de la etiqueta (H7/H8)");
+// Con la etiqueta como fuente, una `clasificacion` que el servidor no deberia
+// mandar hacia que el mensaje dijera «sin opacidad probable» y «0,5649 < 0,4258»
+// a la vez. Ahora la desigualdad es siempre cierta sobre lo que se ve.
+for (const [etiqueta, r, esperado] of [
+  ["positiva", R_POSITIVA, MAYOR_IGUAL],
+  ["banda", R_BANDA, MAYOR_IGUAL],
+  ["negativa", R_NEGATIVA, "<"],
+]) {
+  const t = (await desenlace({ error_cod: "N", detalle: "", resultado: r,
+    sintomas: SINTOMAS, signos: SIGNOS }, U, D)).texto;
+  const cierto = r.probabilidad_cruda >= r.umbral;
+  ok(`${etiqueta}: la desigualdad es cierta sobre los numeros mostrados`,
+     t.includes(dec4(r.probabilidad_cruda) + " " + esperado + " umbral") &&
+     (esperado === MAYOR_IGUAL) === cierto,
+     t.split(NL)[1]);
+}
+// Y una clasificacion o un structuredContent incompletos no llegan al redactor.
+for (const [etiqueta, r] of [
+  ["clasificacion desconocida", Object.assign({}, R_BANDA, {clasificacion: "quiza"})],
+  ["sin umbral", (() => { const x = Object.assign({}, R_POSITIVA); delete x.umbral; return x; })()],
+  ["umbral como cadena", Object.assign({}, R_POSITIVA, {umbral: "0.4258"})],
+  ["sin probabilidad_calibrada", (() => { const x = Object.assign({}, R_POSITIVA); delete x.probabilidad_calibrada; return x; })()],
+  ["RV no finita", Object.assign({}, R_POSITIVA, {razon_de_verosimilitud: Infinity})],
+]) {
+  const s = await leerRespuesta(http200(sseExito(r)), dResp);
+  ok(`${etiqueta} -> error_no_reconocido, no llega al redactor`,
+     s.error_cod === "error_no_reconocido" && s.resultado === null, s.error_cod);
+  const m = await desenlace(s, U, D);
+  ok(`   y su mensaje no lleva ningun NaN`, !/NaN/.test(m.texto), m.texto);
+}
+
+console.log("\nL7. un DICOM truncado no cierra la conversacion (H2)");
+// Medido contra el contenedor el 25-sep-2026 con la misma placa truncada al 1, 5,
+// 10, 25, 50, 75 y 99 %: el servidor devuelve isError con el texto EXACTO
+// «Error executing tool clasificar_radiografia», sin ningun codigo. Antes eso
+// caia en `error_no_reconocido`, que TERMINA, y cerraba la conversacion de un
+// profesional cuyo unico problema es que el fichero llego a medias. Es el perfil
+// «fichero corrupto» del §13.1, el que la tarea 8 va a generar.
+const TRUNCADO = "Error executing tool clasificar_radiografia";
+const sTrunc = await leerRespuesta(http200(sseError(TRUNCADO)), dResp);
+ok("isError SIN codigo -> dicom_invalido, no error_no_reconocido",
+   sTrunc.error_cod === "dicom_invalido", sTrunc.error_cod);
+const mTrunc = await desenlace(sTrunc, U, D);
+ok("y la conversacion NO termina: se queda esperando el archivo",
+   mTrunc.termina === "N", mTrunc.termina);
+ok("con un mensaje que no acusa de nada falso", !/20 MB|5 MB/.test(mTrunc.texto),
+   mTrunc.texto.replace(/\n/g, " | "));
+ok("y sin ninguna cifra de probabilidad", !CIFRA_DE_PROBABILIDAD.test(mTrunc.texto));
+ok("un isError con un codigo que SI trae, aunque no lo conozcamos, sigue terminando",
+   await (async () => {
+     const s = await leerRespuesta(http200(sseError(
+       TRUNCADO + ": gremlins_en_el_gpu: se fue la luz")), dResp);
+     const m = await desenlace(s, U, D);
+     return s.error_cod === "error_no_reconocido" && m.termina === "S";
+   })());
+ok("un isError con el texto vacio tambien es dicom_invalido",
+   (await leerRespuesta(http200(sseError("")), dResp)).error_cod === "dicom_invalido");
+
+console.log("\nL8. la descarga que falla no acusa de un tamano falso (H3)");
+const sDesc = await correr(codigo("Descarga fallida"), { json: { error: "socket hang up" } },
+  { Decidir: { chat_id: 7, t0: 1, sintomas: SINTOMAS, signos: SIGNOS } }, {});
+ok("`Descarga fallida` emite su propio codigo", sDesc[0].json.error_cod === "descarga_fallida",
+   sDesc[0].json.error_cod);
+const mDesc = await desenlace(sDesc[0].json, U, D);
+ok("y su mensaje NO menciona los 20 MB", !mDesc.texto.includes("20 MB"),
+   mDesc.texto.replace(/\n/g, " | "));
+ok("se registra y NO termina la conversacion",
+   mDesc.registrar === "S" && mDesc.termina === "N");
+ok("el codigo de los 20 MB sigue existiendo para lo que si lo es", await (async () => {
+  const m = await desenlace({ error_cod: "fichero_no_descargable", detalle: "",
+                              resultado: null }, U, D);
+  return m.texto.includes("20 MB");
 })());
 
 console.log("\nM. el mensaje del caso: se ensena, pero NO nace fila en consultas");
