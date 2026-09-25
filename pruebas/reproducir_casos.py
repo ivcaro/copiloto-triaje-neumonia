@@ -709,6 +709,7 @@ ENTREGA = {
                            "ESCRIBIÓ EL PACIENTE",
         "se_obtuvo": "el bot lo envió a un chat real. La entrega en sí no se ha "
                      "comprobado: el arnés no ve la respuesta de Telegram",
+        "resumen": "el bot los envió a un chat real; la entrega no se comprobó",
     },
 }
 
@@ -895,7 +896,39 @@ def _mediana(valores):
     return statistics.median(valores) if valores else None
 
 
-def resumen(filas, con_bots, destino):
+def procedencia(filas, url):
+    """De que copiloto salio este corpus.
+
+    Hace falta porque el corpus no describe «el sistema», describe el sistema QUE
+    CONTESTO. Dos ejemplos reales, los dos del mismo dia:
+
+      - si se reentrena el modelo, cambian las puntuaciones, las razones de
+        verosimilitud y hasta que placas caen en la banda del §8;
+      - y el texto de los rechazos por edad llega LITERAL del servidor (§9,
+        `relata: true`), asi que si la imagen desplegada es mas vieja que el
+        repositorio, el corpus ensena la redaccion vieja y parece la de hoy.
+
+    Sin esta seccion, eso no se ve en ningun sitio y el corpus se lee como si
+    hablara del presente.
+    """
+    lineas = ["", " DE QUÉ COPILOTO SALE ESTO", _punto("  copiloto", url)]
+    primero = next((red["resultado"] for _, _, red in filas
+                    if red.get("resultado")), None)
+    if primero:
+        lineas += [
+            _punto("  modelo", primero.get("modelo", "?")),
+            _punto("  AUC de validación", _num(primero.get("auc_validacion"), 4)),
+            _punto("  umbral", _num(primero.get("umbral"), 4)),
+        ]
+    lineas.append(_parrafo(
+        "El texto de los rechazos lo escribe ESE servidor y el bot lo relata "
+        "literal (§9). Si su imagen es más vieja que el repositorio, aquí se lee "
+        "la redacción vieja: compárela con `inferencia.py` antes de dar por "
+        "bueno un mensaje de rechazo."))
+    return lineas
+
+
+def resumen(filas, con_bots, destino, url_copiloto=None):
     lineas = [RAYA,
               f" CORPUS DE REPRODUCCIÓN — {len(filas)} casos reales de RSNA",
               RAYA]
@@ -912,10 +945,10 @@ def resumen(filas, con_bots, destino):
         e = obs.get("entrega", "no_intentada")
         entregas[e] = entregas.get(e, 0) + 1
     for estado, n in sorted(entregas.items(), key=lambda x: -x[1]):
-        lineas.append(_punto("  mensajes que leyó alguien"
+        lineas.append(_punto("  mensajes enviados de verdad"
                              if estado == "intentada"
-                             else "  mensajes que NO leyó nadie",
-                             f"{n}: {ENTREGA[estado]['se_obtuvo']}"))
+                             else "  mensajes que no leyó nadie",
+                             f"{n}, y {ENTREGA[estado]['resumen']}"))
     lineas.append("")
 
     lineas.append(" CASOS POR PERFIL")
@@ -1089,6 +1122,9 @@ def resumen(filas, con_bots, destino):
         for pid, motivo in fallos[:10]:
             lineas.append(f"     {pid}  {motivo}")
 
+    if url_copiloto:
+        lineas += procedencia(filas, url_copiloto)
+
     lineas += ["", RAYA,
                _parrafo("El corpus es para LEERLO, y no hay atajo. Empiece por "
                         "el perfil 03: ahí el cribado y la evidencia se "
@@ -1259,7 +1295,7 @@ def main() -> int:
 
     filas = [(c, o, r) for c, o, r in filas if r is not None]
     escribir_corpus(destino, filas)
-    texto = resumen(filas, con_bots, destino)
+    texto = resumen(filas, con_bots, destino, url_copiloto)
     (destino / "RESUMEN.txt").write_text(texto + "\n", encoding="utf-8")
     print()
     print(texto)

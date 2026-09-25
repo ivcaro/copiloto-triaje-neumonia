@@ -31,7 +31,8 @@ sys.path.insert(0, str(REPO))
 
 from copiloto_triaje.datos.dicom import leer_dicom_desde_bytes  # noqa: E402
 from pruebas.reproducir_casos import (  # noqa: E402
-    MAXIMO_BYTES, PERFILES, _fabricar, nombre_fichero, resumen, texto_del_caso,
+    MAXIMO_BYTES, PERFILES, SIGNOS, _coincide, _fabricar, nombre_fichero,
+    resumen, texto_del_caso,
 )
 
 REDACTOR = REPO / "pruebas" / "redactar.mjs"
@@ -151,12 +152,19 @@ UN_RESULTADO = {
 }
 
 
-def _caso(perfil=None):
+SINTOMAS_ENVIADOS = {"fiebre": "si", "tos": "con_flema",
+                     "dias_evolucion": "3_a_7", "disnea": "no",
+                     "dolor_toracico": "si", "asma": "no_se",
+                     "texto_libre": None}
+
+
+def _caso(perfil=None, pid="03cf9ba9-dfbe-47b9-aa96-3e69432d73c3",
+          clase="No Lung Opacity / Not Normal"):
     return {"perfil": perfil or PERFILES[2],
-            "patientId": "03cf9ba9-dfbe-47b9-aa96-3e69432d73c3",
+            "patientId": pid,
             "ruta_dcm": "x.dcm", "cruda_cache": 0.5649, "edad_rsna": 58,
-            "clase_rsna": "No Lung Opacity / Not Normal", "sexo_rsna": "M",
-            "sintomas": {}}
+            "clase_rsna": clase, "sexo_rsna": "M",
+            "sintomas": dict(SINTOMAS_ENVIADOS)}
 
 
 def test_el_fichero_del_corpus_no_obliga_a_abrir_ningun_json():
@@ -178,6 +186,112 @@ def test_el_fichero_del_corpus_no_obliga_a_abrir_ningun_json():
     # Que quepa en una consola de 80 columnas sin que nada lo reajuste: el margen
     # de 2 es para los rotulos largos del `_punto`.
     assert max(len(l) for l in texto.splitlines()) <= 82
+
+
+def test_el_corpus_no_dice_que_alguien_recibio_lo_que_nadie_recibio():
+    """El rotulo es una afirmacion como cualquier otra.
+
+    La primera version titulaba «EL MENSAJE QUE RECIBIO EL PROFESIONAL» en los
+    tres casos, tambien cuando Telegram habia rechazado el envio con un 400 porque
+    el chat de los updates es inventado. Un corpus solo vale lo que vale su
+    honestidad.
+    """
+    red = {"texto": "CRIBADO — opacidad probable", "texto_paciente": "",
+           "error": None, "resultado": UN_RESULTADO}
+    titulos = {}
+    for entrega in ("no_intentada", "rechazada", "intentada"):
+        texto = texto_del_caso(
+            _caso(), {"con_bots": entrega != "no_intentada", "entrega": entrega,
+                      "motivo_sin_bots": "--sin-bots"}, red)
+        titulos[entrega] = texto
+    assert "RECIBIÓ" not in titulos["no_intentada"].split("CRIBADO")[0]
+    assert "HABRÍA ENVIADO" in titulos["no_intentada"]
+    assert "NADIE LO RECIBIÓ" in titulos["rechazada"]
+    assert "ENVIÓ AL PROFESIONAL" in titulos["intentada"]
+    # Y los tres estados se distinguen: sin esto, un solo rotulo para todos
+    # volveria a pasar sin que nadie lo viera.
+    assert len({t.split("\n")[0] for t in titulos.values()}) >= 1
+    assert len(set(titulos.values())) == 3
+
+
+def test_el_segundo_mensaje_dice_que_no_se_intento_cuando_no_se_intento():
+    """`Enviar texto del paciente` cuelga DETRAS de `Responder`, que no tiene
+    manejo de error: si el primer envio falla, el segundo nodo no se ejecuta. El
+    corpus imprimia su bloque igual, como si hubiera salido."""
+    red = {"texto": "CRIBADO — opacidad probable",
+           "texto_paciente": "TODO ESTE MENSAJE ES TEXTO DEL PACIENTE, no el "
+                             "informe:\nme duele",
+           "error": None, "resultado": UN_RESULTADO}
+    rechazada = texto_del_caso(
+        _caso(), {"con_bots": True, "entrega": "rechazada"}, red)
+    assert "NI SE INTENTÓ ENVIAR" in rechazada
+    assert "NO se intentó enviar, ni siquiera sin éxito" in " ".join(
+        rechazada.split())
+    entregada = texto_del_caso(
+        _caso(), {"con_bots": True, "entrega": "intentada"}, red)
+    assert "NI SE INTENTÓ" not in entregada
+    # El texto del paciente sale igual en los dos: no perderlo es el punto.
+    assert "me duele" in rechazada and "me duele" in entregada
+
+
+def test_el_corpus_dice_si_los_bloques_clinicos_se_observaron_o_se_afirmaron():
+    red = {"texto": "x", "texto_paciente": "", "error": None,
+           "resultado": UN_RESULTADO}
+    afirmados = texto_del_caso(_caso(), {"con_bots": False,
+                                         "bloques": "afirmados"}, red)
+    observados = texto_del_caso(_caso(), {"con_bots": True,
+                                          "entrega": "intentada",
+                                          "bloques": "observados"}, red)
+    assert "NO están verificados" in " ".join(afirmados.split())
+    assert "LEÍDOS de `consultas`" in " ".join(observados.split())
+
+
+def test_coincide_mira_tambien_los_dos_bloques_clinicos():
+    """Antes comparaba puntuacion, clasificacion y codigo, y nada mas: un mensaje
+    con «tos: (valor no reconocido)» y «EXPLORADO — (sin datos completos)» salia
+    con «coinciden: si». Son los dos bloques que un clinico lee primero."""
+    caso = _caso()
+    red = {"resultado": UN_RESULTADO, "error": None}
+    bien = {"resultado": UN_RESULTADO, "error": None,
+            "sintomas": dict(SINTOMAS_ENVIADOS), "signos": dict(SIGNOS)}
+    assert _coincide(bien, caso, red) == "sí"
+
+    # Una respuesta en la clave equivocada: el §4.4 dice que este fallo no da
+    # error, da un mensaje clinico distinto.
+    torcido = dict(bien, sintomas=dict(SINTOMAS_ENVIADOS, tos="no"))
+    assert _coincide(torcido, caso, red).startswith("NO")
+    assert "tos" in _coincide(torcido, caso, red)
+
+    sin_signos = dict(bien, signos={"temperatura_c": 38.2})
+    assert _coincide(sin_signos, caso, red).startswith("NO")
+    assert "signos" in _coincide(sin_signos, caso, red)
+
+
+def test_el_resumen_cuenta_el_aviso_por_placa_y_no_por_caso(tmp_path):
+    """El perfil 04 reusa a proposito la primera placa de la banda. Contando casos,
+    esa placa se contaba dos veces y el «8 de 11» era un «7 de 10» mal sumado."""
+    red = {"texto": "CRIBADO — opacidad probable\nEl cribado marca esta placa",
+           "texto_paciente": "", "error": None, "resultado": UN_RESULTADO}
+    misma = _caso(pid="repetida", clase="Lung Opacity")
+    filas = [(misma, {"con_bots": False}, red),
+             (_caso(perfil=PERFILES[3], pid="repetida", clase="Lung Opacity"),
+              {"con_bots": False}, red)]
+    plano = " ".join(resumen(filas, False, tmp_path).split())
+    assert "mensajes con el aviso (positivo y RV < 1) 2" in plano
+    assert "sobre placas DISTINTAS" in plano
+    # La placa lleva opacidad anotada, asi que el aviso NO acierta: 0 de 1, y no
+    # 0 de 2, que seria contar la misma placa dos veces.
+    assert "0 de esas 1 placas" in plano
+
+
+def test_el_resumen_dice_si_los_mensajes_los_leyo_alguien(tmp_path):
+    red = {"texto": "x", "texto_paciente": "", "error": None,
+           "resultado": UN_RESULTADO}
+    plano = " ".join(resumen(
+        [(_caso(), {"con_bots": True, "entrega": "rechazada"}, red)],
+        True, tmp_path).split())
+    assert "mensajes que no leyó nadie" in plano
+    assert "el chat de los updates es inventado" in plano
 
 
 def test_el_corpus_dice_que_el_dicom_esta_fabricado_dentro_del_fichero():
