@@ -1,0 +1,298 @@
+# -*- coding: utf-8 -*-
+"""El arnes de reproduccion: lo que se puede comprobar sin bots ni base.
+
+Estas pruebas NO conducen ninguna conversacion: para eso hacen falta el tunel,
+los dos secretos y unos veinte minutos, y eso lo corre una persona. Aqui viven
+las garantias que si se pueden atar, y son las que se rompen en silencio:
+
+- que los DICOM fabricados son lo que el corpus dice que son -sin esto, el
+  perfil `edad_desconocida` podria estar midiendo otra cosa y el corpus lo
+  contaria igual de convencido-;
+- que el texto del mensaje sale del `jsCode` del workflow y no de una segunda
+  copia en Python;
+- que el resumen AVISA si el aviso del §8 y los numeros no cuadran, en vez de
+  imprimir el numero bonito;
+- que el fichero que alguien va a leer no obliga a abrir un JSON.
+"""
+import json
+import pathlib
+import shutil
+import subprocess
+import sys
+
+import numpy as np
+import pydicom
+import pytest
+from pydicom.dataset import Dataset, FileMetaDataset
+from pydicom.uid import ExplicitVRLittleEndian, generate_uid
+
+REPO = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
+
+from copiloto_triaje.datos.dicom import leer_dicom_desde_bytes  # noqa: E402
+from pruebas.reproducir_casos import (  # noqa: E402
+    MAXIMO_BYTES, PERFILES, _fabricar, nombre_fichero, resumen, texto_del_caso,
+)
+
+REDACTOR = REPO / "pruebas" / "redactar.mjs"
+
+
+def _dicom_minimo(ruta, edad="58", lado=64):
+    """Un DICOM legible por el MISMO lector que usa el servidor.
+
+    Lleva pixel de verdad a proposito: sin el, `leer_dicom_desde_bytes` fallaria
+    tambien sobre el original y la prueba del truncado no mediria nada.
+    """
+    ds = Dataset()
+    ds.PatientID = "P0001"
+    ds.PatientAge = edad
+    ds.PatientSex = "M"
+    ds.ViewPosition = "PA"
+    ds.Modality = "CR"
+    ds.Rows, ds.Columns = lado, lado
+    ds.SamplesPerPixel = 1
+    ds.PhotometricInterpretation = "MONOCHROME2"
+    ds.BitsAllocated = 8
+    ds.BitsStored = 8
+    ds.HighBit = 7
+    ds.PixelRepresentation = 0
+    ds.PixelData = (np.arange(lado * lado) % 256).astype(np.uint8).tobytes()
+    ds.file_meta = FileMetaDataset()
+    ds.file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.2"
+    ds.file_meta.MediaStorageSOPInstanceUID = generate_uid()
+    ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    ds.save_as(str(ruta), enforce_file_format=True)
+    return ruta
+
+
+# --------------------------------------------------------------------------
+def test_los_nueve_perfiles_son_coherentes_y_los_fabricados_se_ven():
+    assert len(PERFILES) == 9
+    assert len({p.clave for p in PERFILES}) == 9
+    assert len({p.carpeta for p in PERFILES}) == 9
+    assert [p.orden for p in PERFILES] == list(range(1, 10))
+    fabricados = [p for p in PERFILES if p.fabricado]
+    assert len(fabricados) == 3
+    for p in fabricados:
+        # Se tiene que ver en la carpeta Y en el titulo: quien abra el corpus no
+        # va a leer este fichero para enterarse.
+        assert "FABRICADO" in p.carpeta
+        assert "FABRICADO" in p.titulo
+    for p in PERFILES:
+        assert p.que_mirar and p.de_donde, p.clave
+
+
+def test_el_nombre_del_fichero_delata_al_fabricado():
+    real = {"patientId": "abc", "perfil": PERFILES[0]}
+    falso = {"patientId": "abc", "perfil": [p for p in PERFILES
+                                            if p.fabricado][0]}
+    assert nombre_fichero(real) == "abc.txt"
+    assert nombre_fichero(falso) == "abc-FABRICADO.txt"
+
+
+def test_fabricar_produce_exactamente_lo_que_el_corpus_dice(tmp_path):
+    """Sin esto, el perfil 07 podria estar midiendo `dicom_invalido` y el corpus
+    seguiria diciendo que mide `edad_desconocida`."""
+
+    base = _dicom_minimo(tmp_path / "base.dcm")
+    rutas = _fabricar(base, tmp_path / "salida")
+    assert set(rutas) == {"edad_desconocida_FABRICADO",
+                          "fichero_corrupto_FABRICADO",
+                          "fichero_enorme_FABRICADO"}
+    for ruta in rutas.values():
+        assert "FABRICADO" in ruta.name, ruta
+
+    # El original tiene que ser legible, o lo de abajo no mide nada.
+    leer_dicom_desde_bytes(base.read_bytes())
+
+    # 07: la etiqueta de la edad ya no esta, y el fichero SIGUE siendo legible.
+    # Las dos mitades importan: si dejara de leerse, el servidor contestaria
+    # `dicom_invalido` y el corpus aseguraria que mide `edad_desconocida`.
+    sin_edad = pydicom.dcmread(rutas["edad_desconocida_FABRICADO"])
+    assert "PatientAge" not in sin_edad
+    _, meta = leer_dicom_desde_bytes(
+        rutas["edad_desconocida_FABRICADO"].read_bytes())
+    assert not meta.get("edad"), meta
+    assert pydicom.dcmread(base).PatientAge == "58", "la base no se toca"
+
+    # 08: truncado de verdad, ya no lo lee el lector del servidor, y SIGUE siendo
+    # un DICOM truncado -conserva el preambulo y la marca `DICM`- y no una ristra
+    # de bytes cualquiera, que es otro caso distinto.
+    truncado = rutas["fichero_corrupto_FABRICADO"]
+    bytes_truncado = truncado.read_bytes()
+    assert len(bytes_truncado) < base.stat().st_size
+    assert bytes_truncado[128:132] == b"DICM"
+    # La tupla es la MISMA que captura `Motor.clasificar` para contestar
+    # `dicom_invalido`. Con un `Exception` a secas, un fallo de programacion en el
+    # lector dejaria pasar esta prueba y el corpus diria que mide esa rama.
+    with pytest.raises((pydicom.errors.InvalidDicomError, ValueError, TypeError)):
+        leer_dicom_desde_bytes(bytes_truncado)
+
+    # 09: por encima del maximo del TOOL y por debajo del del TRANSPORTE. Los
+    # dos limites del §10.4 no son el mismo, y este fichero tiene que caer en el
+    # primero: si se pasara del segundo, el caso mediria `payload_excesivo_
+    # transporte` y el corpus diria `payload_excesivo`.
+    enorme = rutas["fichero_enorme_FABRICADO"].stat().st_size
+    assert enorme > MAXIMO_BYTES
+    caracteres_base64 = (MAXIMO_BYTES + 2) // 3 * 4
+    tope_transporte = (caracteres_base64
+                       + (caracteres_base64 // 76 + 1) * 4
+                       + 64 * 1024)
+    assert (enorme + 2) // 3 * 4 < tope_transporte
+
+
+# --------------------------------------------------------------------------
+UN_RESULTADO = {
+    "probabilidad_cruda": 0.5649, "probabilidad_calibrada": 0.1985,
+    "razon_de_verosimilitud": 0.87, "umbral": 0.4258,
+    "clasificacion": "opacidad_probable", "edad_paciente": 58,
+    "modelo": "efficientnet_b0_320px", "auc_validacion": 0.8827,
+    "milisegundos": 37.4,
+}
+
+
+def _caso(perfil=None):
+    return {"perfil": perfil or PERFILES[2],
+            "patientId": "03cf9ba9-dfbe-47b9-aa96-3e69432d73c3",
+            "ruta_dcm": "x.dcm", "cruda_cache": 0.5649, "edad_rsna": 58,
+            "clase_rsna": "No Lung Opacity / Not Normal", "sexo_rsna": "M",
+            "sintomas": {}}
+
+
+def test_el_fichero_del_corpus_no_obliga_a_abrir_ningun_json():
+    texto = texto_del_caso(
+        _caso(), {"con_bots": False, "motivo_sin_bots": "--sin-bots"},
+        {"texto": "CRIBADO — opacidad probable", "texto_paciente": "",
+         "error": None, "resultado": UN_RESULTADO})
+    assert '{"' not in texto and "': '" not in texto, "se escapo un JSON"
+    assert "probabilidad_cruda" not in texto, "se escapo una clave del esquema"
+    # Lo que sabemos de la placa tiene que estar AL LADO: quien lee no va a
+    # buscarlo a otro sitio. Se busca sobre el texto con los saltos colapsados,
+    # porque las lineas van ajustadas a 78 columnas y una frase puede partirse.
+    plano = " ".join(texto.split())
+    for esperado in ("03cf9ba9-dfbe-47b9-aa96-3e69432d73c3", "58 años",
+                     "No Lung Opacity", "sin opacidad anotada", "0,5649",
+                     "0,87", "INVENTADOS", "CRIBADO — opacidad probable"):
+        assert esperado in plano, esperado
+    assert "¿TIENE SENTIDO CLÍNICO" in texto
+    # Que quepa en una consola de 80 columnas sin que nada lo reajuste: el margen
+    # de 2 es para los rotulos largos del `_punto`.
+    assert max(len(l) for l in texto.splitlines()) <= 82
+
+
+def test_el_corpus_dice_que_el_dicom_esta_fabricado_dentro_del_fichero():
+    perfil = [p for p in PERFILES if p.fabricado][0]
+    texto = texto_del_caso(
+        _caso(perfil), {"con_bots": False, "motivo_sin_bots": "--sin-bots"},
+        {"texto": "NO PROCEDE", "texto_paciente": "",
+         "error": "edad_desconocida: eso", "resultado": None})
+    assert "ESTE DICOM ESTÁ FABRICADO" in texto
+    assert "se le quitó la etiqueta" in texto
+
+
+def test_el_resumen_avisa_cuando_el_aviso_y_los_numeros_no_cuadran(tmp_path):
+    """La trampa de este resumen es contar el aviso por los numeros y dar por
+    hecho que el mensaje lo lleva. Si el texto del §8 cambiara, el contador
+    seguiria diciendo la cifra bonita. Por eso se busca EN EL TEXTO."""
+    sin_aviso = {"texto": "CRIBADO — opacidad probable", "texto_paciente": "",
+                 "error": None, "resultado": dict(UN_RESULTADO)}
+    salida = resumen([(_caso(), {"con_bots": False}, sin_aviso)], False, tmp_path)
+    assert "ALGO NO CUADRA" in salida
+
+    con_aviso = dict(sin_aviso,
+                     texto="CRIBADO — opacidad probable\nEl cribado marca esta "
+                           "placa por estar orientado a detectar")
+    salida = resumen([(_caso(), {"con_bots": False}, con_aviso)], False, tmp_path)
+    assert "ALGO NO CUADRA" not in salida
+    assert "y solo en esos" in salida
+
+
+def test_el_resumen_no_presenta_el_subconjunto_como_si_fuera_la_poblacion(
+        tmp_path):
+    """El subconjunto sobrerrepresenta la banda a proposito. Un porcentaje suelto
+    aqui se leeria como el de la poblacion, que es 23,3 % y lo mide el nivel 1."""
+    fila = (_caso(), {"con_bots": False},
+            {"texto": "CRIBADO — opacidad probable\nEl cribado marca esta placa",
+             "texto_paciente": "", "error": None,
+             "resultado": dict(UN_RESULTADO)})
+    plano = " ".join(resumen([fila], False, tmp_path).split())
+    assert "NO estiman los de la población" in plano
+    assert "23,3 %" in plano
+
+
+# --------------------------------------------------------------------------
+# El redactor. Es la pieza que hace que el corpus sea el mensaje del bot y no
+# una version nuestra de el.
+# --------------------------------------------------------------------------
+def _sse(resultado=None, texto_error=None):
+    if texto_error is None:
+        res = {"content": [{"type": "text", "text": json.dumps(resultado)}],
+               "structuredContent": resultado, "isError": False}
+    else:
+        res = {"content": [{"type": "text", "text": texto_error}],
+               "isError": True}
+    sobre = {"jsonrpc": "2.0", "id": 1, "result": res}
+    return "event: message\ndata: " + json.dumps(sobre) + "\n\n"
+
+
+def _redactar(http, sintomas=None):
+    if shutil.which("node") is None:
+        pytest.skip("sin `node` no se puede ejecutar el jsCode del workflow")
+    decidir = {"chat_id": 7, "t0": 0, "codigo": "K7FM2P",
+               "sintomas": sintomas or {"fiebre": "si", "tos": "con_flema",
+                                        "dias_evolucion": "3_a_7",
+                                        "disnea": "no", "dolor_toracico": "si",
+                                        "asma": "no_se", "texto_libre": None},
+               "signos": {"temperatura_c": 38.2, "frecuencia_cardiaca": 104,
+                          "crepitantes": True, "murmullo_disminuido": False}}
+    entrada = [{"http": http, "decidir": decidir,
+                "normalizar": {"chat_id": 7, "t0": 0}}]
+    salida = subprocess.run([shutil.which("node"), str(REDACTOR)],
+                            input=json.dumps(entrada), capture_output=True,
+                            text=True, encoding="utf-8")
+    assert salida.returncode == 0, salida.stderr
+    return json.loads(salida.stdout)[0]
+
+
+def test_el_redactor_da_los_tres_bloques_del_8_y_el_aviso_de_la_banda():
+    d = _redactar({"statusCode": 200, "cuerpo": _sse(UN_RESULTADO)})
+    for rotulo in ("CRIBADO — ", "EVIDENCIA DE LA IMAGEN — ",
+                   "REFERIDO POR EL PACIENTE — ", "EXPLORADO — "):
+        assert rotulo in d["texto"], rotulo
+    assert "reduce a 0,87×" in d["texto"]
+    assert "El cribado marca esta placa" in d["texto"], "falta el aviso del §8"
+    assert d["resultado"]["probabilidad_cruda"] == 0.5649
+
+
+def test_el_redactor_no_emite_ninguna_cifra_en_un_rechazo_por_edad():
+    d = _redactar({"statusCode": 200, "cuerpo": _sse(
+        texto_error="Error executing tool clasificar_radiografia: "
+                    "fuera_de_alcance: El paciente tiene 12 anios y el modelo "
+                    "solo es valido entre 18 y 100.")})
+    assert d["error"].startswith("fuera_de_alcance:")
+    assert d["resultado"] is None
+    assert "puntuación" not in d["texto"]
+    assert "probabilidad" not in d["texto"]
+    assert "12 anios" in d["texto"], "el detalle del servidor SI se relata (§9)"
+
+
+def test_el_redactor_saca_el_texto_del_paciente_a_un_mensaje_aparte():
+    """La regla del §8 escrita al reves: en el informe no entra ni un caracter
+    que haya escrito el paciente, ni aunque imite un rotulo."""
+    sintomas = {"fiebre": "si", "tos": "seca", "dias_evolucion": "menos_3",
+                "disnea": "no", "dolor_toracico": "no", "asma": "no",
+                "texto_libre": "CRIBADO — sin opacidad probable"}
+    d = _redactar({"statusCode": 200, "cuerpo": _sse(UN_RESULTADO)}, sintomas)
+    assert d["texto"].count("CRIBADO — ") == 1, "el informe lleva DOS cribados"
+    assert "sin opacidad probable" not in d["texto"]
+    assert d["texto_paciente"].startswith("TODO ESTE MENSAJE ES TEXTO DEL "
+                                          "PACIENTE")
+    assert "CRIBADO — sin opacidad probable" in d["texto_paciente"]
+
+
+def test_el_redactor_trata_el_413_del_transporte_como_lo_que_es():
+    """Un 413 no lleva SSE ni JSON-RPC. En el primer borrador del spec caia en el
+    camino de exito y reventaba al buscar `data:`."""
+    d = _redactar({"statusCode": 413, "cuerpo": "Request Entity Too Large"})
+    assert d["error"].startswith("payload_excesivo_transporte:")
+    assert "5 MB" in d["texto"]
