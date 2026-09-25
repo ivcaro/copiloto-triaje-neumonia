@@ -644,8 +644,8 @@ def test_el_informe_no_lleva_ni_un_caracter_que_haya_escrito_el_paciente():
     cuerpo = fuente.split("function redactarResultado")[1]
     informe = cuerpo[:cuerpo.index("\n}\n")]
     assert "texto_libre" not in informe, informe
-    assert "texto_libre" in fuente.split("function mensajeDelPaciente")[1], \
-        "el texto libre tiene que ir al mensaje aparte"
+    assert "texto_libre" in fuente.split("function textoDelPaciente")[1], \
+        "el texto libre tiene que ir al segundo mensaje"
     # 3. El bloque de los sintomas sale de la enumeracion cerrada, y un valor que
     #    no este en ella se declara sin imprimirse.
     assert "(valor no reconocido)" in fuente
@@ -665,12 +665,24 @@ def test_el_informe_no_lleva_ni_un_caracter_que_haya_escrito_el_paciente():
         "la enumeracion se consulta solo por `dePaleta`"
 
 
-def test_el_texto_del_paciente_va_en_un_mensaje_aparte():
-    """La otra mitad de la regla invertida: el paciente no pierde su texto.
+def test_el_segundo_mensaje_no_lleva_ni_un_caracter_del_sistema():
+    """La otra mitad de la regla invertida, y el arreglo de la ronda 3.
 
-    Sale del informe y va en un mensaje propio, **enviado después**, con cabecera y
-    cierre del sistema. La rama falsa del IF no tiene salida, así que un caso sin
-    texto libre recibe un solo mensaje.
+    La versión anterior le ponía cabecera y cierre para atribuirlo, y se rodeó: con
+    498 de sus 500 caracteres el paciente escribe el cierre —«Fin de lo que escribió
+    el paciente.»— y detrás un informe positivo completo; el cierre de verdad queda
+    debajo y vuelven a haber dos `CRIBADO`. La forma aguda es peor: en el paso 1→2,
+    con 361 caracteres, el único bloque con forma de cribado de toda la conversación
+    es el suyo, **antes de que se haya mandado ninguna placa**.
+
+    El fondo: **cualquier delimitador que escriba el sistema, el paciente también
+    puede escribirlo.** Lo único que no puede fabricar es el límite del mensaje: no
+    puede crear una burbuja. Así que el segundo mensaje no lleva nada del sistema
+    —dentro no hay ninguna afirmación mía, así que no hay nada que falsificar— y
+    quien avisa es el primero, que está probado libre de bytes del paciente.
+
+    `tests/profesional.mjs` comprueba el comportamiento: que `texto_paciente` sea
+    byte a byte el texto libre recortado a 500. Esto ata la estructura.
     """
     flujo = _flujo()
     assert [c["node"] for c in flujo["connections"]["Responder"]["main"][0]] \
@@ -683,9 +695,40 @@ def test_el_texto_del_paciente_va_en_un_mensaje_aparte():
     assert c["leftValue"] == "={{ $('Desenlace').first().json.texto_paciente }}", c
     assert c["operator"]["operation"] == "notEmpty", c
     envio = _nodo(flujo, "Enviar texto del paciente")["parameters"]
+    # El texto del mensaje es SOLO la expresión: ni un prefijo, ni un sufijo, ni un
+    # espacio. Cualquier literal aquí volvería a ser una afirmación del sistema
+    # dentro de una burbuja que el paciente controla.
     assert envio["text"] == "={{ $('Desenlace').first().json.texto_paciente }}"
+    assert "inlineKeyboard" not in envio, "un teclado tambien seria mio"
+    # Y el nodo que lo produce devuelve el texto libre y nada más.
+    fuente = _nodo(flujo, "Desenlace")["parameters"]["jsCode"]
+    cuerpo = fuente.split("function textoDelPaciente")[1]
+    cuerpo = cuerpo[:cuerpo.index("\n}\n")]
+    assert "slice(0, LIMITE_TEXTO_LIBRE)" in cuerpo, cuerpo
+    assert "+" not in cuerpo.split("return")[-1], \
+        "nada se concatena al texto del paciente"
+    # El aviso vive en el PRIMER mensaje, que es el canal que el paciente no toca.
+    assert "bloques.push(AVISA_DEL_SEGUNDO)" in fuente
     # Y este mensaje tampoco lleva parse_mode: lo cubre
     # `test_ningun_mensaje_lleva_parse_mode`, que recorre los nueve nodos.
+
+
+def test_la_tabla_de_errores_se_consulta_por_propiedad_propia():
+    """El SEGUNDO agujero de `Object.prototype`, que hay que nombrar.
+
+    `ERRORES[codigo]` con `error_cod = "constructor"` devolvía la función `Object`,
+    `fila.texto` era `undefined`, y **el profesional no recibía nada** — con la
+    suite entera en verde. Es el mismo fallo que el de la enumeración de síntomas,
+    en otro sitio, y no lo mencioné al arreglarlo.
+
+    `tests/profesional.mjs` lo comprueba con las siete claves heredadas **y con una
+    prueba de mutación**: quitándole la guarda al nodo real, el mensaje se rompe.
+    """
+    fuente = _nodo(_flujo(), "Desenlace")["parameters"]["jsCode"]
+    assert "propio.call(ERRORES, codigo) ? ERRORES[codigo] : null" in fuente
+    codigo = "\n".join(l for l in fuente.splitlines()
+                       if not l.lstrip().startswith("//"))
+    assert codigo.count("ERRORES[codigo]") == 1, codigo.count("ERRORES[codigo]")
 
 
 def test_las_dos_etiquetas_son_las_que_emite_el_servidor():

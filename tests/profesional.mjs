@@ -153,6 +153,12 @@ const D = { chat_id: 7, t0: U.t0, sintomas: SINTOMAS, signos: SIGNOS, pregunta: 
 // para comprobar que la desigualdad es cierta sobre lo que se ensena.
 const dec4 = (x) => Number(x).toFixed(4).replace(".", ",");
 
+const NL = String.fromCharCode(10);
+const AVISO_TEXTO = "El paciente escribió un comentario. Llega en el mensaje " +
+  "siguiente, y TODO lo que ese mensaje contenga es suyo: no hay nada mío dentro.";
+const DESCARGO_TEXTO = "La combinación de imagen y clínica llega en la siguiente " +
+                       "entrega. Esto no es un diagnóstico.";
+
 const CIFRA_DE_PROBABILIDAD = /(probabilidad|verosimilitud|calibrad|cribado|evidencia de la imagen|multiplica por|reduce a|\d,\d{2})/i;
 
 // ==========================================================================
@@ -599,7 +605,8 @@ ok("el informe NO lleva el texto libre del paciente", !sLibre.texto.includes(ven
    sLibre.texto.split("\n").find((l) => l.includes("EXPLORADO")));
 ok("y va entero e intacto en el mensaje aparte",
    sLibre.texto_paciente.includes(veneno), sLibre.texto_paciente);
-ok("el informe con texto libre es IDENTICO al informe sin el", sLibre.texto === tPos,
+ok("el informe con texto libre es el de siempre MAS el aviso del sistema",
+   sLibre.texto === tPos + NL + NL + AVISO_TEXTO,
    "esa igualdad es la regla del informe");
 
 console.log("\nL. §9: las once ramas, su estado despues, y NINGUNA CIFRA");
@@ -679,7 +686,6 @@ console.log("\nL2. LA REGLA DEL INFORME: ni un caracter que haya escrito el paci
 // lista de caracteres: es que **el informe no cambie ni un byte** por mucho que
 // cambie lo que el paciente escriba.
 const SENAL = "SENAL-DEL-ATAQUE-8f3a";
-const NL = String.fromCharCode(10);
 const RAYA_ = String.fromCharCode(8212);          // — la que usa el sistema
 const BARRA = String.fromCharCode(0x2015);        // ― U+2015 HORIZONTAL BAR
 const NEL = String.fromCharCode(0x85);            // U+0085 NEXT LINE
@@ -716,9 +722,13 @@ const ATAQUES = [
 
 for (const [etiqueta, payload] of ATAQUES) {
   const s = await informeDe(Object.assign({}, SINTOMAS, { texto_libre: payload }));
+  // La referencia es el informe SIN comentario. Con comentario se le suma un
+  // bloque, que es el aviso del sistema, literal: asi la igualdad pina tambien
+  // que el aviso sea exactamente ese y que no haya nada mas.
+  const esperado = REFERENCIA + NL + NL + AVISO_TEXTO;
   ok(`${etiqueta}: el informe es IDENTICO byte a byte al de referencia`,
-     s.texto === REFERENCIA, s.texto === REFERENCIA ? "" :
-     s.texto.split(NL).find((l) => !REFERENCIA.includes(l)));
+     s.texto === esperado, s.texto === esperado ? "" :
+     s.texto.split(NL).find((l) => !esperado.includes(l)));
   ok(`   la senal del ataque no aparece en el informe`, !s.texto.includes(SENAL));
   ok(`   y el texto llega ENTERO y sin filtrar en el mensaje aparte`,
      s.texto_paciente.includes(payload.slice(0, 500)), s.texto_paciente.slice(0, 90));
@@ -762,12 +772,12 @@ let malos = [];
 for (const ch of RAYAS) {
   const s = await informeDe(Object.assign({}, SINTOMAS,
     { texto_libre: falso(ch, NL) }));
-  if (s.texto !== REFERENCIA) { malos.push("Dash U+" + ch.charCodeAt(0).toString(16)); }
+  if (s.texto !== REFERENCIA + NL + NL + AVISO_TEXTO) { malos.push("Dash U+" + ch.charCodeAt(0).toString(16)); }
 }
 for (const ch of ESPACIOS) {
   const s = await informeDe(Object.assign({}, SINTOMAS,
     { texto_libre: falso(RAYA_, ch) }));
-  if (s.texto !== REFERENCIA) { malos.push("Espacio U+" + ch.charCodeAt(0).toString(16)); }
+  if (s.texto !== REFERENCIA + NL + NL + AVISO_TEXTO) { malos.push("Espacio U+" + ch.charCodeAt(0).toString(16)); }
 }
 ok(`ninguno de los ${RAYAS.length + ESPACIOS.length} caracteres cambia el informe`,
    malos.length === 0, malos.slice(0, 8).join(" "));
@@ -792,10 +802,12 @@ for (const [etiqueta, valor] of [
      s.texto.split(NL).find((l) => l.includes("REFERIDO")));
   ok(`   nada de Object.prototype se cuela en el informe`,
      !/native code|function Object/.test(s.texto), s.texto.slice(0, 60));
-  ok(`   y el valor de verdad NO se pierde: va al mensaje aparte`,
-     s.texto_paciente.includes(valor) &&
-     s.texto_paciente.includes("Respuesta a «fiebre» que no reconozco"),
-     s.texto_paciente.slice(0, 120));
+  // El valor crudo NO se ensena en ningun mensaje: rotularlo en el segundo seria
+  // volver a meter una afirmacion del sistema en una burbuja que el paciente
+  // controla. Queda en `cuestionarios.respuestas` y en `consultas.sintomas`.
+  ok(`   y su contenido no aparece en NINGUNO de los dos mensajes`,
+     !s.texto.includes(valor) && !s.texto_paciente.includes(valor),
+     JSON.stringify(s.texto_paciente));
   ok(`   los otros cinco sintomas siguen saliendo bien`,
      s.texto.includes("tos con flema, 3 a 7 días"), s.texto.split(NL)[5]);
 }
@@ -808,46 +820,93 @@ ok("un valor que SI esta en la enumeracion sale con su frase",
    (await informeDe(Object.assign({}, SIN_LIBRE, { fiebre: "no_se" })))
      .texto.includes("fiebre: no sabe"));
 ok("un valor que no es cadena tampoco se imprime", await (async () => {
-  const s = await informeDe(Object.assign({}, SIN_LIBRE, { fiebre: 42 }));
+  // 987654321 y no 42: el 42 aparece dentro del umbral 0,4258 y la comprobacion
+  // pasaria por casualidad.
+  const s = await informeDe(Object.assign({}, SIN_LIBRE, { fiebre: 987654321 }));
   return s.texto.includes("fiebre: (valor no reconocido)") &&
-         s.texto_paciente.includes("42");
+         !s.texto.includes("987654321") && s.texto_paciente === "";
 })());
 
-console.log("\nL4. el mensaje aparte: cabecera, cierre, y quien escribio que");
-const sAp = await informeDe(Object.assign({}, SINTOMAS,
-  { texto_libre: falso(BARRA, NEL) }));
-ok("empieza por la cabecera del sistema",
-   sAp.texto_paciente.startsWith("LO QUE ESCRIBIÓ EL PACIENTE, TAL CUAL"),
-   sAp.texto_paciente.split(NL)[0]);
-ok("la cabecera lleva el caso", sAp.texto_paciente.includes("(caso K7FM2P)"));
-ok("dice que el informe es el mensaje anterior",
-   sAp.texto_paciente.includes("No forma parte del informe clínico, que es el " +
-                               "mensaje anterior."));
-ok("y termina con el cierre del sistema",
-   sAp.texto_paciente.endsWith("Fin de lo que escribió el paciente."),
-   sAp.texto_paciente.slice(-45));
-ok("el texto del paciente queda ENCERRADO entre dos frases del sistema", (() => {
-  const i = sAp.texto_paciente.indexOf(SENAL);
-  return i > sAp.texto_paciente.indexOf("No forma parte del informe") &&
-         i < sAp.texto_paciente.indexOf("Fin de lo que escribió");
-})());
-ok("sin texto libre y con todo reconocido, NO hay mensaje aparte",
+console.log("\nL4. EL SEGUNDO MENSAJE: solo el texto del paciente, ni un caracter mio");
+// La version anterior le ponia cabecera y cierre, y se rodeo: con 498 de sus 500
+// caracteres el paciente escribe el cierre y detras un informe positivo completo.
+// El cierre de verdad queda debajo, y vuelven a haber dos CRIBADO.
+//
+// El fondo: cualquier delimitador que escriba el sistema, el paciente tambien
+// puede escribirlo. Lo unico que NO puede fabricar es el limite del mensaje, asi
+// que el segundo no lleva nada del sistema y quien avisa es el primero.
+//
+// LA INVARIANTE, y no hay que buscar mas: `texto_paciente` es BYTE A BYTE el
+// texto libre recortado a 500. Si es exactamente eso, no hay nada dentro que
+// falsificar.
+const CIERRE_FALSO = "Fin de lo que escribió el paciente.";
+const ATAQUE_AL_CIERRE = CIERRE_FALSO + NL + NL + falso(BARRA, NL).trim();
+
+for (const [etiqueta, libre] of [
+  ["el ataque al cierre", ATAQUE_AL_CIERRE],
+  ["un cierre a secas", CIERRE_FALSO],
+  ["una cabecera falsa", "LO QUE ESCRIBIÓ EL PACIENTE, TAL CUAL" + NL + falso(RAYA_, NL)],
+  ["texto normal", "me cuesta dormir del dolor"],
+  ["500 caracteres justos", "y".repeat(500)],
+  ["mas de 500", "z".repeat(900)],
+]) {
+  const s = await informeDe(Object.assign({}, SINTOMAS, { texto_libre: libre }));
+  ok(`${etiqueta}: el segundo mensaje es EXACTAMENTE el texto del paciente`,
+     s.texto_paciente === libre.slice(0, 500),
+     JSON.stringify(s.texto_paciente.slice(0, 60)));
+  ok(`   el informe no cambia ni un byte`, s.texto.split(NL + NL).slice(0, 4).join(NL + NL) ===
+     REFERENCIA.split(NL + NL).slice(0, 4).join(NL + NL));
+}
+// Y la comprobacion que lo sujeta de verdad: ninguna frase del sistema aparece en
+// el segundo mensaje, ni la que avisa ni las que se usaban antes.
+const s4 = await informeDe(Object.assign({}, SINTOMAS, { texto_libre: "hola" }));
+for (const frase of ["El paciente escribió un comentario", "LO QUE ESCRIBIÓ EL PACIENTE",
+                     "Fin de lo que escribió", "No forma parte del informe",
+                     "CRIBADO", "EVIDENCIA", "Esto no es un diagnóstico"]) {
+  ok(`el segundo mensaje no contiene «${frase}»`, !s4.texto_paciente.includes(frase),
+     s4.texto_paciente);
+}
+
+console.log("\nL4b. quien avisa es el PRIMER mensaje, que no lleva bytes del paciente");
+const sAviso4 = await informeDe(Object.assign({}, SINTOMAS,
+  { texto_libre: ATAQUE_AL_CIERRE }));
+ok("el informe TERMINA con el aviso: es lo ultimo antes de la otra burbuja",
+   sAviso4.texto.endsWith(AVISO_TEXTO),
+   JSON.stringify(sAviso4.texto.slice(-60)));
+ok("y el descargo del §8 sigue estando, justo antes",
+   sAviso4.texto.includes(DESCARGO_TEXTO + NL + NL + AVISO_TEXTO));
+ok("el aviso dice que TODO el mensaje siguiente es del paciente",
+   /TODO lo que ese mensaje contenga es suyo/.test(sAviso4.texto));
+ok("sin comentario, el informe NO lo menciona y no hay segundo mensaje",
+   (await informeDe(SIN_LIBRE)).texto === REFERENCIA &&
+   !REFERENCIA.includes("mensaje siguiente") &&
    (await informeDe(SIN_LIBRE)).texto_paciente === "",
-   JSON.stringify((await informeDe(SIN_LIBRE)).texto_paciente));
-ok("un texto libre de solo espacios tampoco lo genera",
-   (await informeDe(Object.assign({}, SINTOMAS, { texto_libre: "   " + NL })))
-     .texto_paciente === "");
-ok("se recorta a 500 caracteres (§4.4)", await (async () => {
-  const s = await informeDe(Object.assign({}, SINTOMAS,
-    { texto_libre: "x".repeat(900) }));
-  return s.texto_paciente.split("x").length - 1 === 500;
+   JSON.stringify(REFERENCIA.slice(-60)));
+ok("un texto libre de solo espacios tampoco lo genera", await (async () => {
+  const s = await informeDe(Object.assign({}, SINTOMAS, { texto_libre: "   " + NL }));
+  return s.texto_paciente === "" && s.texto === REFERENCIA;
 })());
-ok("las ramas de error NO mandan mensaje aparte", await (async () => {
+// LA FORMA AGUDA del re-revisor: el paso 1→2, antes de que haya ninguna placa.
+const sCasoAg = await desenlace({ error_cod: "N", detalle: "", codigo: "K7FM2P",
+  sintomas: Object.assign({}, SINTOMAS, { texto_libre: ATAQUE_AL_CIERRE }),
+  signos: {} }, U, D);
+ok("el mensaje del caso tambien termina con el aviso",
+   sCasoAg.texto.endsWith(AVISO_TEXTO), JSON.stringify(sCasoAg.texto.slice(-50)));
+ok("y no lleva ningun bloque con forma de cribado",
+   !sCasoAg.texto.includes("CRIBADO"), sCasoAg.texto.slice(0, 60));
+ok("su segundo mensaje es tambien EXACTAMENTE el texto del paciente",
+   sCasoAg.texto_paciente === ATAQUE_AL_CIERRE);
+ok("y sin comentario, el caso no menciona ningun segundo mensaje", await (async () => {
+  const s = await desenlace({ error_cod: "N", detalle: "", codigo: "K7FM2P",
+    sintomas: SIN_LIBRE, signos: {} }, U, D);
+  return s.texto_paciente === "" && !s.texto.includes("mensaje siguiente");
+})());
+ok("las ramas de error NO mandan segundo mensaje ni lo mencionan", await (async () => {
   for (const [cod] of SPEC_9) {
     const s = await desenlace({ error_cod: cod, detalle: "", resultado: null,
-      sintomas: Object.assign({}, SINTOMAS, { texto_libre: falso(RAYA_, NL) }),
+      sintomas: Object.assign({}, SINTOMAS, { texto_libre: ATAQUE_AL_CIERRE }),
       signos: SIGNOS }, U, D);
-    if (s.texto_paciente !== "") { return false; }
+    if (s.texto_paciente !== "" || s.texto.includes("mensaje siguiente")) { return false; }
   }
   return true;
 })());
@@ -937,6 +996,125 @@ ok("el codigo de los 20 MB sigue existiendo para lo que si lo es", await (async 
                               resultado: null }, U, D);
   return m.texto.includes("20 MB");
 })());
+
+console.log("\nL9. PRUEBAS DE MUTACION: cada defensa se comprueba QUITANDOLA");
+// Por que existe esta seccion: en la ronda anterior presente ocho comprobaciones
+// como prueba de la defensa contra `Object.prototype`, y no la sujetaban. Quitar
+// solo `propio.call` dejaba el arnes verde, y quitar solo `typeof s === 'string'`
+// dejaba TODO verde. Una prueba que sigue pasando cuando quitas media defensa no
+// prueba esa mitad.
+//
+// La unica forma honesta de afirmar que una linea hace falta es quitarla y ver que
+// algo se rompe. Aqui se le quita al codigo REAL del nodo, se ejecuta el mutante, y
+// se exige que el resultado sea DISTINTO. Si alguien borra esa linea del nodo, la
+// mutacion deja de aplicar y la prueba falla por otro sitio: `mutar` revienta si el
+// texto que va a quitar ya no esta.
+function mutar(nombre, quitar, poner = "") {
+  const src = codigo(nombre);
+  if (!src.includes(quitar)) {
+    throw new Error(`la mutacion ya no aplica a «${nombre}»: ${quitar}`);
+  }
+  return src.split(quitar).join(poner);
+}
+async function correrMutado(nombre, quitar, entrada, nodos, poner = "") {
+  return (await correr(mutar(nombre, quitar, poner), { json: entrada }, nodos))[0].json;
+}
+
+// --- 1. dePaleta, sus tres lineas, una por una y en aislamiento ---------------
+// Se extrae la funcion REAL del nodo y se le pasan tablas que yo controlo. Con la
+// tabla del §4.4 -que solo tiene cadenas- dos de las tres lineas no se pueden
+// distinguir; con tablas propias, si.
+function extraerDePaleta(fuente) {
+  const i = fuente.indexOf("const propio = Object.prototype.hasOwnProperty;");
+  const j = fuente.indexOf("\n}\n", fuente.indexOf("function dePaleta")) + 3;
+  if (i < 0 || j < 3) { throw new Error("no encuentro dePaleta"); }
+  return new Function(fuente.slice(i, j) + "\nreturn dePaleta;")();
+}
+const LINEAS = {
+  "typeof v": "  if (typeof v !== 'string') { return null; }\n",
+  "propio.call": "  if (!propio.call(tabla, v)) { return null; }\n",
+  "typeof s": "  return typeof s === 'string' ? s : null;\n",
+};
+const CASOS_PALETA = [
+  ["typeof v", "una clave que no es cadena y se coaccionaria a una que si existe",
+   {si: "fiebre sí"}, ["si"]],
+  // Con `{si:...}` y la clave `constructor`, quitar `propio.call` lo pararia la
+  // linea de `typeof s` -el constructor es una funcion, no una cadena-, asi que
+  // las dos no se distinguirian. Con una tabla cuyo PROTOTIPO tiene una cadena, la
+  // unica linea que lo para es `propio.call`.
+  ["propio.call", "un valor heredado del prototipo que SI es una cadena",
+   Object.create({si: "frase heredada"}), "si"],
+  ["typeof s", "un valor de la tabla que no es una frase",
+   {si: 42}, "si"],
+];
+const fuenteDesen = codigo("Desenlace");
+const dePaletaReal = extraerDePaleta(fuenteDesen);
+for (const [linea, que, tabla, clave] of CASOS_PALETA) {
+  ok(`dePaleta rechaza ${que}`, dePaletaReal(tabla, clave) === null,
+     JSON.stringify(dePaletaReal(tabla, clave)));
+  // Y la mutacion: sin esa linea, el mismo caso NO se rechaza.
+  let mutada;
+  if (linea === "typeof s") {
+    // Quitar el `return` entero dejaria la funcion sin valor: se sustituye por la
+    // version sin comprobar el tipo, que es la mutacion que interesa.
+    mutada = extraerDePaleta(fuenteDesen.split(LINEAS["typeof s"])
+      .join("  return s;\n"));
+  } else {
+    mutada = extraerDePaleta(fuenteDesen.split(LINEAS[linea]).join(""));
+  }
+  const r = mutada(tabla, clave);
+  ok(`   y sin «${linea}» dejaria pasar ${JSON.stringify(String(r)).slice(0, 40)}`,
+     r !== null, "la mutacion tiene que cambiar el resultado");
+}
+
+// --- 2. ERRORES[codigo], el segundo agujero de Object.prototype --------------
+// Reabierto, un `error_cod` de «constructor» dejaba `fila.texto` en undefined y el
+// profesional NO RECIBIA NADA, con la suite entera en verde.
+const GUARDA_ERRORES = "propio.call(ERRORES, codigo) ? ERRORES[codigo] : null";
+for (const heredada of ["constructor", "__proto__", "toString", "valueOf",
+                        "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable"]) {
+  const s = await desenlace({ error_cod: heredada, detalle: "", resultado: null },
+                            U, D);
+  ok(`error_cod = «${heredada}»: el profesional recibe un mensaje de verdad`,
+     typeof s.texto === "string" && s.texto.length > 20 &&
+     s.texto === "El servicio devolvió un error que no sé interpretar. Se ha registrado.",
+     JSON.stringify(s.texto));
+  ok(`   y queda registrado como error_no_reconocido`,
+     descodificar(s.error_cod).startsWith("error_no_reconocido: " + heredada),
+     descodificar(s.error_cod));
+}
+ok("sin la guarda de ERRORES, «constructor» dejaria al profesional sin mensaje",
+   await (async () => {
+     const s = await correrMutado("Desenlace",
+       GUARDA_ERRORES, { error_cod: "constructor", detalle: "", resultado: null },
+       { "Normalizar update": U, Decidir: D }, "ERRORES[codigo]");
+     // El mutante coge la fila de Object.prototype: `fila` es la funcion Object,
+     // `fila.texto` es undefined, y el mensaje sale vacio o con «undefined».
+     return typeof s.texto !== "string" || s.texto === "" ||
+            s.texto.includes("undefined");
+   })(), "la mutacion tiene que romper el mensaje");
+
+// --- 3. `crudo`, que se perdia con todo en verde -----------------------------
+// La linea del servidor tiene que llegar a consultas.error en la rama SIN codigo,
+// que es donde `detalle` ya es un texto fabricado.
+const TRUNCADO_M = "Error executing tool clasificar_radiografia";
+const MUTA_CRUDO = "crudo: crudo || detalle || ''";
+async function errorRegistrado(fuenteLeer) {
+  const leido = (await correr(fuenteLeer, { json: http200(sseError(TRUNCADO_M)) },
+                              { Decidir: dResp }))[0].json;
+  const s = await desenlace(leido, U, D);
+  return descodificar(s.error_cod);
+}
+const registradoOk = await errorRegistrado(codigo("Leer respuesta"));
+ok("la linea del servidor llega a consultas.error en la rama sin codigo",
+   registradoOk.startsWith("dicom_invalido: ") && registradoOk.includes(TRUNCADO_M),
+   registradoOk);
+ok("y sin propagar `crudo` se perderia (que es el hallazgo, otra vez)",
+   await (async () => {
+     const r = await errorRegistrado(
+       mutar("Leer respuesta", MUTA_CRUDO, "crudo: ''"));
+     return !r.includes(TRUNCADO_M);
+   })(), "la mutacion tiene que perder la linea del servidor");
 
 console.log("\nM. el mensaje del caso: se ensena, pero NO nace fila en consultas");
 const sCaso = await desenlace({ error_cod: "N", detalle: "", codigo: "K7FM2P",
