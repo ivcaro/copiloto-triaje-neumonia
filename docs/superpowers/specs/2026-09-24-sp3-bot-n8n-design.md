@@ -467,6 +467,49 @@ evidencia lo dice de forma explícita:
 > ⚠️ El cribado marca esta placa por estar orientado a detectar, pero la imagen
 > en sí no apoya el diagnóstico. Decide la clínica.
 
+### El aviso es asimétrico a propósito
+
+El resultado **negativo** lleva una línea que el positivo no lleva:
+
+> *Un resultado negativo no descarta neumonía. Decide usted.*
+
+La asimetría parece un descuido y no lo es. **Marcar de más y marcar de menos
+no hacen el mismo daño.** Si el cribado marca una placa sana, el profesional la
+mira, no ve nada y sigue: cuesta tiempo. Si el cribado **no** marca una
+neumonía, puede cerrar el estudio ahí — y ese es el daño de verdad. El aviso va
+donde está el daño.
+
+Salió de leer el corpus de §13.1, no de razonar: hay un caso real —mujer de 28
+años, RSNA anotó `Lung Opacity`— donde el cribado y la evidencia **coinciden y
+los dos se equivocan**. El clínico lee «sin opacidad probable» y «reduce a
+0,04× las probabilidades», y leído solo, tranquiliza. Ningún aviso automático
+puede existir ahí: el sistema no tiene forma de saber que está fallando. Lo
+único honesto es decir que un negativo no descarta.
+
+**Y la línea no lleva cifra, deliberadamente.** Las que se podrían poner son
+ciertas y engañosas a la vez:
+
+| La pregunta | La cifra |
+| :--- | ---: |
+| De los que tienen neumonía, ¿a cuántos se les escapa? | 1 de cada 8,4 |
+| El bot dice negativo, ¿qué probabilidad hay de que la tenga? | 1 de cada 22 |
+| El bot dice positivo, ¿cuántos la tienen? | menos de la mitad |
+
+Las tres suponen una población con la prevalencia del conjunto de validación
+(22,15 %), y en una consulta real es otra. Un número que parece preciso y no lo
+es sería el mismo error que el §8 existe para evitar.
+
+**Por eso el positivo no lleva nada.** El «menos de la mitad» describe lo que
+pasaría si alguien aplicara la **etiqueta** a ciegas a esa población, y nadie
+hace eso: el profesional ya tiene una sospecha antes de mirar la placa. Lo que
+el sistema entrega de verdad es la razón de verosimilitud, y con ella los
+números son otros — una placa clara (RV 19,2) sobre un paciente que el médico
+sospecha al 50 % sale al **95 %**. Leer «más de la mitad se equivocan» junto a
+ese resultado le restaría crédito a algo que lo merece.
+
+Eso es justo lo que H6 va a formalizar: la RV multiplica el previo del
+**paciente concreto**, no la prevalencia de un dataset.
+
 **Cuando la etiqueta es negativa** se usan los mismos tres bloques con
 "sin opacidad probable" y la RV correspondiente. La plantilla es una sola; solo
 cambian los valores y el aviso.
