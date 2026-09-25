@@ -613,10 +613,24 @@ porque la comprobación es por mensaje (§7).
 
 ## 12. Secretos
 
+Las credenciales existen ya en n8n, creadas el 24-sep-2026, y **ninguna la usa
+ningún workflow** — comprobado con `usageCount: 0`, que es lo que garantiza que
+no le robamos el webhook a un bot del cliente (D9):
+
+| Rol | Credencial en n8n | id |
+| :--- | :--- | :--- |
+| Paciente | `[retirado]` | `[retirado]` |
+| Profesional | `[retirado]` | `[retirado]` |
+| Pruebas | `[retirado]` | `[retirado]` |
+
+Las del cliente que **no se tocan**: `[retirado]` (5 workflows) y
+`Telegram account` (2). Existe además una credencial `[retirado]` sin uso,
+anterior a `[retirado]` y hoy redundante.
+
 | Secreto | Dónde vive | Si se filtra |
 | :--- | :--- | :--- |
-| Token del bot del paciente | credencial de n8n | revocar en BotFather, crear otro, actualizar la credencial |
-| Token del bot del profesional | credencial de n8n | igual |
+| Token del bot del paciente | credencial `[retirado]` | revocar en BotFather, crear otro, actualizar la credencial |
+| Token del bot del profesional | credencial `[retirado]` | igual |
 | `secret_token` del webhook (§4.2) | credencial de n8n | rotarlo y volver a llamar a `setWebhook` |
 | Contraseña de `copiloto-bd` | variable de entorno del compose, en un `.env` del VPS | rotar y recrear el contenedor |
 | Contraseña del dashboard | credencial de n8n | rotar |
