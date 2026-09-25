@@ -172,3 +172,52 @@ def test_el_modelo_queda_en_modo_evaluacion(motor):
     """EfficientNet-B0 lleva Dropout en la cabeza: en modo entrenamiento, la
     misma radiografia daria una probabilidad distinta en cada llamada."""
     assert motor.modelo.training is False
+
+
+def test_los_mensajes_que_lee_un_clinico_estan_bien_escritos():
+    """Los detalles de `ErrorDeInferencia` los lee una persona, no un programa.
+
+    Esta prueba existe porque NADA los fijaba y derivaron: durante semanas el
+    servidor dijo «El paciente tiene 12 anios y el modelo solo es valido...»,
+    sin tildes, y el bot lo relataba tal cual al profesional -pegado a un
+    parrafo que si las llevaba-. Lo encontro una persona leyendo el corpus de
+    la tarea 8, no una prueba.
+
+    El codigo de este proyecto va sin tildes a proposito: los identificadores y
+    los comentarios son para programadores. Los mensajes NO: son la voz del
+    sistema ante un clinico, y un sistema que escribe mal le resta credibilidad
+    a lo que dice -y aqui lo que dice es «esto no es un diagnostico, decide
+    usted»-.
+    """
+    import pathlib
+    import re
+
+    raiz = pathlib.Path(__file__).resolve().parents[1] / "src" / "copiloto_triaje"
+    fuentes = [raiz / "servicio" / "inferencia.py",
+               raiz / "servicio" / "aplicacion.py"]
+
+    # Palabras que en espanol llevan tilde y aparecen a menudo sin ella.
+    SIN_TILDE = ("anios", "valido", "codigo", "numero", "maximo", "minimo",
+                 "diagnostico", "analisis", "radiografia", "informacion",
+                 "despues", "tambien", "aqui", "esta.", "mas ")
+    # Formas de tuteo: el sistema trata de usted.
+    TUTEO = (" pide ", " manda ", " envia ", " comprueba ", " revisa ",
+             " vuelve a ", " intenta ")
+
+    # Solo los textos de los errores: `raise ErrorDeInferencia(codigo, detalle)`.
+    LLAMADA = re.compile(
+        r'ErrorDeInferencia\(\s*\n?\s*"[a-z_]+",\s*\n?((?:\s*f?"[^"]*"\s*\n?)+)\)')
+
+    mensajes = []
+    for f in fuentes:
+        for bloque in LLAMADA.findall(f.read_text(encoding="utf-8")):
+            mensajes.append((f.name, " ".join(re.findall(r'"([^"]*)"', bloque))))
+
+    assert mensajes, "no se encontro ningun ErrorDeInferencia: cambio la forma"
+
+    for fichero, texto in mensajes:
+        bajo = " " + texto.lower() + " "
+        malas = [p for p in SIN_TILDE if p in bajo]
+        assert not malas, f"{fichero}: sin tilde {malas} en «{texto}»"
+        tuteo = [p for p in TUTEO if p in bajo]
+        assert not tuteo, f"{fichero}: tuteo {tuteo} en «{texto}»"

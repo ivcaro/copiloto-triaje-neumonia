@@ -1015,7 +1015,7 @@ Comprobado en el contenedor con una placa de un paciente de 12 años; las dos
 puertas dicen lo mismo:
 
 ```
-REST: (422, {'codigo': 'fuera_de_alcance', 'detalle': 'El paciente tiene 12 anios y el modelo solo es valido entre 18 y 100.'})
+REST: (422, {'codigo': 'fuera_de_alcance', 'detalle': 'El paciente tiene 12 años y el modelo solo es válido entre 18 y 100.'})
 MCP : {"result":{"content":[{"text":"Error executing tool clasificar_radiografia: fuera_de_alcance: El paciente tiene 12 anios ...","type":"text"}],"isError":true}}
 ```
 

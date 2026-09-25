@@ -417,6 +417,22 @@ class Bots:
         self.ruta_profesional = ruta_profesional
         self.contador = 0
 
+    def _alcanza_el_chat(self, chat):
+        """Si el bot del profesional puede escribirle a `chat`. (ok, detalle)."""
+        pet = urllib.request.Request(
+            f"https://api.telegram.org/bot{self.token}/getChat?chat_id={chat}")
+        try:
+            with urllib.request.urlopen(pet, timeout=30) as r:
+                if json.loads(r.read().decode()).get("ok"):
+                    return True, ""
+                return False, "Telegram contesto sin `ok`"
+        except urllib.error.HTTPError as e:
+            return False, (f"HTTP {e.code}: "
+                           + e.read().decode("utf-8", "replace")[:160])
+        except Exception as exc:
+            raise SystemExit(f"no se alcanza la API de Telegram: "
+                             f"{type(exc).__name__}: {exc}")
+
     def comprobar_el_chat_de_subida(self):
         """Que el bot del profesional pueda escribir en el chat de subida.
 
@@ -425,26 +441,34 @@ class Bots:
         `chat not found`. Sin esta comprobacion, eso se descubre a los veinte
         segundos del primer caso y en forma de traza.
         """
-        pet = urllib.request.Request(
-            f"https://api.telegram.org/bot{self.token}/getChat"
-            f"?chat_id={self.subida}")
-        try:
-            with urllib.request.urlopen(pet, timeout=30) as r:
-                if json.loads(r.read().decode()).get("ok"):
-                    return
-        except urllib.error.HTTPError as e:
-            detalle = e.read().decode("utf-8", "replace")[:200]
+        ok, detalle = self._alcanza_el_chat(self.subida)
+        if not ok:
             raise SystemExit(
                 f"el bot del profesional no puede usar el chat {self.subida} "
-                f"para subir las placas (HTTP {e.code}: {detalle}).\n"
+                f"para subir las placas ({detalle}).\n"
                 f"Tiene que ser un chat REAL que ya le haya escrito al bot: un "
                 f"`file_id` solo existe si alguien subio el fichero, y un bot no "
                 f"puede escribir primero. Pon uno en CHAT_SUBIDA_PLACAS.")
-        except Exception as exc:
-            raise SystemExit(f"no se alcanza la API de Telegram: "
-                             f"{type(exc).__name__}: {exc}")
-        raise SystemExit(f"Telegram no reconoce el chat {self.subida}. Pon un "
-                         f"chat real en CHAT_SUBIDA_PLACAS.")
+
+    def comprobar_si_el_bot_puede_contestar(self):
+        """Si el bot podra ENTREGAR sus mensajes al chat de los updates.
+
+        No es una comodidad, es la honestidad del corpus. Con un `chat_id`
+        inventado -que es el valor por defecto, y a proposito- el nodo `Responder`
+        se lleva un 400 `chat not found`: la fila de `consultas` se escribe igual
+        porque `Registrar` va antes, pero **nadie lee el mensaje**. Un corpus que
+        titulara «el mensaje que recibio el profesional» estaria afirmando algo
+        falso de las 49 veces.
+
+        Peor con el segundo mensaje: `Enviar texto del paciente` cuelga DETRAS de
+        `Responder`, que no tiene `onError`, asi que cuando `Responder` falla ese
+        nodo **no se intenta siquiera**. Verificado en las conexiones del JSON
+        exportado.
+        """
+        ok, detalle = self._alcanza_el_chat(self.profesional)
+        self.entrega = "intentada" if ok else "rechazada"
+        self.motivo_entrega = detalle
+        return self.entrega
 
     # -- transporte ------------------------------------------------------
     def _post(self, ruta, cuerpo):
@@ -539,7 +563,12 @@ class Bots:
         for _ in range(40):
             fila = self.bd.execute(
                 "SELECT codigo FROM cuestionarios WHERE creado_en > %s"
-                " AND respuestas = %s::jsonb ORDER BY creado_en DESC LIMIT 1",
+                # ASCENDENTE, y no es un detalle. Con `DESC` la consulta PREFERIA
+                # al intruso: entre dos filas que empaten en respuestas, la del
+                # arnes es la que se creo PRIMERO -es la que desbloquea esta
+                # espera- y la de un paciente real que colisionara llegaria
+                # despues, o sea primera con `DESC`. Con `ASC` sale la nuestra.
+                " AND respuestas = %s::jsonb ORDER BY creado_en ASC LIMIT 1",
                 (marca, esperadas)).fetchone()
             if fila:
                 return fila[0], ""
@@ -625,12 +654,17 @@ class Bots:
                          " AND chat_id = %s", (antes, chat), 1,
                          intentos=120) != 1:
             return None, "el flujo no escribio la fila de `consultas`"
+        # Se leen tambien `sintomas` y `signos`: son los dos bloques clinicos del
+        # mensaje, y si el arnes redactara con SUS literales en vez de con lo que
+        # el flujo guardo, el corpus estaria AFIRMANDO esos dos bloques en vez de
+        # observarlos. Es el fallo que el §4.4 declara temer -una respuesta en la
+        # clave equivocada no da error, da un mensaje clinico distinto-.
         fila = self.bd.execute(
-            "SELECT error, resultado, ms_extremo, codigo FROM consultas"
-            " WHERE id > %s AND chat_id = %s ORDER BY id DESC LIMIT 1",
-            (antes, chat)).fetchone()
+            "SELECT error, resultado, ms_extremo, codigo, sintomas, signos"
+            " FROM consultas WHERE id > %s AND chat_id = %s"
+            " ORDER BY id DESC LIMIT 1", (antes, chat)).fetchone()
         return {"error": fila[0], "resultado": fila[1], "ms_extremo": fila[2],
-                "codigo": fila[3]}, ""
+                "codigo": fila[3], "sintomas": fila[4], "signos": fila[5]}, ""
 
 
 # --------------------------------------------------------------------------
@@ -638,6 +672,44 @@ class Bots:
 # --------------------------------------------------------------------------
 RAYA = "=" * 78
 LINEA = "-" * 78
+
+# Tres estados de entrega, y cada uno con su rotulo. El corpus NO puede titular
+# «el mensaje que recibio el profesional» cuando nadie lo recibio: un corpus solo
+# vale lo que vale su honestidad, y un rotulo es una afirmacion como cualquier
+# otra.
+ENTREGA = {
+    "no_intentada": {
+        "titulo": "EL MENSAJE QUE EL BOT HABRÍA ENVIADO, LITERAL",
+        "titulo_paciente": "Y EL SEGUNDO MENSAJE, EL DE LAS PALABRAS DEL "
+                           "PACIENTE",
+        "se_obtuvo": "NO. No hubo envío: nadie condujo la conversación, así que "
+                     "no había a quién enviárselo",
+    },
+    "rechazada": {
+        "titulo": "EL MENSAJE QUE EL BOT COMPUSO — PERO NADIE LO RECIBIÓ",
+        "titulo_paciente": "Y EL SEGUNDO MENSAJE, QUE NI SE INTENTÓ ENVIAR",
+        "se_obtuvo": "NO. El bot lo compuso y lo intentó, y Telegram lo rechazó: "
+                     "el chat de los updates es inventado. La fila de `consultas` "
+                     "se escribió igual porque `Registrar` va antes de `Responder`",
+    },
+    "intentada": {
+        "titulo": "EL MENSAJE QUE EL BOT ENVIÓ AL PROFESIONAL, LITERAL",
+        "titulo_paciente": "Y A CONTINUACIÓN, EN UN MENSAJE APARTE, LO QUE "
+                           "ESCRIBIÓ EL PACIENTE",
+        "se_obtuvo": "el bot lo envió a un chat real. La entrega en sí no se ha "
+                     "comprobado: el arnés no ve la respuesta de Telegram",
+    },
+}
+
+# De donde salen los dos bloques clinicos del mensaje.
+OBSERVADO = {
+    "observados": "INVENTADOS, pero LEÍDOS de `consultas`: son los que el flujo "
+                  "guardó de verdad, no los que este arnés quiso mandar (§19 del "
+                  "spec: RSNA no trae ni un síntoma)",
+    "afirmados": "INVENTADOS, y AFIRMADOS por este arnés: sin conducir la "
+                 "conversación no hay nada que leer de la base, así que estos "
+                 "dos bloques NO están verificados (§19 del spec)",
+}
 
 
 def _num(valor, decimales):
@@ -725,6 +797,7 @@ def texto_del_caso(caso, obs, redaccion):
                    _punto("lo que quedó registrado",
                           redaccion.get("error") or "(nada)")]
 
+    entrega = obs.get("entrega", "no_intentada")
     lineas += ["", " CÓMO SE OBTUVO"]
     if obs.get("con_bots"):
         lineas += [
@@ -744,29 +817,29 @@ def texto_del_caso(caso, obs, redaccion):
                    "habría enviado, pero nadie condujo la conversación"),
             _punto("por qué", obs.get("motivo_sin_bots", "")),
         ]
+    lineas.append(_punto("¿lo leyó alguien?", ENTREGA[entrega]["se_obtuvo"]))
     lineas += [
-        _punto("síntomas", "INVENTADOS. RSNA trae imagen, edad, sexo y "
-                           "etiqueta, y no trae ni un síntoma (§19 del spec)"),
+        _punto("síntomas", OBSERVADO[obs.get("bloques", "afirmados")]),
         _punto("signos", "fijos en todos los casos: 38,2 °C, 104 lpm, "
                          "crepitantes sí, murmullo normal"),
         "",
         LINEA,
-        " EL MENSAJE QUE RECIBIÓ EL PROFESIONAL, LITERAL",
+        " " + ENTREGA[entrega]["titulo"],
         LINEA,
         "",
         redaccion["texto"],
         "",
     ]
     if redaccion.get("texto_paciente"):
-        lineas += [
-            LINEA,
-            " Y A CONTINUACIÓN, EN UN MENSAJE APARTE, LO QUE ESCRIBIÓ EL "
-            "PACIENTE",
-            LINEA,
-            "",
-            redaccion["texto_paciente"],
-            "",
-        ]
+        lineas += [LINEA, " " + ENTREGA[entrega]["titulo_paciente"], LINEA]
+        if entrega == "rechazada":
+            lineas.append(_parrafo(
+                "Este segundo mensaje NO se intentó enviar, ni siquiera sin "
+                "éxito: en el grafo, `Enviar texto del paciente` cuelga detrás "
+                "de `Responder`, que no tiene manejo de error. Al fallar el "
+                "primer envío, el nodo del segundo no llegó a ejecutarse. El "
+                "texto es el que el bot habría mandado.", " "))
+        lineas += ["", redaccion["texto_paciente"], ""]
     lineas += [
         LINEA,
         " ¿TIENE SENTIDO CLÍNICO LO QUE ACABA DE LEER?",
@@ -898,10 +971,20 @@ def resumen(filas, con_bots, destino):
                 if red["resultado"]["razon_de_verosimilitud"] < 1.0]
     AVISO = "El cribado marca esta placa"
     en_texto = sum(1 for _, red in con_resultado if AVISO in red["texto"])
+    # POR PLACA y no por caso. El perfil 04 reusa a proposito la primera placa de
+    # la banda, asi que contar casos contaba esa placa dos veces: el «8 de 11» de
+    # la primera version era «7 de 10» mal sumado.
+    placas_avisadas = {c["patientId"] for c, _ in avisados}
     lineas += ["", " EL AVISO DE DISCREPANCIA DEL §8",
                _punto("  casos que dieron resultado", len(con_resultado)),
                _punto("  etiquetados «opacidad probable»", len(positivos)),
-               _punto("  con el aviso (positivo y RV < 1)", len(avisados))]
+               _punto("  mensajes con el aviso (positivo y RV < 1)",
+                      len(avisados))]
+    if len(placas_avisadas) != len(avisados):
+        lineas.append(_punto("  ...sobre placas DISTINTAS",
+                             f"{len(placas_avisadas)}: el perfil 04 reusa una "
+                             f"placa de la banda, y las cuentas de abajo van por "
+                             f"placa para no contarla dos veces"))
     if en_texto != len(avisados):
         lineas.append(_parrafo(
             f"!! El aviso aparece en {en_texto} mensajes pero los números dicen "
@@ -912,13 +995,14 @@ def resumen(filas, con_bots, destino):
         lineas.append(_parrafo("Y el aviso aparece en esos mensajes y solo en "
                                "esos: se comprobó buscándolo en el texto, no "
                                "dándolo por hecho."))
-    if avisados:
-        acierta = sum(1 for c, _ in avisados
-                      if c["clase_rsna"] != "Lung Opacity")
+    if placas_avisadas:
+        clases = {c["patientId"]: c["clase_rsna"] for c, _ in avisados}
+        acierta = sum(1 for pid in placas_avisadas
+                      if clases[pid] != "Lung Opacity")
         lineas.append(_punto("  y RSNA NO anotó opacidad en",
-                             f"{acierta} de esos {len(avisados)} "
-                             f"({acierta / len(avisados) * 100:.0f} %): cuando "
-                             f"el aviso salta, suele tener razón"))
+                             f"{acierta} de esas {len(placas_avisadas)} placas "
+                             f"({acierta / len(placas_avisadas) * 100:.0f} %): "
+                             f"cuando el aviso salta, suele tener razón"))
     lineas.append(_parrafo(
         "OJO con los porcentajes de aquí arriba: el subconjunto está "
         "estratificado a propósito y sobrerrepresenta la banda, así que NO "
@@ -948,13 +1032,18 @@ def resumen(filas, con_bots, destino):
                 f"El modelo no es el cuello de botella: lo son Telegram, n8n y "
                 f"la base"))
     else:
-        local = _mediana([red.get("ms") for _, _, red in filas])
+        # Medido en Python alrededor de la llamada, NO con el `ms` que devuelve
+        # `Desenlace`. Ese `ms` es `Date.now() - t0`, y `redactar()` corre UNA vez
+        # al final de la corrida: el `t0` de cada caso es de cuando se llamo al
+        # copiloto, asi que el `ms` de todos abarcaba hasta el final de todo. La
+        # primera version imprimia 1 445 ms para una ida y vuelta de unos 60.
+        local = _mediana([obs.get("ms_arnes") for _, obs, _ in filas])
         lineas.append(_punto("  solo el modelo (mediana)",
                              f"{_num(modelo, 1)} ms" if modelo is not None
                              else "—"))
         lineas.append(_punto("  ida y vuelta de este arnés",
-                             f"{local:.0f} ms (mediana)" if local is not None
-                             else "—"))
+                             f"{_num(local, 1)} ms (mediana)"
+                             if local is not None else "—"))
         lineas.append(_parrafo(
             "Sin los bots no hay latencia de extremo a extremo que medir: lo "
             "de arriba es esta máquina hablando con el contenedor, no un "
@@ -1136,8 +1225,27 @@ def main() -> int:
     return 0
 
 
-def _coincide(obs, redaccion):
-    """Dice si lo que quedo en `consultas` y esta lectura cuentan lo mismo."""
+def _coincide(obs, caso, redaccion):
+    """Dice si lo que quedo en `consultas` y esta lectura cuentan lo mismo.
+
+    Compara CUATRO cosas y no dos. Antes comparaba la puntuacion, la
+    clasificacion y el codigo de error, y con eso un mensaje podia decir
+    «tos: (valor no reconocido)» y «EXPLORADO — (sin datos completos)» y el corpus
+    seguia poniendo «coinciden: si»: los dos bloques clinicos no entraban en la
+    comparacion. Son justo los que un clinico lee primero.
+    """
+    enviados = (caso["sintomas"], SIGNOS)
+    guardados = (obs.get("sintomas"), obs.get("signos"))
+    if obs.get("sintomas") is not None and guardados[0] != enviados[0]:
+        faltan = [k for k in enviados[0]
+                  if guardados[0].get(k) != enviados[0][k]]
+        return (f"NO: `consultas.sintomas` no es lo que se envio; difieren "
+                f"{', '.join(faltan) or 'las claves'}")
+    if obs.get("signos") is not None and guardados[1] != enviados[1]:
+        faltan = [k for k in enviados[1]
+                  if guardados[1].get(k) != enviados[1][k]]
+        return (f"NO: `consultas.signos` no es lo que se envio; difieren "
+                f"{', '.join(faltan) or 'las claves'}")
     del_bot = obs.get("resultado")
     aqui = redaccion.get("resultado")
     if (del_bot is None) != (aqui is None):

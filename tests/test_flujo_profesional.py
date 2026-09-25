@@ -41,6 +41,25 @@ AUTORIZADO = 999000010
 OTRO = 999000011
 INTRUSO = 999000099
 
+# El chat REAL donde se SUBEN las placas, que no es el mismo que viaja en los
+# updates fabricados. La distincion no es un detalle de estilo, y estas tres
+# pruebas no podian pasar sin ella:
+#
+#   - `AUTORIZADO` es un chat_id inventado, y eso es correcto: un chat de verdad
+#     en los updates llenaria la conversacion de alguien con informes de prueba.
+#   - Pero para que el flujo pueda BAJAR una placa hace falta un `file_id`, y un
+#     `file_id` solo existe si alguien SUBIO el fichero. Y un bot de Telegram no
+#     puede escribir a un chat que no existe ni a uno que no le haya escrito
+#     antes: `sendDocument` contesta `400 chat not found`, y `urlopen` lanza
+#     HTTPError ANTES del `assert respuesta.get("ok")`, asi que las tres pruebas
+#     que suben una placa daban ERROR, no fallo de asercion.
+#   - Lo que lo arregla es que un `file_id` es del BOT y no de un chat: se puede
+#     subir a un chat real y luego afirmar en el update que viene de otro.
+#
+# Sin la variable, esas tres se SALTAN con este motivo escrito, que es mas honesto
+# que verlas reventar por algo que no es lo que prueban.
+SUBIDA = os.environ.get("CHAT_SUBIDA_PLACAS")
+
 FLUJO = (pathlib.Path(__file__).resolve().parents[1] / "n8n"
          / "copiloto-profesional.json")
 FLUJO_PACIENTE = (pathlib.Path(__file__).resolve().parents[1] / "n8n"
@@ -92,6 +111,14 @@ SINTOMAS_PRUEBA = {"fiebre": "si", "tos": "con_flema", "dias_evolucion": "3_a_7"
                    "disnea": "no", "dolor_toracico": "si", "asma": "no_se",
                    "texto_libre": None}
 
+# Las TRES pruebas que suben una placa. Las otras cinco de la clase no suben nada
+# y no dependen de esto.
+necesita_subida = pytest.mark.skipif(
+    not SUBIDA,
+    reason="sin CHAT_SUBIDA_PLACAS no hay chat real donde subir la placa, y sin "
+           "subirla no hay `file_id` que el flujo pueda bajar. Ponla al chat que "
+           "le escribio /start al bot del profesional")
+
 
 def _mensaje(texto, chat):
     return {"update_id": 1, "message": {
@@ -128,7 +155,7 @@ def _foto(chat):
 # --------------------------------------------------------------------------
 # Ayudantes de la mitad conducida
 # --------------------------------------------------------------------------
-def _subir_dicom(ruta, chat):
+def _subir_dicom(ruta, chat=None):
     """Sube el DICOM con el bot del PROFESIONAL y devuelve su `file_id`.
 
     Con el bot del profesional y no con `[retirado]`, aunque el brief diga
@@ -136,9 +163,12 @@ def _subir_dicom(ruta, chat):
     obtuvo**. Un `file_id` conseguido subiendo el fichero al bot de pruebas haria
     que el `getFile` del flujo -que usa la credencial de `[retirado]`-
     respondiera `wrong file identifier`, y la prueba estaria midiendo eso y no el
-    flujo. Subirlo con el bot del profesional al chat del profesional es
-    exactamente lo que pasa en produccion.
+    flujo.
+
+    Y a `CHAT_SUBIDA_PLACAS`, que tiene que ser un chat REAL y no el `AUTORIZADO`
+    inventado de los updates. El motivo entero esta donde se define `SUBIDA`.
     """
+    chat = chat or SUBIDA
     limite = "----" + uuid.uuid4().hex
     datos = pathlib.Path(ruta).read_bytes()
     cuerpo = b""
@@ -204,7 +234,9 @@ def _consulta_completa(webhook_n8n, bd, caso, chat=AUTORIZADO, sintomas=None):
     """La conversacion entera, con una radiografia REAL de RSNA."""
     antes = bd.execute("SELECT COALESCE(max(id), 0) FROM consultas").fetchone()[0]
     codigo = _llevar_hasta_la_placa(webhook_n8n, bd, chat, sintomas)
-    file_id = _subir_dicom(caso["ruta_dcm"], chat)
+    # La placa se sube al chat REAL de `SUBIDA`; el update dice que viene de
+    # `chat`, que es inventado. Se puede porque un `file_id` es del bot.
+    file_id = _subir_dicom(caso["ruta_dcm"])
     webhook_n8n(RUTA, _documento(file_id, chat), SECRETO)
     nueva = _esperar(bd, "SELECT count(*) FROM consultas WHERE id > %s",
                      (antes,), 1, intentos=60)
@@ -294,6 +326,7 @@ class TestConducido:
             "SELECT resultado FROM consultas WHERE chat_id = %s ORDER BY id DESC"
             " LIMIT 1", (AUTORIZADO,)).fetchone()[0] is None
 
+    @necesita_subida
     def test_un_menor_de_edad_se_rechaza_sin_ninguna_cifra(self, webhook_n8n,
                                                            bd_sp3):
         """Criterio 7. Se usa una placa de un nino REAL, de los 1 276 de RSNA."""
@@ -310,6 +343,7 @@ class TestConducido:
             "SELECT count(*) FROM sesiones_profesional WHERE chat_id = %s",
             (AUTORIZADO,)).fetchone()[0] == 0, "§9: el rechazo por edad TERMINA"
 
+    @necesita_subida
     def test_la_banda_contradictoria_lleva_su_aviso(self, webhook_n8n, bd_sp3):
         """Criterio 6. Pasa una de cada cuatro veces que hay un positivo (§3)."""
         from pruebas.seleccionar_casos import seleccionar
@@ -376,6 +410,7 @@ class TestConducido:
                            (OTRO,))
             bd_sp3.execute("DELETE FROM profesionales WHERE chat_id = %s", (OTRO,))
 
+    @necesita_subida
     def test_los_sintomas_se_copian_a_consultas(self, webhook_n8n, bd_sp3):
         """D12: sin la copia, H7 se queda sin nada que validar porque
         `cuestionarios` se borra a los 7 dias."""
