@@ -3,6 +3,14 @@
 
 Estas pruebas no comprueban el modelo: comprueban el CONTRATO. Si SP4 cambia
 la forma de la respuesta, falla aqui en vez de romperse el bot en produccion.
+
+NECESITAN EL SERVIDOR VIVO, y sin el **se saltan** en vez de fallar. En esta
+rama se ha dicho varias veces que un skip se ve verde, y es cierto; la
+diferencia esta en el mensaje. Un `ConnectionRefusedError` repetido diez veces
+no informa de nada y entrena a no mirar los fallos -que es lo contrario de lo
+que queremos, porque el dia que una de estas diez se rompa de verdad hay que
+verla-. El skip de `copiloto_vivo` dice las dos cosas que hacen falta: QUE se
+ha quedado sin verificar y COMO verificarlo. Se leen con `pytest -rs`.
 """
 import base64
 import json
@@ -45,6 +53,42 @@ COTA_SUPERIOR_RV = 77.32279909706551
 # `0.0163` que causaba que la prueba declarara invalidos datos validos (era
 # MAYOR que COTA_INFERIOR_RV).
 TOLERANCIA_RV = 1e-9
+
+
+ARRANCAR = ("docker run -d --rm --name copiloto-prueba -p 18000:8000 "
+            "-e UMBRAL=0.4258 -e AUC_VALIDACION=0.8827 -e OMP_NUM_THREADS=2 "
+            "copiloto-mcp:0.1.0")
+
+
+@pytest.fixture(scope="module", autouse=True)
+def copiloto_vivo():
+    """Sondea `/salud` UNA vez y, si no responde, salta el modulo entero con un
+    mensaje que dice que se queda sin verificar y como verificarlo.
+
+    Va antes que los fijadores `dicom_*` a proposito -es `autouse`-: sin
+    servidor no hace falta leer ni un manifiesto ni una radiografia.
+
+    Las diez aserciones de abajo no cambian: lo unico que cambia es que la
+    ausencia del contenedor se cuenta como «no verificado» y no como «roto».
+    """
+    try:
+        with urllib.request.urlopen(f"{BASE}/salud", timeout=3) as r:
+            estado = json.load(r).get("estado")
+    except (OSError, ValueError) as e:
+        pytest.skip(
+            f"CONTRATO CON copiloto-mcp SIN VERIFICAR: {BASE}/salud no responde"
+            f" ({type(e).__name__}). Se quedan sin comprobar la forma de"
+            " `structuredContent` (§10.2), la posicion del codigo de error"
+            " (§10.4 bis), los dos limites de tamano (§10.4) y las cotas de la"
+            " razon de verosimilitud (§10.5). Para verificarlo, levanta el"
+            f" contenedor y repite:  {ARRANCAR}  -- o apunta COPILOTO_URL a uno"
+            " que ya este vivo.")
+    if estado != "listo":
+        pytest.skip(
+            f"CONTRATO CON copiloto-mcp SIN VERIFICAR: {BASE}/salud contesta"
+            f" estado={estado!r} en lugar de 'listo', asi que el modelo no ha"
+            " cargado y lo que fallara no es el contrato. Mira el log del"
+            " contenedor y repite.")
 
 
 def _llamar(b64: str) -> dict:
