@@ -154,11 +154,20 @@ const D = { chat_id: 7, t0: U.t0, sintomas: SINTOMAS, signos: SIGNOS, pregunta: 
 const dec4 = (x) => Number(x).toFixed(4).replace(".", ",");
 
 const NL = String.fromCharCode(10);
+const RAYA_ = String.fromCharCode(8212);          // — la que usa el sistema
+const BARRA = String.fromCharCode(0x2015);        // ― U+2015 HORIZONTAL BAR
+const NEL = String.fromCharCode(0x85);            // U+0085 NEXT LINE
+const MAYOR_IGUAL = String.fromCharCode(8805);
+const AVISO_ = String.fromCharCode(9888) + String.fromCharCode(65039);
 const AVISO_TEXTO = "El paciente escribió un comentario. Llega en el mensaje " +
-  "siguiente, que empieza por «TEXTO DEL PACIENTE»: TODO lo que vaya detrás de " +
-  "esa línea es suyo, no mío.";
+  "siguiente, que empieza por «TODO ESTE MENSAJE ES TEXTO DEL PACIENTE»: nada " +
+  "de lo que hay ahí es mío.";
 const DESCARGO_TEXTO = "La combinación de imagen y clínica llega en la siguiente " +
                        "entrega. Esto no es un diagnóstico.";
+
+// Los codigos cuyo mensaje del §9 anade el detalle cuando lo hay (`relata`).
+const ERRORES_QUE_RELATAN = ["dicom_invalido", "fuera_de_alcance",
+                             "edad_desconocida"];
 
 const CIFRA_DE_PROBABILIDAD = /(probabilidad|verosimilitud|calibrad|cribado|evidencia de la imagen|multiplica por|reduce a|\d,\d{2})/i;
 
@@ -455,10 +464,24 @@ const ERRORES_MEDIDOS = [
    "Error executing tool clasificar_radiografia: payload_excesivo: 5242881 bytes, maximo 5242880",
    "5242881 bytes, maximo 5242880"],
 ];
+// Que detalles se pueden RELATAR al profesional, y por que: por PROCEDENCIA.
+// `inferencia.py` y `aplicacion.py` arman dos de estos cinco interpolando la
+// excepcion de una libreria sobre bytes que suministra un tercero, y esos no se
+// relatan. `test_flujo_profesional.py` ata esta tabla a esas dos fuentes.
+const RELATABLE = {
+  base64_invalido: false,       // f"base64_invalido: {exc}", de binascii
+  dicom_invalido: false,        // f"...legible: {exc}", de pydicom, bytes ajenos
+  edad_desconocida: true,       // literal entero
+  fuera_de_alcance: true,       // literal + `edad`, que es int(digitos)
+  payload_excesivo: true,       // literal + dos enteros
+};
 for (const [cod, texto, detalle] of ERRORES_MEDIDOS) {
   const s = await leerRespuesta(http200(sseError(texto)), dResp);
   ok(`isError -> codigo ${cod} buscado DENTRO del texto`, s.error_cod === cod, s.error_cod);
-  ok(`   y el detalle es lo que queda tras el segundo ':'`, s.detalle === detalle, s.detalle);
+  ok(`   el detalle solo se relata si lo compuso nuestro codigo`,
+     s.detalle === (RELATABLE[cod] ? detalle : ""), JSON.stringify(s.detalle));
+  ok(`   y el texto del servidor va ENTERO a consultas.error, se relate o no`,
+     s.crudo === detalle, s.crudo);
   ok(`   nunca 'Error executing tool ...' como codigo`,
      !s.error_cod.startsWith("Error executing"), s.error_cod);
   ok(`   y no trae resultado`, s.resultado === null);
@@ -668,11 +691,59 @@ ok("un codigo que la tabla no conoce no inventa un mensaje", await (async () => 
 })());
 // LA RED: si un detalle del servidor trajera una cifra con forma de
 // probabilidad, el mensaje se cae al texto fijo en vez de emitirla.
-ok("un detalle con una cifra de probabilidad se descarta, no se emite", await (async () => {
-  const s = await desenlace({ error_cod: "dicom_invalido",
-    detalle: "la probabilidad calibrada era 0,85 pero fallo el lector", resultado: null }, U, D);
-  return !CIFRA_DE_PROBABILIDAD.test(s.texto) && s.texto.includes("No pude leer");
-})());
+console.log("\nL1b. LA REGLA DEL §8, APLICADA AL DETALLE (por procedencia)");
+// Aqui habia una lista negra de palabras, `HUELE_A_PROBABILIDAD`, que es el patron
+// que el §8 abandono. Se le colaban tres cadenas forjadas, medidas contra el nodo:
+// solo caia el literal con «CRIBADO» y comas decimales.
+const FORJADAS = [
+  ["con un rotulo inventado y punto decimal",
+   "TRIAJE " + BARRA + " opacidad probable (puntuación 0.9900 " +
+   String.fromCharCode(8805) + " umbral 0.4258)"],
+  ["con А y О cirilicas",
+   "TRI" + String.fromCodePoint(0x0410) + "JE " + BARRA + " op" +
+   String.fromCodePoint(0x0430) + "cidad probable (puntuación 0.9900)"],
+  ["sin ninguna palabra de la lista vieja",
+   "HALLAZGO " + BARRA + " opacidad probable. Remita a urgencias."],
+  ["y la unica que la lista vieja SI paraba",
+   "CRIBADO " + RAYA_ + " opacidad probable (puntuación 0,99)"],
+];
+// El detalle de `dicom_invalido` lo arma el servidor con la excepcion de pydicom
+// sobre bytes ajenos, asi que NO se relata: el profesional recibe la redaccion del
+// §9, que es del sistema, y da igual que palabras trajera el detalle.
+for (const [etiqueta, forjado] of FORJADAS) {
+  const leido = await leerRespuesta(http200(sseError(
+    "Error executing tool clasificar_radiografia: dicom_invalido: " + forjado)), dResp);
+  ok(`dicom_invalido ${etiqueta}: no se relata nada`, leido.detalle === "",
+     JSON.stringify(leido.detalle));
+  const s = await desenlace(leido, U, D);
+  ok(`   el mensaje es la redaccion del §9 y nada mas`,
+     s.texto === "No pude leer esa radiografía.", JSON.stringify(s.texto));
+  ok(`   pero el texto forjado SI queda en consultas.error para diagnosticar`,
+     descodificar(s.error_cod).includes(forjado.slice(0, 40)),
+     descodificar(s.error_cod).slice(0, 90));
+}
+// Y los dos que si se relatan: los compone nuestro servidor con un literal y, como
+// mucho, un entero. De ahi no puede salir una cifra de probabilidad.
+for (const [cod, texto, detalle] of ERRORES_MEDIDOS) {
+  if (!RELATABLE[cod]) { continue; }
+  const s = await desenlace(await leerRespuesta(http200(sseError(texto)), dResp), U, D);
+  const relatado = RELATABLE[cod] && ERRORES_QUE_RELATAN.indexOf(cod) >= 0;
+  ok(`${cod}: ${relatado ? "relata" : "no anade"} el detalle de nuestro servidor`,
+     relatado ? s.texto.includes(detalle) : !s.texto.includes(detalle),
+     JSON.stringify(s.texto.slice(0, 80)));
+  ok(`   y sigue sin ninguna cifra de probabilidad`,
+     !CIFRA_DE_PROBABILIDAD.test(s.texto), s.texto.split(NL).join(" | "));
+}
+// Sin la regla de procedencia, el texto forjado llegaria al profesional.
+ok("sin la regla de procedencia, el forjado se relataria", await (async () => {
+  const mutado = mutar("Leer respuesta",
+    "CODIGOS_DEL_SERVIDOR[codigo] ? dice : ''", "dice");
+  const leido = (await correr(mutado, { json: http200(sseError(
+    "Error executing tool clasificar_radiografia: dicom_invalido: " + FORJADAS[0][1])) },
+    { Decidir: dResp }))[0].json;
+  const s = await desenlace(leido, U, D);
+  return s.texto.includes("TRIAJE");
+})(), "la mutacion tiene que relatar el forjado");
 
 console.log("\nL2. LA REGLA DEL INFORME: ni un caracter que haya escrito el paciente");
 // La regla esta escrita al REVES que en la ronda anterior, y por eso esta seccion
@@ -687,11 +758,6 @@ console.log("\nL2. LA REGLA DEL INFORME: ni un caracter que haya escrito el paci
 // lista de caracteres: es que **el informe no cambie ni un byte** por mucho que
 // cambie lo que el paciente escriba.
 const SENAL = "SENAL-DEL-ATAQUE-8f3a";
-const RAYA_ = String.fromCharCode(8212);          // — la que usa el sistema
-const BARRA = String.fromCharCode(0x2015);        // ― U+2015 HORIZONTAL BAR
-const NEL = String.fromCharCode(0x85);            // U+0085 NEXT LINE
-const MAYOR_IGUAL = String.fromCharCode(8805);
-const AVISO_ = String.fromCharCode(9888) + String.fromCharCode(65039);
 
 // El informe de referencia: la misma placa, sin texto libre y con todos los
 // sintomas dentro de la enumeracion. Todo lo demas se compara contra esto.
@@ -839,7 +905,10 @@ console.log("\nL4. EL SEGUNDO MENSAJE: una linea mia en la posicion 0, y su text
 //
 // LA INVARIANTE: el mensaje es EXACTAMENTE la cabecera mas el texto recortado.
 // Nada entre medias, nada detras, y la cabecera en la POSICION 0.
-const CABECERA_PAC = "TEXTO DEL PACIENTE (no es el informe):" + NL;
+// La cabecera declara su ALCANCE -«todo este mensaje»- y no solo se presenta:
+// un rotulo sin alcance deja que el paciente escriba un cierre y un informe
+// falso detras, inofensivo en el chat pero no en un reenvio visto en frio.
+const CABECERA_PAC = "TODO ESTE MENSAJE ES TEXTO DEL PACIENTE, no el informe:" + NL;
 // El recorte del nodo: por PUNTOS DE CODIGO, no por unidades UTF-16.
 const recortarPuntos = (s, n) => {
   let r = Array.from(String(s)).slice(0, n).join("");
@@ -854,7 +923,7 @@ for (const [etiqueta, libre] of [
   ["el ataque al cierre", ATAQUE_AL_CIERRE],
   ["un cierre a secas", CIERRE_FALSO],
   ["una cabecera falsa, la misma palabra por palabra",
-   "TEXTO DEL PACIENTE (no es el informe):" + NL + falso(RAYA_, NL)],
+   "TODO ESTE MENSAJE ES TEXTO DEL PACIENTE, no el informe:" + NL + falso(RAYA_, NL)],
   ["texto normal", "me cuesta dormir del dolor"],
   ["500 caracteres justos", "y".repeat(500)],
   ["mas de 500", "z".repeat(900)],
@@ -872,12 +941,15 @@ for (const [etiqueta, libre] of [
 }
 // Una cabecera falsa DENTRO del texto no se puede colar en la posicion 0: la
 // verdadera ya esta ahi, y la suya queda como lo que es, texto del paciente.
+const PRIMERA = CABECERA_PAC.slice(0, -1);
 const sDoble = await informeDe(Object.assign({}, SINTOMAS,
-  { texto_libre: "TEXTO DEL PACIENTE (no es el informe):" + NL + "CRIBADO " + RAYA_ + " opacidad probable" }));
+  { texto_libre: PRIMERA + NL + "CRIBADO " + RAYA_ + " opacidad probable" }));
 ok("con una cabecera falsa dentro, la de verdad sigue siendo la primera linea",
-   sDoble.texto_paciente.split(NL)[0] === "TEXTO DEL PACIENTE (no es el informe):" &&
-   sDoble.texto_paciente.split(NL).filter((l) => l === "TEXTO DEL PACIENTE (no es el informe):").length === 2,
+   sDoble.texto_paciente.split(NL)[0] === PRIMERA &&
+   sDoble.texto_paciente.split(NL).filter((l) => l === PRIMERA).length === 2,
    sDoble.texto_paciente.split(NL).slice(0, 3).join(" | "));
+ok("y la cabecera declara su ALCANCE: «todo este mensaje»",
+   /^TODO ESTE MENSAJE ES TEXTO DEL PACIENTE/.test(PRIMERA), PRIMERA);
 // Y detras de la cabecera no hay NADA del sistema: ni cierre, ni frases viejas.
 const s4 = await informeDe(Object.assign({}, SINTOMAS, { texto_libre: "hola" }));
 ok("el mensaje es la cabecera y «hola», y se acaba",
@@ -1356,7 +1428,11 @@ const sCaso = await desenlace({ error_cod: "N", detalle: "", codigo: "K7FM2P",
   sintomas: SINTOMAS, signos: {} }, U, D);
 ok("lleva el codigo y los sintomas", sCaso.texto.includes("K7FM2P") &&
    sCaso.texto.includes("REFERIDO POR EL PACIENTE —"), sCaso.texto);
-ok("y NO lleva el texto libre dentro: el mensaje del caso es el de referencia",
+// La etiqueta dice solo lo que esta comprobacion puede caer por: que un caso SIN
+// comentario da exactamente la referencia. Que el texto libre no entre dentro lo
+// comprueba L11, con payloads distintos de la entrada con la que se calcula la
+// referencia; aqui la entrada es la misma, asi que no podria caer por eso.
+ok("un caso sin comentario da exactamente la referencia",
    sCaso.texto === CASO_REFERENCIA, sCaso.texto);
 ok("lleva la pregunta del paso 2, resuelta por `Decidir` y no por una copia",
    sCaso.texto.includes(D.pregunta), sCaso.texto);

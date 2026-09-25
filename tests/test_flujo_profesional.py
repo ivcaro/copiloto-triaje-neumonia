@@ -594,8 +594,62 @@ def test_ninguna_rama_de_error_puede_emitir_una_cifra_de_probabilidad():
     assert "probabilidad calibrada" not in fuera
     assert "razon_de_verosimilitud" not in fuera
     assert "probabilidad_calibrada" not in fuera
-    # Y la red que lo comprueba en tiempo de ejecucion tiene que seguir ahi.
-    assert "HUELE_A_PROBABILIDAD" in fuente
+    # La lista negra de palabras que antes lo guardaba tiene que estar FUERA: era
+    # el ultimo rincon donde quedaba el patron que el §8 abandono, y se le colaban
+    # tres cadenas forjadas. Lo que lo garantiza ahora es la procedencia del
+    # detalle, que es lo que comprueba el test de abajo.
+    assert "HUELE_A_PROBABILIDAD" not in codigo, \
+        "la garantia es la procedencia del detalle, no una lista de palabras"
+
+
+def test_solo_se_relata_el_detalle_que_compuso_nuestro_codigo():
+    """La regla del §8 aplicada al detalle del servidor, por PROCEDENCIA.
+
+    `HUELE_A_PROBABILIDAD` dejaba pasar tres cadenas forjadas medidas contra el
+    nodo —«TRIAJE ― opacidad probable (puntuación 0.9900 ≥ umbral 0.4258)», la
+    misma con А y О cirílicas, y «HALLAZGO ― opacidad probable. Remita a
+    urgencias.»—: solo caía el literal con «CRIBADO» y comas decimales.
+
+    Y el origen importa: el detalle de `dicom_invalido` lo arma `inferencia.py`
+    interpolando la excepción de **pydicom sobre bytes ajenos**, así que quien
+    suministra el DICOM influye en él.
+
+    La regla: **se relata lo que compuso nuestro código; no se relata lo que
+    compuso un tercero.** Esta prueba la ata a las dos fuentes de verdad, para que
+    no sea una tabla que alguien pueda editar a mano: un mensaje que interpole
+    `{exc}` **no** se puede relatar.
+    """
+    raiz = pathlib.Path(__file__).resolve().parents[1] / "src" / "copiloto_triaje"
+    fuentes = ((raiz / "servicio" / "inferencia.py").read_text(encoding="utf-8") +
+               (raiz / "servicio" / "aplicacion.py").read_text(encoding="utf-8"))
+    leer = _nodo(_flujo(), "Leer respuesta")["parameters"]["jsCode"]
+    tabla = dict((c, v == "true") for c, v in re.findall(
+        r"^  ([a-z0-9_]+): (true|false),", leer, re.M))
+    assert set(tabla) == {"base64_invalido", "dicom_invalido", "edad_desconocida",
+                          "fuera_de_alcance", "payload_excesivo"}, tabla
+    for codigo, relatable in tabla.items():
+        # La llamada de Python que compone el mensaje de ese codigo, delimitada por
+        # sus propios parentesis: un trozo de N caracteres arrastraria el `{exc}`
+        # de la llamada de al lado y daria un falso positivo. Paso.
+        i = fuentes.index('"%s' % codigo)
+        abre = fuentes.rindex("(", 0, i)
+        profundidad, j = 0, abre
+        while j < len(fuentes):
+            if fuentes[j] == "(":
+                profundidad += 1
+            elif fuentes[j] == ")":
+                profundidad -= 1
+                if profundidad == 0:
+                    break
+            j += 1
+        llamada = fuentes[abre:j + 1]
+        assert codigo in llamada, (codigo, llamada[:120])
+        interpola_terceros = "{exc}" in llamada
+        assert relatable != interpola_terceros, (
+            codigo, "relatable=%s pero el mensaje %s interpola {exc}"
+            % (relatable, "si" if interpola_terceros else "no"))
+    # Y el nodo tiene que usar la tabla para decidir, no relatarlo todo.
+    assert "CODIGOS_DEL_SERVIDOR[codigo] ? dice : ''" in leer, leer
 
 
 def test_ningun_mensaje_lleva_parse_mode():
