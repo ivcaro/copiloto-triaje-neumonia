@@ -903,8 +903,46 @@ flujo o cambia la ruta, Telegram sigue apuntando al sitio viejo y el bot deja
 de responder sin que salte nada. El Telegram Trigger da esa garantía gratis;
 aquí se compra con un nodo.
 
-Por eso el mantenimiento llama a diario a `getWebhookInfo` de los dos bots y
-avisa si la `url` no es la esperada o si `last_error_message` trae algo.
+Por eso hay que llamar a diario a `getWebhookInfo` de los dos bots y avisar si la
+`url` no es la esperada o si `last_error_message` trae algo.
+
+**Esa llamada NO cabe dentro del workflow, y la comprobación va partida en dos
+(medido en la tarea 7).** El token de Telegram viaja **en la ruta de la URL**, y
+una credencial de n8n solo sabe inyectar cabeceras, parámetros de consulta, cuerpo
+o autenticación básica: no puede escribir en la ruta. El nodo Telegram v1.2
+tampoco tiene ninguna operación de webhook (`chat`, `callback`, `file`,
+`message`). Escribir el token en un parámetro del nodo lo versionaría en el JSON
+exportado, que es exactamente el pecado por el que este mismo §16 rechaza el
+Telegram Trigger. Así que:
+
+- **La mitad de n8n, dentro del workflow, a diario y sin ningún secreto:** un
+  `POST` sin `secret_token` a cada webhook. Medido contra el n8n real: **403** si
+  está registrado y activo, **404** si el flujo está desactivado o le cambiaron
+  la ruta, y un **200** significaría que la comprobación del §4.2 desapareció.
+  Cubre flujo desactivado, ruta cambiada y proxy roto.
+- **La mitad de Telegram, fuera:** `pruebas/verificar_webhooks.py`, con los
+  tokens del entorno o por teclado, en una **tarea programada diaria en la
+  máquina del equipo** (§5 del manual de operación). Se eligió eso, y no dos
+  variables de entorno en el n8n del cliente, para no reiniciar su n8n mientras
+  H5 esté abierto. **Hasta que esa tarea esté montada, un webhook desregistrado
+  en Telegram deja un bot mudo y nada avisa.**
+
+**Excepción declarada a la retención de ejecuciones del §5.4.** Los dos bots
+llevan las dos retenciones en `none` porque sus ejecuciones arrastran el DICOM,
+su base64 y las respuestas del paciente a la base de n8n del cliente. El
+workflow de mantenimiento lleva **los éxitos en `none` y los errores en `all`**,
+y no es un descuido:
+
+- por él no pasa ningún dato de paciente: sus consultas devuelven recuentos y
+  códigos de error del §9 y nada más, y eso lo ata una prueba de
+  `tests/test_mantenimiento.py` que fija las columnas que salen de la base;
+- y cuando una corrida del mantenimiento falla, **su ejecución es el único
+  rastro que queda**, porque el aviso es justamente lo que no pudo salir. Con
+  los errores en `none`, el vigilante se cae en silencio — que es lo que este
+  §16 existe para impedir.
+
+Las ejecuciones manuales se guardan por la misma razón: el «Execute workflow» es
+como se diagnostica a mano.
 
 ---
 

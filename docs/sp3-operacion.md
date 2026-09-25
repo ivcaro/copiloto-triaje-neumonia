@@ -190,11 +190,17 @@ de Guayaquil) y hace dos cosas: ejecuta `bd/limpieza.sql` —el borrado que
 promete el consentimiento— y comprueba ocho cosas. Si algo falla, manda un
 mensaje por Telegram con **qué pasa, qué efecto tiene y qué hacer**.
 
-**Lo único que hay que rellenar al importarlo:** el nodo **`Configuracion`**,
-campo `chat_equipo`, con el chat_id de quien recibe los avisos. Va vacío en el
-repositorio a propósito: un chat_id identifica a una persona real. Mientras esté
+### Puesta en marcha, en este orden
+
+**Paso 1, y hasta que no se haga NO LLEGA NINGÚN AVISO:** rellenar el nodo
+**`Configuracion`**, campo `chat_equipo`, con el chat_id de quien los recibe.
+Va vacío en el repositorio a propósito —un chat_id identifica a una persona
+real, y así un `git pull` tampoco puede redirigir los avisos de nadie—, así que
+recién importado el workflow **limpia y comprueba, pero no habla**. Mientras esté
 vacío, cada corrida que tenga algo que avisar **sale en rojo** en la lista de
-ejecuciones de n8n, con el motivo escrito, en vez de callarse.
+ejecuciones de n8n, con el motivo escrito, en vez de callarse; y ojo, la primera
+corrida en verde reinicia el «todo bien» semanal, así que puede pasar una semana
+sin ninguna señal si además no falla nada.
 
 - El chat_id lo da `pruebas/profesionales.py` (§1), y es **el mismo para todos
   los bots**: es el id del usuario de Telegram.
@@ -202,6 +208,10 @@ ejecuciones de n8n, con el motivo escrito, en vez de callarse.
   así quedan en su propio hilo, y el canal del aviso no depende de un token que
   quizá haya que revocar. **Hay que haberle escrito a ese bot alguna vez**: un
   bot no puede iniciar una conversación.
+
+**Paso 2:** montar la tarea programada del lado de Telegram (más abajo, «Lo que
+el workflow no puede ver»). Hasta que exista, **un webhook desregistrado en
+Telegram deja un bot mudo y nada avisa**.
 
 ### Qué comprueba, y cuándo avisa
 
@@ -238,11 +248,70 @@ credencial de n8n solo sabe poner cabeceras o parámetros**: escribirlo en el
 nodo lo metería en el JSON que se versiona, que es justo lo que el §16 del spec
 evita al no usar el Telegram Trigger.
 
+**Qué queda sin vigilar mientras esto se corra solo a mano:** que Telegram deje
+de apuntar a nuestra URL —porque alguien registró la ruta del otro bot, o revocó
+el token y registró de nuevo— y que su `secret_token` deje de coincidir con el de
+la credencial de n8n. En los dos casos **el bot queda mudo y las sondas del
+workflow siguen viendo su 403 tan contentas**: desde fuera de Telegram todo está
+bien. Es el único agujero que queda del §16, y se tapa con el paso 2.
+
+### Paso 2: la tarea programada diaria (Windows de [retirado])
+
+Se decidió esto y no dos variables de entorno en el n8n del cliente: reiniciar
+**su** n8n por una comprobación nuestra no compensa mientras H5 esté abierto.
+
+**Una vez**, en una consola de PowerShell del usuario que vaya a correrla —las
+tres variables quedan en su perfil, no en el repositorio—:
+
+```powershell
+setx TELEGRAM_TOKEN_PACIENTE (Read-Host 'token del bot del paciente')
+setx TELEGRAM_TOKEN_PROFESIONAL (Read-Host 'token del bot del profesional')
+setx TELEGRAM_TOKEN_AVISOS (Read-Host 'token de [retirado]')
+setx COPILOTO_CHAT_EQUIPO (Read-Host 'chat_id del equipo')
+```
+
+`TELEGRAM_TOKEN_AVISOS` es el del mismo bot que usa el workflow, para que este
+aviso caiga **en el mismo hilo** que los otros. Con esas cuatro puestas, el
+script manda por Telegram lo que encuentre; sin ellas solo lo imprime.
+
+**La tarea**, a las 07:15 (media hora después del workflow, para no mezclar dos
+avisos en el mismo minuto):
+
+```powershell
+$acc = New-ScheduledTaskAction -Execute 'C:\venv-copiloto\Scripts\python.exe' -Argument 'pruebas\verificar_webhooks.py' -WorkingDirectory 'C:\Users\[retirado]\OneDrive\Desktop\Claude\Proyecto Integrador\copiloto-triaje'
+$dis = New-ScheduledTaskTrigger -Daily -At 07:15
+Register-ScheduledTask -TaskName 'Copiloto Triaje: webhooks de Telegram' -Action $acc -Trigger $dis -Description 'La mitad del §16 que no cabe en n8n: getWebhookInfo de los dos bots.'
+```
+
+Comprobar que quedó bien montada, sin esperar a mañana:
+
+```powershell
+Start-ScheduledTask -TaskName 'Copiloto Triaje: webhooks de Telegram'; Get-ScheduledTaskInfo -TaskName 'Copiloto Triaje: webhooks de Telegram'
+```
+
+`LastTaskResult` en **0** = los dos webhooks están como deben; **1** = hay algo
+que arreglar, y el mensaje ya salió por Telegram.
+
 ### Probarlo sin esperar a mañana
 
 Abre el workflow en n8n y pulsa **Execute workflow**: corre lo mismo que el
 disparador. Las ejecuciones manuales se guardan, las de producción con éxito no,
 y las que fallan sí —por ahí se mira qué pasó cuando no llegó ningún aviso—.
+
+### Por qué este workflow sí guarda las ejecuciones que fallan
+
+Los dos bots llevan las dos retenciones en `none` porque sus ejecuciones
+arrastran el DICOM, su base64 y las respuestas del paciente a la base de n8n del
+cliente (§5.4 del spec). El mantenimiento lleva **los éxitos en `none` y los
+errores en `all`**, y es una excepción deliberada, escrita también en el §16 del
+spec:
+
+- por él **no pasa ningún dato de paciente**: sus consultas devuelven recuentos y
+  códigos de error del §9, nada más, y eso lo ata una prueba de
+  `tests/test_mantenimiento.py`;
+- y cuando una corrida del mantenimiento falla, **su ejecución es el único rastro
+  que queda**, porque el aviso es justamente lo que no pudo salir. Con los
+  errores en `none`, el vigilante se cae en silencio.
 
 ---
 
