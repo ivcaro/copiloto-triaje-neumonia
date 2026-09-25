@@ -100,7 +100,9 @@ def cargadores_sinteticos(n=32):
 
 def test_evaluar_epoca_devuelve_etiquetas_y_puntajes_alineados():
     _, val = cargadores_sinteticos()
-    y_true, y_score = evaluar_epoca(ModeloTrivial(), val, torch.device("cpu"))
+    y_true, y_score, perdida = evaluar_epoca(
+        ModeloTrivial(), val, torch.device("cpu"))
+    assert perdida is None, "sin criterio no hay perdida que devolver"
     assert len(y_true) == len(y_score) == 32
     assert set(np.unique(y_true)).issubset({0.0, 1.0})
 
@@ -275,7 +277,7 @@ def test_el_auc_desempata_cuando_el_recall_se_queda_clavado(tmp_path, monkeypatc
         contador["epoca"] += 1
         return 0.5
 
-    def _evaluar_falso(modelo, cargador, dispositivo):
+    def _evaluar_falso(modelo, cargador, dispositivo, criterio=None):
         k = negativos_ordenados[contador["epoca"]]
         y_true = np.array([1.0] * 10 + [0.0] * 10)
         y_score = np.concatenate([
@@ -284,7 +286,7 @@ def test_el_auc_desempata_cuando_el_recall_se_queda_clavado(tmp_path, monkeypatc
             np.full(k, 0.05),        # negativos ya bien ordenados
             np.full(10 - k, 0.50),   # negativos aun por encima de esos positivos
         ])
-        return y_true, y_score
+        return y_true, y_score, 0.5
 
     monkeypatch.setattr(entrenamiento_mod, "_pasada_de_entrenamiento", _pasada_falsa)
     monkeypatch.setattr(entrenamiento_mod, "evaluar_epoca", _evaluar_falso)
@@ -530,9 +532,9 @@ def test_el_mejor_checkpoint_sigue_al_recall_no_a_la_perdida(tmp_path, monkeypat
         contador["epoca"] += 1
         return perdidas[contador["epoca"]]
 
-    def _evaluar_falso(modelo, cargador, dispositivo):
+    def _evaluar_falso(modelo, cargador, dispositivo, criterio=None):
         detectados = round(recalls[contador["epoca"]] * 10)
-        return _y_true_y_score_con(detectados)
+        return (*_y_true_y_score_con(detectados), 0.5)
 
     monkeypatch.setattr(entrenamiento_mod, "_pasada_de_entrenamiento", _pasada_falsa)
     monkeypatch.setattr(entrenamiento_mod, "evaluar_epoca", _evaluar_falso)
@@ -604,9 +606,9 @@ def test_entrenar_restaura_los_pesos_de_la_mejor_epoca_no_los_de_la_ultima(tmp_p
             modelo.capa.weight.fill_(float(contador["epoca"] + 1))
         return 0.5
 
-    def _evaluar_falso(modelo, cargador, dispositivo):
+    def _evaluar_falso(modelo, cargador, dispositivo, criterio=None):
         detectados = round(recalls[contador["epoca"]] * 10)
-        return _y_true_y_score_con(detectados)
+        return (*_y_true_y_score_con(detectados), 0.5)
 
     monkeypatch.setattr(entrenamiento_mod, "_pasada_de_entrenamiento", _pasada_falsa)
     monkeypatch.setattr(entrenamiento_mod, "evaluar_epoca", _evaluar_falso)
@@ -768,3 +770,100 @@ def test_entrenar_sin_el_aviso_se_comporta_igual(tmp_path):
     resultado = entrenar(ModeloTrivial(), train, val, cfg, torch.device("cpu"),
                          tmp_path / "ck")
     assert len(resultado["historial"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# LA PERDIDA DE VALIDACION POR EPOCA
+#
+# El bucle media la perdida de ENTRENAMIENTO y, en validacion, metricas de
+# ordenamiento. Con eso se elige la mejor epoca, pero no se puede ver si el
+# modelo esta memorizando: esa senal es la separacion entre las dos perdidas, y
+# solo se tenia una de las dos.
+# ---------------------------------------------------------------------------
+def test_evaluar_epoca_calcula_la_perdida_con_el_criterio_que_se_le_da():
+    _, val = cargadores_sinteticos()
+    modelo = ModeloTrivial()
+    _, _, sin_peso = evaluar_epoca(modelo, val, torch.device("cpu"),
+                                   torch.nn.BCEWithLogitsLoss())
+    _, _, con_peso = evaluar_epoca(
+        modelo, val, torch.device("cpu"),
+        torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor(3.44)))
+    assert sin_peso is not None and con_peso is not None
+    # El mismo modelo y el mismo conjunto, con dos criterios: tienen que salir
+    # numeros DISTINTOS. Si salieran iguales, `criterio` no se estaria usando y
+    # la prueba de abajo -la que importa- no probaria nada.
+    assert abs(con_peso - sin_peso) > 1e-6, (con_peso, sin_peso)
+
+
+def test_las_dos_perdidas_de_una_epoca_estan_en_la_misma_escala(tmp_path):
+    """LA PRUEBA QUE SOSTIENE LA CURVA.
+
+    La perdida de validacion tiene que salir del MISMO criterio que la de
+    entrenamiento: `BCEWithLogitsLoss(pos_weight=negativos/positivos)`. Con un
+    criterio sin peso sale en otra escala, y entonces la distancia entre las dos
+    curvas -que es lo que diagnostica el sobreajuste- no mide nada: se hace tan
+    grande o tan pequena como se quiera cambiando el peso de un solo lado.
+
+    Se comprueba sobre un conjunto DESBALANCEADO, que es donde el `pos_weight`
+    se nota: con 50/50 vale 1 y un criterio sin peso daria lo mismo.
+    """
+    g = torch.Generator().manual_seed(0)
+    n_pos, n_neg = 8, 24                      # 25% de positivos, como RSNA
+    y = torch.cat([torch.ones(n_pos), torch.zeros(n_neg)])
+    x = torch.randn(n_pos + n_neg, 3, 8, 8, generator=g)
+    carg = DataLoader(TensorDataset(x, y), batch_size=8)
+
+    cfg = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                 epocas_cabeza=1, epocas_ajuste=0)
+    res = entrenar(ModeloTrivial(), carg, carg, cfg, torch.device("cpu"),
+                   tmp_path / "ck")
+    registro = res["historial"][0]
+    assert "perdida_val" in registro, "la epoca no registra la perdida de validacion"
+    assert registro["perdida_val"] is not None
+
+    # El MISMO conjunto para entrenar y validar, y el modelo ya quieto: la
+    # perdida de validacion tiene que coincidir con la que da el criterio
+    # PONDERADO, y no con la del criterio sin peso. Es la diferencia entre
+    # comparar dos curvas y comparar dos cosas distintas.
+    peso = torch.tensor(float(n_neg) / float(n_pos))
+    modelo = ModeloTrivial()
+    modelo.load_state_dict(torch.load(res["ruta_mejor_checkpoint"],
+                                      weights_only=False)["modelo"])
+    _, _, ponderada = evaluar_epoca(modelo, carg, torch.device("cpu"),
+                                    torch.nn.BCEWithLogitsLoss(pos_weight=peso))
+    _, _, plana = evaluar_epoca(modelo, carg, torch.device("cpu"),
+                                torch.nn.BCEWithLogitsLoss())
+    assert abs(registro["perdida_val"] - ponderada) < 1e-5, (
+        registro["perdida_val"], ponderada)
+    assert abs(registro["perdida_val"] - plana) > 1e-5, (
+        "la perdida de validacion sale de un criterio SIN el pos_weight: "
+        "no es comparable con la de entrenamiento")
+
+
+def test_el_cargador_limpio_anade_las_metricas_de_entrenamiento(tmp_path):
+    """Sin el, la curva B no se puede dibujar; con el, no se dibuja mal.
+
+    `perdida` es el promedio de la pasada MIENTRAS los pesos cambiaban, sobre
+    imagenes aumentadas. `perdida_train` es el mismo conjunto medido limpio y
+    con el modelo quieto. Son numeros distintos a proposito, y solo el segundo
+    se puede poner en la misma grafica que `perdida_val`.
+    """
+    train, val = cargadores_sinteticos()
+    cfg = Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
+                 epocas_cabeza=2, epocas_ajuste=0)
+
+    sin_limpio = entrenar(ModeloTrivial(), train, val, cfg,
+                          torch.device("cpu"), tmp_path / "ck1")
+    assert "perdida_train" not in sin_limpio["historial"][0], (
+        "sin cargador limpio no se paga la pasada de mas")
+    assert "auc_train" not in sin_limpio["historial"][0]
+
+    con_limpio = entrenar(ModeloTrivial(), train, val, cfg,
+                          torch.device("cpu"), tmp_path / "ck2",
+                          cargador_train_limpio=train)
+    registro = con_limpio["historial"][0]
+    for clave in ("perdida_train", "auc_train", "recall_train",
+                  "especificidad_train"):
+        assert clave in registro, f"falta {clave} en el registro de la epoca"
+    assert registro["perdida_train"] is not None
+    assert 0.0 <= registro["auc_train"] <= 1.0

@@ -63,16 +63,44 @@ def fijar_semillas(semilla: int) -> None:
     torch.backends.cudnn.benchmark = False
 
 
-def evaluar_epoca(modelo, cargador, dispositivo) -> tuple[np.ndarray, np.ndarray]:
-    """Devuelve (y_true, y_score) con y_score = probabilidad de la clase positiva."""
+def evaluar_epoca(modelo, cargador, dispositivo, criterio=None):
+    """Devuelve (y_true, y_score, perdida). `y_score` es la probabilidad de la
+    clase positiva; `perdida` es None si no se pasa `criterio`.
+
+    LA PERDIDA SALE DEL MISMO CRITERIO QUE LA DE ENTRENAMIENTO, y eso no es un
+    detalle de estilo: el criterio es `BCEWithLogitsLoss(pos_weight)` con
+    `pos_weight = negativos/positivos` ~3,44 (el 22,5% de positivos del
+    conjunto). Con un criterio sin peso, la perdida de validacion sale en OTRA
+    ESCALA, y entonces la distancia entre las dos curvas -que es justo lo que
+    diagnostica el sobreajuste- no mide nada: se puede hacer tan grande o tan
+    pequena como se quiera cambiando el peso de un solo lado.
+
+    Se calcula DENTRO de la pasada que ya se hacia, sobre los logits y antes de
+    la sigmoide, asi que no cuesta ni una imagen de mas.
+
+    Por que no estaba: el bucle media la perdida de entrenamiento y, en
+    validacion, metricas de ordenamiento (AUC, recall, especificidad). Con eso
+    se elige la mejor epoca, pero NO se puede ver si el modelo esta
+    memorizando: esa senal es la separacion entre las dos perdidas, y solo se
+    tenia una de las dos.
+    """
     modelo.eval()
     etiquetas, puntajes = [], []
+    perdida_total, vistas = 0.0, 0
     with torch.no_grad():
         for x, y in cargador:
+            y = y.to(dispositivo)
             logits = modelo(x.to(dispositivo)).squeeze(1)
+            if criterio is not None:
+                # Ponderado por el tamano del lote, como en la pasada de
+                # entrenamiento: promediar los promedios de cada lote le da al
+                # ultimo lote incompleto el mismo peso que a uno entero.
+                perdida_total += criterio(logits, y).item() * x.size(0)
+                vistas += x.size(0)
             puntajes.append(torch.sigmoid(logits).cpu().numpy())
-            etiquetas.append(y.numpy())
-    return np.concatenate(etiquetas), np.concatenate(puntajes)
+            etiquetas.append(y.cpu().numpy())
+    perdida = perdida_total / vistas if vistas else None
+    return np.concatenate(etiquetas), np.concatenate(puntajes), perdida
 
 
 def _etiquetas_de(cargador) -> np.ndarray:
@@ -195,7 +223,7 @@ def exportar_pesos_cpu(modelo, ruta) -> Path:
 
 def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
              dir_checkpoints, reanudar: bool = False,
-             al_terminar_epoca=None) -> dict:
+             al_terminar_epoca=None, cargador_train_limpio=None) -> dict:
     """Entrena en dos fases y devuelve el historial y el mejor checkpoint.
 
     Fase 1: solo la cabeza (backbone congelado), `cfg.epocas_cabeza` epocas.
@@ -332,10 +360,33 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
         for _ in range(hechas, n_epocas):
             perdida = _pasada_de_entrenamiento(
                 modelo, cargador_train, criterio, optimizador, dispositivo)
-            y_true, y_score = evaluar_epoca(modelo, cargador_val, dispositivo)
+            y_true, y_score, perdida_val = evaluar_epoca(
+                modelo, cargador_val, dispositivo, criterio)
             puntajes = _puntuar_epoca(y_true, y_score, cfg)
             registro = {"fase": nombre_fase, "epoca": len(historial),
-                        "perdida": perdida, **puntajes}
+                        "perdida": perdida, "perdida_val": perdida_val,
+                        **puntajes}
+            # Y, si se pide, el mismo conjunto de entrenamiento SIN AUMENTAR.
+            #
+            # `perdida` de arriba no sirve para comparar con la de validacion, y
+            # por dos razones a la vez: es el promedio de la pasada MIENTRAS los
+            # pesos cambiaban -no el del modelo al cerrar la epoca- y se midio
+            # sobre imagenes con `RandomAffine` y `ColorJitter` encima, que son
+            # mas dificiles que las limpias de validacion. Comparar las dos
+            # puede dar la curva de entrenamiento POR DEBAJO de la de
+            # validacion, que leido de un vistazo parece underfitting y no lo
+            # es: es la aumentacion.
+            #
+            # Con `cargador_train_limpio` se mide el mismo conjunto con las
+            # transformaciones de evaluacion y el modelo ya quieto. Cuesta una
+            # pasada mas por epoca, y por eso es opcional: solo la corrida de
+            # diagnostico la necesita.
+            if cargador_train_limpio is not None:
+                yt, ys, perdida_train = evaluar_epoca(
+                    modelo, cargador_train_limpio, dispositivo, criterio)
+                registro["perdida_train"] = perdida_train
+                for clave, valor in _puntuar_epoca(yt, ys, cfg).items():
+                    registro[f"{clave}_train"] = valor
             historial.append(registro)
 
             mejora = _es_mejor(puntajes, mejor_recall, mejor_auc)

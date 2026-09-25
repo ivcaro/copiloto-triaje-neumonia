@@ -343,7 +343,7 @@ def main(argv=None) -> int:
 
     # `modelo` ya vuelve de entrenar() con los pesos de su MEJOR epoca, no con
     # los de la ultima: no hay que recargar nada a mano aqui.
-    y_val, s_val = evaluar_epoca(modelo, cargador_val, dispositivo)
+    y_val, s_val, _ = evaluar_epoca(modelo, cargador_val, dispositivo)
     umbral, metricas_val, paso = elegir_umbral(
         y_val, s_val, cfg.especificidad_objetivo, cfg.especificidad_minima,
         cfg.recall_objetivo, cfg.recall_minimo,
@@ -355,7 +355,7 @@ def main(argv=None) -> int:
     # umbral esta congelado. Se evalua UNA sola vez: reevaluarlo despues
     # invalidaria estas metricas.
     cargador_test = construir_cargador(cfg, "test", False, args.trabajadores, anclar)
-    y_test, s_test = evaluar_epoca(modelo, cargador_test, dispositivo)
+    y_test, s_test, _ = evaluar_epoca(modelo, cargador_test, dispositivo)
     metricas_test = metricas_en_umbral(y_test, s_test, umbral)
 
     reporte = {
