@@ -268,7 +268,11 @@ CREATE TABLE consultas (
   sintomas     jsonb,        -- COPIA (D12): cuestionarios se borra a los 7 días
   signos       jsonb,
   resultado    jsonb,        -- el structuredContent completo
-  error        text,         -- el código, no el texto
+  error        text,         -- `codigo: texto crudo del servidor`. NO es solo
+                             -- el codigo: agrupar por el exige
+                             -- `split_part(error, ':', 1)`. Se guarda el texto
+                             -- crudo SIEMPRE porque en las caidas sin codigo es
+                             -- lo unico diagnosticable que queda
   ms_extremo   integer,      -- latencia de extremo a extremo, para §16
   creado_en    timestamptz NOT NULL DEFAULT now()
 );
@@ -504,6 +508,19 @@ gana algo: deja de haber duda sobre quién escribió qué.
 
 La invariante que lo fija **no nombra ningún carácter**, y por eso sobrevive al
 siguiente homoglifo que alguien descubra.
+
+**La pregunta que encuentra esta clase de fallo.** Costó tres intentos, y lo
+que falló las dos primeras veces fue la pregunta, no el esfuerzo. Preguntarse
+*«qué caracteres son peligrosos»* lleva a una lista negra, y una lista negra va
+siempre un punto de código por detrás. La pregunta que sirve es:
+
+> **¿De dónde puede venir cada byte de este mensaje?**
+
+Si la respuesta para algún byte es «de alguien de fuera», ese mensaje no puede
+contener afirmaciones del sistema. Esa pregunta habría encontrado los tres
+fallos —el bloque falso, el cierre falsificable, y el que el filtro no veía— a
+la primera, y sirve igual para el dashboard del §15, para H6, y para cualquier
+sitio donde este proyecto vuelva a mezclar dato ajeno con afirmación propia.
 
 > **Para quien construya el dashboard del §15:** el texto libre sigue
 > guardándose sin neutralizar, que es lo correcto —quien presenta decide cómo—.
@@ -813,7 +830,7 @@ Un workflow: **Webhook con autenticación básica** → consultas SQL → HTML.
 | Iniciados vs completados | `cuestionarios_iniciados` contra `consultas` |
 | Distribución de clasificaciones | `resultado->>'clasificacion'` |
 | **Casos en la banda contradictoria** | `resultado` con `cruda` en `[0,4258 ; 0,5786]` — cuántas veces el cribado y la evidencia discreparon |
-| Rechazos por código | `consultas.error` |
+| Rechazos por código | `split_part(consultas.error, ':', 1)` — la columna guarda `codigo: texto`, no solo el codigo |
 | Latencia p50/p95 | `ms_extremo` (extremo a extremo) y `resultado->>'milisegundos'` (solo el modelo) |
 | Consultas por profesional | `consultas.chat_id` contra `profesionales` |
 
@@ -832,7 +849,8 @@ de limpiar, comprueba a diario y **avisa por Telegram al equipo** si:
 - `copiloto-bd` no acepta conexiones;
 - alguno de los tres workflows quedó **desactivado**;
 - la tasa de `dicom_invalido` de los últimos 7 días supera el 20 % (algo pasa
-  con cómo mandan las placas);
+  con cómo mandan las placas) — contando con `split_part(error, ':', 1)`,
+  porque la columna guarda `codigo: texto`;
 - hay cuestionarios caducados sin borrar (la limpieza falló);
 - **el webhook de alguno de los dos bots dejó de apuntar a donde debe.**
 
