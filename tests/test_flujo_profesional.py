@@ -614,41 +614,120 @@ def test_ningun_mensaje_lleva_parse_mode():
         assert extras.get("appendAttribution") is False, nodo["name"]
 
 
-def test_el_rotulo_es_un_canal_que_solo_escribe_el_sistema():
-    """El agujero que abrio renunciar a la negrita, cerrado.
+def test_el_informe_no_lleva_ni_un_caracter_que_haya_escrito_el_paciente():
+    """LA REGLA DEL INFORME, escrita al revés que en la ronda anterior.
 
-    Con `parse_mode` vacio los bloques del §8 se rotulan con MAYUSCULAS + RAYA +
-    salto de linea, y eso deja que **el texto del paciente escriba un rotulo**:
-    240 caracteres en la pregunta 7 bastaban para que el informe de una placa
-    negativa llevara dos bloques CRIBADO y dos EVIDENCIA, y para que el falso
-    fuera el ultimo que el clinico leia.
+    Antes el texto del paciente entraba en el informe y se le quitaban los
+    caracteres peligrosos. Esa defensa se rodeó por tres vías, y la tercera no la
+    arregla ningún filtro: con 447 caracteres y **ningún** carácter de control, el
+    cliente de Telegram envuelve la burbuja y una fila renderizada empieza por el
+    rótulo. «Cabe en una línea» es cierto en la cadena y falso en la pantalla,
+    porque el salto lo mete el cliente y no el dato.
 
-    Lo que lo cierra: el dato del paciente pasa por `neutralizar`, que le quita los
-    saltos de linea y la raya. La raya es el separador de los rotulos, asi que
-    quitarsela al dato hace que `ROTULO — ` sea literalmente algo que solo el
-    sistema puede producir. Es el sustituto de la negrita.
-
-    El comportamiento lo comprueba `tests/profesional.mjs` con el payload literal;
-    esto ata que las DOS entradas de datos del paciente pasen por el filtro, que es
-    lo que una prueba de comportamiento no puede garantizar para el futuro.
+    Ahora: el informe se genera solo a partir de números validados, de valores de
+    una enumeración cerrada y de literales del nodo. `tests/profesional.mjs`
+    comprueba el comportamiento -que el informe no cambie ni un byte con 69
+    caracteres distintos con forma de raya o de espacio-; esto ata la estructura,
+    que es lo que una prueba de comportamiento no garantiza para el futuro.
     """
     fuente = _nodo(_flujo(), "Desenlace")["parameters"]["jsCode"]
-    assert "function neutralizar" in fuente
-    # El texto libre de la pregunta 7.
-    assert re.search(r"const limpio = neutralizar\(libre\)", fuente), \
-        "el texto libre tiene que pasar por el filtro"
-    # Y los valores de los sintomas, cuyo camino de reserva imprime la cadena tal
-    # cual.
-    assert re.search(r"neutralizar\(v\)\)", fuente), \
-        "el valor de reserva de los sintomas tiene que pasar por el filtro"
-    # Los tres caracteres que se le quitan, por codigo y no por escape: un U+2028
-    # escrito como escape que un editor deje como caracter de verdad rompe el nodo.
-    for codigo in ("8232", "8233", "8212", "9888"):
-        assert codigo in fuente, codigo
-    assert " " not in fuente and " " not in fuente, \
-        "un separador de linea LITERAL en el codigo deja el nodo sin compilar"
-    # Y el descargo es lo ultimo, siempre.
-    assert "bloques.push(DESCARGO)" in fuente
+    # 1. La lista negra tiene que estar FUERA. Si alguien la reinstala, la regla
+    #    vuelve a ser «quitar caracteres» y el agujero vuelve con ella.
+    assert "function neutralizar" not in fuente, \
+        "la defensa es la regla invertida, no una lista de caracteres"
+    # 2. El texto libre no se usa en el informe: solo en el mensaje aparte.
+    cuerpo = fuente.split("function redactarResultado")[1]
+    informe = cuerpo[:cuerpo.index("\n}\n")]
+    assert "texto_libre" not in informe, informe
+    assert "texto_libre" in fuente.split("function mensajeDelPaciente")[1], \
+        "el texto libre tiene que ir al mensaje aparte"
+    # 3. El bloque de los sintomas sale de la enumeracion cerrada, y un valor que
+    #    no este en ella se declara sin imprimirse.
+    assert "(valor no reconocido)" in fuente
+    # 4. Y la busqueda va por propiedad PROPIA: con `tabla[v]` a secas, un valor
+    #    como `constructor` alcanza Object.prototype y el informe imprimia
+    #    «function Object() { [native code] }» en vez del dato.
+    assert "hasOwnProperty" in fuente
+    paleta = fuente.split("function dePaleta")[1]
+    paleta = paleta[:paleta.index("\n}\n")]
+    assert paleta.index("propio.call(tabla, v)") < paleta.index("tabla[v]"), \
+        "la comprobacion de propiedad propia tiene que ir ANTES del acceso"
+    # Y no queda ningun acceso a la enumeracion fuera de ese ayudante (sin contar
+    # el comentario que explica por que no puede haberlo).
+    codigo = "\n".join(l for l in fuente.splitlines()
+                       if not l.lstrip().startswith("//"))
+    assert codigo.count("tabla[") == 1, \
+        "la enumeracion se consulta solo por `dePaleta`"
+
+
+def test_el_texto_del_paciente_va_en_un_mensaje_aparte():
+    """La otra mitad de la regla invertida: el paciente no pierde su texto.
+
+    Sale del informe y va en un mensaje propio, **enviado después**, con cabecera y
+    cierre del sistema. La rama falsa del IF no tiene salida, así que un caso sin
+    texto libre recibe un solo mensaje.
+    """
+    flujo = _flujo()
+    assert [c["node"] for c in flujo["connections"]["Responder"]["main"][0]] \
+        == ["Hay texto del paciente?"]
+    salidas = flujo["connections"]["Hay texto del paciente?"]["main"]
+    assert [c["node"] for c in salidas[0]] == ["Enviar texto del paciente"]
+    assert len(salidas) == 1, "la rama falsa no manda nada"
+    cond = _nodo(flujo, "Hay texto del paciente?")["parameters"]["conditions"]
+    c = cond["conditions"][0]
+    assert c["leftValue"] == "={{ $('Desenlace').first().json.texto_paciente }}", c
+    assert c["operator"]["operation"] == "notEmpty", c
+    envio = _nodo(flujo, "Enviar texto del paciente")["parameters"]
+    assert envio["text"] == "={{ $('Desenlace').first().json.texto_paciente }}"
+    # Y este mensaje tampoco lleva parse_mode: lo cubre
+    # `test_ningun_mensaje_lleva_parse_mode`, que recorre los nueve nodos.
+
+
+def test_las_dos_etiquetas_son_las_que_emite_el_servidor():
+    """Si SP2 renombrara la etiqueta negativa, `Leer respuesta` la rechazaría y
+    **toda** radiografía negativa terminaría la conversación con
+    `error_no_reconocido`. Esto lo ata a la fuente en vez de dejarlo a la suerte.
+
+    Se lee `inferencia.py`, que es quien las emite (§10.2).
+    """
+    fuente_py = (pathlib.Path(__file__).resolve().parents[1] / "src"
+                 / "copiloto_triaje" / "servicio" / "inferencia.py"
+                 ).read_text(encoding="utf-8")
+    m = re.search(r'"clasificacion":\s*\(\s*"([a-z_]+)"\s+if\s+.*?else\s+"([a-z_]+)"',
+                  fuente_py, re.S)
+    assert m, "no encuentro la expresion que decide `clasificacion` en inferencia.py"
+    positiva, negativa = m.group(1), m.group(2)
+    leer = _nodo(_flujo(), "Leer respuesta")["parameters"]["jsCode"]
+    declaradas = re.search(r"const ETIQUETAS = \[([^\]]+)\]", leer)
+    assert declaradas, leer
+    assert [x.strip().strip("'\"") for x in declaradas.group(1).split(",")] == \
+        [positiva, negativa], (declaradas.group(1), positiva, negativa)
+    # Y la que `Desenlace` considera positiva es la misma.
+    desen = _nodo(_flujo(), "Desenlace")["parameters"]["jsCode"]
+    assert re.search(r"const POSITIVA = '%s'" % re.escape(positiva), desen), positiva
+
+
+def test_el_texto_crudo_del_servidor_siempre_queda_registrado():
+    """Lo que mi informe anterior decía y era falso.
+
+    En la rama sin código, `consultas.error` recibía solo `"dicom_invalido"`:
+    `Desenlace` concatenaba el detalle únicamente si el código era
+    `error_no_reconocido`, y `Leer respuesta` ya había sustituido el texto del
+    servidor por uno fabricado. Para un DICOM truncado la pérdida es nula; para
+    cualquier otra caída sin código se perdía lo único diagnosticable.
+
+    Ahora `Leer respuesta` lleva `crudo` aparte de `detalle` -uno es lo que se
+    registra, el otro lo que se puede enseñar- y `Desenlace` lo concatena para
+    **todos** los códigos. El comportamiento lo comprueba el arnés; esto ata que
+    los dos campos sigan existiendo y que el código siga siendo lo primero, que es
+    de lo que depende el `GROUP BY` del §16.
+    """
+    leer = _nodo(_flujo(), "Leer respuesta")["parameters"]["jsCode"]
+    assert "crudo" in leer and "detalle" in leer
+    assert re.search(r"const salir = \(codigo, detalle, crudo\)", leer), leer
+    desen = _nodo(_flujo(), "Desenlace")["parameters"]["jsCode"]
+    assert "codificar(codigo + (crudo ? ': ' + crudo : ''))" in desen, \
+        "el codigo tiene que ir PRIMERO: el §16 agrupa por el"
 
 
 def test_los_tres_bloques_del_spec_estan_rotulados_y_separados():
@@ -656,7 +735,7 @@ def test_los_tres_bloques_del_spec_estan_rotulados_y_separados():
     afirmaciones contradictorias sin pista de cual manda."""
     fuente = _nodo(_flujo(), "Desenlace")["parameters"]["jsCode"]
     for rotulo in ("CRIBADO — ", "EVIDENCIA DE LA IMAGEN — ",
-                   "REFERIDO POR EL PACIENTE — ", "EXPLORADO — "):
+                   "REFERIDO POR EL PACIENTE — ", "EXPLORADO — "):  # y nada mas
         assert rotulo in fuente, rotulo
     assert "bloques.join('\\n\\n')" in fuente, "los bloques van separados"
     assert "⚠️" in fuente, "el aviso de la banda contradictoria"

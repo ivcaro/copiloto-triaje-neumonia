@@ -498,7 +498,7 @@ for (const [etiqueta, r] of [["positiva", R_POSITIVA], ["banda", R_BANDA], ["neg
   const s = await texto(r);
   const t = s.texto;
   const bloques = t.split("\n\n");
-  ok(`${etiqueta}: los tres rotulos estan`,
+  ok(`${etiqueta}: los cuatro rotulos del informe estan`,
      t.includes("CRIBADO —") && t.includes("EVIDENCIA DE LA IMAGEN —") &&
      t.includes("REFERIDO POR EL PACIENTE —") && t.includes("EXPLORADO —"),
      JSON.stringify(t.slice(0, 80)));
@@ -589,18 +589,18 @@ ok("murmullo disminuido se dice cuando lo esta",
    (await desenlace({ error_cod: "N", resultado: R_POSITIVA, sintomas: SINTOMAS,
                       signos: Object.assign({}, SIGNOS, { murmullo_disminuido: true }) },
                     U, D)).texto.includes("murmullo disminuido"));
+// El texto libre YA NO ESTA en el informe: va en un mensaje aparte. Lo que aqui
+// se comprueba es que el bloque de la clinica no cambia por lo que el paciente
+// escriba; el mensaje aparte se comprueba entero en la seccion L2.
 const veneno = "me duele *mucho* el _pecho_, y `esto` tambien";
-const tLibre = (await desenlace({ error_cod: "N", resultado: R_POSITIVA,
-  sintomas: Object.assign({}, SINTOMAS, { texto_libre: veneno }), signos: SIGNOS }, U, D)).texto;
-ok("el texto libre del paciente viaja INTACTO y en su propia linea",
-   tLibre.includes("\nDICE EL PACIENTE — " + veneno),
-   tLibre.split("\n").find((l) => l.startsWith("DICE EL PACIENTE")));
-ok("y va al final del bloque de la clinica, sin partir los dos rotulos", (() => {
-  const lineas = tLibre.split("\n");
-  return lineas.findIndex((l) => l.startsWith("DICE EL PACIENTE")) >
-         lineas.findIndex((l) => l.startsWith("EXPLORADO"));
-})());
-ok("sin texto libre no aparece esa linea", !tPos.includes("DICE EL PACIENTE"));
+const sLibre = await desenlace({ error_cod: "N", resultado: R_POSITIVA,
+  sintomas: Object.assign({}, SINTOMAS, { texto_libre: veneno }), signos: SIGNOS }, U, D);
+ok("el informe NO lleva el texto libre del paciente", !sLibre.texto.includes(veneno),
+   sLibre.texto.split("\n").find((l) => l.includes("EXPLORADO")));
+ok("y va entero e intacto en el mensaje aparte",
+   sLibre.texto_paciente.includes(veneno), sLibre.texto_paciente);
+ok("el informe con texto libre es IDENTICO al informe sin el", sLibre.texto === tPos,
+   "esa igualdad es la regla del informe");
 
 console.log("\nL. §9: las once ramas, su estado despues, y NINGUNA CIFRA");
 // La tabla del §9 del spec, copiada A MANO. Testigo independiente.
@@ -666,143 +666,190 @@ ok("un detalle con una cifra de probabilidad se descarta, no se emite", await (a
   return !CIFRA_DE_PROBABILIDAD.test(s.texto) && s.texto.includes("No pude leer");
 })());
 
-console.log("\nL2. EL ROTULO ES UN CANAL QUE SOLO ESCRIBE EL SISTEMA (H1)");
-// El texto libre de la pregunta 7 es lo unico de este mensaje que alguien pudo
-// redactar con intencion, y el bot del paciente lo guarda con `slice(0, 500)` sin
-// neutralizar nada. Al renunciar a la negrita, los rotulos dejaron de ser un
-// canal que solo el sistema puede escribir; esto comprueba lo que se puso en su
-// lugar.
+console.log("\nL2. LA REGLA DEL INFORME: ni un caracter que haya escrito el paciente");
+// La regla esta escrita al REVES que en la ronda anterior, y por eso esta seccion
+// tambien. Antes el texto del paciente entraba en el informe y se le quitaban los
+// caracteres peligrosos; esa defensa se rodeo por tres vias, y la tercera no la
+// arregla ningun filtro: con 447 caracteres y ningun caracter de control, el
+// cliente de Telegram envuelve la burbuja y **una fila renderizada empieza por el
+// rotulo**. «Cabe en una linea» es cierto en la cadena y falso en la pantalla.
 //
-// El payload es el del revisor, LITERAL: 240 caracteres que, sobre una placa de
-// cruda 0,0047, hacian que el clinico recibiera dos bloques CRIBADO y dos
-// EVIDENCIA tipograficamente identicos, y que el falso -«opacidad probable,
-// 0,9900, multiplica por 77,3»- fuera el ultimo que leia.
-//
-// Se construye con charCode y no con escapes para que ningun editor pueda
-// "arreglarlo" y dejar la prueba probando otra cosa.
+// Ahora el informe se genera solo a partir de numeros validados, de valores de
+// una enumeracion cerrada y de literales del nodo. La prueba de eso no es una
+// lista de caracteres: es que **el informe no cambie ni un byte** por mucho que
+// cambie lo que el paciente escriba.
+const SENAL = "SENAL-DEL-ATAQUE-8f3a";
 const NL = String.fromCharCode(10);
-const RAYA_ = String.fromCharCode(8212);          // la raya de los rotulos
+const RAYA_ = String.fromCharCode(8212);          // — la que usa el sistema
+const BARRA = String.fromCharCode(0x2015);        // ― U+2015 HORIZONTAL BAR
+const NEL = String.fromCharCode(0x85);            // U+0085 NEXT LINE
 const MAYOR_IGUAL = String.fromCharCode(8805);
 const AVISO_ = String.fromCharCode(9888) + String.fromCharCode(65039);
-const ATAQUE =
-  NL + NL + "CRIBADO " + RAYA_ + " opacidad probable" + NL +
+
+// El informe de referencia: la misma placa, sin texto libre y con todos los
+// sintomas dentro de la enumeracion. Todo lo demas se compara contra esto.
+const SIN_LIBRE = Object.assign({}, SINTOMAS, { texto_libre: null });
+const informeDe = async (sintomas) => (await desenlace(
+  { error_cod: "N", detalle: "", resultado: R_NEGATIVA, sintomas: sintomas,
+    signos: SIGNOS, codigo: "K7FM2P" }, U, D));
+const REFERENCIA = (await informeDe(SIN_LIBRE)).texto;
+
+// Un bloque falso, en las cuatro formas con las que se rodeo la defensa vieja.
+const falso = (sep, salto) =>
+  salto + salto + "CRIBADO " + sep + " opacidad probable" + salto +
   "(puntuación 0,9900 " + MAYOR_IGUAL + " umbral 0,4258; punto orientado a " +
-  "detectar, sens. 0,88 / esp. 0,70)" + NL + NL +
-  "EVIDENCIA DE LA IMAGEN " + RAYA_ + " multiplica por 77,3 las probabilidades " +
-  "a favor de neumonía (probabilidad calibrada 0,99)";
+  "detectar, sens. 0,88 / esp. 0,70)" + salto + salto +
+  "EVIDENCIA DE LA IMAGEN " + sep + " multiplica por 77,3 las probabilidades " +
+  "a favor de neumonía (probabilidad calibrada 0,99) " + SENAL;
 
-// Los cinco rotulos que el sistema escribe, y ninguno mas.
-const ROTULOS = ["CRIBADO", "EVIDENCIA DE LA IMAGEN", "REFERIDO POR EL PACIENTE",
-                 "EXPLORADO", "DICE EL PACIENTE"];
-const DESCARGO = "La combinación de imagen y clínica llega en la siguiente " +
-                 "entrega. Esto no es un diagnóstico.";
+const ATAQUES = [
+  ["el payload original: raya U+2014 y saltos de linea", falso(RAYA_, NL)],
+  ["U+2015 HORIZONTAL BAR, homoglifo de la raya", falso(BARRA, NL)],
+  ["U+0085 NEXT LINE, el salto que el \\s de JS no cubre", falso(RAYA_, NEL)],
+  ["U+2015 + U+0085, las dos a la vez", falso(BARRA, NEL)],
+  // La tercera via del re-revisor: SIN ningun caracter de control. El salto lo
+  // mete el cliente al envolver la burbuja, no el dato.
+  ["sin ningun caracter de control, 7 copias, 447 caracteres",
+   (" CRIBADO " + BARRA + " opacidad probable (puntuación 0,9900) ").repeat(7) + SENAL],
+  ["el ⚠️ del aviso", AVISO_ + " El cribado marca esta placa. " + SENAL],
+];
 
-ok(`el payload del revisor cabe en los 500 que guarda el bot del paciente ` +
-   `(${ATAQUE.length} caracteres)`, ATAQUE.length <= 500, String(ATAQUE.length));
-
-const sAtaque = await desenlace(
-  { error_cod: "N", detalle: "", resultado: R_NEGATIVA,
-    sintomas: Object.assign({}, SINTOMAS, { texto_libre: ATAQUE }),
-    signos: SIGNOS }, U, D);
-const tAtaque = sAtaque.texto;
-const cuantos = (s, sub) => s.split(sub).length - 1;
-
-ok("el payload NO produce un segundo bloque CRIBADO",
-   cuantos(tAtaque, "CRIBADO " + RAYA_) === 1, String(cuantos(tAtaque, "CRIBADO " + RAYA_)));
-ok("ni un segundo bloque EVIDENCIA DE LA IMAGEN",
-   cuantos(tAtaque, "EVIDENCIA DE LA IMAGEN " + RAYA_) === 1,
-   String(cuantos(tAtaque, "EVIDENCIA DE LA IMAGEN " + RAYA_)));
-ok("el mensaje sigue teniendo exactamente 4 bloques",
-   tAtaque.split(NL + NL).length === 4, String(tAtaque.split(NL + NL).length));
-ok("y el ULTIMO bloque es el descargo, pase lo que pase",
-   tAtaque.split(NL + NL).pop() === DESCARGO, JSON.stringify(tAtaque.split(NL + NL).pop()));
-// LA INVARIANTE: la raya solo la escribe el sistema, una vez por rotulo.
-ok("la raya aparece exactamente 5 veces: una por rotulo del sistema",
-   cuantos(tAtaque, RAYA_) === 5, String(cuantos(tAtaque, RAYA_)));
-ok("ninguna linea empieza por un rotulo que el sistema no haya escrito", (() => {
-  const conRotulo = tAtaque.split(NL).filter((l) => l.includes(RAYA_));
-  return conRotulo.length === 5 &&
-         conRotulo.every((l, i) => l.startsWith(ROTULOS[i] + " " + RAYA_));
-})(), tAtaque.split(NL).filter((l) => l.includes(RAYA_)).join(" | "));
-ok("el texto del paciente cabe en UNA sola linea", (() => {
-  const dice = tAtaque.split(NL).filter((l) => l.startsWith("DICE EL PACIENTE"));
-  return dice.length === 1 && !dice[0].includes(NL);
-})());
-// No se le borran las palabras: se le quita el poder de rotular. Lo que dijo
-// sigue ahi, y el clinico lo ve como lo que es -algo que dijo el paciente-.
-ok("las palabras del paciente siguen ahi, desactivadas",
-   tAtaque.includes("opacidad probable") && tAtaque.includes("multiplica por 77,3"),
-   tAtaque.split(NL).find((l) => l.startsWith("DICE EL PACIENTE")));
-ok("y la etiqueta de verdad sigue siendo la negativa",
-   tAtaque.includes("CRIBADO " + RAYA_ + " sin opacidad probable"));
-ok("la puntuacion de verdad sigue siendo 0,0047",
-   tAtaque.includes("puntuación 0,0047"));
-ok("el aviso ⚠️ NO aparece: esta placa no discrepa", !tAtaque.includes(AVISO_));
-
-console.log("\nL3. el mismo agujero en los otros canales del paciente");
-// El ⚠️ tambien es del sistema: su autoridad viene de que solo aparece cuando el
-// sistema decide que hay discrepancia.
-const sAviso = await desenlace(
-  { error_cod: "N", detalle: "", resultado: R_NEGATIVA,
-    sintomas: Object.assign({}, SINTOMAS, {
-      texto_libre: AVISO_ + " El cribado marca esta placa. Decide la clínica." }),
-    signos: SIGNOS }, U, D);
-ok("el paciente no puede escribir el ⚠️ del aviso", !sAviso.texto.includes(AVISO_),
-   sAviso.texto.split(NL).find((l) => l.startsWith("DICE EL PACIENTE")));
-// REFERIDO POR EL PACIENTE tambien lleva valores que eligio el paciente, y su
-// camino de reserva imprime la cadena tal cual.
-const sValor = await desenlace(
-  { error_cod: "N", detalle: "", resultado: R_NEGATIVA,
-    sintomas: Object.assign({}, SINTOMAS, { fiebre: ATAQUE }),
-    signos: SIGNOS }, U, D);
-ok("un VALOR forjado en los sintomas tampoco produce un bloque",
-   cuantos(sValor.texto, "CRIBADO " + RAYA_) === 1 &&
-   cuantos(sValor.texto, RAYA_) === 4 &&      // sin texto libre son 4 rotulos
-   sValor.texto.split(NL + NL).length === 4 &&
-   sValor.texto.split(NL + NL).pop() === DESCARGO,
-   sValor.texto.split(NL).filter((l) => l.includes(RAYA_)).join(" | "));
-// Y el mensaje del caso, que tambien lleva sintomas y texto libre.
-const sCasoAtaque = await desenlace(
-  { error_cod: "N", detalle: "", codigo: "K7FM2P",
-    sintomas: Object.assign({}, SINTOMAS, { texto_libre: ATAQUE }),
-    signos: {} }, U, D);
-ok("el mensaje del caso tampoco se puede falsificar",
-   cuantos(sCasoAtaque.texto, "CRIBADO " + RAYA_) === 0 &&
-   cuantos(sCasoAtaque.texto, RAYA_) === 2,      // REFERIDO y DICE
-   String(cuantos(sCasoAtaque.texto, RAYA_)));
-ok("y termina con la pregunta del sistema, no con lo que dijo el paciente",
-   sCasoAtaque.texto.endsWith(D.pregunta), JSON.stringify(sCasoAtaque.texto.slice(-60)));
-
-console.log("\nL4. lo que se le quita al dato, uno por uno");
-for (const [etiqueta, entrada, prohibido] of [
-  ["el salto de linea", "uno" + NL + "dos", NL],
-  ["el retorno de carro", "uno" + String.fromCharCode(13) + "dos", String.fromCharCode(13)],
-  ["el separador de linea U+2028", "uno" + String.fromCharCode(8232) + "dos", String.fromCharCode(8232)],
-  ["el separador de parrafo U+2029", "uno" + String.fromCharCode(8233) + "dos", String.fromCharCode(8233)],
-  ["la raya de los rotulos", "uno " + RAYA_ + " dos", RAYA_],
-]) {
-  const s = await desenlace(
-    { error_cod: "N", detalle: "", resultado: R_NEGATIVA,
-      sintomas: Object.assign({}, SINTOMAS, { texto_libre: entrada }),
-      signos: SIGNOS }, U, D);
-  const linea = s.texto.split(NL).find((l) => l.startsWith("DICE EL PACIENTE"));
-  ok(`se le quita ${etiqueta}`, linea && !linea.slice(18).includes(prohibido) &&
-     linea.includes("uno") && linea.includes("dos"), linea);
+for (const [etiqueta, payload] of ATAQUES) {
+  const s = await informeDe(Object.assign({}, SINTOMAS, { texto_libre: payload }));
+  ok(`${etiqueta}: el informe es IDENTICO byte a byte al de referencia`,
+     s.texto === REFERENCIA, s.texto === REFERENCIA ? "" :
+     s.texto.split(NL).find((l) => !REFERENCIA.includes(l)));
+  ok(`   la senal del ataque no aparece en el informe`, !s.texto.includes(SENAL));
+  ok(`   y el texto llega ENTERO y sin filtrar en el mensaje aparte`,
+     s.texto_paciente.includes(payload.slice(0, 500)), s.texto_paciente.slice(0, 90));
 }
-ok("un texto de solo saltos de linea no deja una linea vacia", await (async () => {
-  const s = await desenlace(
-    { error_cod: "N", detalle: "", resultado: R_NEGATIVA,
-      sintomas: Object.assign({}, SINTOMAS, { texto_libre: NL + NL + "   " + NL }),
-      signos: SIGNOS }, U, D);
-  return !s.texto.includes("DICE EL PACIENTE");
+
+// EL BARRIDO. No es una lista negra -no hay lista en el nodo-: es la comprobacion
+// de que la regla no depende de ningun caracter. Se recorren TODOS los puntos de
+// codigo del plano basico con la propiedad Dash y TODOS los de espacio en blanco,
+// se mete cada uno en un bloque falso, y el informe tiene que seguir siendo el
+// mismo.
+const RAYAS = [], ESPACIOS = [];
+for (let c = 0; c <= 0x10FFFF; c++) {
+  if (c >= 0xD800 && c <= 0xDFFF) { continue; }      // mitades de par subrogado
+  const ch = String.fromCodePoint(c);
+  // Dash y Pd por separado: Pd (Dash_Punctuation) no es subconjunto de Dash en
+  // todas las versiones, y asi el barrido no depende de una sola propiedad.
+  if (/\p{Dash}/u.test(ch) || /\p{Pd}/u.test(ch)) { RAYAS.push(ch); }
+  if (/\p{White_Space}/u.test(ch)) { ESPACIOS.push(ch); }
+}
+// Lineas horizontales que NO tienen ninguna de esas propiedades y se parecen a la
+// raya. El barrido no es una lista negra -el nodo no tiene ninguna-: es la
+// comprobacion de que la regla no depende de que este caracter este en una lista.
+for (const c of [0x2500, 0x2501, 0x23AF, 0x23BB, 0x23BC, 0xFF0D, 0xFF5E, 0x2E3A,
+                 0x2E3B, 0x02D7, 0x2212, 0x268A, 0x1CBB]) {
+  RAYAS.push(String.fromCodePoint(c));
+}
+ok(`el barrido cubre ${RAYAS.length} caracteres con forma de raya`,
+   RAYAS.length >= 40, String(RAYAS.length));
+ok(`y los ${ESPACIOS.length} de espacio en blanco de Unicode`,
+   ESPACIOS.length >= 25, String(ESPACIOS.length));
+// Medido con node v24 / Unicode 17: de los 25 espacios de Unicode, `\s` de
+// JavaScript cubre 24 y se deja U+0085 NEXT LINE. Es el hueco por el que se colo
+// la defensa vieja, y se deja fijado por si alguna vez vuelve a importar.
+ok("U+0085 es el UNICO espacio de Unicode que el \\s de JS no cubre", (() => {
+  const fuera = ESPACIOS.filter((ch) => !/\s/.test(ch))
+                        .map((ch) => ch.codePointAt(0));
+  return fuera.length === 1 && fuera[0] === 0x85;
+})(), ESPACIOS.filter((ch) => !/\s/.test(ch))
+              .map((ch) => "U+" + ch.codePointAt(0).toString(16)).join(" "));
+let malos = [];
+for (const ch of RAYAS) {
+  const s = await informeDe(Object.assign({}, SINTOMAS,
+    { texto_libre: falso(ch, NL) }));
+  if (s.texto !== REFERENCIA) { malos.push("Dash U+" + ch.charCodeAt(0).toString(16)); }
+}
+for (const ch of ESPACIOS) {
+  const s = await informeDe(Object.assign({}, SINTOMAS,
+    { texto_libre: falso(RAYA_, ch) }));
+  if (s.texto !== REFERENCIA) { malos.push("Espacio U+" + ch.charCodeAt(0).toString(16)); }
+}
+ok(`ninguno de los ${RAYAS.length + ESPACIOS.length} caracteres cambia el informe`,
+   malos.length === 0, malos.slice(0, 8).join(" "));
+
+console.log("\nL3. el otro canal del paciente: los VALORES del cuestionario");
+// El bloque REFERIDO POR EL PACIENTE sale de una enumeracion cerrada. Un valor
+// que no este en ella se declara como no reconocido y su contenido se va al
+// mensaje aparte: el informe no imprime nada que no salga de la tabla del §4.4.
+for (const [etiqueta, valor] of [
+  ["un bloque falso", falso(BARRA, NEL)],
+  ["`constructor`, que llega a Object.prototype", "constructor"],
+  ["`__proto__`", "__proto__"],
+  ["`toString`", "toString"],
+  ["`hasOwnProperty`", "hasOwnProperty"],
+  ["`valueOf`", "valueOf"],
+  ["`isPrototypeOf`", "isPrototypeOf"],
+  ["`propertyIsEnumerable`", "propertyIsEnumerable"],
+]) {
+  const s = await informeDe(Object.assign({}, SIN_LIBRE, { fiebre: valor }));
+  ok(`fiebre = ${etiqueta}: el informe lo declara sin imprimirlo`,
+     s.texto.includes("REFERIDO POR EL PACIENTE — fiebre: (valor no reconocido),"),
+     s.texto.split(NL).find((l) => l.includes("REFERIDO")));
+  ok(`   nada de Object.prototype se cuela en el informe`,
+     !/native code|function Object/.test(s.texto), s.texto.slice(0, 60));
+  ok(`   y el valor de verdad NO se pierde: va al mensaje aparte`,
+     s.texto_paciente.includes(valor) &&
+     s.texto_paciente.includes("Respuesta a «fiebre» que no reconozco"),
+     s.texto_paciente.slice(0, 120));
+  ok(`   los otros cinco sintomas siguen saliendo bien`,
+     s.texto.includes("tos con flema, 3 a 7 días"), s.texto.split(NL)[5]);
+}
+ok("dos valores distintos no reconocidos dan el MISMO informe", await (async () => {
+  const a = await informeDe(Object.assign({}, SIN_LIBRE, { fiebre: "constructor" }));
+  const b = await informeDe(Object.assign({}, SIN_LIBRE, { fiebre: falso(BARRA, NL) }));
+  return a.texto === b.texto;
+})(), "el informe no depende del contenido del valor");
+ok("un valor que SI esta en la enumeracion sale con su frase",
+   (await informeDe(Object.assign({}, SIN_LIBRE, { fiebre: "no_se" })))
+     .texto.includes("fiebre: no sabe"));
+ok("un valor que no es cadena tampoco se imprime", await (async () => {
+  const s = await informeDe(Object.assign({}, SIN_LIBRE, { fiebre: 42 }));
+  return s.texto.includes("fiebre: (valor no reconocido)") &&
+         s.texto_paciente.includes("42");
 })());
-ok("y se sigue recortando a 500 caracteres", await (async () => {
-  const s = await desenlace(
-    { error_cod: "N", detalle: "", resultado: R_NEGATIVA,
-      sintomas: Object.assign({}, SINTOMAS, { texto_libre: "x".repeat(900) }),
+
+console.log("\nL4. el mensaje aparte: cabecera, cierre, y quien escribio que");
+const sAp = await informeDe(Object.assign({}, SINTOMAS,
+  { texto_libre: falso(BARRA, NEL) }));
+ok("empieza por la cabecera del sistema",
+   sAp.texto_paciente.startsWith("LO QUE ESCRIBIÓ EL PACIENTE, TAL CUAL"),
+   sAp.texto_paciente.split(NL)[0]);
+ok("la cabecera lleva el caso", sAp.texto_paciente.includes("(caso K7FM2P)"));
+ok("dice que el informe es el mensaje anterior",
+   sAp.texto_paciente.includes("No forma parte del informe clínico, que es el " +
+                               "mensaje anterior."));
+ok("y termina con el cierre del sistema",
+   sAp.texto_paciente.endsWith("Fin de lo que escribió el paciente."),
+   sAp.texto_paciente.slice(-45));
+ok("el texto del paciente queda ENCERRADO entre dos frases del sistema", (() => {
+  const i = sAp.texto_paciente.indexOf(SENAL);
+  return i > sAp.texto_paciente.indexOf("No forma parte del informe") &&
+         i < sAp.texto_paciente.indexOf("Fin de lo que escribió");
+})());
+ok("sin texto libre y con todo reconocido, NO hay mensaje aparte",
+   (await informeDe(SIN_LIBRE)).texto_paciente === "",
+   JSON.stringify((await informeDe(SIN_LIBRE)).texto_paciente));
+ok("un texto libre de solo espacios tampoco lo genera",
+   (await informeDe(Object.assign({}, SINTOMAS, { texto_libre: "   " + NL })))
+     .texto_paciente === "");
+ok("se recorta a 500 caracteres (§4.4)", await (async () => {
+  const s = await informeDe(Object.assign({}, SINTOMAS,
+    { texto_libre: "x".repeat(900) }));
+  return s.texto_paciente.split("x").length - 1 === 500;
+})());
+ok("las ramas de error NO mandan mensaje aparte", await (async () => {
+  for (const [cod] of SPEC_9) {
+    const s = await desenlace({ error_cod: cod, detalle: "", resultado: null,
+      sintomas: Object.assign({}, SINTOMAS, { texto_libre: falso(RAYA_, NL) }),
       signos: SIGNOS }, U, D);
-  const linea = s.texto.split(NL).find((l) => l.startsWith("DICE EL PACIENTE"));
-  return linea.split("x").length - 1 === 500;
+    if (s.texto_paciente !== "") { return false; }
+  }
+  return true;
 })());
 
 console.log("\nL5. el punto de operacion solo se afirma si es el que se midio (H6)");
@@ -896,6 +943,7 @@ const sCaso = await desenlace({ error_cod: "N", detalle: "", codigo: "K7FM2P",
   sintomas: SINTOMAS, signos: {} }, U, D);
 ok("lleva el codigo y los sintomas", sCaso.texto.includes("K7FM2P") &&
    sCaso.texto.includes("REFERIDO POR EL PACIENTE —"), sCaso.texto);
+ok("y NO lleva el texto libre dentro", !sCaso.texto.includes("DICE EL PACIENTE"));
 ok("lleva la pregunta del paso 2, resuelta por `Decidir` y no por una copia",
    sCaso.texto.includes(D.pregunta), sCaso.texto);
 ok("NO registra (no es un desenlace clinico)", sCaso.registrar === "N");
