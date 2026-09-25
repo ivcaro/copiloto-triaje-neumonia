@@ -534,9 +534,12 @@ ok("negativa: la desigualdad va al otro lado",
 ok("negativa: la RV reduce, con dos decimales",
    tNeg.includes("reduce a 0,02× las probabilidades"), tNeg);
 ok("negativa: SIN aviso (la etiqueta y la RV coinciden)", !tNeg.includes("⚠️"));
-// La cota del calibrador no se puede deshacer al presentarla: 345 de las 3 811
-// placas de prueba tienen la calibrada por debajo de 0,005 y con dos decimales
-// a secas saldrian como «0,00», que es certeza de ausencia fabricada.
+// La cota del calibrador no se puede deshacer al presentarla: 344 de las 3 811
+// placas de prueba (9,03 %) tienen la calibrada por debajo de 0,005 y con dos
+// decimales a secas saldrian como «0,00», que es certeza de ausencia fabricada.
+// El recuento se hace calibrando la cruda SIN redondear, que es lo que
+// `inferencia.py` calibra; con la cruda de 4 decimales que viaja en la respuesta
+// saldrian 345, y esa es la cifra equivocada.
 ok("negativa: la calibrada NUNCA se ensena como 0,00",
    tNeg.includes("probabilidad calibrada < 0,01") && !tNeg.includes("calibrada 0,00"),
    tNeg.split("\n").find((l) => l.includes("EVIDENCIA")));
