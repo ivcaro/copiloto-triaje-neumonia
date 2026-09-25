@@ -943,7 +943,7 @@ más alto que la mediana: la primera paga el arranque perezoso):
   "clasificacion": "opacidad_probable",
   "edad_paciente": 40,
   "modelo": "efficientnet_b0_320px",
-  "auc_validacion": 0.883,
+  "auc_validacion": 0.8827,
   "milisegundos": 59.8
 }
 ```
@@ -1031,7 +1031,7 @@ el modelo.
 | Variable | Valor por defecto | Qué es |
 | :--- | :--- | :--- |
 | `UMBRAL` | `0.4258` | punto de operación; el de especificidad 0,70 y recall 0,8815 |
-| `AUC_VALIDACION` | **ninguno: es obligatoria** (el compose la pone a `0.883`) | AUC en validación, **se le muestra al profesional** en cada respuesta |
+| `AUC_VALIDACION` | **ninguno: es obligatoria** (el compose la pone a `0.8827`) | AUC en validación, **se le muestra al profesional** en cada respuesta |
 | `RUTA_PESOS` | `/modelo/pesos_modelo_cpu.pt` | dentro de la imagen |
 | `RUTA_CALIBRADOR` | `/modelo/calibrador.json` | dentro de la imagen |
 | `OMP_NUM_THREADS` | `2` | hilos que usa torch. **Tiene que valer lo mismo que `cpus`** del bloque de límites: torch no lee el cgroup y sin esto abriría un hilo por núcleo del host |
