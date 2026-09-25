@@ -572,6 +572,12 @@ ok("negativa: lleva el aviso de falibilidad",
    tNeg.includes("⚠️ Un resultado negativo no descarta neumonía. Decide usted."), tNeg);
 ok("negativa: y NO el aviso de discrepancia, que aqui seria falso",
    !tNeg.includes("no apoya el diagnóstico"), tNeg);
+// Y UNO SOLO. Antes la cota superior la ponia `!tNeg.includes("⚠️")`, que se
+// cayo al empezar el negativo a llevar aviso; el normalizador de la plantilla
+// borra las lineas de ⚠️, asi que una SEGUNDA pasaba verde por los dos lados.
+ok("negativa: un solo aviso, no dos",
+   (tNeg.match(/⚠️/g) || []).length === 1,
+   String((tNeg.match(/⚠️/g) || []).length));
 // La cota del calibrador no se puede deshacer al presentarla: 344 de las 3 811
 // placas de prueba (9,03 %) tienen la calibrada por debajo de 0,005 y con dos
 // decimales a secas saldrian como «0,00», que es certeza de ausencia fabricada.
@@ -679,17 +685,65 @@ for (const [cod, termina] of SPEC_9) {
   ok(`${cod}: NINGUNA cifra de probabilidad en el mensaje`,
      !CIFRA_DE_PROBABILIDAD.test(s.texto), s.texto.replace(/\n/g, " | "));
   ok(`${cod}: y NINGUN resultado junto al rechazo`, s.resultado_cod === "N");
-  // QUE SIGUE ESPERANDO EL BOT. Antes lo decian dos de las once filas, escrito a
-  // mano; las otras nueve dejaban al profesional sin saber si la conversacion
-  // seguia viva. La regla es la del `termina`: si no se borra la sesion, el
-  // mensaje acaba diciendo que se espera; si se borra, no hay nada que esperar y
-  // no lo dice. Asi una fila nueva no puede nacer sin coletilla sin que esto
-  // falle.
-  const espera = /\nSigo esperando (el archivo|el código del paciente)\.$/
+}
+
+// --------------------------------------------------------------------------
+// QUE SIGUE ESPERANDO EL BOT, sobre LA TABLA DEL PROPIO NODO.
+//
+// La primera version de esto recorria `SPEC_9`, y con eso la promesa «una fila
+// nueva no puede nacer sin coletilla sin que esto falle» era FALSA: `SPEC_9` es
+// una lista escrita a mano, y `descarga_fallida` -que existe en la tabla y no en
+// el §9- no estaba en ella. Quitarle su `espera` dejaba la suite en verde. Una
+// invariante sobre una enumeracion que hay que recordar actualizar no es una
+// invariante.
+//
+// `SPEC_9` sigue escrita a mano, y debe seguirlo: es la transcripcion del spec, y
+// afirma que el spec dice que `fuera_de_alcance` termina. Si leyera `fila.termina`
+// del nodo estaria afirmando el codigo contra si mismo.
+//
+// Esto es otra cosa: una invariante INTERNA -la coletilla concuerda con
+// `termina`- comprobada sobre todas las filas que hay, no sobre las que alguien
+// se acordo de listar.
+// --------------------------------------------------------------------------
+function tablaDelNodo() {
+  const fuente = codigo("Desenlace");
+  const i = fuente.indexOf("const ERRORES = {");
+  const j = fuente.indexOf("\n};", i);
+  if (i < 0 || j < 0) { throw new Error("no encuentro ERRORES en el nodo"); }
+  return new Function(fuente.slice(i, j + 3) + "\nreturn ERRORES;")();
+}
+const TABLA = tablaDelNodo();
+
+// `no_autorizado` es la UNICA fila que no termina y no lleva coletilla, y esta
+// nombrada aqui para que quitarle esa excepcion tambien ponga esto rojo.
+const SIN_COLETILLA_A_PROPOSITO = ["no_autorizado"];
+
+ok("la tabla del nodo se lee entera", Object.keys(TABLA).length >= 13,
+   String(Object.keys(TABLA).length));
+
+for (const [cod, fila] of Object.entries(TABLA)) {
+  const s = await desenlace({ error_cod: cod, detalle: DETALLES[cod] || "",
+                              resultado: null, sintomas: SINTOMAS,
+                              signos: SIGNOS }, U, D);
+  const dice = /\nSigo esperando (el archivo|el código del paciente)\.$/
     .test(s.texto);
-  ok(`${cod}: dice que sigue esperando = ${!termina}`, espera === !termina,
+  const debe = !fila.termina && SIN_COLETILLA_A_PROPOSITO.indexOf(cod) < 0;
+  ok(`${cod}: dice que sigue esperando = ${debe}`, dice === debe,
      JSON.stringify(s.texto.split("\n").pop()));
 }
+
+// Y QUE NINGUNA FILA SE QUEDE SIN PROBAR. `SPEC_9` cubre las once del spec;
+// las dos que no estan en el §9 se nombran aqui con su motivo, asi que una fila
+// nueva no puede colarse sin que alguien decida donde la prueba.
+const FUERA_DEL_SPEC_9 = {
+  no_autorizado: "se prueba aparte: es la excepcion de la coletilla",
+  descarga_fallida: "NO esta en el §9 -la salida de error de `Descargar " +
+                    "fichero`- y se prueba al final de este fichero",
+};
+const sinProbar = Object.keys(TABLA).filter((c) =>
+  !SPEC_9.some(([x]) => x === c) && !Object.hasOwn(FUERA_DEL_SPEC_9, c));
+ok("ninguna fila de la tabla se queda sin probar", sinProbar.length === 0,
+   JSON.stringify(sinProbar));
 // Y la que espera el CODIGO, no el archivo: es la unica del §9 en la que el bot no
 // esta esperando un fichero, y una coletilla que pidiera el archivo mandaria al
 // profesional a hacer lo que no es.

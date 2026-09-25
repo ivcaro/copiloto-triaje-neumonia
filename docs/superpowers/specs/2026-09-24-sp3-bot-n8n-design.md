@@ -471,9 +471,17 @@ evidencia lo dice de forma explícita:
 
 El resultado **negativo** lleva una línea que el positivo no lleva:
 
-> *Un resultado negativo no descarta neumonía. Decide usted.*
+> *⚠️ Un resultado negativo no descarta neumonía. Decide usted.*
 
-La asimetría parece un descuido y no lo es. **Marcar de más y marcar de menos
+**Lleva ⚠️, igual que el del positivo contradictorio, y eso no es adorno.** Sin
+el símbolo los dos avisos quedaban al revés: el del positivo contradictorio
+-donde equivocarse manda a alguien sano a una prueba de más- se marcaba, y el
+del negativo -donde equivocarse manda a casa a alguien con neumonía- no. El
+aviso más importante era el menos visible. O lo llevan los dos o no lo lleva
+ninguno.
+
+La asimetría de que el negativo lleve aviso y el positivo concordante no, parece
+un descuido y no lo es. **Marcar de más y marcar de menos
 no hacen el mismo daño.** Si el cribado marca una placa sana, el profesional la
 mira, no ve nada y sigue: cuesta tiempo. Si el cribado **no** marca una
 neumonía, puede cerrar el estudio ahí — y ese es el daño de verdad. El aviso va
@@ -600,7 +608,7 @@ si el texto libre del paciente está presente (§4.4).
 | No es un DICOM legible | `dicom_invalido` | relata el detalle del servidor **cuando lo hay**; si el servidor se cayo sobre esos bytes sin devolver codigo, mensaje propio | se queda en el paso 5 |
 | **Edad fuera de 18-100** | `fuera_de_alcance` | el detalle del servidor, **sin ninguna cifra de probabilidad** | **termina**: se registra y se borra la sesión |
 | La cabecera no declara edad | `edad_desconocida` | el detalle del servidor, **sin ninguna cifra** | termina |
-| Base64 mal formado | `base64_invalido` | "No pude leer el archivo. Vuelva a enviarlo." | se queda en el paso 5 |
+| Base64 mal formado | `base64_invalido` | "No pude leer el archivo." | se queda en el paso 5 |
 | Más de 5 MB (respuesta MCP) | `payload_excesivo` | "El archivo supera los 5 MB." | se queda en el paso 5 |
 | **HTTP 413** del transporte (§10.4) | `payload_excesivo_transporte` | mismo mensaje | se queda en el paso 5 |
 | Código inexistente o caducado | `codigo_invalido` | "Ese código no existe o caducó. Pida al paciente que repita el cuestionario." | se queda en el paso 2 |
@@ -609,6 +617,45 @@ si el texto libre del paciente está presente (§4.4).
 | `isError` con un código desconocido | `error_no_reconocido` | "El servicio devolvió un error que no sé interpretar. Se ha registrado." | termina, y el texto íntegro va a `consultas.error` |
 | **`chat_id` no autorizado** | `no_autorizado` | "No autorizado." y nada mas: sin pistas de que hay detras | **no se toca la sesion**. Se registra el intento con su `chat_id`, que es de donde se leen los de alta (§11) |
 | No se pudo descargar el fichero de Telegram | `descarga_fallida` | mensaje propio y honesto; **no** el de los 20 MB, que solo vale cuando de verdad los supera | se queda en el paso 5 |
+
+### Toda fila que no termina dice que el bot sigue esperando
+
+La última columna dice si la conversación sigue viva. **El mensaje también tiene
+que decirlo**, y antes no lo decía: de las diez filas que no terminan, una sola
+-`envio_como_foto`- lo decía explícitamente, dos lo insinuaban con "Vuelva a
+enviarlo.", y las seis demás dejaban al profesional sin saber si reenviar la
+placa o empezar de cero. "El archivo supera los 5 MB." y punto, con el bot
+esperando en silencio al otro lado.
+
+Cada fila declara ahora **qué** espera, y el mensaje acaba con la frase
+correspondiente:
+
+| Lo que espera | La frase, literal |
+| :--- | :--- |
+| el archivo | *Sigo esperando el archivo.* |
+| el código del paciente | *Sigo esperando el código del paciente.* |
+
+Va **al final**, detrás del detalle del servidor y de la coletilla de edad: es
+lo que el profesional tiene que hacer a continuación, y lo último que se lee es
+lo que se hace. Ocho de las nueve filas la esperan para el archivo; solo
+`codigo_invalido` espera el código, y una coletilla que pidiera el archivo ahí
+mandaría al clínico a hacer lo que no es.
+
+`no_autorizado` es la **única excepción**: no termina la conversación y aun así
+no lleva coletilla. Quien llega ahí no está en la lista blanca, y "Sigo esperando
+el archivo." le confirmaría que hay un bot escuchando detrás y que lo que manda
+le llega.
+
+Las tres filas que **terminan** no la llevan: no hay nada que esperar cuando se
+borra la sesión.
+
+La frase vive en un solo sitio del nodo (`SIGO_ESPERANDO`), y eso no basta por sí
+solo -escrita a mano era justo una frase que ocho filas se habían olvidado de
+poner-. Lo que lo sostiene es una invariante de `tests/profesional.mjs` que
+recorre **la tabla del propio nodo**, no una lista escrita a mano, y exige que la
+coletilla concuerde con la última columna. La primera versión de esa prueba
+recorría una lista a mano, y `descarga_fallida` -que está en la tabla y no en
+este §9- se le colaba entera.
 
 **Son trece, y la cuenta importa:** un spec con once filas y un flujo con
 trece hace que la siguiente revision marque dos falsos positivos, o que alguien
