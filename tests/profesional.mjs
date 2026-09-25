@@ -563,7 +563,15 @@ ok("negativa: la desigualdad va al otro lado",
    tNeg.includes("puntuación 0,0047 < umbral 0,4258"), tNeg.split("\n")[1]);
 ok("negativa: la RV reduce, con dos decimales",
    tNeg.includes("reduce a 0,02× las probabilidades"), tNeg);
-ok("negativa: SIN aviso (la etiqueta y la RV coinciden)", !tNeg.includes("⚠️"));
+// Aqui se afirmaba que un negativo NO llevaba ⚠️, porque el ⚠️ marcaba una sola
+// cosa: la DISCREPANCIA entre etiqueta y RV. Ahora marca dos, y lo que hay que
+// comprobar es que no se confundan. El negativo lleva el aviso de FALIBILIDAD -de
+// las placas que el cribado da por negativas, 1 de cada 22 tiene neumonia- y NO el
+// de discrepancia, que aqui seria falso: etiqueta y RV coinciden.
+ok("negativa: lleva el aviso de falibilidad",
+   tNeg.includes("⚠️ Un resultado negativo no descarta neumonía. Decide usted."), tNeg);
+ok("negativa: y NO el aviso de discrepancia, que aqui seria falso",
+   !tNeg.includes("no apoya el diagnóstico"), tNeg);
 // La cota del calibrador no se puede deshacer al presentarla: 344 de las 3 811
 // placas de prueba (9,03 %) tienen la calibrada por debajo de 0,005 y con dos
 // decimales a secas saldrian como «0,00», que es certeza de ausencia fabricada.
@@ -578,6 +586,10 @@ ok("negativa: la calibrada NUNCA se ensena como 0,00",
 // comparador, y «multiplica por N» frente a «reduce a N×».
 ok("negativa: la plantilla es la MISMA que la positiva", await (async () => {
   const quitar = (x) => x
+    // El aviso, que es justo lo que el §8 exceptua. Antes no hacia falta quitarlo
+    // porque ninguno de estos dos casos lo llevaba; ahora el negativo lleva el de
+    // falibilidad y el positivo concordante sigue sin llevar ninguno.
+    .replace(/\n⚠️[^\n]*/g, "")
     .replace(/< 0,01|> 0,99/g, "#")
     .replace(/multiplica por ([0-9,]+)/g, "V #")
     .replace(/reduce a ([0-9,]+)×/g, "V #")
@@ -667,11 +679,34 @@ for (const [cod, termina] of SPEC_9) {
   ok(`${cod}: NINGUNA cifra de probabilidad en el mensaje`,
      !CIFRA_DE_PROBABILIDAD.test(s.texto), s.texto.replace(/\n/g, " | "));
   ok(`${cod}: y NINGUN resultado junto al rechazo`, s.resultado_cod === "N");
+  // QUE SIGUE ESPERANDO EL BOT. Antes lo decian dos de las once filas, escrito a
+  // mano; las otras nueve dejaban al profesional sin saber si la conversacion
+  // seguia viva. La regla es la del `termina`: si no se borra la sesion, el
+  // mensaje acaba diciendo que se espera; si se borra, no hay nada que esperar y
+  // no lo dice. Asi una fila nueva no puede nacer sin coletilla sin que esto
+  // falle.
+  const espera = /\nSigo esperando (el archivo|el código del paciente)\.$/
+    .test(s.texto);
+  ok(`${cod}: dice que sigue esperando = ${!termina}`, espera === !termina,
+     JSON.stringify(s.texto.split("\n").pop()));
 }
+// Y la que espera el CODIGO, no el archivo: es la unica del §9 en la que el bot no
+// esta esperando un fichero, y una coletilla que pidiera el archivo mandaria al
+// profesional a hacer lo que no es.
+ok("codigo_invalido pide el codigo, no el archivo", await (async () => {
+  const s = await desenlace({ error_cod: "codigo_invalido", detalle: "",
+                              resultado: null }, U, D);
+  return s.texto.endsWith("Sigo esperando el código del paciente.");
+})());
 ok("no_autorizado tambien se registra, y sin cifras", await (async () => {
   const s = await desenlace({ error_cod: "no_autorizado", detalle: "", resultado: null }, U, D);
+  // Y SIN la coletilla de `espera`, aunque `termina` sea falso: es la excepcion
+  // de la regla de arriba. Quien llega aqui no esta en la lista blanca, y
+  // «Sigo esperando el archivo.» le confirmaria que hay un bot escuchando
+  // detras y que lo que manda le llega. El §9 pide que no se le den pistas.
   return s.registrar === "S" && descodificar(s.error_cod) === "no_autorizado" &&
-         !CIFRA_DE_PROBABILIDAD.test(s.texto) && s.resultado_cod === "N" && s.termina === "N";
+         !CIFRA_DE_PROBABILIDAD.test(s.texto) && s.resultado_cod === "N" &&
+         s.termina === "N" && !s.texto.includes("Sigo esperando");
 })());
 const sEdad = await desenlace({ error_cod: "fuera_de_alcance",
   detalle: DETALLES.fuera_de_alcance, resultado: null }, U, D);
@@ -717,7 +752,8 @@ for (const [etiqueta, forjado] of FORJADAS) {
      JSON.stringify(leido.detalle));
   const s = await desenlace(leido, U, D);
   ok(`   el mensaje es la redaccion del §9 y nada mas`,
-     s.texto === "No pude leer esa radiografía.", JSON.stringify(s.texto));
+     s.texto === "No pude leer esa radiografía.\n\nSigo esperando el archivo.",
+     JSON.stringify(s.texto));
   ok(`   pero el texto forjado SI queda en consultas.error para diagnosticar`,
      descodificar(s.error_cod).includes(forjado.slice(0, 40)),
      descodificar(s.error_cod).slice(0, 90));
