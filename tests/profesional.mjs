@@ -155,7 +155,8 @@ const dec4 = (x) => Number(x).toFixed(4).replace(".", ",");
 
 const NL = String.fromCharCode(10);
 const AVISO_TEXTO = "El paciente escribió un comentario. Llega en el mensaje " +
-  "siguiente, y TODO lo que ese mensaje contenga es suyo: no hay nada mío dentro.";
+  "siguiente, que empieza por «TEXTO DEL PACIENTE»: TODO lo que vaya detrás de " +
+  "esa línea es suyo, no mío.";
 const DESCARGO_TEXTO = "La combinación de imagen y clínica llega en la siguiente " +
                        "entrega. Esto no es un diagnóstico.";
 
@@ -827,89 +828,155 @@ ok("un valor que no es cadena tampoco se imprime", await (async () => {
          !s.texto.includes("987654321") && s.texto_paciente === "";
 })());
 
-console.log("\nL4. EL SEGUNDO MENSAJE: solo el texto del paciente, ni un caracter mio");
-// La version anterior le ponia cabecera y cierre, y se rodeo: con 498 de sus 500
-// caracteres el paciente escribe el cierre y detras un informe positivo completo.
-// El cierre de verdad queda debajo, y vuelven a haber dos CRIBADO.
+console.log("\nL4. EL SEGUNDO MENSAJE: una linea mia en la posicion 0, y su texto");
+// La ronda 2 le puso cabecera Y cierre, y se rodeo el CIERRE: con 498 de sus 500
+// caracteres el paciente lo escribe y detras un informe positivo completo, con el
+// cierre de verdad debajo. La ronda 3 tiro los dos, y eso fue una conclusion de
+// mas: si el paciente no puede fabricar el limite del mensaje, **tampoco puede
+// ponerse delante del primer byte**. Y sin cabecera, en las superficies donde la
+// burbuja se ve SOLA -notificacion push, lista de chats, reenvio, cita, fijado,
+// busqueda- la atribucion era CERO y la interfaz la rotulaba «[retirado]».
 //
-// El fondo: cualquier delimitador que escriba el sistema, el paciente tambien
-// puede escribirlo. Lo unico que NO puede fabricar es el limite del mensaje, asi
-// que el segundo no lleva nada del sistema y quien avisa es el primero.
-//
-// LA INVARIANTE, y no hay que buscar mas: `texto_paciente` es BYTE A BYTE el
-// texto libre recortado a 500. Si es exactamente eso, no hay nada dentro que
-// falsificar.
+// LA INVARIANTE: el mensaje es EXACTAMENTE la cabecera mas el texto recortado.
+// Nada entre medias, nada detras, y la cabecera en la POSICION 0.
+const CABECERA_PAC = "TEXTO DEL PACIENTE (no es el informe):" + NL;
+// El recorte del nodo: por PUNTOS DE CODIGO, no por unidades UTF-16.
+const recortarPuntos = (s, n) => {
+  let r = Array.from(String(s)).slice(0, n).join("");
+  const u = r.charCodeAt(r.length - 1);
+  if (u >= 0xD800 && u <= 0xDBFF) { r = r.slice(0, -1); }
+  return r;
+};
 const CIERRE_FALSO = "Fin de lo que escribió el paciente.";
 const ATAQUE_AL_CIERRE = CIERRE_FALSO + NL + NL + falso(BARRA, NL).trim();
 
 for (const [etiqueta, libre] of [
   ["el ataque al cierre", ATAQUE_AL_CIERRE],
   ["un cierre a secas", CIERRE_FALSO],
-  ["una cabecera falsa", "LO QUE ESCRIBIÓ EL PACIENTE, TAL CUAL" + NL + falso(RAYA_, NL)],
+  ["una cabecera falsa, la misma palabra por palabra",
+   "TEXTO DEL PACIENTE (no es el informe):" + NL + falso(RAYA_, NL)],
   ["texto normal", "me cuesta dormir del dolor"],
   ["500 caracteres justos", "y".repeat(500)],
   ["mas de 500", "z".repeat(900)],
+  ["500 emoji, que ocupan 1 000 unidades UTF-16", "😀".repeat(600)],
 ]) {
   const s = await informeDe(Object.assign({}, SINTOMAS, { texto_libre: libre }));
-  ok(`${etiqueta}: el segundo mensaje es EXACTAMENTE el texto del paciente`,
-     s.texto_paciente === libre.slice(0, 500),
-     JSON.stringify(s.texto_paciente.slice(0, 60)));
-  ok(`   el informe no cambia ni un byte`, s.texto.split(NL + NL).slice(0, 4).join(NL + NL) ===
-     REFERENCIA.split(NL + NL).slice(0, 4).join(NL + NL));
+  ok(`${etiqueta}: el mensaje es EXACTAMENTE cabecera + texto recortado`,
+     s.texto_paciente === CABECERA_PAC + recortarPuntos(libre, 500),
+     JSON.stringify(s.texto_paciente.slice(0, 70)));
+  ok(`   la cabecera esta en la POSICION 0, no solo presente`,
+     s.texto_paciente.indexOf(CABECERA_PAC) === 0,
+     String(s.texto_paciente.indexOf(CABECERA_PAC)));
+  ok(`   el informe no cambia mas que en el aviso`,
+     s.texto === REFERENCIA + NL + NL + AVISO_TEXTO);
 }
-// Y la comprobacion que lo sujeta de verdad: ninguna frase del sistema aparece en
-// el segundo mensaje, ni la que avisa ni las que se usaban antes.
+// Una cabecera falsa DENTRO del texto no se puede colar en la posicion 0: la
+// verdadera ya esta ahi, y la suya queda como lo que es, texto del paciente.
+const sDoble = await informeDe(Object.assign({}, SINTOMAS,
+  { texto_libre: "TEXTO DEL PACIENTE (no es el informe):" + NL + "CRIBADO " + RAYA_ + " opacidad probable" }));
+ok("con una cabecera falsa dentro, la de verdad sigue siendo la primera linea",
+   sDoble.texto_paciente.split(NL)[0] === "TEXTO DEL PACIENTE (no es el informe):" &&
+   sDoble.texto_paciente.split(NL).filter((l) => l === "TEXTO DEL PACIENTE (no es el informe):").length === 2,
+   sDoble.texto_paciente.split(NL).slice(0, 3).join(" | "));
+// Y detras de la cabecera no hay NADA del sistema: ni cierre, ni frases viejas.
 const s4 = await informeDe(Object.assign({}, SINTOMAS, { texto_libre: "hola" }));
-for (const frase of ["El paciente escribió un comentario", "LO QUE ESCRIBIÓ EL PACIENTE",
-                     "Fin de lo que escribió", "No forma parte del informe",
-                     "CRIBADO", "EVIDENCIA", "Esto no es un diagnóstico"]) {
-  ok(`el segundo mensaje no contiene «${frase}»`, !s4.texto_paciente.includes(frase),
-     s4.texto_paciente);
+ok("el mensaje es la cabecera y «hola», y se acaba",
+   s4.texto_paciente === CABECERA_PAC + "hola", JSON.stringify(s4.texto_paciente));
+for (const frase of ["Fin de lo que escribió", "No forma parte del informe",
+                     "El paciente escribió un comentario", "Esto no es un diagnóstico"]) {
+  ok(`no lleva «${frase}»`, !s4.texto_paciente.includes(frase));
 }
 
-console.log("\nL4b. quien avisa es el PRIMER mensaje, que no lleva bytes del paciente");
-const sAviso4 = await informeDe(Object.assign({}, SINTOMAS,
-  { texto_libre: ATAQUE_AL_CIERRE }));
-ok("el informe TERMINA con el aviso: es lo ultimo antes de la otra burbuja",
-   sAviso4.texto.endsWith(AVISO_TEXTO),
-   JSON.stringify(sAviso4.texto.slice(-60)));
-ok("y el descargo del §8 sigue estando, justo antes",
-   sAviso4.texto.includes(DESCARGO_TEXTO + NL + NL + AVISO_TEXTO));
-ok("el aviso dice que TODO el mensaje siguiente es del paciente",
-   /TODO lo que ese mensaje contenga es suyo/.test(sAviso4.texto));
-ok("sin comentario, el informe NO lo menciona y no hay segundo mensaje",
-   (await informeDe(SIN_LIBRE)).texto === REFERENCIA &&
-   !REFERENCIA.includes("mensaje siguiente") &&
-   (await informeDe(SIN_LIBRE)).texto_paciente === "",
-   JSON.stringify(REFERENCIA.slice(-60)));
-ok("un texto libre de solo espacios tampoco lo genera", await (async () => {
-  const s = await informeDe(Object.assign({}, SINTOMAS, { texto_libre: "   " + NL }));
-  return s.texto_paciente === "" && s.texto === REFERENCIA;
-})());
-// LA FORMA AGUDA del re-revisor: el paso 1→2, antes de que haya ninguna placa.
-const sCasoAg = await desenlace({ error_cod: "N", detalle: "", codigo: "K7FM2P",
-  sintomas: Object.assign({}, SINTOMAS, { texto_libre: ATAQUE_AL_CIERRE }),
-  signos: {} }, U, D);
-ok("el mensaje del caso tambien termina con el aviso",
-   sCasoAg.texto.endsWith(AVISO_TEXTO), JSON.stringify(sCasoAg.texto.slice(-50)));
-ok("y no lleva ningun bloque con forma de cribado",
-   !sCasoAg.texto.includes("CRIBADO"), sCasoAg.texto.slice(0, 60));
-ok("su segundo mensaje es tambien EXACTAMENTE el texto del paciente",
-   sCasoAg.texto_paciente === ATAQUE_AL_CIERRE);
-ok("y sin comentario, el caso no menciona ningun segundo mensaje", await (async () => {
-  const s = await desenlace({ error_cod: "N", detalle: "", codigo: "K7FM2P",
-    sintomas: SIN_LIBRE, signos: {} }, U, D);
-  return s.texto_paciente === "" && !s.texto.includes("mensaje siguiente");
-})());
-ok("las ramas de error NO mandan segundo mensaje ni lo mencionan", await (async () => {
-  for (const [cod] of SPEC_9) {
-    const s = await desenlace({ error_cod: cod, detalle: "", resultado: null,
-      sintomas: Object.assign({}, SINTOMAS, { texto_libre: ATAQUE_AL_CIERRE }),
-      signos: SIGNOS }, U, D);
-    if (s.texto_paciente !== "" || s.texto.includes("mensaje siguiente")) { return false; }
-  }
-  return true;
-})());
+console.log("\nL4a. el recorte no puede mentir (N5 y N6)");
+// N5: `"a"×499 + emoji` con `slice(0, 500)` partia el par suplente y dejaba la
+// cadena mal formada. El paciente rompia A VOLUNTAD lo que el primer mensaje
+// promete.
+const CASI = "a".repeat(499);
+for (const [etiqueta, libre] of [
+  ["499 letras y un emoji", CASI + "😀"],
+  ["498 letras y dos emoji", "a".repeat(498) + "😀😀"],
+  ["500 emoji seguidos", "😀".repeat(500)],
+  ["un subrogado alto SUELTO al final (el bot del paciente ya recorto mal)",
+   CASI + String.fromCharCode(0xD83D)],
+]) {
+  const s = await informeDe(Object.assign({}, SINTOMAS, { texto_libre: libre }));
+  const cuerpo = s.texto_paciente.slice(CABECERA_PAC.length);
+  ok(`${etiqueta}: la cadena esta BIEN FORMADA`, (() => {
+    for (let i = 0; i < cuerpo.length; i++) {
+      const c = cuerpo.charCodeAt(i);
+      if (c >= 0xD800 && c <= 0xDBFF) {
+        const sig = cuerpo.charCodeAt(i + 1);
+        if (!(sig >= 0xDC00 && sig <= 0xDFFF)) { return false; }
+        i++;
+      } else if (c >= 0xDC00 && c <= 0xDFFF) { return false; }
+    }
+    return true;
+  })(), JSON.stringify(cuerpo.slice(-6)));
+  ok(`   y es identica a lo que JSON.stringify sabe serializar`,
+     JSON.parse(JSON.stringify(cuerpo)) === cuerpo);
+}
+// Las DOS lineas de `recortar` arreglan cosas distintas, y hay que probarlas por
+// separado o no se sujeta ninguna. Mezclarlas fue el error de la ronda anterior con
+// `dePaleta`.
+const paciente = async (libre, fuente) => (await correr(
+  fuente || codigo("Desenlace"),
+  { json: { error_cod: "N", detalle: "", resultado: R_NEGATIVA, signos: SIGNOS,
+            codigo: "K7FM2P",
+            sintomas: Object.assign({}, SINTOMAS, { texto_libre: libre }) } },
+  { "Normalizar update": U, Decidir: D }))[0].json.texto_paciente;
+
+// (1) El subrogado suelto: es lo que garantiza que la cadena este BIEN FORMADA, y
+//     hace falta aunque se recorte por puntos de codigo, porque lo que llega de la
+//     base puede venir ya partido por el `slice` del bot del paciente.
+ok("sin quitar el subrogado suelto, la cadena saldria mal formada",
+   await (async () => {
+     const mutado = mutar("Desenlace",
+       "  if (ultimo >= 0xD800 && ultimo <= 0xDBFF) { r = r.slice(0, -1); }\n", "");
+     const tp = await paciente(CASI + String.fromCharCode(0xD83D), mutado);
+     const c = tp.charCodeAt(tp.length - 1);
+     return c >= 0xD800 && c <= 0xDBFF;
+   })(), "la mutacion tiene que dejar un subrogado suelto");
+// (2) Los puntos de codigo: es lo que hace que «500» signifique 500 caracteres.
+ok("500 emoji llegan los 500, no 250",
+   Array.from(await paciente("😀".repeat(600))).length - Array.from(CABECERA_PAC).length === 500,
+   String(Array.from(await paciente("😀".repeat(600))).length));
+ok("sin recortar por puntos de codigo, se quedarian en la mitad",
+   await (async () => {
+     const mutado = mutar("Desenlace",
+       "let r = Array.from(String(s)).slice(0, n).join('');",
+       "let r = String(s).slice(0, n);");
+     const tp = await paciente("😀".repeat(600), mutado);
+     return Array.from(tp.slice(CABECERA_PAC.length)).length === 250;
+   })(), "la mutacion tiene que perder la mitad de los caracteres");
+
+// N6: la guarda miraba `libre.trim()` y se mandaba `libre.slice(0, 500)`, asi que
+// con 600 espacios y una `x` detras el informe prometia un comentario y la burbuja
+// eran 500 espacios.
+for (const [etiqueta, libre] of [
+  ["600 espacios y una x", " ".repeat(600) + "x"],
+  ["600 tabuladores y una x", "\t".repeat(600) + "x"],
+  ["600 saltos de linea y una x", NL.repeat(600) + "x"],
+  ["500 espacios justos", " ".repeat(500)],
+]) {
+  const s = await informeDe(Object.assign({}, SINTOMAS, { texto_libre: libre }));
+  ok(`${etiqueta}: no se manda segundo mensaje`, s.texto_paciente === "",
+     JSON.stringify(s.texto_paciente.slice(0, 30)));
+  ok(`   y el informe NO promete ninguno`, s.texto === REFERENCIA,
+     s.texto.split(NL).pop());
+}
+ok("decidir con el original en vez de con el recorte volveria a mentir",
+   await (async () => {
+     const mutado = mutar("Desenlace", "if (recortado.trim() === '') { return ''; }",
+                          "if (libre.trim() === '') { return ''; }");
+     const r = (await correr(mutado, { json: { error_cod: "N", detalle: "",
+       resultado: R_NEGATIVA, signos: SIGNOS, codigo: "K7FM2P",
+       sintomas: Object.assign({}, SINTOMAS,
+                               { texto_libre: " ".repeat(600) + "x" }) } },
+       { "Normalizar update": U, Decidir: D }))[0].json;
+     // El mutante promete un comentario y manda una burbuja de solo espacios.
+     return r.texto_paciente !== "" &&
+            r.texto_paciente.slice(CABECERA_PAC.length).trim() === "";
+   })(), "la mutacion tiene que prometer lo que no manda");
 
 console.log("\nL5. el punto de operacion solo se afirma si es el que se midio (H6)");
 const OTRO_UMBRAL = Object.assign({}, R_POSITIVA, {umbral: 0.5, clasificacion: "opacidad_probable"});
@@ -1116,12 +1183,181 @@ ok("y sin propagar `crudo` se perderia (que es el hallazgo, otra vez)",
      return !r.includes(TRUNCADO_M);
    })(), "la mutacion tiene que perder la linea del servidor");
 
+console.log("\nL10. QUE CANALES HAY, no solo que caracteres llevan (N2/N3/N4)");
+// La igualdad byte a byte de L2 fija los caracteres de los canales CONOCIDOS. No
+// dice nada de cuantos canales hay: si alguien anade un campo nuevo del
+// cuestionario al informe, la referencia se calcula con los mismos fixtures -que
+// no tienen ese campo-, los dos lados salen iguales, y las dos suites quedan en
+// TODO VERDE con un canal nuevo abierto.
+//
+// Esto lo cierra por el otro lado: se envuelve `sintomas` en un Proxy que APUNTA
+// cada clave que el nodo lee, y se exige que sean exactamente las del §4.4 mas
+// `texto_libre`. Ya no importa que palabra use el canal nuevo ni con que
+// caracteres: importa que exista.
+const CLAVES_PERMITIDAS = ["fiebre", "tos", "dias_evolucion", "disnea",
+                           "dolor_toracico", "asma", "texto_libre"];
+
+function espiar(objeto) {
+  const leidas = new Set();
+  const espia = new Proxy(objeto, {
+    get(t, k) {
+      // Los simbolos y los metodos que usan `String()`, `JSON` o el motor no son
+      // canales de datos del paciente: se ignoran a proposito para que la lista no
+      // se llene de ruido y deje de ser legible.
+      if (typeof k === "string" && k !== "toJSON" && k !== "toString" &&
+          k !== "valueOf" && k !== "then" && k !== "constructor") {
+        leidas.add(k);
+      }
+      return t[k];
+    },
+    has(t, k) { if (typeof k === "string") { leidas.add(k); } return k in t; },
+  });
+  return { espia, leidas };
+}
+
+async function clavesLeidas(entradaBase, fuente) {
+  const { espia, leidas } = espiar(Object.assign({}, SINTOMAS,
+    { texto_libre: "un comentario cualquiera" }));
+  const entrada = Object.assign({}, entradaBase, { sintomas: espia });
+  const d = Object.assign({}, D, { sintomas: espia });
+  await correr(fuente || codigo("Desenlace"), { json: entrada },
+               { "Normalizar update": U, Decidir: d });
+  return [...leidas].sort();
+}
+
+const ENTRADAS = [
+  ["el informe", { error_cod: "N", detalle: "", resultado: R_NEGATIVA,
+                   signos: SIGNOS, codigo: "K7FM2P" }],
+  ["el mensaje del caso", { error_cod: "N", detalle: "", codigo: "K7FM2P",
+                            signos: {} }],
+];
+for (const [etiqueta, entrada] of ENTRADAS) {
+  const leidas = await clavesLeidas(entrada);
+  const sobran = leidas.filter((k) => CLAVES_PERMITIDAS.indexOf(k) < 0);
+  ok(`${etiqueta}: solo se leen las claves del §4.4 y texto_libre`,
+     sobran.length === 0, "sobran: " + sobran.join(", "));
+  ok(`   y se leen TODAS las seis del §4.4 (ninguna se ha quedado sin ensenar)`,
+     CLAVES_PERMITIDAS.slice(0, 6).every((k) => leidas.indexOf(k) >= 0),
+     leidas.join(", "));
+}
+// LA MUTACION: se le abre un canal nuevo al nodo y el espia tiene que verlo. Si
+// esta prueba no lo viera, no estaria probando nada.
+const CANAL_NUEVO = "redactarSintomas(sintomas) + '\\n' + redactarSignos(signos)";
+ok("un campo nuevo del cuestionario en el informe se DETECTA", await (async () => {
+  const mutado = mutar("Desenlace", CANAL_NUEVO,
+    CANAL_NUEVO + " + String(sintomas.observaciones || '')");
+  const leidas = await clavesLeidas(ENTRADAS[0][1], mutado);
+  return leidas.indexOf("observaciones") >= 0;
+})(), "la mutacion tiene que abrir un canal visible");
+ok("y con el nodo tal cual, ese canal NO existe",
+   (await clavesLeidas(ENTRADAS[0][1])).indexOf("observaciones") < 0);
+
+console.log("\nL11. el mensaje del caso, por igualdad y no por una palabra");
+// Antes se comprobaba con `!texto.includes("CRIBADO")`, o sea una lista negra de
+// UNA palabra: pasaba con «TRIAJE —» o con «CRIBADО» (О cirilica). Ahora es la
+// misma igualdad byte a byte que el informe.
+const casoDe = async (sintomas) => (await desenlace(
+  { error_cod: "N", detalle: "", codigo: "K7FM2P", sintomas: sintomas,
+    signos: {} }, U, D));
+const CASO_REFERENCIA = (await casoDe(SIN_LIBRE)).texto;
+for (const [etiqueta, libre] of [
+  ["el ataque al cierre", ATAQUE_AL_CIERRE],
+  ["un rotulo inventado", "TRIAJE " + RAYA_ + " opacidad probable"],
+  ["CRIBADO con O cirilica", "CRIB" + String.fromCodePoint(0x0410) + "D" +
+    String.fromCodePoint(0x041E) + " " + BARRA + " opacidad probable"],
+  ["el payload de 447 sin controles",
+   (" CRIBADO " + BARRA + " opacidad probable (puntuación 0,9900) ").repeat(7)],
+]) {
+  const s = await casoDe(Object.assign({}, SINTOMAS, { texto_libre: libre }));
+  ok(`caso, ${etiqueta}: el mensaje es la referencia MAS el aviso, byte a byte`,
+     s.texto === CASO_REFERENCIA + NL + NL + AVISO_TEXTO,
+     s.texto.split(NL).find((l) => !CASO_REFERENCIA.includes(l) && l !== AVISO_TEXTO));
+  ok(`   y su texto va en el segundo mensaje, detras de la cabecera`,
+     s.texto_paciente === CABECERA_PAC + recortarPuntos(libre, 500));
+}
+
+console.log("\nL12. el codigo del caso se valida donde se usa (N1)");
+for (const [etiqueta, cod] of [
+  ["un codigo del alfabeto del §5.2", "K7FM2P"],
+  ["minusculas", "k7fm2p"],
+  ["con una O prohibida", "K7FM2O"],
+  ["con un 0 prohibido", "K7FM20"],
+  ["de cinco", "K7FM2"],
+  ["de siete", "K7FM2PP"],
+  ["con una raya dentro", "K7F" + RAYA_ + "2P"],
+  ["un bloque falso entero", falso(BARRA, NL)],
+  ["vacio", ""],
+  ["nulo", null],
+  ["un numero", 123456],
+]) {
+  const s = await casoDe(SIN_LIBRE);
+  const r = await desenlace({ error_cod: "N", detalle: "", codigo: cod,
+                              sintomas: SIN_LIBRE, signos: {} }, U, D);
+  const valido = typeof cod === "string" && cod.length === 6 &&
+                 [...cod].every((c) => "ABCDEFGHJKMNPQRSTUVWXYZ23456789".includes(c));
+  if (valido) {
+    ok(`${etiqueta}: se imprime tal cual`, r.texto.startsWith("Caso " + cod),
+       r.texto.split(NL)[0]);
+  } else {
+    ok(`${etiqueta}: NO se imprime; se dice que no se reconoce`,
+       r.texto.startsWith("Caso (código no reconocido)") &&
+       !r.texto.includes(String(cod === null ? "" : cod).slice(0, 20)) ===
+       (String(cod || "").length > 0),
+       r.texto.split(NL)[0]);
+  }
+}
+ok("sin la validacion, un bloque falso entraria en el primer mensaje",
+   await (async () => {
+     const mutado = mutar("Desenlace", "codigoODesconocido(e.codigo)",
+                          "String(e.codigo)");
+     const r = (await correr(mutado,
+       { json: { error_cod: "N", detalle: "", codigo: falso(BARRA, NL),
+                 sintomas: SIN_LIBRE, signos: {} } },
+       { "Normalizar update": U, Decidir: D }))[0].json;
+     return r.texto.includes("CRIBADO");
+   })(), "la mutacion tiene que meter el bloque falso");
+
+console.log("\nL13. ningun mensaje puede pasarse del limite de Telegram (N7)");
+// Telegram rechaza un mensaje de mas de 4 096 caracteres, y un mensaje rechazado es
+// un profesional que NO RECIBE NADA. Antes `e.detalle` iba sin recortar: 20 000
+// caracteres daban un primer mensaje de 20 031, y el camino para llegar ahi es
+// justo el que el §9 mas teme, una caida del servidor.
+const LIMITE_TELEGRAM = 4096;
+const DETALLE_ABSURDO = "volcado de pila: ".repeat(1250);   // 20 000 caracteres
+ok(`el detalle de la prueba tiene ${DETALLE_ABSURDO.length} caracteres`,
+   DETALLE_ABSURDO.length >= 20000, String(DETALLE_ABSURDO.length));
+for (const cod of ["dicom_invalido", "fuera_de_alcance", "edad_desconocida"]) {
+  const s = await desenlace({ error_cod: cod, detalle: DETALLE_ABSURDO,
+    crudo: DETALLE_ABSURDO, resultado: null }, U, D);
+  ok(`${cod}: el mensaje cabe en Telegram (${s.texto.length} caracteres)`,
+     s.texto.length <= LIMITE_TELEGRAM, String(s.texto.length));
+  ok(`   y sigue habiendo mensaje, no un silencio`, s.texto.length > 20);
+  ok(`   y lo que se registra tambien esta acotado`,
+     descodificar(s.error_cod).length <= 600,
+     String(descodificar(s.error_cod).length));
+}
+// Los dos mensajes del desenlace normal, con el texto libre mas largo posible.
+const sLargo = await informeDe(Object.assign({}, SINTOMAS,
+  { texto_libre: "ñ".repeat(900) }));
+ok(`el informe cabe (${sLargo.texto.length})`, sLargo.texto.length <= LIMITE_TELEGRAM);
+ok(`y el segundo mensaje cabe (${sLargo.texto_paciente.length})`,
+   sLargo.texto_paciente.length <= LIMITE_TELEGRAM);
+ok("sin acotar el detalle, el mensaje se pasaria del limite", await (async () => {
+  const mutado = mutar("Desenlace", "recortar(e.detalle, TOPE_DETALLE)",
+                       "String(e.detalle)");
+  const r = (await correr(mutado, { json: { error_cod: "dicom_invalido",
+    detalle: DETALLE_ABSURDO, crudo: "", resultado: null } },
+    { "Normalizar update": U, Decidir: D }))[0].json;
+  return r.texto.length > LIMITE_TELEGRAM;
+})(), "la mutacion tiene que pasarse del limite");
+
 console.log("\nM. el mensaje del caso: se ensena, pero NO nace fila en consultas");
 const sCaso = await desenlace({ error_cod: "N", detalle: "", codigo: "K7FM2P",
   sintomas: SINTOMAS, signos: {} }, U, D);
 ok("lleva el codigo y los sintomas", sCaso.texto.includes("K7FM2P") &&
    sCaso.texto.includes("REFERIDO POR EL PACIENTE —"), sCaso.texto);
-ok("y NO lleva el texto libre dentro", !sCaso.texto.includes("DICE EL PACIENTE"));
+ok("y NO lleva el texto libre dentro: el mensaje del caso es el de referencia",
+   sCaso.texto === CASO_REFERENCIA, sCaso.texto);
 ok("lleva la pregunta del paso 2, resuelta por `Decidir` y no por una copia",
    sCaso.texto.includes(D.pregunta), sCaso.texto);
 ok("NO registra (no es un desenlace clinico)", sCaso.registrar === "N");

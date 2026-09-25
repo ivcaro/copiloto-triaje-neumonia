@@ -677,12 +677,21 @@ def test_el_segundo_mensaje_no_lleva_ni_un_caracter_del_sistema():
 
     El fondo: **cualquier delimitador que escriba el sistema, el paciente también
     puede escribirlo.** Lo único que no puede fabricar es el límite del mensaje: no
-    puede crear una burbuja. Así que el segundo mensaje no lleva nada del sistema
-    —dentro no hay ninguna afirmación mía, así que no hay nada que falsificar— y
-    quien avisa es el primero, que está probado libre de bytes del paciente.
+    puede crear una burbuja.
 
-    `tests/profesional.mjs` comprueba el comportamiento: que `texto_paciente` sea
-    byte a byte el texto libre recortado a 500. Esto ata la estructura.
+    Pero de ahí se sacó una conclusión de más: lo que se rodeó fue el **cierre**, y
+    se tiraron los dos cuando solo uno había fallado. Si el paciente no puede
+    fabricar el límite del mensaje, **tampoco puede ponerse delante del primer
+    byte**: la posición 0 es tan del sistema como el límite. Y sin cabecera, en las
+    superficies donde la burbuja se ve sola —notificación push, lista de chats,
+    reenvío, cita, fijado, búsqueda— la atribución era **cero** y la interfaz la
+    rotulaba «[retirado]»; el camino realista al daño es que el clínico reenvíe
+    esa burbuja a un colega.
+
+    Estructura final: **una línea literal en la posición 0, y nada más. Sin
+    cierre.** `tests/profesional.mjs` comprueba el comportamiento con la igualdad
+    `mensaje === cabecera + texto_recortado` y exigiendo la posición 0, no la mera
+    presencia. Esto ata la estructura.
     """
     flujo = _flujo()
     assert [c["node"] for c in flujo["connections"]["Responder"]["main"][0]] \
@@ -695,22 +704,78 @@ def test_el_segundo_mensaje_no_lleva_ni_un_caracter_del_sistema():
     assert c["leftValue"] == "={{ $('Desenlace').first().json.texto_paciente }}", c
     assert c["operator"]["operation"] == "notEmpty", c
     envio = _nodo(flujo, "Enviar texto del paciente")["parameters"]
-    # El texto del mensaje es SOLO la expresión: ni un prefijo, ni un sufijo, ni un
-    # espacio. Cualquier literal aquí volvería a ser una afirmación del sistema
-    # dentro de una burbuja que el paciente controla.
+    # El texto del mensaje es SOLO la expresión. Cualquier literal en el nodo de
+    # Telegram quedaría fuera del alcance de la igualdad que prueba el arnés.
     assert envio["text"] == "={{ $('Desenlace').first().json.texto_paciente }}"
     assert "inlineKeyboard" not in envio, "un teclado tambien seria mio"
-    # Y el nodo que lo produce devuelve el texto libre y nada más.
+    # Y el nodo que lo produce devuelve la cabecera y el recorte, y nada más.
     fuente = _nodo(flujo, "Desenlace")["parameters"]["jsCode"]
     cuerpo = fuente.split("function textoDelPaciente")[1]
     cuerpo = cuerpo[:cuerpo.index("\n}\n")]
-    assert "slice(0, LIMITE_TEXTO_LIBRE)" in cuerpo, cuerpo
-    assert "+" not in cuerpo.split("return")[-1], \
-        "nada se concatena al texto del paciente"
+    assert "recortar(libre, LIMITE_TEXTO_LIBRE)" in cuerpo, cuerpo
+    assert cuerpo.rstrip().endswith("return CABECERA_PACIENTE + recortado;"), cuerpo
+    # La decisión se toma con lo que se manda, no con el original: la guarda mira
+    # `recortado` y no `libre`. Con 600 espacios y una `x` detrás, mirar `libre`
+    # prometía un comentario y mandaba una burbuja de 500 espacios.
+    assert "if (recortado.trim() === '') { return ''; }" in cuerpo, cuerpo
+    # La cabecera es UNA línea y acaba en salto: lo que venga detrás empieza en la
+    # línea 2, y no hay cierre que el paciente pueda fabricar.
+    m = re.search(r"const CABECERA_PACIENTE = '([^']+)';", fuente)
+    assert m, fuente
+    assert m.group(1).endswith(r"\n") and m.group(1).count(r"\n") == 1, m.group(1)
+    # No hay cierre: es lo que se demostró falsificable. Se mira el código, no los
+    # comentarios, que sí lo mencionan para explicar por qué no está.
+    codigo_js = "\n".join(l for l in fuente.splitlines()
+                          if not l.lstrip().startswith("//"))
+    assert "CIERRE" not in codigo_js, "el cierre es lo que se demostro falsificable"
     # El aviso vive en el PRIMER mensaje, que es el canal que el paciente no toca.
     assert "bloques.push(AVISA_DEL_SEGUNDO)" in fuente
     # Y este mensaje tampoco lleva parse_mode: lo cubre
     # `test_ningun_mensaje_lleva_parse_mode`, que recorre los nueve nodos.
+
+
+def test_ningun_mensaje_puede_pasarse_del_limite_de_telegram():
+    """Un mensaje de más de 4 096 caracteres lo rechaza Telegram, y un mensaje
+    rechazado es **un profesional que no recibe nada**: el mismo desenlace que el
+    agujero de `ERRORES[codigo]`, por otra puerta.
+
+    `e.detalle` era el único cabo suelto —todo lo demás está acotado por
+    construcción: literales, números y valores de la enumeración—, y el camino para
+    llegar a él es justo el que el §9 más teme, una caída del servidor con un
+    volcado de 20 000 caracteres. Con él iba sin recortar, el primer mensaje salía
+    de 20 031.
+
+    El comportamiento y la mutación los cubre `tests/profesional.mjs`; esto ata que
+    el tope siga existiendo en los dos sitios que lo aplican.
+    """
+    leer = _nodo(_flujo(), "Leer respuesta")["parameters"]["jsCode"]
+    desen = _nodo(_flujo(), "Desenlace")["parameters"]["jsCode"]
+    # En el origen, donde nace el detalle del servidor.
+    assert re.search(r"const TOPE_DETALLE = (\d+);", leer), leer
+    assert "slice(0, TOPE_DETALLE)" in leer, leer
+    # Y otra vez donde se usa, porque a `Desenlace` lo alimentan cuatro nodos y
+    # basta con que uno no lo acote.
+    m = re.search(r"const TOPE_DETALLE = (\d+);", desen)
+    assert m, desen
+    assert int(m.group(1)) <= 1000, m.group(1)
+    assert "recortar(e.detalle, TOPE_DETALLE)" in desen, desen
+    # Y el texto libre, que es el otro dato de longitud ajena.
+    assert re.search(r"const LIMITE_TEXTO_LIBRE = (\d+);", desen), desen
+
+
+def test_el_codigo_del_caso_se_valida_donde_se_imprime():
+    """N1: `'Caso ' + String(e.codigo)` era seguro **solo** porque hoy lo genera
+    `generar_codigo()`. Eso es una propiedad de otro sitio: la columna no tiene
+    CHECK, y el día que alguien inserte un cuestionario a mano o lo importe, esto
+    imprimiría lo que le dieran. Un identificador que se imprime sin validar es el
+    mismo patrón que ya falló dos veces en este nodo.
+    """
+    fuente = _nodo(_flujo(), "Desenlace")["parameters"]["jsCode"]
+    assert "codigoODesconocido(e.codigo)" in fuente
+    assert "'Caso ' + String(e.codigo" not in fuente
+    # El alfabeto es el del §5.2, copiado aquí a mano como testigo independiente.
+    assert "const ALFABETO_CODIGO = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';" in fuente
+    assert "(código no reconocido)" in fuente
 
 
 def test_la_tabla_de_errores_se_consulta_por_propiedad_propia():
