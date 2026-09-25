@@ -253,7 +253,10 @@ def test_las_ejecuciones_guardan_el_error_pero_no_los_exitos(flujo):
     el mantenimiento no pasa ni un dato de paciente -lo ata
     `test_el_mantenimiento_no_lee_ni_un_dato_de_paciente`-, y cuando una corrida
     falla su ejecucion es el UNICO rastro que queda, porque el aviso es
-    justamente lo que no pudo salir."""
+    justamente lo que no pudo salir.
+
+    Es una EXCEPCION DECLARADA y no un descuido: esta escrita, con este mismo
+    porque, en el §16 del spec y en el §5 del manual de operacion."""
     s = flujo["settings"]
     assert s["saveDataErrorExecution"] == "all"
     assert s["saveDataSuccessExecution"] == "none"
@@ -544,6 +547,43 @@ def test_la_cola_pendiente_solo_avisa_cuando_CRECE():
     assert diagnosticar(dict(BIEN, pending_update_count=3), anterior=None) == []
     p = diagnosticar(dict(BIEN, pending_update_count=9), anterior=3)
     assert len(p) == 1 and "9" in p[0] and "3" in p[0]
+
+
+def test_el_aviso_de_la_tarea_programada_lleva_los_problemas_y_no_el_token(monkeypatch):
+    """La tarea programada del §5 del manual solo sirve si el resultado LLEGA a
+    alguien: un script diario que escribe en un log es el mismo silencio que el
+    workflow existe para romper. Se comprueba que el mensaje lleva los problemas
+    con su «Qué hacer», y que el token viaja en la URL de la API pero NUNCA en el
+    cuerpo del mensaje que se manda."""
+    import urllib.parse
+
+    enviados = {}
+
+    def falso(pet, timeout=0):
+        enviados["url"] = pet.full_url
+        enviados["cuerpo"] = dict(urllib.parse.parse_qsl(pet.data.decode()))
+
+        class R:
+            def read(self_inner):
+                return b'{"ok":true,"result":{}}'
+
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *a):
+                return False
+        return R()
+
+    monkeypatch.setattr(vw.urllib.request, "urlopen", falso)
+    problemas = diagnosticar({"url": "", "pending_update_count": 0})
+    texto = vw.mensaje_para_telegram(problemas)
+    ok, detalle = vw.avisar_por_telegram("T0K3N", "987", texto)
+    assert ok is True, detalle
+    assert enviados["cuerpo"]["chat_id"] == "987"
+    assert "mudo" in enviados["cuerpo"]["text"]
+    assert "Qué hacer" in enviados["cuerpo"]["text"]
+    assert "T0K3N" not in enviados["cuerpo"]["text"]
+    assert len(enviados["cuerpo"]["text"]) <= 4096
 
 
 def test_un_token_revocado_se_distingue_de_un_problema_de_url(monkeypatch):

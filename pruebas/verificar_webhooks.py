@@ -34,6 +34,13 @@ Uso:
     C:\\venv-copiloto\\Scripts\\python.exe pruebas/verificar_webhooks.py
 
 Devuelve 0 si los dos webhooks estan como deben, y 1 si hay algo que arreglar.
+
+PARA LA TAREA PROGRAMADA DIARIA (§5 del manual de operacion) hacen falta dos
+variables mas: `COPILOTO_CHAT_EQUIPO` y `TELEGRAM_TOKEN_AVISOS` -el token del bot
+que ya usa el workflow de mantenimiento, para que el aviso caiga en el MISMO hilo
+de Telegram-. Con las dos puestas, lo que encuentre se manda por Telegram; sin
+ellas solo se imprime. Una tarea programada que escribe en un log que nadie lee
+es el silencio que esto existe para romper.
 """
 import getpass
 import json
@@ -41,6 +48,7 @@ import os
 import pathlib
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 BASE_N8N = os.environ.get("N8N_URL", "https://n8n.[retirado].com").rstrip("/")
@@ -163,21 +171,67 @@ def _memoria_escribir(datos):
         pass
 
 
+def mensaje_para_telegram(problemas):
+    """El mismo formato que el aviso del workflow: encabezado, y cada problema
+    con su «Que hacer». Recortado al limite de Telegram, que son 4096."""
+    cabeza = ("\U0001fa7a Copiloto Triaje — el webhook de Telegram no está como "
+              "debe\n\n(lo dice pruebas/verificar_webhooks.py, que es la mitad "
+              "de la sexta comprobación del §16 que no cabe dentro de n8n)\n")
+    cuerpo = "\n\n".join(f"{i}. {p}" for i, p in enumerate(problemas, 1))
+    texto = f"{cabeza}\n{cuerpo}"
+    if len(texto) > 3900:
+        texto = (f"{texto[:3900]}\n\n[…] recortado: corre el script a mano para "
+                 "verlo entero.")
+    return texto
+
+
+def avisar_por_telegram(token, chat_id, texto):
+    """Manda el texto por Telegram. Devuelve (ok, detalle).
+
+    Sin dependencias: la API acepta el cuerpo como formulario, y asi el texto no
+    viaja en la URL -donde acabaria en cualquier log de por medio-.
+    """
+    datos = urllib.parse.urlencode({"chat_id": chat_id, "text": texto}).encode()
+    pet = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendMessage", data=datos)
+    try:
+        with urllib.request.urlopen(pet, timeout=20) as r:
+            cuerpo = json.load(r)
+        return bool(cuerpo.get("ok")), ""
+    except urllib.error.HTTPError as e:
+        try:
+            detalle = json.load(e).get("description", f"HTTP {e.code}")
+        except Exception:
+            detalle = f"HTTP {e.code}"
+        if "chat not found" in str(detalle):
+            detalle += (" — el chat_id es de otra cuenta, o nadie le ha escrito "
+                        "nunca a ese bot: un bot no puede iniciar la "
+                        "conversacion")
+        return False, detalle
+    except OSError as e:
+        return False, str(e)
+
+
 def main() -> int:
     memoria = _memoria_leer()
     nueva = {}
+    problemas_todos = []
     problemas_totales = 0
     for quien, variable, ruta, flujo in BOTS:
         token = os.environ.get(variable) or getpass.getpass(
             f"token del bot del {quien} (de BotFather, no se muestra): ").strip()
         if not token:
             print(f"{quien}: sin token, no se puede comprobar. SALTADO")
+            problemas_todos.append(
+                f"El bot del {quien} no se pudo comprobar: falta su token en "
+                f"{variable}.")
             problemas_totales += 1
             continue
         print(f"\n== bot del {quien} ==")
         ok, info = pedir_api(token, "getWebhookInfo")
         if not ok:
             print(f"   PROBLEMA: {info}")
+            problemas_todos.append(f"Bot del {quien}: {info}")
             problemas_totales += 1
             continue
         problemas = diagnosticar(quien, ruta, flujo, info,
@@ -186,10 +240,25 @@ def main() -> int:
         if problemas:
             for i, p in enumerate(problemas, 1):
                 print(f"   PROBLEMA {i}: {p}")
+            problemas_todos.extend(problemas)
             problemas_totales += len(problemas)
         else:
             print(f"   bien: Telegram entrega en {info['url']}, sin errores.")
     _memoria_escribir(nueva)
+
+    # El canal de la tarea programada: sin esto, lo de arriba acaba en un log
+    # que nadie abre.
+    chat = os.environ.get("COPILOTO_CHAT_EQUIPO", "").strip()
+    token_avisos = os.environ.get("TELEGRAM_TOKEN_AVISOS", "").strip()
+    if problemas_todos and chat and token_avisos:
+        enviado, detalle = avisar_por_telegram(
+            token_avisos, chat, mensaje_para_telegram(problemas_todos))
+        print("\naviso por Telegram: "
+              + ("enviado." if enviado else f"NO se pudo enviar ({detalle})."))
+    elif problemas_todos and (chat or token_avisos):
+        print("\naviso por Telegram: no se manda, faltan COPILOTO_CHAT_EQUIPO o "
+              "TELEGRAM_TOKEN_AVISOS (hacen falta las dos).")
+
     if problemas_totales:
         print(f"\n{problemas_totales} cosas que arreglar.")
         return 1
