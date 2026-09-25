@@ -413,6 +413,24 @@ console.log("\nK. dos fallos a la vez se cuentan y se numeran");
     /1 comprobación falla/.test(una.texto), una.texto.split("\n")[0]);
 }
 
+console.log("\nL. las dos medidas del dia van rotuladas y en su propia linea");
+{
+  // Antes iban pegadas en una sola frase -«… 0 de 1 en 7 días. No queda
+  // ninguno.»- y el final no se sabia de que hablaba.
+  const r = await evaluar(bien(), {});
+  const lineas = r.texto.split("\n");
+  ok("hay una linea «Medido hoy:» sola", lineas.includes("Medido hoy:"),
+    JSON.stringify(lineas.slice(-3)));
+  ok("las placas van en su linea rotulada",
+    lineas.some((l) => l.startsWith("• Placas: ")));
+  ok("y los caducados en la suya",
+    lineas.some((l) => l.startsWith("• Cuestionarios caducados: ")));
+  const mal = await evaluar(bien({ "Caducados sin borrar": { caducados: 9 } }), {});
+  ok("tambien cuando una de las dos es la que falla",
+    mal.texto.split("\n").some((l) => /^• Cuestionarios caducados: 9 /.test(l)),
+    JSON.stringify(mal.texto.split("\n").slice(-3)));
+}
+
 console.log(fallos ? `\n${fallos} FALLOS` : "\nTODO VERDE");
 process.exit(fallos ? 1 : 0);
 }
