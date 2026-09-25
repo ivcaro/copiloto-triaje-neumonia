@@ -56,9 +56,18 @@ def bd_sp3():
     docker, aunque nadie de fuera pueda. Al cerrar la ventana desaparece y no
     deja rastro: no se publica nada ni se cambia el compose.
 
-    El DSN llega por entorno y **nunca se escribe en el repositorio**:
+    El DSN llega por entorno y **nunca se escribe en el repositorio**. Usa el
+    formato CLAVE-VALOR, no el de URL:
 
-        COPILOTO_BD_DSN=postgresql://copiloto:<contrasena>@127.0.0.1:15433/copiloto
+        COPILOTO_BD_DSN="host=127.0.0.1 port=15433 dbname=copiloto user=copiloto password=<contrasena>"
+
+    El de URL -`postgresql://usuario:clave@host:puerto/base`- se rompe en
+    cuanto la contrasena lleva `/`, `+`, `:` o `@`, que son separadores de la
+    propia URL. Y las contrasenas generadas con `openssl rand -base64` llevan
+    `/` y `+` casi siempre: lo que se ve entonces no es un error de
+    autenticacion sino un `getaddrinfo failed`, porque el parser ha troceado el
+    DSN por los sitios equivocados y acaba buscando un servidor que no existe.
+    Costo dos intentos descubrirlo.
 
     Sin esa variable las pruebas que lo usan se saltan, para que la suite del
     paquete siga corriendo en una maquina sin tunel.
