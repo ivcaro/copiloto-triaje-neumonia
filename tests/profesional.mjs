@@ -678,7 +678,7 @@ const sEdad = await desenlace({ error_cod: "fuera_de_alcance",
 ok("el rechazo por edad llega como DECISION CLINICA, no como fallo tecnico",
    sEdad.texto.includes("NO PROCEDE") && sEdad.texto.includes("Decida clínicamente"), sEdad.texto);
 ok("y relata el detalle del servidor, con la edad que venia DENTRO del texto",
-   sEdad.texto.includes("El paciente tiene 12 anios"), sEdad.texto);
+   sEdad.texto.includes("El paciente tiene 12 años"), sEdad.texto);
 ok("error_no_reconocido guarda el texto INTEGRO en consultas.error (§9)", await (async () => {
   const s = await desenlace({ error_cod: "error_no_reconocido",
     detalle: "gremlins_en_el_gpu: se fue la luz", resultado: null }, U, D);

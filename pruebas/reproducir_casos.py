@@ -203,15 +203,20 @@ PERFILES = [
     Perfil(8, "fichero_corrupto_FABRICADO",
            "Fichero corrupto (FABRICADO)",
            "los primeros 4 KiB de una placa real, truncada ahí",
-           "Mire que el bot no acusa al clínico de nada y que sigue esperando "
-           "el archivo: un DICOM truncado se vuelve a enviar, no se abandona.",
+           "El bot no acusa al clínico de nada, y eso está bien. Pero fíjese en "
+           "lo que NO dice: la conversación sigue viva esperando el archivo y el "
+           "mensaje no se lo cuenta, así que el clínico no sabe si reenviar la "
+           "placa o empezar de cero. Es un defecto de redacción del §9, ya "
+           "señalado; el corpus lo saca a la luz y no lo tapa.",
            fabricado=True),
     Perfil(9, "fichero_enorme_FABRICADO",
            "Fichero enorme (FABRICADO)",
            "una placa real rellenada por encima de los 5 MiB del §10.4",
-           "Mire que el mensaje dice el límite en MB y no un error técnico. Los "
-           "DICOM de RSNA pesan 131 KiB de mediana: esto no debería pasar "
-           "nunca, y está aquí para que, si pasa, el bot diga algo cierto.",
+           "Que el mensaje dice el límite en MB y no un error técnico, y eso "
+           "está bien. Le pasa lo mismo que al perfil 08: tampoco dice que siga "
+           "esperando el archivo. Los DICOM de RSNA pesan 131 KiB de mediana, "
+           "así que esto no debería pasar nunca; está aquí para que, si pasa, el "
+           "bot diga algo cierto.",
            fabricado=True),
 ]
 
@@ -416,6 +421,10 @@ class Bots:
         self.ruta_paciente = ruta_paciente
         self.ruta_profesional = ruta_profesional
         self.contador = 0
+        # Hasta que `comprobar_si_el_bot_puede_contestar` diga lo contrario, no se
+        # afirma que el bot pueda entregar nada.
+        self.entrega = "rechazada"
+        self.motivo_entrega = "no se comprobo"
 
     def _alcanza_el_chat(self, chat):
         """Si el bot del profesional puede escribirle a `chat`. (ok, detalle)."""
@@ -684,6 +693,7 @@ ENTREGA = {
                            "PACIENTE",
         "se_obtuvo": "NO. No hubo envío: nadie condujo la conversación, así que "
                      "no había a quién enviárselo",
+        "resumen": "no hubo envío, porque no se condujo ninguna conversación",
     },
     "rechazada": {
         "titulo": "EL MENSAJE QUE EL BOT COMPUSO — PERO NADIE LO RECIBIÓ",
@@ -691,6 +701,7 @@ ENTREGA = {
         "se_obtuvo": "NO. El bot lo compuso y lo intentó, y Telegram lo rechazó: "
                      "el chat de los updates es inventado. La fila de `consultas` "
                      "se escribió igual porque `Registrar` va antes de `Responder`",
+        "resumen": "Telegram los rechazó: el chat de los updates es inventado",
     },
     "intentada": {
         "titulo": "EL MENSAJE QUE EL BOT ENVIÓ AL PROFESIONAL, LITERAL",
@@ -892,7 +903,20 @@ def resumen(filas, con_bots, destino):
             if con_bots else "solo el copiloto (--sin-bots): sin Telegram, sin "
                              "n8n y sin base de datos")
     lineas += [_punto("pasó por", modo),
-               _punto("corpus en", str(destino)), ""]
+               _punto("corpus en", str(destino))]
+    # Que alguien lea el mensaje es otra cosa que que el bot lo componga, y el
+    # resumen lo dice antes que nada: si nadie lo recibio, el corpus es igual de
+    # util pero no es una prueba de entrega.
+    entregas = {}
+    for _, obs, _ in filas:
+        e = obs.get("entrega", "no_intentada")
+        entregas[e] = entregas.get(e, 0) + 1
+    for estado, n in sorted(entregas.items(), key=lambda x: -x[1]):
+        lineas.append(_punto("  mensajes que leyó alguien"
+                             if estado == "intentada"
+                             else "  mensajes que NO leyó nadie",
+                             f"{n}: {ENTREGA[estado]['se_obtuvo']}"))
+    lineas.append("")
 
     lineas.append(" CASOS POR PERFIL")
     presentes = 0
@@ -1147,6 +1171,13 @@ def main() -> int:
         # nadie y no hay nada que limpiar. Al reves quedaria un chat_id de pruebas
         # autorizado en la unica puerta del bot del profesional (D6).
         bots.comprobar_el_chat_de_subida()
+        if bots.comprobar_si_el_bot_puede_contestar() == "rechazada":
+            print(f"AVISO: el bot no puede entregar sus mensajes al chat "
+                  f"{chat_profesional} ({bots.motivo_entrega}).")
+            print("La corrida sirve igual -la fila de `consultas` se escribe "
+                  "antes del envio- y el")
+            print("corpus lo dira caso por caso: NO titulara «el mensaje que "
+                  "recibio el profesional».\n")
         profesional_existia = bd.execute(
             "SELECT count(*) FROM profesionales WHERE chat_id = %s",
             (chat_profesional,)).fetchone()[0] > 0
@@ -1161,9 +1192,11 @@ def main() -> int:
         for i, caso in enumerate(casos, 1):
             print(f"[{i:>3}/{len(casos)}] {caso['perfil'].carpeta}  "
                   f"{caso['patientId']}", flush=True)
-            obs = {"con_bots": False, "motivo_sin_bots": motivo_sin_bots}
+            obs = {"con_bots": False, "motivo_sin_bots": motivo_sin_bots,
+                   "entrega": "no_intentada", "bloques": "afirmados"}
             if con_bots:
                 obs["con_bots"] = True
+                obs["entrega"] = bots.entrega
                 codigo, fallo = bots.conversacion_del_paciente(caso["sintomas"])
                 if codigo is None:
                     obs["fallo"] = fallo
@@ -1177,13 +1210,26 @@ def main() -> int:
                         print(f"        {fallo}")
                     else:
                         obs.update(consulta)
+            # Los dos bloques clinicos se redactan con lo que el flujo GUARDO
+            # cuando eso existe, y no con los literales de este arnes: si no, el
+            # corpus los afirmaria en vez de observarlos.
+            if obs.get("sintomas") is not None:
+                obs["bloques"] = "observados"
+            sintomas = (obs["sintomas"] if obs.get("sintomas") is not None
+                        else caso["sintomas"])
+            signos = obs["signos"] if obs.get("signos") else SIGNOS
             t0 = int(time.time() * 1000)
+            reloj = time.perf_counter()
             estado, cuerpo = llamar_al_copiloto(url_copiloto, caso["ruta_dcm"])
+            # Medido AQUI, no con el `ms` de `Desenlace`: `redactar()` corre una
+            # sola vez al final, asi que aquel `ms` llegaba hasta el final de la
+            # corrida entera y no hasta el final de esta llamada.
+            obs["ms_arnes"] = (time.perf_counter() - reloj) * 1000
             lote.append({
                 "http": {"statusCode": estado, "cuerpo": cuerpo},
                 "decidir": {"chat_id": chat_profesional, "t0": t0,
                             "codigo": obs.get("codigo") or "",
-                            "sintomas": caso["sintomas"], "signos": SIGNOS},
+                            "sintomas": sintomas, "signos": signos},
                 "normalizar": {"chat_id": chat_profesional, "t0": t0}})
             filas.append([caso, obs, None])
 
@@ -1199,7 +1245,7 @@ def main() -> int:
             fila[2] = redaccion
             caso, obs = fila[0], fila[1]
             if obs.get("con_bots") and not obs.get("fallo"):
-                obs["coincide"] = _coincide(obs, redaccion)
+                obs["coincide"] = _coincide(obs, caso, redaccion)
     finally:
         if bd is not None:
             bd.execute("DELETE FROM sesiones_profesional WHERE chat_id = %s",

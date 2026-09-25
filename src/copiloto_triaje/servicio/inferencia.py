@@ -113,11 +113,12 @@ class Motor:
             raise ErrorDeInferencia(
                 "edad_desconocida",
                 "La cabecera DICOM no declara una edad interpretable. No se "
-                "asume que el paciente sea adulto: pide la edad al profesional.")
+                "asume que el paciente sea adulto: compruebe la edad en la "
+                "cabecera del estudio.")
         if not EDAD_MINIMA <= edad <= EDAD_MAXIMA:
             raise ErrorDeInferencia(
                 "fuera_de_alcance",
-                f"El paciente tiene {edad} años y el modelo solo es valido "
+                f"El paciente tiene {edad} años y el modelo solo es válido "
                 f"entre {EDAD_MINIMA} y {EDAD_MAXIMA}.")
 
         # El arreglo ya esta leido: se reusa en vez de volver a decodificar el
