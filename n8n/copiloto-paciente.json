@@ -253,7 +253,7 @@
         "resource": "message",
         "operation": "sendMessage",
         "chatId": "={{ $('Normalizar update').first().json.chat_id }}",
-        "text": "Antes de empezar necesito su permiso.\n\nLe voy a hacer 7 preguntas sobre cómo se siente. Con sus respuestas:\n\n• Las guardo 7 días y después se borran.\n• NO guardo su nombre ni su número de teléfono. Solo un código de 6 letras.\n• Solo las verá el médico a quien usted le dé ese código.\n• Esto NO es un diagnóstico: es una ayuda para su médico.\n\nSi le cuesta respirar, le duele mucho el pecho o se siente muy mal, acuda a urgencias AHORA. No espere a terminar esto.\n\n¿Acepta que guarde sus respuestas?",
+        "text": "Antes de empezar necesito su permiso.\n\nLe voy a hacer 7 preguntas sobre cómo se siente. Con sus respuestas:\n\n• Las guardo 7 días y después se borran.\n• NO guardo su nombre ni su número de teléfono. Solo un código de 6 caracteres, con letras y números.\n• Guardo el identificador de su Telegram 2 días, para evitar abusos, y NO va unido a sus respuestas.\n• Solo las verá el médico a quien usted le dé ese código.\n• Esto NO es un diagnóstico: es una ayuda para su médico.\n\nSi le cuesta respirar, le duele mucho el pecho o se siente muy mal, acuda a urgencias AHORA. No espere a terminar esto.\n\n¿Acepta que guarde sus respuestas?",
         "replyMarkup": "inlineKeyboard",
         "inlineKeyboard": {
           "rows": [
