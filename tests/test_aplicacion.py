@@ -45,7 +45,7 @@ def motor():
     return Motor(modelo=Trivial(),
                  calibrador=ajustar_calibrador(y, crudo, 0.2215, "prueba"),
                  umbral=0.5, tam_imagen=32, nombre_modelo="prueba",
-                 auc_validacion=0.88)
+                 auc_validacion=0.88, prevalencia_local=0.1466)
 
 
 @contextlib.asynccontextmanager
