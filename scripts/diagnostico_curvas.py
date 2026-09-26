@@ -371,7 +371,7 @@ def figura_perdidas(corrida, destino):
                         connectionstyle="arc3,rad=-0.15"))
 
     _ejes(ax, f"Pérdida por época — {corrida['nombre']}",
-          "época", "pérdida (BCE ponderada, pos_weight ≈ 3,44)")
+          "época", "pérdida (BCE ponderada por el desbalance)")
     _marcar_fases(ax, h)
     fig.tight_layout()
     fig.savefig(destino, dpi=DPI)
