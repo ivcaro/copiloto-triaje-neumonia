@@ -126,12 +126,50 @@ for (const [n, clave, valores] of SPEC) {
 ok("«Omitir» codifica NULL, no la cadena 'omitir'",
    decidir(normalizar(btn("p7:omitir")), ses(7)).valor_cod === "N");
 
+console.log("\nE bis. EL PACIENTE QUE VUELVE");
+// El caso real que destapo esto: alguien completo el cuestionario, se fue, y
+// vuelve dias despues a por otro codigo. `Completar` le borro la sesion al
+// entregarle el primero, y la limpieza diaria borra las que pasan de 24 h, asi
+// que llega SIEMPRE sin sesion. Y no puede pulsar Iniciar: Telegram solo pone
+// ese boton en un chat nuevo.
+for (const texto of ["Hola", "hola", "buenos dias", "quiero otro codigo",
+                     "start", "?"]) {
+  ok(`«${texto}» sin sesion abre el consentimiento`,
+     decidir(normalizar(msg(texto)), sinSesion).accion === "consentimiento",
+     decidir(normalizar(msg(texto)), sinSesion).accion);
+}
+// Y sigue funcionando lo que ya funcionaba: aceptar o rechazar el
+// consentimiento se pulsa JUSTO cuando todavia no hay sesion, asi que la rama
+// nueva no puede adelantarse a esos dos botones. Si se adelantara, nadie
+// volveria a poder aceptar.
+ok("el boton Si sigue creando la sesion",
+   decidir(normalizar(btn("consent:si")), sinSesion).accion === "aceptar");
+ok("el boton No sigue despidiendo",
+   decidir(normalizar(btn("consent:no")), sinSesion).accion === "despedida");
+// Con sesion a medias NO se reabre el consentimiento: se repite la pregunta,
+// que es lo que ya hacia y no debe cambiar.
+ok("con el cuestionario a medias se repite la pregunta, no el consentimiento",
+   decidir(normalizar(msg("hola")), ses(3)).accion === "repetir");
+
 console.log("\nF. valores y botones que NO se aceptan");
 ok("un valor fuera del §4.4 no se guarda", decidir(normalizar(btn("p1:quiza")), ses(1)).accion === "repetir");
 ok("el boton de OTRA pregunta no se guarda", decidir(normalizar(btn("p2:seca")), ses(5)).accion === "repetir");
 ok("un callback ajeno se descarta sin contestar", decidir(normalizar(btn("borrar:todo")), ses(3)).accion === "nada");
 ok("p8 no existe -> se descarta", decidir(normalizar(btn("p8:si")), ses(3)).accion === "nada");
-ok("boton sin sesion -> nada", decidir(normalizar(btn("p1:si")), sinSesion).accion === "nada");
+// SIN SESION, CUALQUIER COSA ABRE EL CONSENTIMIENTO, tambien un boton viejo.
+// Antes esto afirmaba `nada`. Cambio porque el razonamiento de entonces
+// -«contestar seria hablarle a quien no ha dicho /start»- tiene un agujero: el
+// boton Iniciar de Telegram SOLO aparece en un chat nuevo, asi que quien ya uso
+// el bot no puede descubrir /start, y las dos rutas normales -terminar el
+// cuestionario, o dejarlo mas de 24 h- acaban sin sesion. El paciente que
+// repite consulta caia siempre ahi y no recibia nada.
+//
+// Y ya no compensa distinguir el callback forjado del texto cualquiera: si a un
+// «hola» se le contesta, discriminar por el tipo de mensaje no protege de nada.
+ok("boton viejo sin sesion -> abre el consentimiento",
+   decidir(normalizar(btn("p1:si")), sinSesion).accion === "consentimiento");
+ok("un callback forjado sin sesion, igual",
+   decidir(normalizar(btn("borrar:todo")), sinSesion).accion === "consentimiento");
 ok("sesion SIN consentimiento -> nada (D11)", decidir(normalizar(btn("p1:si")), ses(1, true, false)).accion === "nada");
 
 console.log("\nG. pregunta 7: la unica con texto libre");

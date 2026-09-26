@@ -132,9 +132,21 @@ acumula un rastro de quién usó el bot y cuándo.
 
 ### 4.3. El recorrido
 
+> **Corregido el 26-sep.** Este apartado decia que el bot del paciente arranca
+> **solo** con `/start`, y el del profesional con `/start o cualquier mensaje`.
+> La asimetria parecia justificada -al paciente hay que pedirle consentimiento,
+> al profesional no- y era un defecto: **el boton *Iniciar* de Telegram solo
+> aparece en un chat nuevo**. Quien ya uso el bot no lo vuelve a ver, y las dos
+> rutas normales acaban sin sesion (`Completar` la borra al entregar el codigo,
+> y la limpieza diaria borra las que pasan de 24 h). O sea que **todo paciente
+> que repite consulta** llegaba sin sesion, escribia «hola» y no recibia nada.
+> Ahora cualquier mensaje abre el consentimiento, que es exactamente lo que
+> mandaba `/start`: no se guarda ni un dato sin aceptarlo, asi que el D11 sigue
+> intacto.
+
 ```
 PACIENTE                              PROFESIONAL
-  /start                                /start o cualquier mensaje
+  /start o cualquier mensaje            /start o cualquier mensaje
   consentimiento ─ no acepta ─► fin     │
   7 preguntas de botones                ├─► secret_token válido?  no ─► descarta
      ▼                                  ├─► chat_id en lista blanca? no ─► "no autorizado"
