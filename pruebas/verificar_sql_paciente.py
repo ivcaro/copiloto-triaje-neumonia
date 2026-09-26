@@ -176,7 +176,13 @@ with psycopg.connect(DSN, autocommit=True) as cx:
 
     print("\n6. doble toque en el MISMO boton (idempotencia del AND paso = $5)")
     r = ejecutar(cur, "Guardar respuesta", ctx_guardar("asma", cod("no"), 7, 6))
-    comprobar("el segundo update no encuentra fila", r is None, str(r))
+    # LA IDEMPOTENCIA SE OBSERVA AHORA POR `guardados`, no por la ausencia de
+    # fila. La propiedad es la misma -el segundo toque no muerde- pero la
+    # consulta va envuelta en una CTE para que SIEMPRE devuelva una fila: con el
+    # `RETURNING` pelado, cero filas en n8n no es un dato vacio sino el final de
+    # la rama, y el usuario se quedaba sin ningun mensaje.
+    comprobar("el segundo update no muerde, pero SI devuelve fila",
+              r is not None and r["guardados"] == 0, str(r))
     comprobar("el paso sigue en 7", cur.execute(
         "SELECT paso FROM sesiones_paciente WHERE chat_id=%s", (CHAT,)).fetchone()[0] == 7)
 
