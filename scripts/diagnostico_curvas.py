@@ -54,8 +54,12 @@ from pathlib import Path
 # BRECHA_ALTA: brecha de AUC entre entrenamiento y validacion que ya no se
 #   explica por la dificultad del conjunto.
 # PERDIDA_ALTA_AMBAS: por encima de esto las dos curvas juntas es underfitting;
-#   es el orden de magnitud de la perdida de una salida constante con
-#   `pos_weight` ~3,44.
+#   es el orden de magnitud de la perdida de una salida constante con el
+#   `pos_weight` del desbalance. No se cita aqui un valor concreto a proposito:
+#   cada corrida lo calcula sobre SU particion de entrenamiento, y el 3,44 que
+#   decia antes esta linea sale del 22,5 % de positivos de RSNA ENTERO, que ya
+#   no es el conjunto con el que se entrena -tras descartar los 1 276 menores y
+#   los 5 de edad imposible, los positivos son el 22,15 % y el peso ronda 3,5-.
 SUBIDA_SOBREAJUSTE = 0.05
 BRECHA_ALTA = 0.08
 PERDIDA_ALTA_AMBAS = 0.80
