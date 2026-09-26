@@ -146,6 +146,48 @@ const R_NEGATIVA_BORDE = {
   modelo: "efficientnet_b0_320px", auc_validacion: 0.8827, milisegundos: 42.6,
 };
 
+// Bloques `combinacion` (SP4 §9.2) CALCULADOS con heckerling.py -prevalencia
+// 0,1466, RV del §4 del spec y la RV real de cada placa de arriba-, no
+// tecleados. Los cuatro decimales son los que el servidor manda.
+//   C_POS_3    puntuacion 3 con la positiva clara: el ejemplo 1 del §8.
+//   C_POS_0    puntuacion 0 con la positiva clara: discordantes, ejemplo 2.
+//   C_POS_3_4  asma no_se (3 o 4) con la positiva clara: una sola horquilla.
+//   C_BANDA_0  puntuacion 0 con la banda: concordantes por debajo de 1 y los
+//              dos extremos redondean igual (2 %).
+//   C_BORDE_0  puntuacion 0 con la negativa del borde: por debajo de 1, y la
+//              mas informativa es la CLINICA.
+//   C_NEG_0    puntuacion 0 con la negativa clara: todo por debajo del 1 %.
+const C_POS_3 = {
+  prevalencia: 0.1466, puntuacion: [3], rv_clinica: [1.64],
+  rv_imagen: R_POSITIVA.razon_de_verosimilitud, concordantes: true,
+  absorbe: "imagen", independencia: [0.8951], dependencia: [0.8388],
+  minima: 0.8388, maxima: 0.8951 };
+const C_POS_0 = {
+  prevalencia: 0.1466, puntuacion: [0], rv_clinica: [0.12],
+  rv_imagen: R_POSITIVA.razon_de_verosimilitud, concordantes: false,
+  absorbe: null, independencia: [0.3844], dependencia: null,
+  minima: 0.3844, maxima: 0.3844 };
+const C_POS_3_4 = {
+  prevalencia: 0.1466, puntuacion: [3, 4], rv_clinica: [1.64, 7.18],
+  rv_imagen: R_POSITIVA.razon_de_verosimilitud, concordantes: true,
+  absorbe: "imagen", independencia: [0.8951, 0.9739],
+  dependencia: [0.8388, 0.8388], minima: 0.8388, maxima: 0.9739 };
+const C_BANDA_0 = {
+  prevalencia: 0.1466, puntuacion: [0], rv_clinica: [0.12],
+  rv_imagen: R_BANDA.razon_de_verosimilitud, concordantes: true,
+  absorbe: "clinica", independencia: [0.0176], dependencia: [0.0202],
+  minima: 0.0176, maxima: 0.0202 };
+const C_BORDE_0 = {
+  prevalencia: 0.1466, puntuacion: [0], rv_clinica: [0.12],
+  rv_imagen: R_NEGATIVA_BORDE.razon_de_verosimilitud, concordantes: true,
+  absorbe: "clinica", independencia: [0.0120], dependencia: [0.0202],
+  minima: 0.0120, maxima: 0.0202 };
+const C_NEG_0 = {
+  prevalencia: 0.1466, puntuacion: [0], rv_clinica: [0.12],
+  rv_imagen: R_NEGATIVA.razon_de_verosimilitud, concordantes: true,
+  absorbe: "clinica", independencia: [0.0003], dependencia: [0.0028],
+  minima: 0.0003, maxima: 0.0028 };
+
 const sse = (obj) => `event: message\r\ndata: ${JSON.stringify(obj)}\r\n\r\n`;
 const sseExito = (r) => sse({
   jsonrpc: "2.0", id: 1,
@@ -593,6 +635,44 @@ ok("200 con SSE pero structuredContent incompleto -> error_no_reconocido", await
   })), dResp);
   return s.error_cod === "error_no_reconocido";
 })());
+// SP4 (D9): el bloque `combinacion` es OPCIONAL -un copiloto anterior a SP4
+// no lo manda y el informe sale sin el-, pero si viene tiene que estar ENTERO
+// y con sus tipos, por lo mismo que los cuatro numeros del §8: un campo que
+// falta no es una cifra que se pueda imprimir.
+const leerCon = async (r) => (await correr(
+  codigo("Leer respuesta"), { json: http200(sseExito(r)) }, { Decidir: dResp }))[0].json;
+ok("sin `combinacion` (copiloto anterior a SP4) se lee como siempre", await (async () => {
+  const s = await leerCon(R_POSITIVA);
+  return s.error_cod === "N" && !("combinacion" in s.resultado);
+})());
+for (const [etiqueta, c] of [["ejemplo 1", C_POS_3], ["discordante", C_POS_0],
+                             ["asma no_se", C_POS_3_4], ["banda", C_BANDA_0]]) {
+  const s = await leerCon(Object.assign({}, R_POSITIVA, { combinacion: c }));
+  ok(`${etiqueta}: un bloque valido pasa ENTERO y tal cual`,
+     s.error_cod === "N" && JSON.stringify(s.resultado.combinacion) === JSON.stringify(c),
+     JSON.stringify(s.error_cod));
+}
+const ROTOS = [
+  ["minima > maxima", Object.assign({}, C_POS_3, { minima: 0.9, maxima: 0.8 })],
+  ["puntuacion fuera de 0-5", Object.assign({}, C_POS_3, { puntuacion: [6] })],
+  ["tres puntuaciones", Object.assign({}, C_POS_3, { puntuacion: [3, 4, 5], rv_clinica: [1, 2, 3], independencia: [0.1, 0.2, 0.3], dependencia: [0.1, 0.2, 0.3] })],
+  ["rv_clinica de otro largo", Object.assign({}, C_POS_3, { rv_clinica: [1.64, 7.18] })],
+  ["concordantes sin dependencia", Object.assign({}, C_POS_3, { dependencia: null })],
+  ["discordantes CON dependencia", Object.assign({}, C_POS_0, { dependencia: [0.5] })],
+  ["absorbe desconocido", Object.assign({}, C_POS_3, { absorbe: "nadie" })],
+  ["una posterior como texto", Object.assign({}, C_POS_3, { independencia: ["0,89"] })],
+  ["una posterior de mas de 1", Object.assign({}, C_POS_3, { maxima: 1.2 })],
+  ["prevalencia de 0", Object.assign({}, C_POS_3, { prevalencia: 0 })],
+  ["rv_imagen negativa", Object.assign({}, C_POS_3, { rv_imagen: -1 })],
+  ["el bloque no es un objeto", "84-90"],
+  ["el bloque es una lista", [0.84, 0.9]],
+];
+for (const [etiqueta, c] of ROTOS) {
+  const s = await leerCon(Object.assign({}, R_POSITIVA, { combinacion: c }));
+  ok(`${etiqueta}: error_no_reconocido, y NO llega al redactor`,
+     s.error_cod === "error_no_reconocido" && s.resultado === null,
+     JSON.stringify(s.error_cod));
+}
 ok("el base64 del DICOM NO viaja en la salida de este nodo (§5.4)", await (async () => {
   const s = await leerRespuesta(http200(sseExito(R_POSITIVA)), dResp);
   return !("dicom_base64" in s) && !("cuerpo" in s);
