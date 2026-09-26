@@ -194,6 +194,14 @@ const C_POS_2_3 = {
   rv_imagen: R_POSITIVA.razon_de_verosimilitud, concordantes: false,
   absorbe: null, independencia: [0.7846, 0.8951], dependencia: null,
   minima: 0.7846, maxima: 0.8951 };
+// C_POS_0_1  asma no_se (0 o 1) contra la placa positiva: las DOS RV clinicas
+//            se oponen a la imagen (0,12 y 0,20, ambas por debajo de 1);
+//            discordante para las dos hipotesis del asma (Ruling 6).
+const C_POS_0_1 = {
+  prevalencia: 0.1466, puntuacion: [0, 1], rv_clinica: [0.12, 0.2],
+  rv_imagen: R_POSITIVA.razon_de_verosimilitud, concordantes: false,
+  absorbe: null, independencia: [0.3844, 0.51], dependencia: null,
+  minima: 0.3844, maxima: 0.51 };
 
 const sse = (obj) => `event: message\r\ndata: ${JSON.stringify(obj)}\r\n\r\n`;
 const sseExito = (r) => sse({
@@ -2192,7 +2200,20 @@ ok("D6: dos puntuaciones a los dos lados de 1 -> horquilla de independencia",
 ok("D6: los factores con las dos RV y las dos puntuaciones",
    b23[1] === "(prevalencia 14,7 % × clínica 0,70–1,64 × imagen 30,3; Heckerling 2 o 3 de 5, según tenga asma o no)", b23[1]);
 ok("D6: el aviso dice de que depende el sentido",
-   b23[2] === "⚠️ Según tenga asma o no, la clínica apunta en el mismo sentido que la imagen o en el contrario, y además no son pruebas independientes: la horquilla es orientativa. Decide usted.", b23[2]);
+   b23[2] === "⚠️ Que la clínica apunte en el mismo sentido que la imagen o en el contrario depende de si tiene asma, y además no son pruebas independientes: la horquilla es orientativa. Decide usted.", b23[2]);
+
+// Ruling 6: "dos puntuaciones" no basta para que el sentido dependa del asma.
+// Si las DOS RV clinicas se oponen a la imagen -aqui 0,12 y 0,20, las dos
+// por debajo de 1 contra una imagen a favor-, la frase de "sentidos
+// opuestos" es verdad para las dos hipotesis, y el aviso vuelve a ser el de
+// siempre (con "la horquilla" porque aqui si hay rango).
+const b01 = bloqueCombinado(await conCombinacion(C_POS_0_1, SINTOMAS)).split(NL);
+ok("Ruling 6: las dos RV clinicas se oponen a la imagen -> horquilla de independencia",
+   b01[0] === "COMBINADO — entre 38 % y 51 % de probabilidad de opacidad compatible", b01[0]);
+ok("Ruling 6: los factores con las dos RV y las dos puntuaciones",
+   b01[1] === "(prevalencia 14,7 % × clínica 0,12–0,20 × imagen 30,3; Heckerling 0 o 1 de 5, según tenga asma o no)", b01[1]);
+ok("Ruling 6: con las dos RV clinicas del mismo lado, el aviso vuelve a ser el de siempre",
+   b01[2] === "⚠️ La clínica y la imagen apuntan en sentidos opuestos, y además no son pruebas independientes: la horquilla es orientativa. Decide usted.", b01[2]);
 
 const bB = bloqueCombinado(await conCombinacion(C_BANDA_0, SINTOMAS_SI, SIGNOS, R_BANDA)).split(NL);
 ok("un rango que se cierra deja de ser un rango: «2 %» a secas",
