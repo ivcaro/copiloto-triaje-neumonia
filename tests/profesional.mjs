@@ -518,6 +518,91 @@ ok("el base64 del DICOM NO viaja en la salida de este nodo (§5.4)", await (asyn
   return !("dicom_base64" in s) && !("cuerpo" in s);
 })());
 
+console.log("\nI bis. LO QUE EL CLINICO LEE, BIEN ESCRITO");
+// --------------------------------------------------------------------------
+// `tests/test_inferencia.py` comprueba la ortografia y el trato de los mensajes
+// de `src/`, y eso dejaba fuera TODO lo que escriben los nodos de n8n, que es de
+// donde sale la mayoria de lo que el profesional lee. Medido por una revision:
+// 16 de los 20 literales de Telegram se podian destildar y tutear con las cuatro
+// suites en VERDE, y cinco ya estaban mal escritos de verdad.
+//
+// QUE SE MIRA Y QUE NO. Un nodo tiene literales de dos clases: mensajes en
+// castellano y cadenas de trabajo (`codigo_invalido`, `s4:si`, `application/
+// json`). Solo las primeras tienen ortografia que juzgar, y se distinguen por
+// que son PROSA: llevan espacios y tienen largo de frase. Con un `codigo` dentro
+// de `'codigo_invalido'` no hay nada que corregir.
+// --------------------------------------------------------------------------
+const SIN_TILDE = ["anios", "valido", "codigo", "numero", "maximo", "minimo",
+                   "diagnostico", "analisis", "radiografia", "informacion",
+                   "despues", "tambien", "aqui", "mas ", "clinic", "practic",
+                   "ningun ", "algun ", "segun", "rapido", "facil"];
+// EL TUTEO NO SE PUEDE BUSCAR POR LA RAIZ DEL VERBO, y el primer intento de
+// esta prueba lo hizo y se llevo tres falsos positivos seguidos.
+//
+// En castellano la forma de USTED es la tercera persona del singular, la misma
+// que el imperativo de tu. Asi que «decide» no distingue nada: «Decide usted» y
+// «Decide la clínica» son las dos correctas y de usted, y «vuelve a pasar» es
+// impersonal. Una comprobacion que se queja de texto correcto acaba apagada, y
+// entonces no comprueba nada.
+//
+// Lo que SI es inequivoco es la segunda persona conjugada -«decides»,
+// «compruebas»-, que no existe en el trato de usted, y los pronombres de tu.
+// La lista es corta a proposito: mejor pocas y ciertas.
+const TUTEO = [" decides ", " vuelves ", " envias ", " env\u00edas ",
+               " compruebas ", " revisas ", " intentas ", " miras ",
+               " esperas ", " tienes ", " puedes ", " debes ", " sabes ",
+               " quieres ", " haces ", " tu ", " tus ", " te ", " ti ",
+               " contigo ", " tuyo ", " tuya "];
+// Lo que NO es un mensaje aunque lo parezca: cabeceras HTTP, claves y el texto
+// que el SERVIDOR compone -que se comprueba en `test_inferencia.py`, en su
+// fuente, y aqui solo aparece como literal a buscar dentro de la respuesta-.
+const NO_ES_UN_MENSAJE = [
+  "application/json", "text/event-stream", "Error executing tool",
+  "Request body too large", "no hay parametro", "jsonrpc",
+  "clasificar_radiografia", "Only base64 data is allowed",
+  "paso_3_se_conserva_paso_1", "opacidad_probable", "sin_opacidad_probable",
+];
+
+function mensajesDelNodo(fuente) {
+  // Literales entre comillas simples, que es como estan escritos los nodos.
+  const crudos = fuente.match(/'(?:[^'\\\n]|\\.)*'/g) || [];
+  return crudos
+    .map((s) => s.slice(1, -1).replace(/\\n/g, " ").replace(/\\'/g, "'"))
+    // PROSA: con espacio y con largo de frase. Deja fuera las claves.
+    .filter((s) => s.includes(" ") && s.length >= 14)
+    // Y fuera lo que no es castellano nuestro.
+    .filter((s) => !NO_ES_UN_MENSAJE.some((x) => s.includes(x)))
+    // Un literal sin ninguna letra acentuable tipica tampoco es castellano:
+    // se exige al menos una palabra con vocal, que cualquier frase tiene.
+    .filter((s) => /[a-zA-Z]{3}/.test(s));
+}
+
+const NODOS_QUE_HABLAN = ["Decidir", "Desenlace"];
+let revisados = 0;
+for (const nombre of NODOS_QUE_HABLAN) {
+  for (const mensaje of mensajesDelNodo(codigo(nombre))) {
+    const bajo = " " + mensaje.toLowerCase() + " ";
+    const malas = SIN_TILDE.filter((p) => bajo.includes(p));
+    const tuteo = TUTEO.filter((p) => bajo.includes(p));
+    revisados += 1;
+    if (malas.length || tuteo.length) {
+      ok(`${nombre}: «${mensaje.slice(0, 46)}»`, false,
+         `sin tilde ${JSON.stringify(malas)} / tuteo ${JSON.stringify(tuteo)}`);
+    }
+  }
+}
+ok(`se revisaron los mensajes de ${NODOS_QUE_HABLAN.length} nodos`,
+   revisados >= 20, String(revisados));
+// Y las preguntas llevan su signo de apertura, que el castellano pide y el
+// corrector de tildes no ve.
+for (const nombre of NODOS_QUE_HABLAN) {
+  for (const mensaje of mensajesDelNodo(codigo(nombre))) {
+    if (!mensaje.trimEnd().endsWith("?")) { continue; }
+    ok(`${nombre}: «${mensaje.slice(0, 40)}» abre la interrogacion`,
+       mensaje.includes("\u00bf"), mensaje);
+  }
+}
+
 console.log("\nJ. §8: TRES BLOQUES ROTULADOS, y la etiqueta nunca con la RV");
 async function texto(r) {
   const s = await desenlace(
