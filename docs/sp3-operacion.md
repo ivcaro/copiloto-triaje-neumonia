@@ -143,15 +143,48 @@ límite reales —y dejarlos escritos para leerlos con calma— está
 propio fichero; aquí va cómo se corre.
 
 **Necesita el copiloto alcanzable.** Por defecto busca el contenedor de prueba
-en el 18000, el mismo que usan las pruebas de contrato. En el VPS:
+en el 18000. En el VPS:
 
 ```bash
-docker run -d --rm --name copiloto-prueba -p 18000:8000 -e UMBRAL=0.4258 -e AUC_VALIDACION=0.8827 -e OMP_NUM_THREADS=2 copiloto-mcp:0.1.0
+docker run -d --rm --name copiloto-prueba -p 127.0.0.1:18000:8000 -e UMBRAL=0.4258 -e AUC_VALIDACION=0.8827 -e OMP_NUM_THREADS=2 copiloto-mcp:0.1.0
 ```
 
-y en tu Windows, si el contenedor está en el VPS, un túnel más:
-`ssh -N -L 18000:127.0.0.1:18000 usuario@vps`. O se apunta a otro sitio con
-`COPILOTO_URL`.
+**El `127.0.0.1:` del `-p` no es adorno, y antes aquí no estaba.** Sin él Docker
+publica el 18000 en **todas** las interfaces del VPS, y eso deja un endpoint de
+inferencia **sin autenticación** abierto a internet en una máquina compartida con
+24 contenedores ajenos. Con la dirección delante solo escucha en el loopback del
+host — que es exactamente por donde entra el túnel de la línea siguiente, así
+que funciona igual y no abre nada. (`tests/test_contrato_mcp.py` todavía imprime
+la forma sin dirección en su mensaje de salto; la buena es esta.)
+
+Y en tu Windows, si el contenedor está en el VPS, un túnel más:
+
+```powershell
+ssh -N -L 18000:127.0.0.1:18000 usuario@vps
+```
+
+#### `COPILOTO_URL` no quiere el mismo valor en los dos sitios
+
+La variable se llama igual en los dos scripts y **significa cosas distintas**.
+Ponerle la del otro no da un error: da **verde sin haber comprobado nada**.
+
+| Quién la lee | Qué espera | Su valor por defecto |
+| :--- | :--- | :--- |
+| `pruebas/reproducir_casos.py` | el **endpoint MCP**, con `/mcp` al final | `http://127.0.0.1:18000/mcp` |
+| `tests/test_contrato_mcp.py` | el **origen**, sin ruta: el script le pega `/salud` y `/mcp` por su cuenta | `http://127.0.0.1:18000` |
+
+Si la dejas puesta con `/mcp` y corres las pruebas de contrato, sondean
+`http://127.0.0.1:18000/mcp/salud`, que no existe, y el fijador `copiloto_vivo`
+salta el módulo entero: **`10 skipped` y código de salida `0`** con el contenedor
+perfectamente vivo. **Un skip aquí se ve verde**: nada en pantalla dice que las
+diez aserciones del §10 del spec —la forma de `structuredContent`, la posición
+del código de error, los dos límites de tamaño y las cotas de la razón de
+verosimilitud— se quedaron sin comprobar. Medido: con `/mcp` puesta, `10
+skipped`; sin ella, `10 passed`.
+
+Así que: **para las pruebas de contrato, no pongas `COPILOTO_URL`** y deja el
+valor por defecto. Si tienes que apuntarlas a otro sitio, pásale el origen a
+secas y córrelas con `pytest -rs`, que es lo único que enseña los skips.
 
 **Sin bots** — no toca n8n, ni Telegram, ni la base. Llama al copiloto y
 redacta el mensaje con el código del propio workflow. Es lo que se puede correr
@@ -418,7 +451,7 @@ Se decidió esto y no dos variables de entorno en el n8n del cliente: reiniciar
 **su** n8n por una comprobación nuestra no compensa mientras H5 esté abierto.
 
 **Una vez**, en una consola de PowerShell del usuario que vaya a correrla —las
-tres variables quedan en su perfil, no en el repositorio—:
+cuatro variables quedan en su perfil, no en el repositorio—:
 
 ```powershell
 setx TELEGRAM_TOKEN_PACIENTE (Read-Host 'token del bot del paciente')
@@ -427,9 +460,20 @@ setx TELEGRAM_TOKEN_AVISOS (Read-Host 'token de [retirado]')
 setx COPILOTO_CHAT_EQUIPO (Read-Host 'chat_id del equipo')
 ```
 
+**Son cuatro y hacen dos cosas distintas**, que conviene no confundir cuando
+una falte:
+
+- `TELEGRAM_TOKEN_PACIENTE` y `TELEGRAM_TOKEN_PROFESIONAL` son lo que el script
+  comprueba. Si no están, los **pide por teclado** — y una tarea programada no
+  tiene teclado: sin ellas la tarea no comprueba ese bot y lo cuenta como
+  problema.
+- `COPILOTO_CHAT_EQUIPO` y `TELEGRAM_TOKEN_AVISOS` son el canal del aviso, y
+  **hacen falta las dos**. Sin ellas el script encuentra los problemas pero solo
+  los **imprime**, y una tarea programada que escribe en un log que nadie abre
+  es el silencio que esto existe para romper.
+
 `TELEGRAM_TOKEN_AVISOS` es el del mismo bot que usa el workflow, para que este
-aviso caiga **en el mismo hilo** que los otros. Con esas cuatro puestas, el
-script manda por Telegram lo que encuentre; sin ellas solo lo imprime.
+aviso caiga **en el mismo hilo** que los otros.
 
 **La tarea**, a las 07:15 (media hora después del workflow, para no mezclar dos
 avisos en el mismo minuto):
@@ -446,8 +490,18 @@ Comprobar que quedó bien montada, sin esperar a mañana:
 Start-ScheduledTask -TaskName 'Copiloto Triaje: webhooks de Telegram'; Get-ScheduledTaskInfo -TaskName 'Copiloto Triaje: webhooks de Telegram'
 ```
 
-`LastTaskResult` en **0** = los dos webhooks están como deben; **1** = hay algo
-que arreglar, y el mensaje ya salió por Telegram.
+`LastTaskResult` en **0** = los dos webhooks están como deben. **1** = hay algo
+que arreglar, y **eso es todo lo que dice**: el script devuelve 1 también cuando
+**no ha mandado nada** —porque falten `COPILOTO_CHAT_EQUIPO` o
+`TELEGRAM_TOKEN_AVISOS`, o porque falte el token de un bot y no lo haya podido
+comprobar— y cuando el envío por Telegram **falló**. Un 1 no garantiza que el
+aviso haya salido.
+
+Lo que sí lo dice es la salida del script, no su código: la línea del final es
+«aviso por Telegram: enviado.» o «NO se pudo enviar (…)». Si la tarea lleva días
+devolviendo 1 y en el chat no ha aparecido nada, córrelo a mano en una consola y
+lee esa línea: lo más probable es que falte una de las dos variables del canal,
+o que nadie le haya escrito nunca a `[retirado]`.
 
 ### Probarlo sin esperar a mañana
 
