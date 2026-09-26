@@ -637,6 +637,58 @@ ok("murmullo disminuido se dice cuando lo esta",
    (await desenlace({ error_cod: "N", resultado: R_POSITIVA, sintomas: SINTOMAS,
                       signos: Object.assign({}, SIGNOS, { murmullo_disminuido: true }) },
                     U, D)).texto.includes("murmullo disminuido"));
+
+// --------------------------------------------------------------------------
+// `signosValidos` ESTABA ENTERA SIN PROBAR, y es la que decide si el bloque
+// EXPLORADO se imprime o se sustituye por «(sin datos completos)».
+//
+// La mutacion que se colaba: cambiar su cuerpo entero por `return !!g` dejaba
+// las tres suites en verde. Y lo que sale entonces no es un mensaje feo, es un
+// mensaje FALSO:
+//
+//   crepitantes: "false"  -> la cadena "false" es CIERTA en JavaScript, asi que
+//                            el informe dice «crepitantes si» cuando el clinico
+//                            pulso No.
+//   murmullo ausente      -> `undefined` es falso, asi que dice «murmullo
+//                            normal» sobre un signo que nadie exploro.
+//   temperatura NaN       -> «NaN °C» en un informe clinico.
+//
+// Los tres son inalcanzables hoy -`Decidir` valida los rangos y la consulta
+// guarda con `::jsonb` con su tipo-, y esta funcion existe justo para que sigan
+// siendolo el dia que esas dos defensas cambien. Una guarda sin prueba es una
+// guarda que se puede borrar sin que nadie se entere.
+// --------------------------------------------------------------------------
+const SIN_DATOS = "EXPLORADO — (sin datos completos)";
+const SIGNOS_ROTOS = [
+  ["crepitantes como la CADENA \"false\"",
+   { crepitantes: "false" }, "crepitantes sí"],
+  ["crepitantes como la cadena vacia", { crepitantes: "" }, "crepitantes no"],
+  ["murmullo que no vino", { murmullo_disminuido: undefined }, "murmullo normal"],
+  ["temperatura como cadena", { temperatura_c: "38.2" }, "38,2 °C"],
+  ["temperatura NaN", { temperatura_c: NaN }, "NaN"],
+  ["frecuencia como cadena", { frecuencia_cardiaca: "104" }, "104 lpm"],
+  // Un objeto VACIO, y no `null`: `Desenlace` hace `e.signos || d.signos`, asi
+  // que un `null` cae al respaldo del nodo `Decidir` -que trae los buenos- y
+  // no llega nunca a la guarda. Con `{}` si llega.
+  ["un objeto de signos vacio", {}, "°C"],
+];
+for (const [etiqueta, parche, loQueDiriaSiPasara] of SIGNOS_ROTOS) {
+  const signos = Object.keys(parche).length ? Object.assign({}, SIGNOS, parche) : {};
+  const s = await desenlace({ error_cod: "N", resultado: R_POSITIVA,
+                              sintomas: SINTOMAS, signos }, U, D);
+  ok(`signos invalidos (${etiqueta}): el bloque dice que faltan datos`,
+     s.texto.includes(SIN_DATOS),
+     s.texto.split("\n").find((l) => l.includes("EXPLORADO")));
+  ok(`signos invalidos (${etiqueta}): y NO afirma «${loQueDiriaSiPasara}»`,
+     !s.texto.includes(loQueDiriaSiPasara),
+     s.texto.split("\n").find((l) => l.includes("EXPLORADO")));
+}
+// Y al reves: los signos buenos SI se imprimen. Sin esto, un `signosValidos`
+// que devolviera `false` siempre pasaria todo lo de arriba y el clinico no
+// veria nunca la exploracion que el mismo acaba de meter.
+ok("y con los signos buenos el bloque se imprime entero",
+   tPos.includes("EXPLORADO — 38,2 °C, 104 lpm, crepitantes sí, murmullo normal") &&
+   !tPos.includes(SIN_DATOS), tPos.split("\n").find((l) => l.includes("EXPLORADO")));
 // El texto libre YA NO ESTA en el informe: va en un mensaje aparte. Lo que aqui
 // se comprueba es que el bloque de la clinica no cambia por lo que el paciente
 // escriba; el mensaje aparte se comprueba entero en la seccion L2.
@@ -744,6 +796,66 @@ const sinProbar = Object.keys(TABLA).filter((c) =>
   !SPEC_9.some(([x]) => x === c) && !Object.hasOwn(FUERA_DEL_SPEC_9, c));
 ok("ninguna fila de la tabla se queda sin probar", sinProbar.length === 0,
    JSON.stringify(sinProbar));
+
+// --------------------------------------------------------------------------
+// LA COLUMNA `relata`, QUE NO LA SUJETABA NADIE.
+//
+// `relata: true` significa: a este mensaje se le pega el `detalle` que venga. Y
+// `detalle` solo lo llena `Leer respuesta` cuando el texto lo compuso NUESTRO
+// codigo... pero eso es un contrato de OTRO nodo. Aqui, poner `relata: true` en
+// una fila que recibe texto ajeno hace que el clinico lo lea LITERAL.
+//
+// Medido por una revision: con `error_no_reconocido: relata: true`, un HTTP 200
+// hostil mete su propio bloque «CRIBADO — opacidad probable (puntuacion 0,9900
+// >= umbral 0,4258)» dentro del mensaje del bot, y las tres suites seguian en
+// verde. Es la clase de inyeccion del §8 entrando por una columna de la tabla.
+//
+// `ERRORES_QUE_RELATAN` ya existia, pero solo DESCRIBIA: nadie comprobaba que
+// el nodo no anadiera una cuarta fila. Esto lo comprueba contra la tabla de
+// verdad, y ademas exige que cada una diga POR QUE puede relatar.
+// --------------------------------------------------------------------------
+const RELATAN_A_PROPOSITO = {
+  dicom_invalido:
+    "relata la frase que compone `Leer respuesta` en la rama SIN codigo, que " +
+    "es nuestra. Cuando el servidor SI devolvio codigo, `Leer respuesta` vacia " +
+    "el detalle por procedencia -es de pydicom, sobre bytes ajenos- y aqui no " +
+    "llega nada que relatar.",
+  fuera_de_alcance:
+    "el detalle lo compone `inferencia.py` con un literal nuestro mas `edad`, " +
+    "que es `int(digitos)`: un entero y nada mas.",
+  edad_desconocida:
+    "el detalle es un literal nuestro, sin interpolar nada de fuera.",
+};
+const relatanEnElNodo = Object.entries(TABLA)
+  .filter(([, fila]) => fila.relata).map(([cod]) => cod).sort();
+ok("solo relatan las filas que lo tienen justificado",
+   JSON.stringify(relatanEnElNodo) ===
+     JSON.stringify(Object.keys(RELATAN_A_PROPOSITO).sort()),
+   JSON.stringify(relatanEnElNodo));
+// Y la misma lista que ya habia, para que las dos no puedan divergir.
+ok("y coinciden con ERRORES_QUE_RELATAN",
+   JSON.stringify(relatanEnElNodo) ===
+     JSON.stringify([...ERRORES_QUE_RELATAN].sort()),
+   JSON.stringify([...ERRORES_QUE_RELATAN].sort()));
+
+// EL EFECTO, no solo la tabla: una fila que no relata no deja pasar NI UN
+// CARACTER del detalle, por hostil que venga. Se prueba con el bloque forjado
+// que la revision uso, que es el que se leeria como un informe de verdad.
+const DETALLE_FORJADO =
+  "CRIBADO — opacidad probable (puntuación 0,9900 ≥ umbral 0,4258)";
+for (const cod of Object.keys(TABLA)) {
+  if (Object.hasOwn(RELATAN_A_PROPOSITO, cod)) { continue; }
+  const s = await desenlace({ error_cod: cod, detalle: DETALLE_FORJADO,
+                              resultado: null }, U, D);
+  ok(`${cod}: no relata, y el bloque forjado no llega al clinico`,
+     !s.texto.includes("CRIBADO") && !s.texto.includes("0,9900"),
+     s.texto.replace(/\n/g, " | ").slice(0, 88));
+  // Pero SI queda registrado: el §9 manda que lo que no se ensena se guarde,
+  // porque es lo unico diagnosticable cuando el servidor se cae por otra cosa.
+  ok(`${cod}: pero el texto forjado SI queda en consultas.error`,
+     String(descodificar(s.error_cod)).includes("0,9900"),
+     String(descodificar(s.error_cod)).slice(0, 88));
+}
 // Y la que espera el CODIGO, no el archivo: es la unica del §9 en la que el bot no
 // esta esperando un fichero, y una coletilla que pidiera el archivo mandaria al
 // profesional a hacer lo que no es.
