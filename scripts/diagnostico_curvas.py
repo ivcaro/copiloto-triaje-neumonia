@@ -179,6 +179,122 @@ def imprimir(corrida: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# ESTRATEGIAS DE MEJORA, EVALUADAS SOBRE EL HISTORIAL GRABADO
+#
+# No se puede reentrenar para probar cada idea: cada corrida son horas de GPU.
+# Pero las politicas de PARADA no hacen falta reentrenarlas, porque no cambian
+# el entrenamiento: solo eligen en que epoca cortar y con que pesos quedarse. Y
+# eso se reproduce EXACTAMENTE sobre el historial que ya esta grabado.
+#
+# Lo que esto NO puede evaluar, y hay que decirlo: cualquier cosa que cambie los
+# gradientes -mas dropout, mas weight decay, otra aumentacion- produce OTRO
+# historial, y simularla sobre este seria inventarselo. Para esas, el modulo
+# calcula lo que se espera y lo etiqueta como prediccion, no como medida.
+# ---------------------------------------------------------------------------
+CRITERIOS = {
+    "recall+auc": (
+        "el del proyecto: mejor recall en validacion, con el AUC de desempate",
+        lambda r: (r["recall"], r["auc"])),
+    "auc": (
+        "solo AUC en validacion",
+        lambda r: (r["auc"],)),
+    "perdida_val": (
+        "menor perdida de validacion, que es la senal del sobreajuste",
+        lambda r: (-r["perdida_val"],)),
+}
+
+
+def simular_parada(historial, criterio="recall+auc", paciencia=5):
+    """Que epoca habria elegido esta politica, y donde habria cortado.
+
+    REPRODUCE EL BUCLE REAL, INCLUIDAS SUS FASES, y eso no es un detalle: la
+    primera version de esta funcion trataba el historial como una sola fase y
+    produjo un hallazgo FALSO -«con paciencia 2 el criterio del proyecto elige
+    la epoca 1 y se queda con un AUC de 0,8359»-. No pasa: en `entrenar()` la
+    paciencia es POR FASE, y agotarla en la cabeza no abandona el
+    entrenamiento, significa que la cabeza convergio y toca pasar al ajuste
+    fino.
+
+    Las tres reglas que se copian de `entrenar()` (ver su comentario, que las
+    declara):
+
+      - `mejor_*` es GLOBAL entre fases: la mejor epoca puede ser de la cabeza.
+      - `sin_mejora` se REINICIA al empezar cada fase.
+      - agotar la paciencia corta esa fase y se pasa a la siguiente; solo
+        agotarla en la ULTIMA termina la corrida.
+
+    Y el criterio se compara sin redondear, como `_es_mejor`: redondear cambia
+    los empates, y el desempate por AUC es lo que decide varias epocas.
+
+    Se puede simular sin reentrenar porque una politica de parada NO cambia el
+    entrenamiento: solo elige donde cortar y con que pesos quedarse. Cualquier
+    cosa que toque los gradientes -mas dropout, otro weight decay- produciria
+    OTRO historial, y simularla sobre este seria inventarsela.
+    """
+    if criterio not in CRITERIOS:
+        raise ValueError(f"criterio desconocido: {criterio}")
+    _, clave = CRITERIOS[criterio]
+
+    # El historial agrupado por fases, en orden, que es como corre `entrenar()`.
+    fases: list[tuple[str, list[dict]]] = []
+    for reg in historial:
+        if not fases or fases[-1][0] != reg["fase"]:
+            fases.append((reg["fase"], []))
+        fases[-1][1].append(reg)
+
+    mejor, mejor_epoca = None, None       # GLOBAL, como en `entrenar()`
+    corridas, cortes = 0, []
+    for nombre_fase, epocas in fases:
+        sin_mejora = 0                    # se reinicia en cada fase
+        for reg in epocas:
+            corridas += 1
+            v = clave(reg)
+            if mejor is None or v > mejor:
+                mejor, mejor_epoca, sin_mejora = v, reg["epoca"], 0
+            else:
+                sin_mejora += 1
+                if sin_mejora >= paciencia:
+                    cortes.append((nombre_fase, reg["epoca"]))
+                    break                 # corta ESTA fase, no la corrida
+
+    elegida = next(x for x in historial if x["epoca"] == mejor_epoca)
+    return {
+        "criterio": criterio,
+        "paciencia": paciencia,
+        "epoca_elegida": mejor_epoca,
+        "cortes": cortes,
+        "epocas_corridas": corridas,
+        "epocas_ahorradas": len(historial) - corridas,
+        "auc_val": elegida["auc"],
+        "recall_val": elegida["recall"],
+        "especificidad_val": elegida["especificidad"],
+        "perdida_val": elegida["perdida_val"],
+    }
+
+
+def comparar_politicas(corrida, paciencias=(5, 3, 2)):
+    """Todas las combinaciones de criterio y paciencia, sobre una corrida."""
+    h = corrida["historial"]
+    filas = []
+    for criterio in CRITERIOS:
+        for p in paciencias:
+            filas.append(simular_parada(h, criterio, p))
+    return filas
+
+
+def imprimir_politicas(corrida):
+    print(f"\n  estrategias de parada sobre {corrida['nombre']}:")
+    print("    %-13s %-4s %-9s %-26s %-8s %s" % (
+        "criterio", "pac", "elige", "agota la paciencia en", "AUC val",
+        "ahorra"))
+    for f in comparar_politicas(corrida):
+        cortes = ", ".join(f"{fa} ep.{e}" for fa, e in f["cortes"]) or "-"
+        print("    %-13s %-4d ep. %-5d %-26s %-8.4f %d epocas" % (
+            f["criterio"], f["paciencia"], f["epoca_elegida"], cortes,
+            f["auc_val"], f["epocas_ahorradas"]))
+
+
+# ---------------------------------------------------------------------------
 # LAS FIGURAS
 #
 # Requisitos del enunciado: 300 DPI, titulos informativos, ejes rotulados,
@@ -359,6 +475,7 @@ def main() -> int:
     print(f"{len(corridas)} corrida(s) con historial completo")
     for c in corridas:
         imprimir(c)
+        imprimir_politicas(c)
 
     if args.figuras:
         args.figuras.mkdir(parents=True, exist_ok=True)
