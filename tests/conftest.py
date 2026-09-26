@@ -3,8 +3,20 @@
 
 `webhook_n8n` habla con un n8n REAL. Las pruebas que lo usan son de
 integracion: mas lentas que las unitarias, y con efectos que se ven desde
-fuera. Se saltan solas si `N8N_URL` no esta declarada, para que la suite del
-paquete siga corriendo en una maquina sin acceso a n8n.
+fuera.
+
+OJO, QUE ESTE DOCSTRING DECIA LO CONTRARIO: `webhook_n8n` **no salta** por
+`N8N_URL`. Esa variable solo elige a que n8n se habla, y sin ella se habla al
+de produccion (`https://n8n.[retirado].com`). Lo que hace que la suite corra en una
+maquina sin acceso son los `pytest.skip` de cada prueba por sus SECRETOS
+-`TELEGRAM_SECRET_PRUEBA`, `TELEGRAM_TOKEN_PROFESIONAL`,
+`CHAT_SUBIDA_PLACAS`-: sin el secreto no se pasa la puerta del secret_token del
+§4.2, asi que la peticion no llega a ningun sitio. El fijador `bd_sp3` de abajo
+si salta solo, por `COPILOTO_BD_DSN`.
+
+La diferencia importa: creer que el fijador salta invita a anadir una prueba que
+use `webhook_n8n` sin guardar su secreto, y esa prueba mandaria trafico al n8n
+del cliente desde cualquier maquina que corra la suite.
 """
 import json
 import os
