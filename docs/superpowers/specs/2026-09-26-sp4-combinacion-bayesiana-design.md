@@ -175,34 +175,100 @@ consolidación.
 concordantes la posterior sale más extrema de lo que corresponde. Se ve en la
 esquina de la tabla: imagen muy positiva y cinco de cinco dan 98,9 %.
 
-**No se amortigua.** Corregir la dependencia exigiría un factor de reducción que
-nadie ha medido para este par de pruebas, y este proyecto no inventa constantes.
-Se hacen tres cosas en su lugar:
+**No se amortigua con un factor inventado.** Corregir la dependencia con una
+constante de reducción exigiría medirla para este par de pruebas, y nadie lo ha
+hecho: este proyecto no inventa constantes.
+
+Pero **no hace falta inventar nada para acotarla**, y ahí está el arreglo.
+
+### 7.1. Las dos puntas, y las dos son calculables
+
+Los dos extremos posibles se pueden calcular sin ningún parámetro nuevo:
+
+| Supuesto | Qué significa | RV combinada |
+| :--- | :--- | :--- |
+| **Independencia** | cada prueba aporta información nueva | RV_clínica × RV_imagen |
+| **Dependencia total** | la auscultación no añade nada sobre la imagen | la más informativa de las dos |
+
+La verdad está entre las dos, así que **se entregan las dos** como rango. El
+extremo alto es la cifra que exagera; el bajo, la conservadora. Ninguno se
+inventa: son la misma aritmética con los dos supuestos límite.
+
+Es además el mismo recurso que el §6 usa para `asma: no_se`: cuando algo no se
+sabe, se dice entre qué y qué, en vez de elegir por el clínico.
+
+### 7.2. Solo cuando las dos evidencias apuntan al mismo lado
+
+**La acotación se aplica únicamente si las dos RV están del mismo lado de 1**
+—ambas a favor, o ambas en contra—. Medido, los rangos quedan entre 0 y 15
+puntos porcentuales, y se abren justo donde la exageración es real:
+
+| Imagen | Puntuación | Rango | Ancho |
+| :--- | ---: | :--- | ---: |
+| Muy positiva (30,3) | 2 | 78 – 84 % | 5 |
+| Muy positiva (30,3) | 3 | 84 – 90 % | 6 |
+| Muy positiva (30,3) | **5** | **84 – 99 %** | **15** |
+| Banda (0,87) | 0 | 2 – 2 % | 0 |
+| Banda (0,87) | 3 | 20 – 22 % | 2 |
+
+La fila de 5 de 5 es la que justifica todo esto: la multiplicación sola daba
+98,9 %, una casi certeza construida sobre dos maneras de mirar la misma
+consolidación. El rango enseña que el suelo defendible es 84 %.
+
+**Cuando las dos evidencias se contradicen NO se acota.** Ahí «dependencia
+total» deja de tener sentido —no hay una prueba que absorba a la otra— y el
+rango sale inútil: una imagen muy positiva con puntuación 0 daría 38 – 84 %,
+que no ayuda a decidir nada. En ese caso se entrega el número y lo cubre el
+aviso de discrepancia que el §8 de SP3 ya emite, que existe exactamente para
+eso.
+
+### 7.3. Lo que sigue sin resolverse
+
+Acotar no es medir. **Sigue sin saberse dónde dentro del rango está la verdad**,
+y eso es de H7: medirlo contra desenlaces reales es lo que la validación clínica
+tiene que hacer. Hasta entonces:
 
 1. **Se dice en el mensaje**, con ⚠️, en cada informe que lleve combinación.
-2. **Se declara aquí** como la limitación principal del subproyecto.
-3. **Se le pasa a H7**: medir cuánto exagera contra desenlaces reales es
-   exactamente lo que la validación clínica tiene que hacer.
+2. **Se acota**, como queda dicho arriba.
+3. **Se declara** como la limitación principal del subproyecto.
 
 ## 8. Qué lee el profesional
 
-El informe gana un cuarto bloque. Ejemplo con puntuación 3 e imagen de RV 30,3,
-todas las cifras calculadas:
+El informe gana un cuarto bloque. **Todas las cifras de estos ejemplos están
+calculadas**, no son ilustraciones.
+
+**Caso normal** — puntuación 3, imagen de RV 30,3, las dos a favor:
 
 ```
-COMBINADO — 89 % de probabilidad de opacidad compatible en la radiografía
+COMBINADO — entre 84 % y 90 % de probabilidad de opacidad compatible
 (prevalencia 14,7 % × clínica 1,64 × imagen 30,3; Heckerling 3 de 5)
 ⚠️ La auscultación y la imagen miran la misma consolidación, así que no son
-pruebas independientes y esta cifra tiende a exagerar. Decide usted.
+pruebas independientes: el 90 % supone que cada una aporta información nueva,
+y el 84 %, que la auscultación no añade nada sobre la imagen. Decide usted.
 ```
 
-Con el asma sin saber, la primera línea cambia de forma:
+**Cuando las dos evidencias se contradicen** —imagen a favor, clínica en
+contra, o al revés— no se acota, porque «dependencia total» deja de significar
+nada. Sale un número, y lo acompaña el aviso de discrepancia que el §8 de SP3
+ya emite:
 
 ```
-COMBINADO — entre 20 % y 52 % de probabilidad de opacidad compatible
-(prevalencia 14,7 % × clínica 1,64–7,18 × imagen 0,87; Heckerling 3 o 4 de 5,
+COMBINADO — 38 % de probabilidad de opacidad compatible
+(prevalencia 14,7 % × clínica 0,12 × imagen 30,3; Heckerling 0 de 5)
+```
+
+**Cuando además el asma no se sabe**, los dos rangos se funden en uno solo: se
+toma el mínimo y el máximo de todo lo posible. Con imagen de RV 30,3 y cuatro
+de los cinco puntos presentes, el asma decide entre 4 y 5:
+
+```
+COMBINADO — entre 84 % y 99 % de probabilidad de opacidad compatible
+(prevalencia 14,7 % × clínica 7,18–17,5 × imagen 30,3; Heckerling 4 o 5 de 5,
 según tenga asma o no)
 ```
+
+**Nunca se anidan dos rangos.** El profesional ve una sola horquilla y, debajo,
+de qué depende cada extremo.
 
 ### 8.1. Cuatro reglas de redacción
 
@@ -221,6 +287,10 @@ cambiar. Un número sin sus factores no es explicable, es solo un número.
 nodo: `< 1 %` y `> 99 %`. Una posterior de 0,0 % es certeza de ausencia, que es
 la misma mentira que una calibrada de 0,00 —y la cota del calibrador existe
 justo para no fabricarla—.
+
+**Un rango que se cierra deja de ser un rango.** Si los dos extremos redondean
+al mismo entero, se imprime un solo número. «Entre 2 % y 2 %» no informa de
+nada y hace dudar de todo lo demás.
 
 **La posterior se imprime en porcentaje entero.** El resto del informe usa dos
 decimales para las probabilidades, y aquí serían falsa precisión: la cifra
@@ -324,7 +394,7 @@ reproducirla**: es una prueba de mutación que se escribe sola.
 
 | Riesgo | Estado |
 | :--- | :--- |
-| **La independencia condicional no se sostiene** y la posterior exagera | Declarado (§7). Sin corregir a propósito: no hay factor medido. H7 debe cuantificarlo |
+| **La independencia condicional no se sostiene** y la posterior exagera | **Acotado** (§7.1): se entregan los dos supuestos límite como rango, sin inventar ningún factor. Dónde cae la verdad dentro del rango sigue siendo de H7 |
 | **Las RV son del conjunto de derivación** | Declarado (§4.1). La alternativa conservadora existe y pierde resolución |
 | **La prevalencia inicial es la de una cohorte de 1990 en EE. UU.** | Declarado (§5). Es un parámetro, no una constante: se cambia sin tocar código |
 | **No hay datos para validar la combinación** | Heredado del §19 de SP3. **El mayor del proyecto**, y sigue abierto |
@@ -341,6 +411,9 @@ reproducirla**: es una prueba de mutación que se escribe sola.
 5. El informe con combinación imprime los tres factores y el aviso de
    dependencia.
 6. Ningún literal de la combinación afirma «neumonía»; los avisos sí pueden.
+6 bis. Con las dos evidencias del mismo lado de 1, el informe entrega un rango
+   entre el supuesto de independencia y el de dependencia total. Con evidencias
+   discordantes entrega un número, y el aviso de discrepancia del §8 de SP3.
 7. Con signos incompletos el informe sale como en SP3 y dice por qué.
 8. `PREVALENCIA_LOCAL` no tiene valor por defecto silencioso: sin ella, el
    servidor no arranca. **Esto no rompe la compatibilidad del §9.2**, que es del
