@@ -120,6 +120,15 @@ def test_un_signo_con_el_tipo_equivocado_se_rechaza_y_dice_cual(clave, valor):
     assert clave in str(exc.value)
 
 
+def test_un_numero_que_desborda_a_float_no_escapa_como_overflowerror():
+    """`math.isfinite` explota con un entero de Python enorme (`OverflowError`
+    al convertirlo a `float`); se convierte primero dentro de un `try` y el
+    fallo sigue siendo `HallazgosInvalidos`, nombrando la clave."""
+    with pytest.raises(HallazgosInvalidos) as exc:
+        puntuar({**SIGNOS_3, "temperatura_c": 10**400}, "no")
+    assert "temperatura_c" in str(exc.value)
+
+
 def test_validar_hallazgos_exige_exactamente_las_cinco_claves():
     completos = {**SIGNOS_3, "asma": "no_se"}
     assert validar_hallazgos(completos) == completos
@@ -149,6 +158,16 @@ def test_combinar_rechaza_una_prevalencia_que_no_es_una_probabilidad():
         combinar(0.1466, 0.0, 1.0)
 
 
+def test_combinar_rechaza_nan_e_inf_en_cualquiera_de_las_dos_rv():
+    """El guardia viejo (`rv <= 0`) deja pasar `nan` -la comparacion es
+    siempre falsa- e `inf`, y la posterior sale `nan`. Ahora exige finita y
+    positiva en las dos RV."""
+    with pytest.raises(ValueError):
+        combinar(0.1466, float("nan"), 1.0)
+    with pytest.raises(ValueError):
+        combinar(0.1466, 1.0, float("inf"))
+
+
 def test_la_posterior_nunca_toca_0_ni_1_con_las_rv_acotadas():
     """Con la RV de imagen dentro de lo que el calibrador sostiene
     ([0,0163 ; 77,32], SP2) y las seis RV clinicas, la posterior queda
@@ -169,3 +188,111 @@ def test_mas_informativa_es_la_de_mayor_log_absoluto():
     # En empate exacto manda la primera.
     assert mas_informativa(2.0, 0.5) == 2.0
     assert math.isclose(abs(math.log(2.0)), abs(math.log(0.5)))
+
+
+from copiloto_triaje.servicio.heckerling import combinacion  # noqa: E402
+
+PREV = 0.1466
+RV_MUY_POSITIVA = 30.3       # la placa positiva clara del corpus de SP3
+RV_BANDA = 0.87              # la banda contradictoria
+CLAVES_DEL_BLOQUE = {"prevalencia", "puntuacion", "rv_clinica", "rv_imagen",
+                     "concordantes", "absorbe", "independencia", "dependencia",
+                     "minima", "maxima"}
+
+
+def _hallazgos(asma, **cambios):
+    return {**SIGNOS_3, "asma": asma, **cambios}
+
+
+def test_el_bloque_lleva_exactamente_las_diez_claves_del_spec():
+    c = combinacion(PREV, _hallazgos("si"), RV_MUY_POSITIVA)
+    assert set(c) == CLAVES_DEL_BLOQUE
+    assert c["prevalencia"] == PREV
+    assert c["rv_imagen"] == RV_MUY_POSITIVA
+
+
+def test_ejemplo_1_del_spec_puntuacion_3_e_imagen_30_3():
+    """§8, caso normal: entre 84 % (dependencia total) y 90 % (independencia)."""
+    c = combinacion(PREV, _hallazgos("si"), RV_MUY_POSITIVA)
+    assert c["puntuacion"] == [3] and c["rv_clinica"] == [1.64]
+    assert c["concordantes"] is True and c["absorbe"] == "imagen"
+    assert c["independencia"] == [pytest.approx(0.8951, abs=5e-4)]
+    assert c["dependencia"] == [pytest.approx(0.8388, abs=5e-4)]
+    assert c["minima"] == c["dependencia"][0]
+    assert c["maxima"] == c["independencia"][0]
+
+
+def test_ejemplo_2_del_spec_discordantes_no_se_acota():
+    """§8: puntuacion 0 (RV 0,12) contra imagen 30,3 -> un numero, 38 %."""
+    ceros = {"temperatura_c": 37.0, "frecuencia_cardiaca": 80,
+             "crepitantes": False, "murmullo_disminuido": False, "asma": "si"}
+    c = combinacion(PREV, ceros, RV_MUY_POSITIVA)
+    assert c["puntuacion"] == [0] and c["rv_clinica"] == [0.12]
+    assert c["concordantes"] is False
+    assert c["dependencia"] is None and c["absorbe"] is None
+    assert c["minima"] == c["maxima"] == c["independencia"][0]
+    assert c["minima"] == pytest.approx(0.3845, abs=5e-4)
+
+
+def test_ejemplo_3_del_spec_asma_no_se_funde_todo_en_una_horquilla():
+    """§8 tercer ejemplo: 4 o 5 con imagen 30,3 -> del 84 % al 99 %."""
+    cuatro = _hallazgos("no_se", murmullo_disminuido=True)
+    c = combinacion(PREV, cuatro, RV_MUY_POSITIVA)
+    assert c["puntuacion"] == [4, 5] and c["rv_clinica"] == [7.18, 17.5]
+    assert c["concordantes"] is True and c["absorbe"] == "imagen"
+    assert c["independencia"] == [pytest.approx(0.9739, abs=5e-4),
+                                  pytest.approx(0.9891, abs=5e-4)]
+    assert c["dependencia"] == [pytest.approx(0.8388, abs=5e-4)] * 2
+    assert c["minima"] == pytest.approx(0.8388, abs=5e-4)
+    assert c["maxima"] == pytest.approx(0.9891, abs=5e-4)
+
+
+def test_con_asma_no_se_y_las_dos_puntuaciones_a_lados_distintos_de_1_no_se_acota():
+    """D6: 2 y 3 (0,70 y 1,64) contra la banda (0,87): 0,70 esta del lado de la
+    imagen y 1,64 no. Sin concordancia, la horquilla es la de independencia."""
+    dos_o_tres = {"temperatura_c": 38.2, "frecuencia_cardiaca": 104,
+                  "crepitantes": False, "murmullo_disminuido": False,
+                  "asma": "no_se"}
+    c = combinacion(PREV, dos_o_tres, RV_BANDA)
+    assert c["puntuacion"] == [2, 3]
+    assert c["concordantes"] is False and c["dependencia"] is None
+    assert c["minima"] == pytest.approx(0.0947, abs=5e-4)
+    assert c["maxima"] == pytest.approx(0.1969, abs=5e-4)
+
+
+def test_absorbe_dice_quien_es_la_mas_informativa():
+    ceros = {"temperatura_c": 37.0, "frecuencia_cardiaca": 80,
+             "crepitantes": False, "murmullo_disminuido": False, "asma": "si"}
+    # 0,12 contra la banda 0,87: manda la clinica.
+    assert combinacion(PREV, ceros, RV_BANDA)["absorbe"] == "clinica"
+    # 4 o 5 (7,18 y 17,5) contra una imagen de 10: |ln 10| = 2,30 esta entre
+    # |ln 7,18| = 1,97 y |ln 17,5| = 2,86 -> cambia de una puntuacion a otra.
+    cuatro = _hallazgos("no_se", murmullo_disminuido=True)
+    assert combinacion(PREV, cuatro, 10.0)["absorbe"] == "mixta"
+
+
+def test_los_dos_extremos_por_debajo_de_1_tambien_se_acotan():
+    """Ambas RV en contra: la independencia da el extremo BAJO y la dependencia
+    el ALTO. Los numeros del corpus: negativa del borde, RV 0,5888, puntuacion 0."""
+    ceros = {"temperatura_c": 37.0, "frecuencia_cardiaca": 80,
+             "crepitantes": False, "murmullo_disminuido": False, "asma": "si"}
+    c = combinacion(PREV, ceros, 0.5888)
+    assert c["concordantes"] is True and c["absorbe"] == "clinica"
+    assert c["independencia"] == [pytest.approx(0.0120, abs=5e-4)]
+    assert c["dependencia"] == [pytest.approx(0.0202, abs=5e-4)]
+    assert c["minima"] < c["maxima"]
+
+
+def test_las_posteriores_van_a_cuatro_decimales_y_la_rv_de_imagen_tal_cual():
+    c = combinacion(PREV, _hallazgos("si"), 30.29389781009622)
+    for x in c["independencia"] + c["dependencia"] + [c["minima"], c["maxima"]]:
+        assert x == round(x, 4)
+    assert c["rv_imagen"] == 30.29389781009622
+
+
+def test_combinacion_rechaza_hallazgos_invalidos_y_rv_no_positiva():
+    with pytest.raises(HallazgosInvalidos):
+        combinacion(PREV, {**SIGNOS_3}, RV_MUY_POSITIVA)      # sin asma
+    for rv in (0.0, -1.0, float("nan"), float("inf"), "30", True):
+        with pytest.raises(ValueError):
+            combinacion(PREV, _hallazgos("si"), rv)

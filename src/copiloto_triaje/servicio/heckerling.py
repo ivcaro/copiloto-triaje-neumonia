@@ -60,11 +60,21 @@ class HallazgosInvalidos(ValueError):
 def _numero(hallazgos: Mapping, clave: str) -> float:
     v = hallazgos.get(clave)
     # `bool` es subclase de `int`: un `True` colaria como un grado.
-    if (isinstance(v, bool) or not isinstance(v, (int, float))
-            or not math.isfinite(v)):
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
         raise HallazgosInvalidos(
             f"«{clave}» debe ser un número finito, y es {v!r}.")
-    return float(v)
+    # Un `int` de Python enorme (`10**400`) no desborda al construirlo, pero
+    # si al convertirlo a `float`: `math.isfinite` dejaria escapar un
+    # `OverflowError`, y el contrato promete `HallazgosInvalidos`.
+    try:
+        numero = float(v)
+    except OverflowError:
+        raise HallazgosInvalidos(
+            f"«{clave}» debe ser un número finito, y es {v!r}.") from None
+    if not math.isfinite(numero):
+        raise HallazgosInvalidos(
+            f"«{clave}» debe ser un número finito, y es {v!r}.")
+    return numero
 
 
 def _booleano(hallazgos: Mapping, clave: str) -> bool:
@@ -141,8 +151,15 @@ def combinar(prevalencia: float, rv_clinica: float, rv_imagen: float) -> float:
     if not 0.0 < prevalencia < 1.0:
         raise ValueError(
             f"la prevalencia debe estar entre 0 y 1, y es {prevalencia!r}")
-    if rv_clinica <= 0 or rv_imagen <= 0:
-        raise ValueError("las razones de verosimilitud deben ser positivas")
+    # El guardia viejo (`rv <= 0`) deja pasar `nan` -toda comparacion con
+    # `nan` es falsa- e `inf`, y la posterior sale `nan`. Exige finita y
+    # positiva en las dos RV.
+    if not (math.isfinite(rv_clinica) and rv_clinica > 0):
+        raise ValueError(
+            f"rv_clinica debe ser un número positivo y finito, y es {rv_clinica!r}")
+    if not (math.isfinite(rv_imagen) and rv_imagen > 0):
+        raise ValueError(
+            f"rv_imagen debe ser un número positivo y finito, y es {rv_imagen!r}")
     odds = prevalencia / (1.0 - prevalencia) * rv_clinica * rv_imagen
     return odds / (1.0 + odds)
 
@@ -152,3 +169,52 @@ def mas_informativa(rv_a: float, rv_b: float) -> float:
     total» del spec §7.1: la otra no anade nada. En empate exacto, la
     primera."""
     return rv_a if abs(math.log(rv_a)) >= abs(math.log(rv_b)) else rv_b
+
+
+def combinacion(prevalencia: float, hallazgos: Mapping, rv_imagen: float) -> dict:
+    """El bloque `combinacion` del contrato (spec §9.2), listo para viajar.
+
+    Para cada puntuacion posible -una, o dos si el asma no se sabe- calcula la
+    posterior bajo INDEPENDENCIA (producto de las dos RV) y, solo si todas
+    las RV clinicas estan del mismo lado de 1 que la de la imagen, bajo
+    DEPENDENCIA TOTAL (la mas informativa sola, spec §7.1-7.2). `minima` y
+    `maxima` son el minimo y el maximo de todo eso: la horquilla que
+    `Desenlace` imprime. Nunca se anidan dos rangos: se funden aqui.
+
+    `absorbe` dice quien es la mas informativa cuando hay concordancia, para
+    que el aviso del informe nombre a quien absorbe a quien sin mentir:
+    «la auscultacion no anade nada sobre la imagen» solo es cierto si la
+    imagen es la que manda.
+    """
+    h = validar_hallazgos(hallazgos)
+    if (isinstance(rv_imagen, bool) or not isinstance(rv_imagen, (int, float))
+            or not math.isfinite(rv_imagen) or rv_imagen <= 0):
+        raise ValueError(
+            f"rv_imagen debe ser un número positivo, y es {rv_imagen!r}")
+    puntuaciones = puntuar(h, h["asma"])
+    rv_clinica = [RV_POR_PUNTUACION[p] for p in puntuaciones]
+    a_favor = rv_imagen >= 1.0
+    concordantes = all((rv >= 1.0) == a_favor for rv in rv_clinica)
+    independencia = [combinar(prevalencia, rv, rv_imagen) for rv in rv_clinica]
+    dependencia = None
+    absorbe = None
+    if concordantes:
+        dependencia = [combinar(prevalencia, mas_informativa(rv, rv_imagen), 1.0)
+                       for rv in rv_clinica]
+        quien = {"imagen" if mas_informativa(rv, rv_imagen) == rv_imagen
+                 else "clinica" for rv in rv_clinica}
+        absorbe = quien.pop() if len(quien) == 1 else "mixta"
+    todas = independencia + (dependencia or [])
+    return {
+        "prevalencia": float(prevalencia),
+        "puntuacion": list(puntuaciones),
+        "rv_clinica": rv_clinica,
+        "rv_imagen": float(rv_imagen),
+        "concordantes": concordantes,
+        "absorbe": absorbe,
+        "independencia": [round(x, 4) for x in independencia],
+        "dependencia": (None if dependencia is None
+                        else [round(x, 4) for x in dependencia]),
+        "minima": round(min(todas), 4),
+        "maxima": round(max(todas), 4),
+    }
