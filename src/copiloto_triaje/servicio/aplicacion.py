@@ -173,7 +173,11 @@ def construir_aplicacion(motor: Motor,
         if hallazgos is not None:
             try:
                 hallazgos_dict = json.loads(hallazgos)
-            except ValueError:
+            except (ValueError, RecursionError):
+                # Un JSON anidado a 100 000 niveles no es un ValueError: el
+                # decodificador se queda sin pila y lanza RecursionError, que
+                # sin capturar era un 500 sin `codigo`. Es un texto que no es
+                # un objeto de cinco campos, como cualquier otro.
                 hallazgos_dict = None
             if not isinstance(hallazgos_dict, dict):
                 return JSONResponse(status_code=422, content={

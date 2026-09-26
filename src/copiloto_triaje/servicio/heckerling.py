@@ -57,24 +57,38 @@ class HallazgosInvalidos(ValueError):
     persona -acaba en `consultas.error`-, asi que va bien escrito."""
 
 
-def _numero(hallazgos: Mapping, clave: str) -> float:
-    v = hallazgos.get(clave)
-    # `bool` es subclase de `int`: un `True` colaria como un grado.
+def _corto(x) -> str:
+    """Lo que el llamante mando, acotado a 40 caracteres para el mensaje de
+    error. El texto viaja por MCP como `Error executing tool ...:
+    hallazgos_invalidos: ...` y acaba en `consultas.error`: sin tope, una
+    clave o un valor ajeno de cualquier longitud se copiaba entero en el. El
+    corte se marca con «…»: un `10**400` recortado a secas se leeria como
+    otro numero."""
+    texto = repr(x)
+    return texto if len(texto) <= 40 else texto[:39] + "…"
+
+
+def _finito(v) -> float | None:
+    """`v` como `float` finito, o `None`. Ni `bool` -es subclase de `int`: un
+    `True` colaria como un grado- ni cadenas. Un `int` de Python enorme
+    (`10**400`) no desborda al construirlo pero si al convertirlo a `float`:
+    se convierte dentro del `try` para que no escape un `OverflowError`."""
     if isinstance(v, bool) or not isinstance(v, (int, float)):
-        raise HallazgosInvalidos(
-            f"«{clave}» debe ser un número finito, y es {v!r}.")
-    # Un `int` de Python enorme (`10**400`) no desborda al construirlo, pero
-    # si al convertirlo a `float`: `math.isfinite` dejaria escapar un
-    # `OverflowError`, y el contrato promete `HallazgosInvalidos`.
+        return None
     try:
         numero = float(v)
     except OverflowError:
-        raise HallazgosInvalidos(
-            f"«{clave}» debe ser un número finito, y es {v!r}.") from None
-    if not math.isfinite(numero):
-        raise HallazgosInvalidos(
-            f"«{clave}» debe ser un número finito, y es {v!r}.")
-    return numero
+        return None
+    return numero if math.isfinite(numero) else None
+
+
+def _numero(hallazgos: Mapping, clave: str) -> float:
+    v = hallazgos.get(clave)
+    numero = _finito(v)
+    if numero is not None:
+        return numero
+    raise HallazgosInvalidos(
+        f"«{clave}» debe ser un número finito, y es {_corto(v)}.")
 
 
 def _booleano(hallazgos: Mapping, clave: str) -> bool:
@@ -83,8 +97,20 @@ def _booleano(hallazgos: Mapping, clave: str) -> bool:
     # un 0/1 no dice si alguien auscultó o tecleó.
     if not isinstance(v, bool):
         raise HallazgosInvalidos(
-            f"«{clave}» debe ser verdadero o falso, y es {v!r}.")
+            f"«{clave}» debe ser verdadero o falso, y es {_corto(v)}.")
     return v
+
+
+def _rv_positiva(nombre: str, v) -> float:
+    """Una RV como `float` finito y positivo, o `ValueError`. La misma
+    conversion que `_numero`: una cadena daba `TypeError` desde
+    `math.isfinite` y un `10**400`, `OverflowError`; ahora las dos son el
+    mismo `ValueError` que un cero o un `nan`."""
+    rv = _finito(v)
+    if rv is not None and rv > 0:
+        return rv
+    raise ValueError(
+        f"{nombre} debe ser un número positivo y finito, y es {_corto(v)}")
 
 
 def validar_hallazgos(hallazgos) -> dict:
@@ -103,12 +129,12 @@ def validar_hallazgos(hallazgos) -> dict:
     sobran = [k for k in hallazgos if k not in PUNTOS]
     if faltan or sobran:
         raise HallazgosInvalidos(
-            f"hallazgos incompletos o con campos de más: faltan {faltan}, "
-            f"sobran {sobran}.")
+            f"hallazgos incompletos o con campos de más: faltan "
+            f"{_corto(faltan)}, sobran {_corto(sobran)}.")
     asma = hallazgos["asma"]
     if asma not in ESTADOS_ASMA:
         raise HallazgosInvalidos(
-            f"«asma» debe ser uno de {list(ESTADOS_ASMA)}, y es {asma!r}.")
+            f"«asma» debe ser uno de {list(ESTADOS_ASMA)}, y es {_corto(asma)}.")
     return {
         "temperatura_c": _numero(hallazgos, "temperatura_c"),
         "frecuencia_cardiaca": _numero(hallazgos, "frecuencia_cardiaca"),
@@ -130,8 +156,14 @@ def puntuar(signos: Mapping, asma: str) -> tuple[int, ...]:
     if not isinstance(signos, Mapping):
         raise HallazgosInvalidos("los signos deben ser un objeto con los "
                                  "cuatro datos de la exploración.")
-    h = validar_hallazgos({k: signos.get(k) for k in PUNTOS if k != "asma"}
-                          | {"asma": asma})
+    return _puntuar_validados(validar_hallazgos(
+        {k: signos.get(k) for k in PUNTOS if k != "asma"} | {"asma": asma}))
+
+
+def _puntuar_validados(h: Mapping) -> tuple[int, ...]:
+    """La aritmetica de `puntuar` sobre unos hallazgos YA validados (los cinco,
+    con su tipo). `combinacion` la llama con los que acaba de validar, para
+    no pasarlos otra vez por `validar_hallazgos`."""
     base = (int(h["temperatura_c"] > TEMPERATURA_CORTE_C)
             + int(h["frecuencia_cardiaca"] > PULSO_CORTE_LPM)
             + int(h["crepitantes"])
@@ -153,13 +185,10 @@ def combinar(prevalencia: float, rv_clinica: float, rv_imagen: float) -> float:
             f"la prevalencia debe estar entre 0 y 1, y es {prevalencia!r}")
     # El guardia viejo (`rv <= 0`) deja pasar `nan` -toda comparacion con
     # `nan` es falsa- e `inf`, y la posterior sale `nan`. Exige finita y
-    # positiva en las dos RV.
-    if not (math.isfinite(rv_clinica) and rv_clinica > 0):
-        raise ValueError(
-            f"rv_clinica debe ser un número positivo y finito, y es {rv_clinica!r}")
-    if not (math.isfinite(rv_imagen) and rv_imagen > 0):
-        raise ValueError(
-            f"rv_imagen debe ser un número positivo y finito, y es {rv_imagen!r}")
+    # positiva en las dos RV, y lo que no lo es -tambien una cadena o un
+    # entero que desborda- es siempre `ValueError`.
+    rv_clinica = _rv_positiva("rv_clinica", rv_clinica)
+    rv_imagen = _rv_positiva("rv_imagen", rv_imagen)
     odds = prevalencia / (1.0 - prevalencia) * rv_clinica * rv_imagen
     return odds / (1.0 + odds)
 
@@ -187,22 +216,26 @@ def combinacion(prevalencia: float, hallazgos: Mapping, rv_imagen: float) -> dic
     imagen es la que manda.
     """
     h = validar_hallazgos(hallazgos)
-    if (isinstance(rv_imagen, bool) or not isinstance(rv_imagen, (int, float))
-            or not math.isfinite(rv_imagen) or rv_imagen <= 0):
-        raise ValueError(
-            f"rv_imagen debe ser un número positivo, y es {rv_imagen!r}")
-    puntuaciones = puntuar(h, h["asma"])
+    rv_imagen = _rv_positiva("rv_imagen", rv_imagen)
+    puntuaciones = _puntuar_validados(h)
     rv_clinica = [RV_POR_PUNTUACION[p] for p in puntuaciones]
+    # 1,0 exacto cuenta como «a favor»: con una clinica por debajo de 1 el
+    # bloque saldria discordante, y el aviso diria «sentidos opuestos» de una
+    # imagen que no apunta a ningun lado. Con el calibrador desplegado (modelo
+    # en float32, curva sin tramo plano en su prevalencia) no puede pasar: la
+    # revision final recorrio todas las crudas float32 del unico tramo que
+    # cruza la prevalencia y ninguna da RV == 1,0. Si un recalibrado tuviera
+    # un tramo plano justo en la prevalencia, habria que decidir el empate.
     a_favor = rv_imagen >= 1.0
     concordantes = all((rv >= 1.0) == a_favor for rv in rv_clinica)
     independencia = [combinar(prevalencia, rv, rv_imagen) for rv in rv_clinica]
     dependencia = None
     absorbe = None
     if concordantes:
-        dependencia = [combinar(prevalencia, mas_informativa(rv, rv_imagen), 1.0)
-                       for rv in rv_clinica]
-        quien = {"imagen" if mas_informativa(rv, rv_imagen) == rv_imagen
-                 else "clinica" for rv in rv_clinica}
+        informativas = [mas_informativa(rv, rv_imagen) for rv in rv_clinica]
+        dependencia = [combinar(prevalencia, m, 1.0) for m in informativas]
+        quien = {"imagen" if m == rv_imagen else "clinica"
+                 for m in informativas}
         absorbe = quien.pop() if len(quien) == 1 else "mixta"
     todas = independencia + (dependencia or [])
     return {

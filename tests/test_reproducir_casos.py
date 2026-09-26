@@ -427,6 +427,14 @@ def test_el_modo_sin_bots_manda_los_cinco_datos_que_manda_el_bot():
     assert hallazgos_del_caso({**SINTOMAS, "asma": "quizas"}, SIGNOS) is None
     assert hallazgos_del_caso(SINTOMAS, {}) is None
     assert hallazgos_del_caso(SINTOMAS, {**SIGNOS, "crepitantes": "true"}) is None
+    # Los mismos tipos malos que rechaza `hallazgosDe`: un booleano no es un
+    # grado, una clave ausente no se inventa, un numero en texto no es un
+    # numero, y un `nan` no es finito (`Number.isFinite` en el nodo).
+    assert hallazgos_del_caso(SINTOMAS, {**SIGNOS, "temperatura_c": True}) is None
+    sin_murmullo = {k: v for k, v in SIGNOS.items() if k != "murmullo_disminuido"}
+    assert hallazgos_del_caso(SINTOMAS, sin_murmullo) is None
+    assert hallazgos_del_caso(SINTOMAS, {**SIGNOS, "temperatura_c": "38,2"}) is None
+    assert hallazgos_del_caso(SINTOMAS, {**SIGNOS, "temperatura_c": float("nan")}) is None
 
 
 def test_la_llamada_sin_bots_lleva_los_hallazgos_en_el_json_rpc(tmp_path, monkeypatch):

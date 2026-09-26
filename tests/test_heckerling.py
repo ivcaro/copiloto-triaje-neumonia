@@ -168,6 +168,32 @@ def test_combinar_rechaza_nan_e_inf_en_cualquiera_de_las_dos_rv():
         combinar(0.1466, 1.0, float("inf"))
 
 
+@pytest.mark.parametrize("rv_clinica, rv_imagen", [
+    ("1.64", 1.0),      # una cadena daba TypeError desde math.isfinite
+    (10**400, 1.0),     # un entero que desborda daba OverflowError
+    (1.64, 10**400),
+    (1.64, True),       # bool es subclase de int: colaria como RV 1
+], ids=["texto", "clinica_desborda", "imagen_desborda", "bool"])
+def test_combinar_rechaza_con_valueerror_una_rv_en_texto_o_que_desborda(rv_clinica, rv_imagen):
+    """Un solo contrato de error para las RV, el mismo que `combinacion`
+    tiene para `rv_imagen`: `ValueError`, ni `TypeError` ni `OverflowError`."""
+    with pytest.raises(ValueError):
+        combinar(0.1466, rv_clinica, rv_imagen)
+
+
+def test_el_mensaje_de_error_no_copia_sin_tope_lo_que_manda_el_llamante():
+    """Una clave o un valor ajeno se interpola acotado: el texto acaba en
+    `consultas.error` y no tiene por que arrastrar mil caracteres de otro."""
+    largo = "x" * 1000
+    for malos in ({**SIGNOS_3, "asma": "no", largo: 1},
+                  {**SIGNOS_3, "asma": largo},
+                  {**SIGNOS_3, "temperatura_c": largo, "asma": "no"}):
+        with pytest.raises(HallazgosInvalidos) as exc:
+            validar_hallazgos(malos)
+        assert "x" * 41 not in str(exc.value)
+        assert len(str(exc.value)) < 120, str(exc.value)
+
+
 def test_la_posterior_nunca_toca_0_ni_1_con_las_rv_acotadas():
     """Con la RV de imagen dentro de lo que el calibrador sostiene
     ([0,0163 ; 77,32], SP2) y las seis RV clinicas, la posterior queda
@@ -185,9 +211,10 @@ def test_mas_informativa_es_la_de_mayor_log_absoluto():
     # A ojo se diria lo contrario: |ln 0,14| = 1,966 y |ln 7,18| = 1,971.
     # Es la clase de error que esta funcion existe para no cometer a ojo.
     assert mas_informativa(0.14, 7.18) == 7.18
-    # En empate exacto manda la primera.
+    # En empate exacto manda la primera. La premisa se comprueba con `==`:
+    # con `isclose` pasaria aunque los dos logaritmos no empataran de verdad.
     assert mas_informativa(2.0, 0.5) == 2.0
-    assert math.isclose(abs(math.log(2.0)), abs(math.log(0.5)))
+    assert abs(math.log(2.0)) == abs(math.log(0.5))
 
 
 from copiloto_triaje.servicio.heckerling import combinacion  # noqa: E402
@@ -287,12 +314,19 @@ def test_las_posteriores_van_a_cuatro_decimales_y_la_rv_de_imagen_tal_cual():
     c = combinacion(PREV, _hallazgos("si"), 30.29389781009622)
     for x in c["independencia"] + c["dependencia"] + [c["minima"], c["maxima"]]:
         assert x == round(x, 4)
+    # `x == round(x, 4)` tambien es cierto con tres decimales; los valores
+    # exactos son los que cazan un redondeo a menos.
+    assert c["independencia"] == [0.8951]
+    assert c["dependencia"] == [0.8388]
+    assert c["minima"] == 0.8388
+    assert c["maxima"] == 0.8951
     assert c["rv_imagen"] == 30.29389781009622
 
 
 def test_combinacion_rechaza_hallazgos_invalidos_y_rv_no_positiva():
     with pytest.raises(HallazgosInvalidos):
         combinacion(PREV, {**SIGNOS_3}, RV_MUY_POSITIVA)      # sin asma
-    for rv in (0.0, -1.0, float("nan"), float("inf"), "30", True):
+    # 10**400: un entero que desborda a float daba OverflowError, no ValueError.
+    for rv in (0.0, -1.0, float("nan"), float("inf"), "30", True, 10**400):
         with pytest.raises(ValueError):
             combinacion(PREV, _hallazgos("si"), rv)

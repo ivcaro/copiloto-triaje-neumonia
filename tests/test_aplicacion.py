@@ -499,12 +499,14 @@ async def test_rest_rechaza_unos_hallazgos_que_no_son_un_objeto_json(motor, tmp_
     ruta = tmp_path / "a.dcm"
     crear_dicom(ruta, edad="054Y")
     async with cliente_de(motor) as cliente:
-        for texto in ("{no es json", '"una cadena"', "[1, 2]"):
+        # El ultimo, anidado a 100 000 niveles: `json.loads` lanza
+        # RecursionError, que no es ValueError, y antes salia un 500.
+        for texto in ("{no es json", '"una cadena"', "[1, 2]", "[" * 100000):
             r = await cliente.post("/inferir",
                                    files={"archivo": ("a.dcm", ruta.read_bytes())},
                                    data={"hallazgos": texto})
-            assert r.status_code == 422, texto
-            assert r.json()["codigo"] == "hallazgos_invalidos", texto
+            assert r.status_code == 422, texto[:40]
+            assert r.json()["codigo"] == "hallazgos_invalidos", texto[:40]
 
 
 @pytest.mark.asyncio

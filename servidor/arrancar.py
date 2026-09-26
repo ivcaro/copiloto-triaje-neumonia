@@ -45,8 +45,9 @@ if not os.environ.get("PREVALENCIA_LOCAL"):
     raise SystemExit(
         "Falta la variable de entorno PREVALENCIA_LOCAL. Es la probabilidad "
         "previa con la que se combina la regla clinica con la imagen y se le "
-        "muestra al profesional en cada informe, asi que no tiene valor por "
-        "defecto. Declarala en el docker-compose.yml (ya viene puesta) o "
+        "muestra al profesional en cada informe con combinacion, asi que no "
+        "tiene valor por defecto. Declarala en el docker-compose.yml (ya "
+        "viene puesta) o "
         "pasala al arrancar, p. ej. PREVALENCIA_LOCAL=0.1466.")
 PREVALENCIA_LOCAL = float(os.environ["PREVALENCIA_LOCAL"])
 if not 0.0 < PREVALENCIA_LOCAL < 1.0:

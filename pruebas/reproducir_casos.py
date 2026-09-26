@@ -92,6 +92,7 @@ USO
 import argparse
 import base64
 import json
+import math
 import os
 import pathlib
 import shutil
@@ -151,7 +152,10 @@ def hallazgos_del_caso(sintomas, signos=SIGNOS):
     booleanos = ("crepitantes", "murmullo_disminuido")
     for k in numeros:
         v = signos.get(k)
-        if isinstance(v, bool) or not isinstance(v, (int, float)):
+        # Finitos, como `Number.isFinite` en el nodo: si no, un `nan` viajaria
+        # en un caso en el que el bot no manda hallazgos.
+        if (isinstance(v, bool) or not isinstance(v, (int, float))
+                or not math.isfinite(v)):
             return None
     for k in booleanos:
         if not isinstance(signos.get(k), bool):
