@@ -127,6 +127,24 @@ const R_NEGATIVA = {
   clasificacion: "sin_opacidad_probable", edad_paciente: 54,
   modelo: "efficientnet_b0_320px", auc_validacion: 0.8827, milisegundos: 42.6,
 };
+// LA NEGATIVA DEL BORDE, y hace falta porque `R_NEGATIVA` es el SUELO: su RV es
+// 0,0163, que es la cota inferior del calibrador. Con solo ese caso, un aviso
+// escrito como `if (!positivo && rv < 0.5)` pasaba en verde, y entonces el 9,9 %
+// de las negativas se quedaba sin el.
+//
+// Cifras del calibrador desplegado (`servidor/calibrador.json`), no inventadas:
+// con la cruda justo por debajo del umbral, la calibrada es 0,143478 y la RV
+// 0,5888. Medido sobre las 2 184 negativas del conjunto de prueba: 216 (9,9 %)
+// tienen la RV en 0,5 o mas, y 0,5888 es la mas alta que una negativa puede
+// tener. O sea que este es el caso extremo por el otro lado, y son justo las
+// placas mas cercanas al umbral: aquellas en las que un negativo se parece mas
+// a un positivo, que es donde el aviso mas falta hace.
+const R_NEGATIVA_BORDE = {
+  probabilidad_cruda: 0.4257, probabilidad_calibrada: 0.143478,
+  razon_de_verosimilitud: 0.5888, umbral: 0.4258,
+  clasificacion: "sin_opacidad_probable", edad_paciente: 54,
+  modelo: "efficientnet_b0_320px", auc_validacion: 0.8827, milisegundos: 42.6,
+};
 
 const sse = (obj) => `event: message\r\ndata: ${JSON.stringify(obj)}\r\n\r\n`;
 const sseExito = (r) => sse({
@@ -663,6 +681,22 @@ ok("negativa: y NO el aviso de discrepancia, que aqui seria falso",
 ok("negativa: un solo aviso, no dos",
    (tNeg.match(/⚠️/g) || []).length === 1,
    String((tNeg.match(/⚠️/g) || []).length));
+// Y LA DEL BORDE TAMBIEN LO LLEVA. El aviso no mira la RV a proposito -una
+// etiqueta negativa sale de cruda < 0,4258 y la RV no cruza 1 hasta 0,5786, asi
+// que un negativo la tiene SIEMPRE por debajo de 1- y esto es lo que sujeta ese
+// «a proposito»: si alguien le pusiera una condicion sobre la RV, las 216 placas
+// negativas mas cercanas al umbral se quedarian sin aviso, y son las que mas lo
+// necesitan.
+const tNegBorde = (await texto(R_NEGATIVA_BORDE)).texto;
+ok("negativa del borde (RV 0,5888): tambien lleva el aviso",
+   tNegBorde.includes("⚠️ Un resultado negativo no descarta neumonía. Decide usted."),
+   tNegBorde.split("\n").find((l) => l.includes("EVIDENCIA")));
+ok("negativa del borde: la etiqueta sigue siendo negativa",
+   tNegBorde.includes("CRIBADO — sin opacidad probable"),
+   tNegBorde.split("\n")[0]);
+ok("negativa del borde: y la evidencia dice REDUCE, no multiplica",
+   tNegBorde.includes("reduce a 0,59×") && !tNegBorde.includes("multiplica"),
+   tNegBorde.split("\n").find((l) => l.includes("EVIDENCIA")));
 // La cota del calibrador no se puede deshacer al presentarla: 344 de las 3 811
 // placas de prueba (9,03 %) tienen la calibrada por debajo de 0,005 y con dos
 // decimales a secas saldrian como «0,00», que es certeza de ausencia fabricada.
