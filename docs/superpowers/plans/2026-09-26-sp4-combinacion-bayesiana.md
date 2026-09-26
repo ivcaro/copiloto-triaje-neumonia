@@ -1763,7 +1763,7 @@ const C_BORDE_0 = {
 const C_NEG_0 = {
   prevalencia: 0.1466, puntuacion: [0], rv_clinica: [0.12],
   rv_imagen: R_NEGATIVA.razon_de_verosimilitud, concordantes: true,
-  absorbe: "clinica", independencia: [0.0003], dependencia: [0.0028],
+  absorbe: "imagen", independencia: [0.0003], dependencia: [0.0028],
   minima: 0.0003, maxima: 0.0028 };
 ```
 

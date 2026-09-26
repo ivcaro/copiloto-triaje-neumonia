@@ -185,7 +185,7 @@ const C_BORDE_0 = {
 const C_NEG_0 = {
   prevalencia: 0.1466, puntuacion: [0], rv_clinica: [0.12],
   rv_imagen: R_NEGATIVA.razon_de_verosimilitud, concordantes: true,
-  absorbe: "clinica", independencia: [0.0003], dependencia: [0.0028],
+  absorbe: "imagen", independencia: [0.0003], dependencia: [0.0028],
   minima: 0.0003, maxima: 0.0028 };
 
 const sse = (obj) => `event: message\r\ndata: ${JSON.stringify(obj)}\r\n\r\n`;
@@ -646,7 +646,9 @@ ok("sin `combinacion` (copiloto anterior a SP4) se lee como siempre", await (asy
   return s.error_cod === "N" && !("combinacion" in s.resultado);
 })());
 for (const [etiqueta, c] of [["ejemplo 1", C_POS_3], ["discordante", C_POS_0],
-                             ["asma no_se", C_POS_3_4], ["banda", C_BANDA_0]]) {
+                             ["asma no_se", C_POS_3_4], ["banda", C_BANDA_0],
+                             ["bordes inclusivos", Object.assign({}, C_NEG_0,
+                               { independencia: [0], dependencia: [1], minima: 0, maxima: 1 })]]) {
   const s = await leerCon(Object.assign({}, R_POSITIVA, { combinacion: c }));
   ok(`${etiqueta}: un bloque valido pasa ENTERO y tal cual`,
      s.error_cod === "N" && JSON.stringify(s.resultado.combinacion) === JSON.stringify(c),
