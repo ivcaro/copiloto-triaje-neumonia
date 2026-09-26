@@ -8,6 +8,7 @@ import pytest
 import torch
 
 from copiloto_triaje.servicio.calibracion import Calibrador, ajustar_calibrador
+from copiloto_triaje.servicio.heckerling import combinar
 from copiloto_triaje.servicio.inferencia import ErrorDeInferencia, Motor
 
 from test_dicom import crear_dicom  # reutiliza el generador de DICOM sinteticos
@@ -254,13 +255,31 @@ def test_con_hallazgos_la_respuesta_trae_el_bloque_combinacion(motor, tmp_path):
     salida = motor.clasificar(ruta.read_bytes(), HALLAZGOS)
     assert set(salida) == CONTRATO_SP3 | {"combinacion"}
     # La combinacion se calcula y se asigna ANTES que los milisegundos: si
-    # contara desde antes, milisegundos dejaria de ser el ultimo campo.
+    # `milisegundos` se asignara antes que `combinacion` dejaria de ser la
+    # ultima clave y no contaria la combinacion.
     assert list(salida)[-1] == "milisegundos"
     c = salida["combinacion"]
     assert c["rv_imagen"] == salida["razon_de_verosimilitud"]
     assert c["prevalencia"] == motor.prevalencia_local == 0.1466
     assert c["puntuacion"] == [3]
     assert 0.0 < c["minima"] <= c["maxima"] < 1.0
+
+
+def test_la_combinacion_usa_la_prevalencia_del_motor_y_no_una_fija(motor, tmp_path):
+    """Spec §5: la prevalencia es un parametro, no una constante escondida.
+    Con 0,1466 en todos los motores de prueba, un `combinacion(0.1466, ...)`
+    fijo en `inferencia.py` pasaba en verde: aqui el motor lleva otra."""
+    otro = Motor(modelo=motor.modelo, calibrador=motor.calibrador,
+                 umbral=motor.umbral, tam_imagen=motor.tam_imagen,
+                 nombre_modelo=motor.nombre_modelo,
+                 auc_validacion=motor.auc_validacion, prevalencia_local=0.3)
+    ruta = tmp_path / "a.dcm"
+    crear_dicom(ruta, edad="054Y")
+    salida = otro.clasificar(ruta.read_bytes(), HALLAZGOS)
+    c = salida["combinacion"]
+    assert c["prevalencia"] == 0.3
+    assert c["independencia"][0] == pytest.approx(
+        combinar(0.3, 1.64, salida["razon_de_verosimilitud"]), abs=5e-4)
 
 
 def test_unos_hallazgos_invalidos_se_rechazan_antes_de_leer_el_dicom(motor):
@@ -294,7 +313,9 @@ def test_la_prevalencia_local_es_obligatoria_y_una_probabilidad():
                    nombre_modelo="prueba", auc_validacion=0.88)
     with pytest.raises(TypeError):
         Motor(**comunes)                                  # falta
-    for mala in (0.0, 1.0, 1.5, -0.2):
+    # `nan` no cumple ninguna comparacion e `inf` no esta por debajo de 1: las
+    # dos tienen que caer en la misma guarda que un 1,5.
+    for mala in (0.0, 1.0, 1.5, -0.2, float("nan"), float("inf")):
         with pytest.raises(ValueError):
             Motor(**comunes, prevalencia_local=mala)
     assert Motor(**comunes, prevalencia_local=0.1466).prevalencia_local == 0.1466

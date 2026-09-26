@@ -473,6 +473,9 @@ async def test_las_dos_puertas_dan_la_misma_combinacion(motor, tmp_path):
             "/inferir", files={"archivo": ("a.dcm", datos)},
             data={"hallazgos": json.dumps(HALLAZGOS)})).json()
         por_mcp = _extraer_resultado(await _llamar_por_mcp(cliente, datos, HALLAZGOS))
+    # Sin esto, dos puertas que ignoraran `hallazgos` serian iguales entre si
+    # y la prueba pasaria sin que ninguna combinara nada.
+    assert "combinacion" in por_rest and "combinacion" in por_mcp
     sin_tiempo = lambda d: {k: v for k, v in d.items() if k != "milisegundos"}
     assert sin_tiempo(por_mcp) == sin_tiempo(por_rest)
 

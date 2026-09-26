@@ -2,11 +2,12 @@
 
 Se comprueba que dos variables sean de verdad obligatorias: `AUC_VALIDACION` y
 `PREVALENCIA_LOCAL`. Son afirmaciones de calidad y de contexto clinico que se
-le muestran al profesional en cada respuesta, y un default silencioso
+le muestran al profesional -`AUC_VALIDACION` en cada respuesta y
+`PREVALENCIA_LOCAL` en cada informe con combinacion-, y un default silencioso
 sobreviviria a un reentrenamiento o a un despliegue en otra sede citando la
 cifra vieja. El comentario del fichero siempre dijo eso; la linea de debajo le
-ponia un valor por defecto y lo desmentia -es la rama que esta suite ya
-perdio una vez para `AUC_VALIDACION`-.
+ponia un valor por defecto y lo desmentia -es la garantia que esta rama ya
+perdio una vez con `AUC_VALIDACION`-.
 
 Se ejecuta en un subproceso porque el fichero carga el modelo al importarse.
 """
@@ -14,6 +15,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 RAIZ = Path(__file__).resolve().parent.parent
 ARRANCAR = RAIZ / "servidor" / "arrancar.py"
@@ -95,3 +98,9 @@ def test_el_compose_declara_la_prevalencia_con_su_fuente():
     compose = (RAIZ / "servidor" / "docker-compose.yml").read_text(encoding="utf-8")
     assert 'PREVALENCIA_LOCAL: "0.1466"' in compose
     assert "134/914" in compose and "Heckerling" in compose
+    # Y en el servicio que la lee: el texto crudo tambien pasaria con la
+    # linea en otro servicio. (PyYAML esta en el venv pero no en las
+    # dependencias del proyecto: sin el, esta mitad se salta y lo dice.)
+    yaml = pytest.importorskip("yaml")
+    servicios = yaml.safe_load(compose)["services"]
+    assert servicios["copiloto-mcp"]["environment"]["PREVALENCIA_LOCAL"] == "0.1466"
