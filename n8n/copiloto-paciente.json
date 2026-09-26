@@ -1138,8 +1138,11 @@
           "name": "[retirado]"
         }
       },
-      "notes": "Sin parse_mode, como todos los mensajes de este flujo. El codigo sale de un alfabeto de 31 caracteres sin metacaracteres de Markdown, pero renunciar al formato en TODO el flujo del paciente elimina de golpe la clase entera de fallos por formato: ninguno de estos mensajes puede romperse ni inyectar formato. El §6 lo enseña en negrita; la diferencia es cosmetica.",
-      "webhookId": "9d18e9be-41e3-41f8-9eda-f45f01ab7dac"
+      "notes": "Sin parse_mode, como todos los mensajes de este flujo. El codigo sale de un alfabeto de 31 caracteres sin metacaracteres de Markdown, pero renunciar al formato en TODO el flujo del paciente elimina de golpe la clase entera de fallos por formato: ninguno de estos mensajes puede romperse ni inyectar formato. El §6 lo enseña en negrita; la diferencia es cosmetica.\n\nREINTENTA, y por que este nodo si y los demas no: el cuestionario esta completo, el codigo generado y `limite_paciente` ya conto a esta persona. Si el envio falla, el paciente nunca sabe su codigo y ha gastado su intento. Tres intentos separados 3 s: un 429 de Telegram es transitorio y pide unos segundos. Si aun asi falla, el desenlace se pierde igual -eso NO lo arregla el reintento- pero deja de perderse por el caso comun.",
+      "webhookId": "9d18e9be-41e3-41f8-9eda-f45f01ab7dac",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
     },
     {
       "id": "err_cod",

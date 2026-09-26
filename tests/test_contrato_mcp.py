@@ -55,7 +55,14 @@ COTA_SUPERIOR_RV = 77.32279909706551
 TOLERANCIA_RV = 1e-9
 
 
-ARRANCAR = ("docker run -d --rm --name copiloto-prueba -p 18000:8000 "
+# `127.0.0.1:` delante del puerto, y no `-p 18000:8000` a secas: asi el
+# contenedor de prueba solo escucha en el loopback. Con la forma corta, en el
+# VPS queda un endpoint de inferencia SIN AUTENTICACION abierto a los 24
+# contenedores que comparten la red, y el tunel SSH que usan las pruebas entra
+# por el loopback igual. Este comando se imprime cuando las pruebas se saltan,
+# asi que es el que la gente copia y pega.
+ARRANCAR = ("docker run -d --rm --name copiloto-prueba "
+            "-p 127.0.0.1:18000:8000 "
             "-e UMBRAL=0.4258 -e AUC_VALIDACION=0.8827 -e OMP_NUM_THREADS=2 "
             "copiloto-mcp:0.1.0")
 

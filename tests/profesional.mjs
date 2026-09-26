@@ -536,6 +536,45 @@ ok("el base64 del DICOM NO viaja en la salida de este nodo (§5.4)", await (asyn
   return !("dicom_base64" in s) && !("cuerpo" in s);
 })());
 
+console.log("\nI ter. LOS ENVIOS QUE NO SE RECUPERAN SOLOS");
+// --------------------------------------------------------------------------
+// Un envio de Telegram que falla no siempre cuesta lo mismo.
+//
+// Si falla una PREGUNTA, la sesion se queda en ese paso: el usuario escribe
+// cualquier cosa y se le vuelve a preguntar. No se pierde nada.
+//
+// Si falla `Responder`, no. `Registrar` ya corrio: la fila esta escrita y la
+// sesion BORRADA. Un 429 de Telegram -que es transitorio y frecuente- pierde el
+// desenlace clinico para siempre, y sin rastro, porque el §5.4 obliga a
+// `saveDataErrorExecution: none`. El profesional se queda sin nada y sin saber
+// por que. Es el desenlace que el §9 existe para que no ocurra, por una puerta
+// que el §9 no mira.
+//
+// Estos tres llevan reintento, y esta escrito aqui cuales para que quitarselo
+// ponga la suite roja. Los demas NO lo llevan, tambien a proposito: un
+// reintento donde no hace falta solo retrasa la respuesta.
+// --------------------------------------------------------------------------
+const ENVIOS_QUE_REINTENTAN = {
+  "Responder": "el desenlace clinico, con la sesion ya borrada",
+  "Enviar texto del paciente": "el informe ya prometio que llega",
+};
+for (const [nombre, porque] of Object.entries(ENVIOS_QUE_REINTENTAN)) {
+  const n = nodo(nombre);
+  ok(`${nombre} reintenta (${porque})`,
+     n.retryOnFail === true && n.maxTries >= 2 && n.waitBetweenTries >= 1000,
+     JSON.stringify({ retryOnFail: n.retryOnFail, maxTries: n.maxTries,
+                      waitBetweenTries: n.waitBetweenTries }));
+}
+// Y ninguno mas, para que la lista signifique algo: si manana alguien se lo
+// pone a las seis preguntas, esto lo dice y se decide a proposito.
+const reintentanDeVerdad = flujo.nodes
+  .filter((n) => n.type.includes("telegram") && n.retryOnFail === true)
+  .map((n) => n.name).sort();
+ok("y no reintenta ningun envio mas",
+   JSON.stringify(reintentanDeVerdad) ===
+     JSON.stringify(Object.keys(ENVIOS_QUE_REINTENTAN).sort()),
+   JSON.stringify(reintentanDeVerdad));
+
 console.log("\nI bis. LO QUE EL CLINICO LEE, BIEN ESCRITO");
 // --------------------------------------------------------------------------
 // `tests/test_inferencia.py` comprueba la ortografia y el trato de los mensajes

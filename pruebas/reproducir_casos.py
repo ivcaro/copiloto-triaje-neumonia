@@ -40,9 +40,20 @@ DOS MODOS
      redacta. Sirve para revisar el corpus y el formato sin tener el tunel ni los
      secretos, y es lo unico que se puede correr en una maquina sin ellos.
 
-Los dos modos necesitan alcanzar el copiloto (`COPILOTO_URL`, por defecto el
-contenedor de prueba en `http://127.0.0.1:18000/mcp`, el mismo que usa
-`tests/test_contrato_mcp.py`).
+Los dos modos necesitan alcanzar el copiloto. La variable se llama
+`COPILOTO_URL` y aqui es el ENDPOINT COMPLETO, con `/mcp`:
+
+    COPILOTO_URL=http://127.0.0.1:18000/mcp      <- este arnes
+
+CUIDADO, porque el mismo nombre significa otra cosa en las pruebas de contrato:
+alli es el ORIGEN, sin `/mcp`, y cada prueba le pega la ruta que le toca
+(`/salud`, `/mcp`).
+
+    COPILOTO_URL=http://127.0.0.1:18000          <- tests/test_contrato_mcp.py
+
+Ponerle el `/mcp` a las de contrato no da un error: da **10 skipped y exit 0**
+con el contenedor vivo, o sea verde sin haber comprobado ni una de las diez
+afirmaciones del §10. Solo se ve con `pytest -rs`.
 
 ENTORNO
 -------

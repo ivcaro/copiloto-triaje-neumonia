@@ -876,7 +876,10 @@
           "name": "[retirado]"
         }
       },
-      "notes": "EL MENSAJE APARTE. Va SIN FILTRAR y entero, porque ya no tiene que defender nada: el informe clinico no contiene ni un caracter que haya escrito el paciente, asi que lo que aqui venga no puede hacerse pasar por parte de el. Lleva cabecera y cierre del sistema, y la cabecera dice que el informe es el mensaje anterior. Sin parse_mode, como todo el flujo."
+      "notes": "EL MENSAJE APARTE. Va SIN FILTRAR y entero, porque ya no tiene que defender nada: el informe clinico no contiene ni un caracter que haya escrito el paciente, asi que lo que aqui venga no puede hacerse pasar por parte de el.\n\nLleva UNA linea del sistema en la posicion 0 y NADA MAS. No hay cierre: se demostro falsificable -con 498 de sus 500 caracteres el paciente escribia el cierre y metia un informe completo debajo- y se quito. La posicion 0, en cambio, no la puede fabricar: no puede ponerse delante del primer byte de una burbuja.\n\nLa cabecera dice «TODO ESTE MENSAJE ES TEXTO DEL PACIENTE, no el informe», y declara su ALCANCE y no solo lo que viene detras: asi cubre un reenvio visto en frio, donde la burbuja se lee sola y la interfaz la rotula con el nombre del bot.\n\nSin parse_mode, como todo el flujo.\n\nREINTENTA: el informe ya prometio que este mensaje llega. Si no llega, el clinico busca una burbuja que no existe.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
     },
     {
       "id": "resp",
@@ -902,7 +905,10 @@
           "name": "[retirado]"
         }
       },
-      "notes": "Sin parse_mode, como todo el flujo del paciente. Este mensaje lleva texto que escribio el paciente (§4.4) y numeros del modelo: con MarkdownV2 un `*` o un `_` suelto romperia el formato o permitiria inyectarlo. Los tres bloques del §8 se rotulan en mayusculas, que es el unico enfasis que no necesita formato."
+      "notes": "Sin parse_mode, como todo el flujo del paciente. Este mensaje lleva numeros del modelo y rotulos del sistema: con MarkdownV2 un `*` o un `_` suelto romperia el formato o permitiria inyectarlo. Los tres bloques del §8 se rotulan en mayusculas, que es el unico enfasis que no necesita formato.\n\nREINTENTA, y por que este nodo si y los demas no: es EL desenlace clinico, y `Registrar` ya corrio: la fila esta escrita y la sesion BORRADA. Un 429 de Telegram aqui pierde el resultado para siempre, sin rastro de ejecucion (§5.4 obliga a `saveDataErrorExecution: none`). El profesional se queda sin nada y sin saber por que. Tres intentos separados 3 s: un 429 de Telegram es transitorio y pide unos segundos. Si aun asi falla, el desenlace se pierde igual -eso NO lo arregla el reintento- pero deja de perderse por el caso comun.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
     }
   ],
   "connections": {
