@@ -1,7 +1,11 @@
 """Convierte la salida del modelo en evidencia que SP4 pueda combinar.
 
-El modelo se entreno con `BCEWithLogitsLoss(pos_weight=3.44)` para compensar
-que solo el 22,15% de las radiografias son positivas. Eso desplaza su salida
+El modelo se entreno con `BCEWithLogitsLoss(pos_weight = negativos/positivos)`
+para compensar que solo el 22,15% de las radiografias son positivas; sobre esa
+proporcion el peso ronda 3,5. (Este docstring decia `pos_weight=3.44`, que se
+contradecia con el 22,15% de la frase siguiente: el 3,44 sale del 22,53% de
+RSNA ENTERO, antes de descartar los 1 276 menores y los 5 de edad imposible. El
+calibrador desplegado declara `prevalencia = 0,2215`, que da 3,51.) Eso desplaza su salida
 hacia arriba: un 0,74 NO significa 74% de probabilidad de neumonia.
 
 SP4 va a multiplicar la evidencia de imagen por las probabilidades a favor

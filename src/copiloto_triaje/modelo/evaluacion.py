@@ -2,7 +2,7 @@
 
 La metrica primaria es el Recall: en triaje, un falso negativo (paciente
 enfermo despriorizado) es el error mas costoso. No se reporta accuracy
-como metrica principal porque con 22,5% de positivos es enganosa.
+como metrica principal porque con 22,15% de positivos es enganosa.
 """
 from __future__ import annotations
 

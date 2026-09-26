@@ -1,7 +1,7 @@
 """Bucle de entrenamiento en dos fases con early stopping por RECALL.
 
 El criterio de parada observa el Recall en validacion, no la exactitud ni
-la perdida: con 22,5% de positivos, la exactitud premia al modelo que
+la perdida: con 22,15% de positivos, la exactitud premia al modelo que
 nunca detecta a nadie.
 
 Ese Recall se mide SIEMPRE en el umbral que `elegir_umbral` selecciona para
@@ -69,8 +69,10 @@ def evaluar_epoca(modelo, cargador, dispositivo, criterio=None):
 
     LA PERDIDA SALE DEL MISMO CRITERIO QUE LA DE ENTRENAMIENTO, y eso no es un
     detalle de estilo: el criterio es `BCEWithLogitsLoss(pos_weight)` con
-    `pos_weight = negativos/positivos` ~3,44 (el 22,5% de positivos del
-    conjunto). Con un criterio sin peso, la perdida de validacion sale en OTRA
+    `pos_weight = negativos/positivos`, que sobre el 22,15% de positivos del
+    conjunto filtrado ronda 3,5 -y que cada corrida calcula sobre SU particion
+    de entrenamiento, asi que no hay un valor fijo que citar-. Con un criterio
+    sin peso, la perdida de validacion sale en OTRA
     ESCALA, y entonces la distancia entre las dos curvas -que es justo lo que
     diagnostica el sobreajuste- no mide nada: se puede hacer tan grande o tan
     pequena como se quiera cambiando el peso de un solo lado.
@@ -140,8 +142,9 @@ def _puntuar_epoca(y_true, y_score, cfg) -> dict:
     final, no con un umbral fijo.
 
     Por que no vale medir el recall en 0,5: el entrenamiento usa
-    `pos_weight = negativos / positivos` (~3,44 con el 22,5% de positivos
-    del dataset). Ese peso hace que la salida constante optima de la perdida
+    `pos_weight = negativos / positivos` (~3,5 con el 22,15% de positivos
+    que quedan tras el filtro de edad). Ese peso hace que la salida constante
+    optima de la perdida
     sea exactamente un logit 0, es decir una probabilidad de 0,5: el modelo
     queda sentado justo encima del umbral ingenuo y basta un sesgo minimo
     para que caiga entero a un lado. En la practica, en la epoca 0 predice
@@ -267,7 +270,7 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
     ruta_ultimo = dir_checkpoints / NOMBRE_ULTIMO
     ruta_mejor = dir_checkpoints / NOMBRE_MEJOR
 
-    # peso de la clase positiva: compensa el desbalance 22,5 / 77,5.
+    # peso de la clase positiva: compensa el desbalance 22,15 / 77,85.
     # Se leen las etiquetas del manifiesto cuando existe: iterar el cargador
     # cargaria y transformaria las 18 000 imagenes solo para contar etiquetas.
     etiquetas_train = _etiquetas_de(cargador_train)
