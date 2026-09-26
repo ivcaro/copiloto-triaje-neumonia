@@ -159,6 +159,7 @@ def hallazgos_del_caso(sintomas, signos=SIGNOS):
     return {**{k: signos[k] for k in numeros + booleanos},
             "asma": sintomas["asma"]}
 
+
 # El comentario del perfil `con_comentario_del_paciente`. Imita a proposito un
 # rotulo del informe -«CRIBADO --»- porque es el ataque que el §8 describe: asi,
 # al leer el corpus, se VE que esas palabras llegan en un mensaje aparte con su
