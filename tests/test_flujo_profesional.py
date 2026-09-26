@@ -806,7 +806,20 @@ def test_el_segundo_mensaje_no_lleva_ni_un_caracter_del_sistema():
     # La decisión se toma con lo que se manda, no con el original: la guarda mira
     # `recortado` y no `libre`. Con 600 espacios y una `x` detrás, mirar `libre`
     # prometía un comentario y mandaba una burbuja de 500 espacios.
-    assert "if (recortado.trim() === '') { return ''; }" in cuerpo, cuerpo
+    assert "(recortado)" in cuerpo and "(libre)" not in cuerpo, cuerpo
+    # Y la guarda se define por lo que SI cuenta, no por una lista de
+    # caracteres invisibles: `trim()` dejaba pasar U+200B, U+0085, U+2060,
+    # U+180E y U+3164, y con 500 copias el informe prometia un comentario
+    # que la burbuja no ensenaba. Se afirma la FORMA de la regla -una clase
+    # de caracteres permitidos- y no su texto exacto, para que anadir una
+    # categoria no rompa esta prueba sin motivo.
+    assert "TIENE_CONTENIDO" in cuerpo, cuerpo
+    clase = fuente.split("const TIENE_CONTENIDO = ")[1].split("\n")[0]
+    for categoria in (r"\p{L}", r"\p{N}", r"\p{P}", r"\p{S}"):
+        assert categoria in clase, (categoria, clase)
+    assert r"\p{C}" not in clase, (
+        "los caracteres de control NO cuentan como contenido: son justo los "
+        "que se ven vacios", clase)
     # La cabecera es UNA línea y acaba en salto: lo que venga detrás empieza en la
     # línea 2, y no hay cierre que el paciente pueda fabricar.
     m = re.search(r"const CABECERA_PACIENTE = '([^']+)';", fuente)

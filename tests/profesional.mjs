@@ -1456,6 +1456,16 @@ for (const [etiqueta, libre] of [
   ["600 tabuladores y una x", "\t".repeat(600) + "x"],
   ["600 saltos de linea y una x", NL.repeat(600) + "x"],
   ["500 espacios justos", " ".repeat(500)],
+  // LOS QUE `trim()` NO QUITABA. Medido: el `\s` de JavaScript cubre U+00A0,
+  // U+FEFF y U+2028, y estos seis no. Con 500 copias de cualquiera, la guarda
+  // daba el texto por lleno, el informe prometia «El paciente escribio un
+  // comentario» y la segunda burbuja se veia VACIA.
+  ["500 espacios de ancho cero (U+200B)", "\u200B".repeat(500)],
+  ["500 NEXT LINE (U+0085)", "\u0085".repeat(500)],
+  ["500 juntapalabras (U+2060)", "\u2060".repeat(500)],
+  ["500 separadores mongoles (U+180E)", "\u180E".repeat(500)],
+  ["500 marcas de orden de byte (U+FEFF)", "\uFEFF".repeat(500)],
+  ["mezcla de invisibles", ("\u200B\u0085\u2060\u180E\uFEFF ").repeat(80)],
 ]) {
   const s = await informeDe(Object.assign({}, SINTOMAS, { texto_libre: libre }));
   ok(`${etiqueta}: no se manda segundo mensaje`, s.texto_paciente === "",
@@ -1465,8 +1475,9 @@ for (const [etiqueta, libre] of [
 }
 ok("decidir con el original en vez de con el recorte volveria a mentir",
    await (async () => {
-     const mutado = mutar("Desenlace", "if (recortado.trim() === '') { return ''; }",
-                          "if (libre.trim() === '') { return ''; }");
+     const mutado = mutar("Desenlace",
+                          "if (!TIENE_CONTENIDO.test(recortado)) { return ''; }",
+                          "if (!TIENE_CONTENIDO.test(libre)) { return ''; }");
      const r = (await correr(mutado, { json: { error_cod: "N", detalle: "",
        resultado: R_NEGATIVA, signos: SIGNOS, codigo: "K7FM2P",
        sintomas: Object.assign({}, SINTOMAS,
