@@ -598,6 +598,52 @@ ok("y no reintenta ningun envio mas",
      JSON.stringify(Object.keys(ENVIOS_QUE_REINTENTAN).sort()),
    JSON.stringify(reintentanDeVerdad));
 
+console.log("\nI ante. LO QUE EL MODELO AFIRMA vs LO QUE ADVIERTE");
+// --------------------------------------------------------------------------
+// LA CNN SE ENTRENO SOBRE `Lung Opacity` DE RSNA, NO SOBRE NEUMONIA.
+//
+// Opacidad no es neumonia: hay opacidades que no lo son -atelectasia, derrame,
+// tumor- y hay neumonias que no dan opacidad visible. Un evaluador externo lo
+// senalo el 26-sep: «hablen de opacidad compatible y no de neumonia, porque es
+// lo que etiqueta RSNA».
+//
+// Y el informe se contradecia a si mismo de un renglon al siguiente: el bloque
+// CRIBADO decia «opacidad probable» y el de EVIDENCIA, dos lineas mas abajo,
+// «las probabilidades a favor de neumonia».
+//
+// LA REGLA, que es lo que esta prueba sujeta y no un literal concreto:
+//
+//   lo que el sistema AFIRMA dice «opacidad»;
+//   lo que ADVIERTE al clinico puede decir «neumonia», porque advierte justo
+//   contra ese salto.
+//
+// Escrita asi, cambiar la redaccion de un aviso no rompe la prueba, y colar un
+// «neumonia» en una afirmacion si.
+// --------------------------------------------------------------------------
+for (const [etiqueta, r] of [["positiva", R_POSITIVA], ["banda", R_BANDA],
+                             ["negativa", R_NEGATIVA],
+                             ["negativa del borde", R_NEGATIVA_BORDE]]) {
+  const t = (await texto(r)).texto;
+  const afirmaciones = t.split(NL).filter((l) => !l.trimStart().startsWith("\u26a0"));
+  const advertencias = t.split(NL).filter((l) => l.trimStart().startsWith("\u26a0"));
+  ok(`${etiqueta}: ninguna AFIRMACION dice neumonia`,
+     !afirmaciones.some((l) => /neumon/i.test(l)),
+     afirmaciones.find((l) => /neumon/i.test(l)) || "");
+  ok(`${etiqueta}: el bloque de la evidencia habla de opacidad`,
+     t.includes("a favor de una opacidad compatible"),
+     t.split(NL).find((l) => l.includes("EVIDENCIA")));
+  // Y que la regla no se cumpla por vaciedad: si no hubiera ningun aviso, la
+  // primera comprobacion pasaria sola. Solo se exige en los NEGATIVOS, que son
+  // los que llevan el aviso de falibilidad: el de la banda contradictoria
+  // advierte de otra cosa -que la etiqueta y la RV no concuerdan- y no tiene
+  // por que mencionar la neumonia.
+  if (etiqueta.startsWith("negativa")) {
+    ok(`${etiqueta}: y SI hay un aviso que menciona neumonia`,
+       advertencias.some((l) => /neumon/i.test(l)),
+       JSON.stringify(advertencias));
+  }
+}
+
 console.log("\nI bis. LO QUE EL CLINICO LEE, BIEN ESCRITO");
 // --------------------------------------------------------------------------
 // `tests/test_inferencia.py` comprueba la ortografia y el trato de los mensajes
@@ -734,7 +780,7 @@ ok("negativa: la RV reduce, con dos decimales",
 // las placas que el cribado da por negativas, 1 de cada 22 tiene neumonia- y NO el
 // de discrepancia, que aqui seria falso: etiqueta y RV coinciden.
 ok("negativa: lleva el aviso de falibilidad",
-   tNeg.includes("⚠️ Un resultado negativo no descarta neumonía. Decide usted."), tNeg);
+   tNeg.includes("⚠️ El modelo mide opacidad en la placa, no neumonía. Un resultado negativo no la descarta. Decide usted."), tNeg);
 ok("negativa: y NO el aviso de discrepancia, que aqui seria falso",
    !tNeg.includes("no apoya el diagnóstico"), tNeg);
 // Y UNO SOLO. Antes la cota superior la ponia `!tNeg.includes("⚠️")`, que se
@@ -751,7 +797,7 @@ ok("negativa: un solo aviso, no dos",
 // necesitan.
 const tNegBorde = (await texto(R_NEGATIVA_BORDE)).texto;
 ok("negativa del borde (RV 0,5888): tambien lleva el aviso",
-   tNegBorde.includes("⚠️ Un resultado negativo no descarta neumonía. Decide usted."),
+   tNegBorde.includes("⚠️ El modelo mide opacidad en la placa, no neumonía. Un resultado negativo no la descarta. Decide usted."),
    tNegBorde.split("\n").find((l) => l.includes("EVIDENCIA")));
 ok("negativa del borde: la etiqueta sigue siendo negativa",
    tNegBorde.includes("CRIBADO — sin opacidad probable"),
