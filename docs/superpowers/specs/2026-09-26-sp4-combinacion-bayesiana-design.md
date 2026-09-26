@@ -163,6 +163,11 @@ posterior **del 20 % al 52 %**. Un número único ahí habría sido una invenci�
 consecuencias. Con una imagen muy positiva, en cambio, el intervalo es estrecho y
 la pregunta da igual.
 
+Las cifras de esta tabla están bajo el supuesto de independencia. El §7 le
+añade la cota de dependencia, y el informe entrega **el mínimo y el máximo de
+todo lo posible** (§8, tercer ejemplo): así el 97,4 – 98,9 % de la esquina se
+convierte en 84 – 99 %.
+
 ## 7. El supuesto incómodo: independencia condicional
 
 Multiplicar dos razones de verosimilitud **asume que son condicionalmente
@@ -205,11 +210,17 @@ puntos porcentuales, y se abren justo donde la exageración es real:
 
 | Imagen | Puntuación | Rango | Ancho |
 | :--- | ---: | :--- | ---: |
-| Muy positiva (30,3) | 2 | 78 – 84 % | 5 |
 | Muy positiva (30,3) | 3 | 84 – 90 % | 6 |
+| Muy positiva (30,3) | 4 | 84 – 97 % | 13 |
 | Muy positiva (30,3) | **5** | **84 – 99 %** | **15** |
-| Banda (0,87) | 0 | 2 – 2 % | 0 |
-| Banda (0,87) | 3 | 20 – 22 % | 2 |
+| Banda (0,87) | 0 | 2 % (los dos extremos redondean igual) | 0 |
+| Banda (0,87) | 2 | 9 – 11 % | 2 |
+| Negativa clara (0,016) | 0 | < 1 % (los dos extremos redondean igual) | 0 |
+
+(Una versión anterior de esta tabla traía dos filas discordantes —30,3 con
+puntuación 2, y 0,87 con 3— calculadas antes de fijar la regla de este
+apartado. La regla las excluye, así que se quitan: no eran ejemplos de lo que
+el sistema hace.)
 
 La fila de 5 de 5 es la que justifica todo esto: la multiplicación sola daba
 98,9 %, una casi certeza construida sobre dos maneras de mirar la misma
@@ -249,12 +260,16 @@ y el 84 %, que la auscultación no añade nada sobre la imagen. Decide usted.
 
 **Cuando las dos evidencias se contradicen** —imagen a favor, clínica en
 contra, o al revés— no se acota, porque «dependencia total» deja de significar
-nada. Sale un número, y lo acompaña el aviso de discrepancia que el §8 de SP3
-ya emite:
+nada. Sale un número, y el ⚠️ del bloque dice que apuntan en sentidos opuestos.
+(El aviso de discrepancia del §8 de SP3 no sirve aquí: solo salta cuando el
+cribado es positivo y la RV de la imagen menor que 1, y este caso es el
+contrario: imagen a favor, clínica en contra.)
 
 ```
 COMBINADO — 38 % de probabilidad de opacidad compatible
 (prevalencia 14,7 % × clínica 0,12 × imagen 30,3; Heckerling 0 de 5)
+⚠️ La clínica y la imagen apuntan en sentidos opuestos, y además no son pruebas
+independientes: la cifra es orientativa. Decide usted.
 ```
 
 **Cuando además el asma no se sabe**, los dos rangos se funden en uno solo: se
@@ -265,10 +280,26 @@ de los cinco puntos presentes, el asma decide entre 4 y 5:
 COMBINADO — entre 84 % y 99 % de probabilidad de opacidad compatible
 (prevalencia 14,7 % × clínica 7,18–17,5 × imagen 30,3; Heckerling 4 o 5 de 5,
 según tenga asma o no)
+⚠️ La auscultación y la imagen miran la misma consolidación, así que no son
+pruebas independientes: el 99 % supone que cada una aporta información nueva,
+y el 84 %, que la auscultación no añade nada sobre la imagen. Decide usted.
 ```
 
 **Nunca se anidan dos rangos.** El profesional ve una sola horquilla y, debajo,
 de qué depende cada extremo.
+
+**El ⚠️ va en todo informe con combinación** (§7.3), y lo que dice depende del
+caso, porque tiene que ser verdad en cada uno:
+
+| Caso | Qué dice el ⚠️ |
+| :--- | :--- |
+| Concordantes, y los dos extremos redondean distinto | los dos números: cuál supone independencia y cuál dependencia total, nombrando a **quién absorbe a quién** —«la auscultación no añade nada sobre la imagen» solo si la imagen es la más informativa; si lo es la clínica, al revés; si con el asma sin saber cambia de una puntuación a otra, «solo cuenta la más informativa de las dos» |
+| Concordantes, y los extremos redondean igual | sin números: «no son pruebas independientes: la cifra puede exagerar» |
+| Discordantes | «apuntan en sentidos opuestos, y además no son pruebas independientes: la cifra es orientativa» |
+
+Con las dos RV **por debajo** de 1 la exageración va hacia abajo: ahí el
+extremo bajo es el de independencia y el alto el de dependencia, y el ⚠️ los
+nombra igual, cada uno por su número.
 
 ### 8.1. Cuatro reglas de redacción
 
@@ -336,9 +367,34 @@ cinco datos ya existen.
 hoy. Las diez comprobaciones del §10 de SP3 siguen valiendo sin tocarlas, y eso
 es un criterio de aceptación, no una esperanza.
 
+**Lo que trae el bloque**, y es lo que `Desenlace` imprime y H7 encuentra en
+`consultas.resultado`:
+
+| Campo | Qué es |
+| :--- | :--- |
+| `prevalencia` | la `PREVALENCIA_LOCAL` con la que se calculó |
+| `puntuacion` | lista de una puntuación, o de dos con `asma: no_se` (primero con asma, luego sin) |
+| `rv_clinica` | la RV de cada puntuación, en el mismo orden |
+| `rv_imagen` | la misma `razon_de_verosimilitud` de la respuesta, repetida para que el bloque se lea solo |
+| `concordantes` | si todas las RV clínicas están del mismo lado de 1 que la de la imagen (§7.2) |
+| `absorbe` | con concordancia, quién es la más informativa: `imagen`, `clinica`, o `mixta` si cambia entre las dos puntuaciones; sin concordancia, `null` |
+| `independencia` | la posterior de cada puntuación bajo independencia |
+| `dependencia` | la posterior de cada puntuación bajo dependencia total, o `null` si no hay concordancia |
+| `minima`, `maxima` | el mínimo y el máximo de todo lo anterior: la horquilla que se imprime |
+
+Las posteriores van redondeadas a cuatro decimales —bastan para un porcentaje
+entero y para H7— y la RV de la imagen tal cual llega.
+
+Con `asma: no_se` y las dos puntuaciones a **lados distintos** de 1 (2 y 3, por
+ejemplo), no hay concordancia y no se acota: la horquilla sale de las dos
+posteriores bajo independencia.
+
 ### 9.3. Lo que viaja, y lo que eso implica
 
-Con `hallazgos` viajan al copiloto **cinco booleanos**, no el cuestionario. No es
+Con `hallazgos` viajan al copiloto **cinco datos** —la temperatura y el pulso
+como números, los dos hallazgos de la auscultación como booleanos y el asma con
+sus tres estados—, no el cuestionario. Los cortes de 37,8 °C y 100 lpm se
+aplican en Python y no en n8n, que es donde el §11.2 los prueba. No es
 una clase de exposición nueva —la radiografía entera ya va por ahí, por la red
 privada de Docker del VPS— pero **se anota en el §5.4 de SP3** igual que todo lo
 demás que se mueve.
@@ -406,7 +462,10 @@ reproducirla**: es una prueba de mutación que se escribe sola.
    cohorte, salvo redondeo a una décima.
 2. Sin `hallazgos`, la respuesta de `clasificar_radiografia` es idéntica a la de
    SP3, y las diez comprobaciones del contrato pasan sin modificarse.
-3. Con `asma: no_se` el informe entrega un intervalo, nunca un número único.
+3. Con `asma: no_se` el informe entrega **las dos puntuaciones y las dos RV
+   clínicas**, nunca una sola. La horquilla de la cabecera se cierra en un solo
+   número únicamente cuando sus dos extremos redondean igual (§8.1), y aun
+   entonces la línea de los factores enseña las dos.
 4. Ninguna posterior se presenta como 0 % ni como 100 %.
 5. El informe con combinación imprime los tres factores y el aviso de
    dependencia.
