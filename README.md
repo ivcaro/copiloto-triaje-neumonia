@@ -89,6 +89,43 @@ punta y comprueba la propiedad **sobre los tres CSV que quedan en disco**, que
 son los que alimentan al Dataset. Si alguna falla, las métricas no significan
 nada.
 
+### Lo que `pytest` NO ejecuta por sí solo
+
+`pytest` corre el paquete de Python. Los dos bots de n8n tienen sus propias
+suites, que ejecutan el `jsCode` **real** de los nodos y hay que lanzar aparte:
+
+```
+node tests/profesional.mjs
+node tests/decidir.mjs
+node tests/mantenimiento.mjs
+```
+
+Cada una imprime `TODO VERDE` y sale 0, o cuenta los fallos y sale 1. **No las
+encadene con una tubería**: `node tests/profesional.mjs | tail` devuelve el
+estado de `tail`, que es 0 siempre, y así se han fusionado pruebas rojas.
+
+### Las que se saltan, y qué se queda sin comprobar
+
+Varias pruebas necesitan algo que no está siempre: el contenedor del copiloto,
+una Postgres desechable, el túnel a la base del VPS o los secretos de Telegram.
+**Se saltan en vez de fallar**, con el motivo escrito y el comando para
+levantarlo, porque un `ConnectionRefusedError` repetido ensena a no mirar los
+fallos. El precio es que **un skip se ve verde**:
+
+```
+C:\venv-copiloto\Scripts\python.exe -m pytest -q -rs
+```
+
+`-rs` lista cada salto con lo que deja sin verificar. Conviénelo antes de decir
+que la suite está en verde.
+
+Entre ellas, `tests/test_sql_de_los_nodos.py` llama a los dos arneses de
+`pruebas/verificar_sql_*.py`, que son los **únicos** que comprueban la semántica
+SQL de los nodos: la lista blanca, el borrado de sesión, los tipos del `jsonb`,
+la copia de síntomas a `consultas` y la idempotencia del doble toque. Antes
+vivían fuera de `testpaths` y no los nombraba nadie: nueve de nueve mutaciones a
+esas consultas dejaban la suite entera en verde.
+
 ## Datos del dataset (verificados el 16-sep-2026)
 
 26 684 imágenes de entrenamiento, una por paciente. 6 012 positivos (22,5%),
