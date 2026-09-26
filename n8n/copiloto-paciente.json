@@ -21,7 +21,7 @@
       "credentials": {
         "httpHeaderAuth": {
           "id": "[retirado]",
-          "name": "copiloto-paciente: secret_token del webhook (pendiente de fijar)"
+          "name": "copiloto-paciente: secret_token del webhook"
         }
       },
       "notes": "El secret_token del §4.2, y por que NO es un Telegram Trigger.\n\nEste webhook es PUBLICO: cualquiera que sepa la URL puede hacerle POST, asi que el chat_id del cuerpo lo aporta quien llama y no prueba nada.\n\nEl Telegram Trigger de n8n (v1.5) no expone el campo secret_token NI la cabecera de la peticion: solo entrega el cuerpo del update. Con el, la comprobacion del §4.2 es imposible. Con un Webhook + Header Auth la hace n8n en la capa del webhook, antes de que corra un solo nodo, y el secreto vive en una credencial: no aparece en este JSON ni, por tanto, en el repositorio (§12).\n\nEfecto lateral bueno: un Webhook no llama a setWebhook al activarse, asi que activar esto no puede robarle el webhook a ningun bot del cliente (D9).\n\nEl webhook se registra a mano una vez:\n  curl -s \"https://api.telegram.org/bot<TOKEN>/setWebhook\" -d url=https://n8n.[retirado].com/webhook/copiloto-paciente -d secret_token=<EL MISMO VALOR DE LA CREDENCIAL>",
