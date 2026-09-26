@@ -17,7 +17,11 @@ services:
     # que la radiografia no salga de la maquina.
     environment:
       UMBRAL: "0.4258"
-      AUC_VALIDACION: "0.883"
+      # 0.8827 y no 0.883: es el AUC MEDIDO de estos pesos
+      # (docs/frontera-recall-especificidad.md), y el servidor lo publica en cada
+      # respuesta. Redondeado a 0.883 salia como "0,8830", afirmando un cuarto
+      # decimal que es falso, y es justo lo que esta variable existe para evitar.
+      AUC_VALIDACION: "0.8827"
       # torch NO mira el cgroup: sin esto abre un hilo por nucleo del HOST,
       # ignorando el limite de `cpus` de abajo, y se pelea por la CPU del VPS
       # con PostgreSQL y la API del cliente. Tiene que valer lo mismo que `cpus`.

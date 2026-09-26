@@ -444,28 +444,126 @@ probabilidades a favor de neumonía. Las dos cosas son correctas y miden cosas
 distintas.
 
 **Regla:** nunca van en el mismo renglón. El mensaje tiene **tres bloques
-rotulados**:
+rotulados**.
 
-> **Cribado** — opacidad probable
-> *(puntuación 0,98 ≥ umbral 0,4258; punto orientado a detectar, sens. 0,88 /
-> esp. 0,70)*
->
-> **Evidencia de la imagen** — multiplica por **19,2** las probabilidades a
-> favor de neumonía *(probabilidad calibrada 0,85)*
->
-> **Referido por el paciente** — fiebre sí, tos con flema, 3 a 7 días, sin asma
-> **Explorado** — 38,2 °C, 104 lpm, crepitantes sí, murmullo normal
->
-> *La combinación de imagen y clínica llega en la siguiente entrega. Esto no es
-> un diagnóstico.*
+**Estos dos ejemplos son literales**, copiados de
+`pruebas/corpus/01-positiva_clara/` y `02-negativa_clara/`: es exactamente lo
+que `Desenlace` emite. Van en bloque de código y no citados con negritas porque
+el mensaje **no lleva formato** —ver «Formato», al final de la sección—: los
+rótulos se reconocen por ir en mayúsculas y con raya, y eso es lo único que el
+texto del paciente no puede imitar sin que se note.
+
+Positiva clara (placa `0022073f…`, cruda 0,9802):
+
+```
+CRIBADO — opacidad probable
+(puntuación 0,9802 ≥ umbral 0,4258; punto orientado a detectar, sens. 0,88 / esp. 0,70)
+
+EVIDENCIA DE LA IMAGEN — multiplica por 30,3 las probabilidades a favor de neumonía (probabilidad calibrada 0,90)
+
+REFERIDO POR EL PACIENTE — fiebre sí, tos con flema, 3 a 7 días, sin falta de aire, dolor torácico al respirar, asma: no sabe
+EXPLORADO — 38,2 °C, 104 lpm, crepitantes sí, murmullo normal
+
+La combinación de imagen y clínica llega en la siguiente entrega. Esto no es un diagnóstico.
+```
+
+Negativa clara (placa `0022995a…`, cruda 0,0047). Lleva **una línea más** que la
+positiva, el aviso del apartado siguiente:
+
+```
+CRIBADO — sin opacidad probable
+(puntuación 0,0047 < umbral 0,4258; punto orientado a detectar, sens. 0,88 / esp. 0,70)
+
+EVIDENCIA DE LA IMAGEN — reduce a 0,02× las probabilidades a favor de neumonía (probabilidad calibrada < 0,01)
+⚠️ Un resultado negativo no descarta neumonía. Decide usted.
+
+REFERIDO POR EL PACIENTE — fiebre sí, tos con flema, 3 a 7 días, sin falta de aire, dolor torácico al respirar, asma: no sabe
+EXPLORADO — 38,2 °C, 104 lpm, crepitantes sí, murmullo normal
+
+La combinación de imagen y clínica llega en la siguiente entrega. Esto no es un diagnóstico.
+```
+
+**El ejemplo que había aquí antes no era el mensaje que sale, y cada diferencia
+manda a un sitio distinto.** Ponía «puntuación 0,98»: la puntuación cruda va con
+**cuatro** decimales, porque no es una probabilidad —es justo lo que esta
+sección existe para separar— y con dos al lado de un umbral de cuatro salen
+desigualdades visiblemente falsas, «puntuación 0,43 < umbral 0,4258» en 3 de las
+3 811 placas de prueba. Enseñaba cuatro síntomas de los seis, y el bloque lleva
+**los seis siempre**, en el orden del §4.4: un síntoma que falta se lee como un
+síntoma que el paciente no tiene. Y ponía los rótulos en minúscula y negrita,
+cuando van en **mayúsculas y sin negrita** — que tampoco es estilo, es lo que
+los hace reconocibles en un mensaje sin formato.
+
+La probabilidad calibrada tampoco se imprime con dos decimales a secas: el
+calibrador acota su salida a los extremos sostenidos de la curva (0,0046 y
+0,9565), y con dos decimales 344 de las 3 811 placas de prueba se presentarían
+como «probabilidad calibrada 0,00» — certeza de ausencia, que es exactamente lo
+que esa cota existe para no fabricar. Por eso el ejemplo negativo dice
+**`< 0,01`** y no `0,00`.
 
 **Cuando la etiqueta es positiva y la RV es menor que 1**, el bloque de
 evidencia lo dice de forma explícita:
 
-> **Evidencia de la imagen** — **reduce** a **0,59×** las probabilidades a favor
-> de neumonía *(probabilidad calibrada 0,14)*.
-> ⚠️ El cribado marca esta placa por estar orientado a detectar, pero la imagen
-> en sí no apoya el diagnóstico. Decide la clínica.
+```
+EVIDENCIA DE LA IMAGEN — reduce a 0,87× las probabilidades a favor de neumonía (probabilidad calibrada 0,20)
+⚠️ El cribado marca esta placa por estar orientado a detectar, pero la imagen en sí no apoya el diagnóstico. Decide la clínica.
+```
+
+(Literal, de `pruebas/corpus/03-banda_contradictoria/`, placa `03cf9ba9…`, cruda
+0,5649.)
+
+### El aviso es asimétrico a propósito
+
+El resultado **negativo** lleva una línea que el positivo no lleva:
+
+```
+⚠️ Un resultado negativo no descarta neumonía. Decide usted.
+```
+
+**Lleva ⚠️, igual que el del positivo contradictorio, y eso no es adorno.** Sin
+el símbolo los dos avisos quedaban al revés: el del positivo contradictorio
+-donde equivocarse manda a alguien sano a una prueba de más- se marcaba, y el
+del negativo -donde equivocarse manda a casa a alguien con neumonía- no. El
+aviso más importante era el menos visible. O lo llevan los dos o no lo lleva
+ninguno.
+
+La asimetría de que el negativo lleve aviso y el positivo concordante no, parece
+un descuido y no lo es. **Marcar de más y marcar de menos
+no hacen el mismo daño.** Si el cribado marca una placa sana, el profesional la
+mira, no ve nada y sigue: cuesta tiempo. Si el cribado **no** marca una
+neumonía, puede cerrar el estudio ahí — y ese es el daño de verdad. El aviso va
+donde está el daño.
+
+Salió de leer el corpus de §13.1, no de razonar: hay un caso real —mujer de 28
+años, RSNA anotó `Lung Opacity`— donde el cribado y la evidencia **coinciden y
+los dos se equivocan**. El clínico lee «sin opacidad probable» y «reduce a
+0,04× las probabilidades», y leído solo, tranquiliza. Ningún aviso automático
+puede existir ahí: el sistema no tiene forma de saber que está fallando. Lo
+único honesto es decir que un negativo no descarta.
+
+**Y la línea no lleva cifra, deliberadamente.** Las que se podrían poner son
+ciertas y engañosas a la vez:
+
+| La pregunta | La cifra |
+| :--- | ---: |
+| De los que tienen neumonía, ¿a cuántos se les escapa? | 1 de cada 8,4 |
+| El bot dice negativo, ¿qué probabilidad hay de que la tenga? | 1 de cada 22 |
+| El bot dice positivo, ¿cuántos la tienen? | menos de la mitad |
+
+Las tres suponen una población con la prevalencia del conjunto de validación
+(22,15 %), y en una consulta real es otra. Un número que parece preciso y no lo
+es sería el mismo error que el §8 existe para evitar.
+
+**Por eso el positivo no lleva nada.** El «menos de la mitad» describe lo que
+pasaría si alguien aplicara la **etiqueta** a ciegas a esa población, y nadie
+hace eso: el profesional ya tiene una sospecha antes de mirar la placa. Lo que
+el sistema entrega de verdad es la razón de verosimilitud, y con ella los
+números son otros — una placa clara (RV 19,2) sobre un paciente que el médico
+sospecha al 50 % sale al **95 %**. Leer «más de la mitad se equivocan» junto a
+ese resultado le restaría crédito a algo que lo merece.
+
+Eso es justo lo que H6 va a formalizar: la RV multiplica el previo del
+**paciente concreto**, no la prevalencia de un dataset.
 
 **Cuando la etiqueta es negativa** se usan los mismos tres bloques con
 "sin opacidad probable" y la RV correspondiente. La plantilla es una sola; solo
@@ -542,10 +640,26 @@ sitio donde este proyecto vuelva a mezclar dato ajeno con afirmación propia.
 > es peor: un filtro pensado para Telegram no toca `<`, `>`, `&` ni `"`.
 > Escapar para HTML es obligatorio ahí, y es otro problema que este.
 
-**Formato:** los números se muestran con la precisión de arriba —probabilidades
-con dos decimales, RV con uno o dos—, y el mensaje se manda con `parse_mode:
-MarkdownV2` **escapando** todo lo que venga de datos, o con `parse_mode` vacío
-si el texto libre del paciente está presente (§4.4).
+**Formato:** los números se muestran con la precisión de arriba —probabilidad
+calibrada con dos decimales, RV con uno o dos, puntuación cruda con cuatro—, y
+**ningún mensaje de los tres workflows lleva `parse_mode`**: todos van como
+texto plano, que es lo que ya dice el §4.4.
+
+**Por qué, y no es una preferencia de estilo.** `MarkdownV2` obliga a escapar
+dieciocho caracteres, y el informe está lleno de tres de ellos: los paréntesis
+de la línea de la puntuación y el punto de «Decide usted.». Uno sin escapar y
+Telegram contesta 400 — con lo que el profesional **no recibe nada**, que es
+mucho peor que recibirlo sin negritas. El segundo mensaje es peor todavía: lleva
+el texto que escribió el paciente **sin filtrar**, y un `*` o un `_` suelto
+rompería el envío o inyectaría formato. Y con formato disponible, los rótulos en
+mayúsculas dejarían de ser la única forma de rotular que el paciente no puede
+fabricar, que es la que sostiene la regla del informe.
+
+Los nueve nodos de Telegram del flujo del profesional no llevan `parse_mode`, y
+`test_ningun_mensaje_lleva_parse_mode` los recorre uno a uno para que siga
+siendo así. **Lo que este párrafo prescribía antes —`MarkdownV2` escapando los
+datos— haría que el informe no llegara**, y una revisión que lo tomara por
+autoridad «corregiría» el flujo hasta dejar mudo al bot.
 
 ---
 
@@ -553,19 +667,98 @@ si el texto libre del paciente está presente (§4.4).
 
 | Situación | Código registrado | Qué dice el bot | Estado después |
 | :--- | :--- | :--- | :--- |
-| Envía **foto** en vez de archivo | `envio_como_foto` | "Telegram recomprime las fotos y destruye el DICOM. Envíela como archivo." | **se queda en el paso 5**, esperando el archivo |
-| No es un DICOM legible | `dicom_invalido` | relata el detalle del servidor **cuando lo hay**; si el servidor se cayo sobre esos bytes sin devolver codigo, mensaje propio | se queda en el paso 5 |
+| Envía **foto** en vez de archivo | `envio_como_foto` | "Telegram recomprime las fotos y destruye el DICOM. Envíela como archivo." | **se queda en el paso 6**, esperando el archivo |
+| No es un DICOM legible | `dicom_invalido` | «No pude leer esa radiografía.» y **nada del detalle del servidor cuando lo hay**; lo que sí se relata es la frase propia de la rama en la que el servidor no devolvió código (ver abajo) | se queda en el paso 6 |
 | **Edad fuera de 18-100** | `fuera_de_alcance` | el detalle del servidor, **sin ninguna cifra de probabilidad** | **termina**: se registra y se borra la sesión |
 | La cabecera no declara edad | `edad_desconocida` | el detalle del servidor, **sin ninguna cifra** | termina |
-| Base64 mal formado | `base64_invalido` | "No pude leer el archivo. Vuelva a enviarlo." | se queda en el paso 5 |
-| Más de 5 MB (respuesta MCP) | `payload_excesivo` | "El archivo supera los 5 MB." | se queda en el paso 5 |
-| **HTTP 413** del transporte (§10.4) | `payload_excesivo_transporte` | mismo mensaje | se queda en el paso 5 |
-| Código inexistente o caducado | `codigo_invalido` | "Ese código no existe o caducó. Pida al paciente que repita el cuestionario." | se queda en el paso 2 |
-| Fichero de Telegram > 20 MB | `fichero_no_descargable` | "Telegram no me deja descargar archivos de más de 20 MB." | se queda en el paso 5 |
-| Timeout o error de red | `copiloto_no_responde` | "El servicio de imagen no está disponible. Inténtelo en unos minutos." | se queda en el paso 5 |
+| Base64 mal formado | `base64_invalido` | "No pude leer el archivo." | se queda en el paso 6 |
+| Más de 5 MB (respuesta MCP) | `payload_excesivo` | "El archivo supera los 5 MB." | se queda en el paso 6 |
+| **HTTP 413** del transporte (§10.4) | `payload_excesivo_transporte` | mismo mensaje | se queda en el paso 6 |
+| Código inexistente o caducado | `codigo_invalido` | "Ese código no existe o caducó. Pida al paciente que repita el cuestionario." | se queda en el paso 1 |
+| Fichero de Telegram > 20 MB | `fichero_no_descargable` | "Telegram no me deja descargar archivos de más de 20 MB." | se queda en el paso 6 |
+| Timeout o error de red | `copiloto_no_responde` | "El servicio de imagen no está disponible. Inténtelo en unos minutos." | se queda en el paso 6 |
 | `isError` con un código desconocido | `error_no_reconocido` | "El servicio devolvió un error que no sé interpretar. Se ha registrado." | termina, y el texto íntegro va a `consultas.error` |
 | **`chat_id` no autorizado** | `no_autorizado` | "No autorizado." y nada mas: sin pistas de que hay detras | **no se toca la sesion**. Se registra el intento con su `chat_id`, que es de donde se leen los de alta (§11) |
-| No se pudo descargar el fichero de Telegram | `descarga_fallida` | mensaje propio y honesto; **no** el de los 20 MB, que solo vale cuando de verdad los supera | se queda en el paso 5 |
+| No se pudo descargar el fichero de Telegram | `descarga_fallida` | mensaje propio y honesto; **no** el de los 20 MB, que solo vale cuando de verdad los supera | se queda en el paso 6 |
+
+### El número de la última columna es el de la base, no el del §7
+
+**Son dos numeraciones distintas, y mezclarlas sale caro.** El §7 cuenta pasos
+del recorrido, y ahí el 5 es «pide la radiografía». La tabla `PASOS` del nodo
+`Decidir` cuenta los seis huecos que la sesión puede tener guardados: **1**
+código, **2** temperatura, **3** frecuencia, **4** crepitantes, **5** murmullo,
+**6** placa. Esta columna dice en qué estado queda la fila de
+`sesiones_profesional`, así que usa el número de la base.
+
+Antes decía «paso 5» en las ocho filas que esperan el archivo —donde el 5 es el
+murmullo— y «paso 2» en `codigo_invalido`. Las dos eran falsas, y de la forma
+que más daño hace: quien revisara iría a comprobar el paso del murmullo contra
+una fila que espera una placa, o «arreglaría» la consulta para que dejase la
+sesión donde decía el spec. En `codigo_invalido` la sesión se queda en el **1**
+porque `Buscar cuestionario` hace su `UPDATE ... SET paso = 2` con
+`WHERE s.paso = 1` y solo cuando el código existe y no ha caducado: si no vale,
+no se actualiza nada y el bot vuelve a pedir el código.
+
+### Qué se relata del servidor, y por qué `dicom_invalido` es al revés de lo que parece
+
+La columna «qué dice el bot» dice «el detalle del servidor» en tres filas, y en
+`dicom_invalido` **no** lo dice. La decisión es por **procedencia** y la toma
+`Leer respuesta` (§10.4 bis): se relata lo que compuso nuestro código, nunca lo
+que el servidor armó interpolando la excepción de una librería sobre bytes
+ajenos.
+
+- Cuando el servidor **sí** devuelve `dicom_invalido: <detalle>`, ese detalle lo
+  compone `inferencia.py` con el texto de la excepción de `pydicom` sobre el
+  fichero que mandó quien sea: `detalle` se vacía y el clínico recibe solo «No
+  pude leer esa radiografía.» y la coletilla.
+- Cuando el servidor se cae sobre esos bytes **sin** devolver código, la frase
+  la compone `Leer respuesta` —«No pude interpretar el contenido del fichero. Si
+  lo recortó al enviarlo, vuelva a exportarlo completo.»— y esa **sí** se
+  relata, porque es nuestra.
+
+En los dos casos el texto crudo del servidor va entero a `consultas.error`, que
+es donde se diagnostica. Escrito al revés, este §9 invitaba a devolverle al
+profesional un texto que controla quien suministra el DICOM, que es justo el
+agujero que el §8 existe para cerrar.
+
+### Toda fila que no termina dice que el bot sigue esperando
+
+La última columna dice si la conversación sigue viva. **El mensaje también tiene
+que decirlo**, y antes no lo decía: de las diez filas que no terminan, una sola
+-`envio_como_foto`- lo decía explícitamente, dos lo insinuaban con "Vuelva a
+enviarlo.", y las seis demás dejaban al profesional sin saber si reenviar la
+placa o empezar de cero. "El archivo supera los 5 MB." y punto, con el bot
+esperando en silencio al otro lado.
+
+Cada fila declara ahora **qué** espera, y el mensaje acaba con la frase
+correspondiente:
+
+| Lo que espera | La frase, literal |
+| :--- | :--- |
+| el archivo | *Sigo esperando el archivo.* |
+| el código del paciente | *Sigo esperando el código del paciente.* |
+
+Va **al final**, detrás del detalle del servidor y de la coletilla de edad: es
+lo que el profesional tiene que hacer a continuación, y lo último que se lee es
+lo que se hace. Ocho de las nueve filas la esperan para el archivo; solo
+`codigo_invalido` espera el código, y una coletilla que pidiera el archivo ahí
+mandaría al clínico a hacer lo que no es.
+
+`no_autorizado` es la **única excepción**: no termina la conversación y aun así
+no lleva coletilla. Quien llega ahí no está en la lista blanca, y "Sigo esperando
+el archivo." le confirmaría que hay un bot escuchando detrás y que lo que manda
+le llega.
+
+Las tres filas que **terminan** no la llevan: no hay nada que esperar cuando se
+borra la sesión.
+
+La frase vive en un solo sitio del nodo (`SIGO_ESPERANDO`), y eso no basta por sí
+solo -escrita a mano era justo una frase que ocho filas se habían olvidado de
+poner-. Lo que lo sostiene es una invariante de `tests/profesional.mjs` que
+recorre **la tabla del propio nodo**, no una lista escrita a mano, y exige que la
+coletilla concuerde con la última columna. La primera versión de esa prueba
+recorría una lista a mano, y `descarga_fallida` -que está en la tabla y no en
+este §9- se le colaba entera.
 
 **Son trece, y la cuenta importa:** un spec con once filas y un flujo con
 trece hace que la siguiente revision marque dos falsos positivos, o que alguien
@@ -882,9 +1075,13 @@ de limpiar, comprueba a diario y **avisa por Telegram al equipo** si:
 - `copiloto-mcp` no responde a `/salud`;
 - `copiloto-bd` no acepta conexiones;
 - alguno de los tres workflows quedó **desactivado**;
-- la tasa de `dicom_invalido` de los últimos 7 días supera el 20 % (algo pasa
-  con cómo mandan las placas) — contando con `split_part(error, ':', 1)`,
-  porque la columna guarda `codigo: texto`;
+- hay **3 rechazos por `dicom_invalido` o más** en los últimos 7 días **y**
+  además pasan del 20 % de las placas de esa ventana (algo pasa con cómo mandan
+  las placas) — contando con `split_part(error, ':', 1)`, porque la columna
+  guarda `codigo: texto`. **Las dos condiciones, no solo la tasa:** con el 20 %
+  a secas, una placa rechazada de tres dispara el aviso, y eso ocurre el 27 % de
+  las semanas flojas aunque la tasa real sea del 10 %. Un aviso que salta cada
+  semana deja de leerse, y entonces ya no avisa de nada;
 - hay cuestionarios caducados sin borrar (la limpieza falló);
 - **el webhook de alguno de los dos bots dejó de apuntar a donde debe.**
 

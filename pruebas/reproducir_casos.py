@@ -40,9 +40,20 @@ DOS MODOS
      redacta. Sirve para revisar el corpus y el formato sin tener el tunel ni los
      secretos, y es lo unico que se puede correr en una maquina sin ellos.
 
-Los dos modos necesitan alcanzar el copiloto (`COPILOTO_URL`, por defecto el
-contenedor de prueba en `http://127.0.0.1:18000/mcp`, el mismo que usa
-`tests/test_contrato_mcp.py`).
+Los dos modos necesitan alcanzar el copiloto. La variable se llama
+`COPILOTO_URL` y aqui es el ENDPOINT COMPLETO, con `/mcp`:
+
+    COPILOTO_URL=http://127.0.0.1:18000/mcp      <- este arnes
+
+CUIDADO, porque el mismo nombre significa otra cosa en las pruebas de contrato:
+alli es el ORIGEN, sin `/mcp`, y cada prueba le pega la ruta que le toca
+(`/salud`, `/mcp`).
+
+    COPILOTO_URL=http://127.0.0.1:18000          <- tests/test_contrato_mcp.py
+
+Ponerle el `/mcp` a las de contrato no da un error: da **10 skipped y exit 0**
+con el contenedor vivo, o sea verde sin haber comprobado ni una de las diez
+afirmaciones del §10. Solo se ve con `pytest -rs`.
 
 ENTORNO
 -------
@@ -168,7 +179,9 @@ PERFILES = [
            "del conjunto de prueba, puntuación cruda menor que 0,1",
            "Que la evidencia reduzca las probabilidades, y que el mensaje no "
            "suene a alta: no dice «no tiene neumonía», dice lo que la imagen "
-           "aporta."),
+           "aporta. Lo que hay que juzgar aquí es el aviso del final: de las "
+           "placas que el cribado da por negativas, 1 de cada 22 tiene "
+           "neumonía. ¿Lo deja claro leyendo el mensaje una sola vez?"),
     Perfil(3, "banda_contradictoria",
            "Banda contradictoria",
            "de las 379 placas medidas con puntuación cruda entre 0,4258 y "
@@ -203,20 +216,19 @@ PERFILES = [
     Perfil(8, "fichero_corrupto_FABRICADO",
            "Fichero corrupto (FABRICADO)",
            "los primeros 4 KiB de una placa real, truncada ahí",
-           "El bot no acusa al clínico de nada, y eso está bien. Pero fíjese en "
-           "lo que NO dice: la conversación sigue viva esperando el archivo y el "
-           "mensaje no se lo cuenta, así que el clínico no sabe si reenviar la "
-           "placa o empezar de cero. Es un defecto de redacción del §9, ya "
-           "señalado; el corpus lo saca a la luz y no lo tapa.",
+           "El bot no acusa al clínico de nada, y ahora además acaba diciendo "
+           "que sigue esperando el archivo: la conversación no ha muerto y el "
+           "mensaje lo dice. Este texto antes señalaba justo lo contrario, "
+           "porque el corpus sacó a la luz ese defecto y así se arregló. Mire "
+           "si con lo que dice le basta para saber qué hacer.",
            fabricado=True),
     Perfil(9, "fichero_enorme_FABRICADO",
            "Fichero enorme (FABRICADO)",
            "una placa real rellenada por encima de los 5 MiB del §10.4",
-           "Que el mensaje dice el límite en MB y no un error técnico, y eso "
-           "está bien. Le pasa lo mismo que al perfil 08: tampoco dice que siga "
-           "esperando el archivo. Los DICOM de RSNA pesan 131 KiB de mediana, "
-           "así que esto no debería pasar nunca; está aquí para que, si pasa, el "
-           "bot diga algo cierto.",
+           "Que el mensaje dice el límite en MB y no un error técnico, y que "
+           "acaba diciendo que sigue esperando el archivo. Los DICOM de RSNA "
+           "pesan 131 KiB de mediana, así que esto no debería pasar nunca; "
+           "está aquí para que, si pasa, el bot diga algo cierto.",
            fabricado=True),
 ]
 

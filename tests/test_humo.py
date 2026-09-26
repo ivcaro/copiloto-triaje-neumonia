@@ -69,7 +69,8 @@ def test_pipeline_completo_en_cpu(tmp_path):
     # docstring de `elegir_umbral`). Decidir el punto de corte mirando la
     # prueba contaminaria esa estimacion; por eso la prueba se evalua una
     # unica vez, ya con el umbral fijo.
-    y_true_val, y_score_val = evaluar_epoca(modelo, cargador("val", False), torch.device("cpu"))
+    y_true_val, y_score_val, _ = evaluar_epoca(
+        modelo, cargador("val", False), torch.device("cpu"))
     umbral, metricas_val, paso = elegir_umbral(y_true_val, y_score_val)
     pasos_validos = {
         "paso_1_especificidad_objetivo",
@@ -79,7 +80,8 @@ def test_pipeline_completo_en_cpu(tmp_path):
     }
     assert paso in pasos_validos
 
-    y_true_test, y_score_test = evaluar_epoca(modelo, cargador("test", False), torch.device("cpu"))
+    y_true_test, y_score_test, _ = evaluar_epoca(
+        modelo, cargador("test", False), torch.device("cpu"))
     assert len(y_true_test) == len(y_score_test) > 0
     # `metricas_en_umbral`, no `metricas_binarias`: es lo que hace que el AUC
     # del conjunto de PRUEBA quede reportado (hallazgo I2). Esta linea es la

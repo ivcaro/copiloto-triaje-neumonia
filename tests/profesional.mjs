@@ -127,6 +127,24 @@ const R_NEGATIVA = {
   clasificacion: "sin_opacidad_probable", edad_paciente: 54,
   modelo: "efficientnet_b0_320px", auc_validacion: 0.8827, milisegundos: 42.6,
 };
+// LA NEGATIVA DEL BORDE, y hace falta porque `R_NEGATIVA` es el SUELO: su RV es
+// 0,0163, que es la cota inferior del calibrador. Con solo ese caso, un aviso
+// escrito como `if (!positivo && rv < 0.5)` pasaba en verde, y entonces el 9,9 %
+// de las negativas se quedaba sin el.
+//
+// Cifras del calibrador desplegado (`servidor/calibrador.json`), no inventadas:
+// con la cruda justo por debajo del umbral, la calibrada es 0,143478 y la RV
+// 0,5888. Medido sobre las 2 184 negativas del conjunto de prueba: 216 (9,9 %)
+// tienen la RV en 0,5 o mas, y 0,5888 es la mas alta que una negativa puede
+// tener. O sea que este es el caso extremo por el otro lado, y son justo las
+// placas mas cercanas al umbral: aquellas en las que un negativo se parece mas
+// a un positivo, que es donde el aviso mas falta hace.
+const R_NEGATIVA_BORDE = {
+  probabilidad_cruda: 0.4257, probabilidad_calibrada: 0.143478,
+  razon_de_verosimilitud: 0.5888, umbral: 0.4258,
+  clasificacion: "sin_opacidad_probable", edad_paciente: 54,
+  modelo: "efficientnet_b0_320px", auc_validacion: 0.8827, milisegundos: 42.6,
+};
 
 const sse = (obj) => `event: message\r\ndata: ${JSON.stringify(obj)}\r\n\r\n`;
 const sseExito = (r) => sse({
@@ -518,6 +536,153 @@ ok("el base64 del DICOM NO viaja en la salida de este nodo (§5.4)", await (asyn
   return !("dicom_base64" in s) && !("cuerpo" in s);
 })());
 
+// LOS DOS `TOPE_DETALLE`, que estan duplicados en dos nodos y nada los ataba.
+// `Leer respuesta` acota en el origen y `Desenlace` otra vez, porque a este
+// ultimo lo alimentan cuatro sitios y basta que uno no lo haga. Si divergieran,
+// el de `Desenlace` manda para todo lo que pasa por `Leer respuesta` y el otro
+// no serviria de nada: dos numeros donde deberia haber uno, y el segundo
+// callado.
+const topeDe = (nombre) => {
+  const m = /const TOPE_DETALLE = (\d+);/.exec(codigo(nombre));
+  return m ? Number(m[1]) : null;
+};
+ok("los dos nodos declaran el MISMO tope de detalle",
+   topeDe("Desenlace") !== null && topeDe("Desenlace") === topeDe("Leer respuesta"),
+   JSON.stringify({ Desenlace: topeDe("Desenlace"),
+                    "Leer respuesta": topeDe("Leer respuesta") }));
+// Y que el tope ACOTE de verdad, que es lo que ninguna prueba sujetaba: con
+// 500 -> 3000 la suite seguia verde.
+const DETALLE_LARGO = "x".repeat(2000);
+const sDetalleLargo = await desenlace({ error_cod: "fuera_de_alcance",
+  detalle: DETALLE_LARGO, resultado: null }, U, D);
+ok("un detalle de 2 000 caracteres se recorta al tope",
+   (sDetalleLargo.texto.match(/x/g) || []).length === topeDe("Desenlace"),
+   String((sDetalleLargo.texto.match(/x/g) || []).length));
+
+console.log("\nI ter. LOS ENVIOS QUE NO SE RECUPERAN SOLOS");
+// --------------------------------------------------------------------------
+// Un envio de Telegram que falla no siempre cuesta lo mismo.
+//
+// Si falla una PREGUNTA, la sesion se queda en ese paso: el usuario escribe
+// cualquier cosa y se le vuelve a preguntar. No se pierde nada.
+//
+// Si falla `Responder`, no. `Registrar` ya corrio: la fila esta escrita y la
+// sesion BORRADA. Un 429 de Telegram -que es transitorio y frecuente- pierde el
+// desenlace clinico para siempre, y sin rastro, porque el §5.4 obliga a
+// `saveDataErrorExecution: none`. El profesional se queda sin nada y sin saber
+// por que. Es el desenlace que el §9 existe para que no ocurra, por una puerta
+// que el §9 no mira.
+//
+// Estos tres llevan reintento, y esta escrito aqui cuales para que quitarselo
+// ponga la suite roja. Los demas NO lo llevan, tambien a proposito: un
+// reintento donde no hace falta solo retrasa la respuesta.
+// --------------------------------------------------------------------------
+const ENVIOS_QUE_REINTENTAN = {
+  "Responder": "el desenlace clinico, con la sesion ya borrada",
+  "Enviar texto del paciente": "el informe ya prometio que llega",
+};
+for (const [nombre, porque] of Object.entries(ENVIOS_QUE_REINTENTAN)) {
+  const n = nodo(nombre);
+  ok(`${nombre} reintenta (${porque})`,
+     n.retryOnFail === true && n.maxTries >= 2 && n.waitBetweenTries >= 1000,
+     JSON.stringify({ retryOnFail: n.retryOnFail, maxTries: n.maxTries,
+                      waitBetweenTries: n.waitBetweenTries }));
+}
+// Y ninguno mas, para que la lista signifique algo: si manana alguien se lo
+// pone a las seis preguntas, esto lo dice y se decide a proposito.
+const reintentanDeVerdad = flujo.nodes
+  .filter((n) => n.type.includes("telegram") && n.retryOnFail === true)
+  .map((n) => n.name).sort();
+ok("y no reintenta ningun envio mas",
+   JSON.stringify(reintentanDeVerdad) ===
+     JSON.stringify(Object.keys(ENVIOS_QUE_REINTENTAN).sort()),
+   JSON.stringify(reintentanDeVerdad));
+
+console.log("\nI bis. LO QUE EL CLINICO LEE, BIEN ESCRITO");
+// --------------------------------------------------------------------------
+// `tests/test_inferencia.py` comprueba la ortografia y el trato de los mensajes
+// de `src/`, y eso dejaba fuera TODO lo que escriben los nodos de n8n, que es de
+// donde sale la mayoria de lo que el profesional lee. Medido por una revision:
+// 16 de los 20 literales de Telegram se podian destildar y tutear con las cuatro
+// suites en VERDE, y cinco ya estaban mal escritos de verdad.
+//
+// QUE SE MIRA Y QUE NO. Un nodo tiene literales de dos clases: mensajes en
+// castellano y cadenas de trabajo (`codigo_invalido`, `s4:si`, `application/
+// json`). Solo las primeras tienen ortografia que juzgar, y se distinguen por
+// que son PROSA: llevan espacios y tienen largo de frase. Con un `codigo` dentro
+// de `'codigo_invalido'` no hay nada que corregir.
+// --------------------------------------------------------------------------
+const SIN_TILDE = ["anios", "valido", "codigo", "numero", "maximo", "minimo",
+                   "diagnostico", "analisis", "radiografia", "informacion",
+                   "despues", "tambien", "aqui", "mas ", "clinic", "practic",
+                   "ningun ", "algun ", "segun", "rapido", "facil"];
+// EL TUTEO NO SE PUEDE BUSCAR POR LA RAIZ DEL VERBO, y el primer intento de
+// esta prueba lo hizo y se llevo tres falsos positivos seguidos.
+//
+// En castellano la forma de USTED es la tercera persona del singular, la misma
+// que el imperativo de tu. Asi que «decide» no distingue nada: «Decide usted» y
+// «Decide la clínica» son las dos correctas y de usted, y «vuelve a pasar» es
+// impersonal. Una comprobacion que se queja de texto correcto acaba apagada, y
+// entonces no comprueba nada.
+//
+// Lo que SI es inequivoco es la segunda persona conjugada -«decides»,
+// «compruebas»-, que no existe en el trato de usted, y los pronombres de tu.
+// La lista es corta a proposito: mejor pocas y ciertas.
+const TUTEO = [" decides ", " vuelves ", " envias ", " env\u00edas ",
+               " compruebas ", " revisas ", " intentas ", " miras ",
+               " esperas ", " tienes ", " puedes ", " debes ", " sabes ",
+               " quieres ", " haces ", " tu ", " tus ", " te ", " ti ",
+               " contigo ", " tuyo ", " tuya "];
+// Lo que NO es un mensaje aunque lo parezca: cabeceras HTTP, claves y el texto
+// que el SERVIDOR compone -que se comprueba en `test_inferencia.py`, en su
+// fuente, y aqui solo aparece como literal a buscar dentro de la respuesta-.
+const NO_ES_UN_MENSAJE = [
+  "application/json", "text/event-stream", "Error executing tool",
+  "Request body too large", "no hay parametro", "jsonrpc",
+  "clasificar_radiografia", "Only base64 data is allowed",
+  "paso_3_se_conserva_paso_1", "opacidad_probable", "sin_opacidad_probable",
+];
+
+function mensajesDelNodo(fuente) {
+  // Literales entre comillas simples, que es como estan escritos los nodos.
+  const crudos = fuente.match(/'(?:[^'\\\n]|\\.)*'/g) || [];
+  return crudos
+    .map((s) => s.slice(1, -1).replace(/\\n/g, " ").replace(/\\'/g, "'"))
+    // PROSA: con espacio y con largo de frase. Deja fuera las claves.
+    .filter((s) => s.includes(" ") && s.length >= 14)
+    // Y fuera lo que no es castellano nuestro.
+    .filter((s) => !NO_ES_UN_MENSAJE.some((x) => s.includes(x)))
+    // Un literal sin ninguna letra acentuable tipica tampoco es castellano:
+    // se exige al menos una palabra con vocal, que cualquier frase tiene.
+    .filter((s) => /[a-zA-Z]{3}/.test(s));
+}
+
+const NODOS_QUE_HABLAN = ["Decidir", "Desenlace"];
+let revisados = 0;
+for (const nombre of NODOS_QUE_HABLAN) {
+  for (const mensaje of mensajesDelNodo(codigo(nombre))) {
+    const bajo = " " + mensaje.toLowerCase() + " ";
+    const malas = SIN_TILDE.filter((p) => bajo.includes(p));
+    const tuteo = TUTEO.filter((p) => bajo.includes(p));
+    revisados += 1;
+    if (malas.length || tuteo.length) {
+      ok(`${nombre}: «${mensaje.slice(0, 46)}»`, false,
+         `sin tilde ${JSON.stringify(malas)} / tuteo ${JSON.stringify(tuteo)}`);
+    }
+  }
+}
+ok(`se revisaron los mensajes de ${NODOS_QUE_HABLAN.length} nodos`,
+   revisados >= 20, String(revisados));
+// Y las preguntas llevan su signo de apertura, que el castellano pide y el
+// corrector de tildes no ve.
+for (const nombre of NODOS_QUE_HABLAN) {
+  for (const mensaje of mensajesDelNodo(codigo(nombre))) {
+    if (!mensaje.trimEnd().endsWith("?")) { continue; }
+    ok(`${nombre}: «${mensaje.slice(0, 40)}» abre la interrogacion`,
+       mensaje.includes("\u00bf"), mensaje);
+  }
+}
+
 console.log("\nJ. §8: TRES BLOQUES ROTULADOS, y la etiqueta nunca con la RV");
 async function texto(r) {
   const s = await desenlace(
@@ -563,7 +728,37 @@ ok("negativa: la desigualdad va al otro lado",
    tNeg.includes("puntuación 0,0047 < umbral 0,4258"), tNeg.split("\n")[1]);
 ok("negativa: la RV reduce, con dos decimales",
    tNeg.includes("reduce a 0,02× las probabilidades"), tNeg);
-ok("negativa: SIN aviso (la etiqueta y la RV coinciden)", !tNeg.includes("⚠️"));
+// Aqui se afirmaba que un negativo NO llevaba ⚠️, porque el ⚠️ marcaba una sola
+// cosa: la DISCREPANCIA entre etiqueta y RV. Ahora marca dos, y lo que hay que
+// comprobar es que no se confundan. El negativo lleva el aviso de FALIBILIDAD -de
+// las placas que el cribado da por negativas, 1 de cada 22 tiene neumonia- y NO el
+// de discrepancia, que aqui seria falso: etiqueta y RV coinciden.
+ok("negativa: lleva el aviso de falibilidad",
+   tNeg.includes("⚠️ Un resultado negativo no descarta neumonía. Decide usted."), tNeg);
+ok("negativa: y NO el aviso de discrepancia, que aqui seria falso",
+   !tNeg.includes("no apoya el diagnóstico"), tNeg);
+// Y UNO SOLO. Antes la cota superior la ponia `!tNeg.includes("⚠️")`, que se
+// cayo al empezar el negativo a llevar aviso; el normalizador de la plantilla
+// borra las lineas de ⚠️, asi que una SEGUNDA pasaba verde por los dos lados.
+ok("negativa: un solo aviso, no dos",
+   (tNeg.match(/⚠️/g) || []).length === 1,
+   String((tNeg.match(/⚠️/g) || []).length));
+// Y LA DEL BORDE TAMBIEN LO LLEVA. El aviso no mira la RV a proposito -una
+// etiqueta negativa sale de cruda < 0,4258 y la RV no cruza 1 hasta 0,5786, asi
+// que un negativo la tiene SIEMPRE por debajo de 1- y esto es lo que sujeta ese
+// «a proposito»: si alguien le pusiera una condicion sobre la RV, las 216 placas
+// negativas mas cercanas al umbral se quedarian sin aviso, y son las que mas lo
+// necesitan.
+const tNegBorde = (await texto(R_NEGATIVA_BORDE)).texto;
+ok("negativa del borde (RV 0,5888): tambien lleva el aviso",
+   tNegBorde.includes("⚠️ Un resultado negativo no descarta neumonía. Decide usted."),
+   tNegBorde.split("\n").find((l) => l.includes("EVIDENCIA")));
+ok("negativa del borde: la etiqueta sigue siendo negativa",
+   tNegBorde.includes("CRIBADO — sin opacidad probable"),
+   tNegBorde.split("\n")[0]);
+ok("negativa del borde: y la evidencia dice REDUCE, no multiplica",
+   tNegBorde.includes("reduce a 0,59×") && !tNegBorde.includes("multiplica"),
+   tNegBorde.split("\n").find((l) => l.includes("EVIDENCIA")));
 // La cota del calibrador no se puede deshacer al presentarla: 344 de las 3 811
 // placas de prueba (9,03 %) tienen la calibrada por debajo de 0,005 y con dos
 // decimales a secas saldrian como «0,00», que es certeza de ausencia fabricada.
@@ -578,6 +773,10 @@ ok("negativa: la calibrada NUNCA se ensena como 0,00",
 // comparador, y «multiplica por N» frente a «reduce a N×».
 ok("negativa: la plantilla es la MISMA que la positiva", await (async () => {
   const quitar = (x) => x
+    // El aviso, que es justo lo que el §8 exceptua. Antes no hacia falta quitarlo
+    // porque ninguno de estos dos casos lo llevaba; ahora el negativo lleva el de
+    // falibilidad y el positivo concordante sigue sin llevar ninguno.
+    .replace(/\n⚠️[^\n]*/g, "")
     .replace(/< 0,01|> 0,99/g, "#")
     .replace(/multiplica por ([0-9,]+)/g, "V #")
     .replace(/reduce a ([0-9,]+)×/g, "V #")
@@ -619,6 +818,91 @@ ok("murmullo disminuido se dice cuando lo esta",
    (await desenlace({ error_cod: "N", resultado: R_POSITIVA, sintomas: SINTOMAS,
                       signos: Object.assign({}, SIGNOS, { murmullo_disminuido: true }) },
                     U, D)).texto.includes("murmullo disminuido"));
+
+// --------------------------------------------------------------------------
+// `signosValidos` ESTABA ENTERA SIN PROBAR, y es la que decide si el bloque
+// EXPLORADO se imprime o se sustituye por «(sin datos completos)».
+//
+// La mutacion que se colaba: cambiar su cuerpo entero por `return !!g` dejaba
+// las tres suites en verde. Y lo que sale entonces no es un mensaje feo, es un
+// mensaje FALSO:
+//
+//   crepitantes: "false"  -> la cadena "false" es CIERTA en JavaScript, asi que
+//                            el informe dice «crepitantes si» cuando el clinico
+//                            pulso No.
+//   murmullo ausente      -> `undefined` es falso, asi que dice «murmullo
+//                            normal» sobre un signo que nadie exploro.
+//   temperatura NaN       -> «NaN °C» en un informe clinico.
+//
+// Los tres son inalcanzables hoy -`Decidir` valida los rangos y la consulta
+// guarda con `::jsonb` con su tipo-, y esta funcion existe justo para que sigan
+// siendolo el dia que esas dos defensas cambien. Una guarda sin prueba es una
+// guarda que se puede borrar sin que nadie se entere.
+// --------------------------------------------------------------------------
+const SIN_DATOS = "EXPLORADO — (sin datos completos)";
+const SIGNOS_ROTOS = [
+  ["crepitantes como la CADENA \"false\"",
+   { crepitantes: "false" }, "crepitantes sí"],
+  ["crepitantes como la cadena vacia", { crepitantes: "" }, "crepitantes no"],
+  ["murmullo que no vino", { murmullo_disminuido: undefined }, "murmullo normal"],
+  ["temperatura como cadena", { temperatura_c: "38.2" }, "38,2 °C"],
+  ["temperatura NaN", { temperatura_c: NaN }, "NaN"],
+  ["frecuencia como cadena", { frecuencia_cardiaca: "104" }, "104 lpm"],
+  // Un objeto VACIO, y no `null`: `Desenlace` hace `e.signos || d.signos`, asi
+  // que un `null` cae al respaldo del nodo `Decidir` -que trae los buenos- y
+  // no llega nunca a la guarda. Con `{}` si llega.
+  ["un objeto de signos vacio", {}, "°C"],
+];
+for (const [etiqueta, parche, loQueDiriaSiPasara] of SIGNOS_ROTOS) {
+  const signos = Object.keys(parche).length ? Object.assign({}, SIGNOS, parche) : {};
+  const s = await desenlace({ error_cod: "N", resultado: R_POSITIVA,
+                              sintomas: SINTOMAS, signos }, U, D);
+  ok(`signos invalidos (${etiqueta}): el bloque dice que faltan datos`,
+     s.texto.includes(SIN_DATOS),
+     s.texto.split("\n").find((l) => l.includes("EXPLORADO")));
+  ok(`signos invalidos (${etiqueta}): y NO afirma «${loQueDiriaSiPasara}»`,
+     !s.texto.includes(loQueDiriaSiPasara),
+     s.texto.split("\n").find((l) => l.includes("EXPLORADO")));
+}
+// --------------------------------------------------------------------------
+// EL CUESTIONARIO QUE LA LIMPIEZA YA BORRO.
+//
+// `cuestionarios` se borra a los 7 dias (§5.4) y la limpieza no mira si alguna
+// sesion de profesional sigue apuntando a ese codigo. Una revision lo reprodujo
+// contra una Postgres de verdad: `consultas.sintomas` acaba en NULL, en
+// silencio, y al redactor le llegan los sintomas vacios.
+//
+// Lo que sujeta esto es la primera linea de `redactarSintomas`. Sin ella,
+// `ORDEN_SINTOMAS.map()` entra a leer propiedades de `null`, el nodo LANZA, y
+// el profesional -que acaba de mandar la radiografia y esta esperando- no
+// recibe NADA. El peor desenlace del §9, por una puerta que el §9 no mira.
+//
+// Y lo que tiene que pasar en su lugar: que el informe llegue ENTERO. Los
+// sintomas del paciente se han perdido, pero la imagen no, y el cribado y la
+// evidencia son lo que el clinico vino a buscar.
+// --------------------------------------------------------------------------
+const D_SIN_CUESTIONARIO = Object.assign({}, D, { sintomas: null });
+const sSinQ = await desenlace({ error_cod: "N", detalle: "",
+  resultado: R_POSITIVA, sintomas: null, signos: SIGNOS }, U, D_SIN_CUESTIONARIO);
+ok("cuestionario borrado: el bot contesta igual, no se queda callado",
+   sSinQ.texto.length > 80, JSON.stringify(sSinQ.texto.slice(0, 60)));
+ok("cuestionario borrado: lo dice, en vez de inventarse los sintomas",
+   sSinQ.texto.includes("REFERIDO POR EL PACIENTE \u2014 (el cuestionario ya no est\u00e1)"),
+   sSinQ.texto.split(NL).find((l) => l.includes("REFERIDO")));
+ok("cuestionario borrado: y el informe de la imagen llega entero",
+   sSinQ.texto.includes("CRIBADO \u2014 opacidad probable") &&
+   sSinQ.texto.includes("EVIDENCIA DE LA IMAGEN \u2014") &&
+   sSinQ.texto.includes("EXPLORADO \u2014 38,2 \u00b0C"),
+   JSON.stringify(sSinQ.texto.slice(0, 70)));
+ok("cuestionario borrado: y la consulta se registra igual",
+   sSinQ.registrar === "S" && sSinQ.resultado_cod !== "N", sSinQ.registrar);
+
+// Y al reves: los signos buenos SI se imprimen. Sin esto, un `signosValidos`
+// que devolviera `false` siempre pasaria todo lo de arriba y el clinico no
+// veria nunca la exploracion que el mismo acaba de meter.
+ok("y con los signos buenos el bloque se imprime entero",
+   tPos.includes("EXPLORADO — 38,2 °C, 104 lpm, crepitantes sí, murmullo normal") &&
+   !tPos.includes(SIN_DATOS), tPos.split("\n").find((l) => l.includes("EXPLORADO")));
 // El texto libre YA NO ESTA en el informe: va en un mensaje aparte. Lo que aqui
 // se comprueba es que el bloque de la clinica no cambia por lo que el paciente
 // escriba; el mensaje aparte se comprueba entero en la seccion L2.
@@ -666,12 +950,154 @@ for (const [cod, termina] of SPEC_9) {
   // EL CRITERIO 7, para las once.
   ok(`${cod}: NINGUNA cifra de probabilidad en el mensaje`,
      !CIFRA_DE_PROBABILIDAD.test(s.texto), s.texto.replace(/\n/g, " | "));
-  ok(`${cod}: y NINGUN resultado junto al rechazo`, s.resultado_cod === "N");
+  // NO PODIA CAER, y por eso se le mete un resultado de verdad: todas las
+  // entradas de este bucle llevan `resultado: null`, asi que afirmar que no
+  // sale resultado era afirmar que null no es un resultado. Con un resultado
+  // POSITIVO al lado del codigo de error, lo que se comprueba es la regla del
+  // §9 de verdad: o hay desenlace clinico o hay rechazo, nunca los dos.
+  const conResultado = await desenlace(
+    { error_cod: cod, detalle: DETALLES[cod] || "", resultado: R_POSITIVA,
+      sintomas: SINTOMAS, signos: SIGNOS }, U, D);
+  ok(`${cod}: y NINGUN resultado junto al rechazo, ni forzandolo`,
+     conResultado.resultado_cod === "N" &&
+     !conResultado.texto.includes("CRIBADO"),
+     JSON.stringify(conResultado.resultado_cod));
 }
+
+// --------------------------------------------------------------------------
+// QUE SIGUE ESPERANDO EL BOT, sobre LA TABLA DEL PROPIO NODO.
+//
+// La primera version de esto recorria `SPEC_9`, y con eso la promesa «una fila
+// nueva no puede nacer sin coletilla sin que esto falle» era FALSA: `SPEC_9` es
+// una lista escrita a mano, y `descarga_fallida` -que existe en la tabla y no en
+// el §9- no estaba en ella. Quitarle su `espera` dejaba la suite en verde. Una
+// invariante sobre una enumeracion que hay que recordar actualizar no es una
+// invariante.
+//
+// `SPEC_9` sigue escrita a mano, y debe seguirlo: es la transcripcion del spec, y
+// afirma que el spec dice que `fuera_de_alcance` termina. Si leyera `fila.termina`
+// del nodo estaria afirmando el codigo contra si mismo.
+//
+// Esto es otra cosa: una invariante INTERNA -la coletilla concuerda con
+// `termina`- comprobada sobre todas las filas que hay, no sobre las que alguien
+// se acordo de listar.
+// --------------------------------------------------------------------------
+function tablaDelNodo() {
+  const fuente = codigo("Desenlace");
+  const i = fuente.indexOf("const ERRORES = {");
+  const j = fuente.indexOf("\n};", i);
+  if (i < 0 || j < 0) { throw new Error("no encuentro ERRORES en el nodo"); }
+  return new Function(fuente.slice(i, j + 3) + "\nreturn ERRORES;")();
+}
+const TABLA = tablaDelNodo();
+
+// `no_autorizado` es la UNICA fila que no termina y no lleva coletilla, y esta
+// nombrada aqui para que quitarle esa excepcion tambien ponga esto rojo.
+const SIN_COLETILLA_A_PROPOSITO = ["no_autorizado"];
+
+ok("la tabla del nodo se lee entera", Object.keys(TABLA).length >= 13,
+   String(Object.keys(TABLA).length));
+
+for (const [cod, fila] of Object.entries(TABLA)) {
+  const s = await desenlace({ error_cod: cod, detalle: DETALLES[cod] || "",
+                              resultado: null, sintomas: SINTOMAS,
+                              signos: SIGNOS }, U, D);
+  const dice = /\nSigo esperando (el archivo|el código del paciente)\.$/
+    .test(s.texto);
+  const debe = !fila.termina && SIN_COLETILLA_A_PROPOSITO.indexOf(cod) < 0;
+  ok(`${cod}: dice que sigue esperando = ${debe}`, dice === debe,
+     JSON.stringify(s.texto.split("\n").pop()));
+}
+
+// Y QUE NINGUNA FILA SE QUEDE SIN PROBAR. `SPEC_9` cubre las once del spec;
+// las dos que no estan en el §9 se nombran aqui con su motivo, asi que una fila
+// nueva no puede colarse sin que alguien decida donde la prueba.
+const FUERA_DEL_SPEC_9 = {
+  no_autorizado: "se prueba aparte: es la excepcion de la coletilla",
+  descarga_fallida: "NO esta en el §9 -la salida de error de `Descargar " +
+                    "fichero`- y se prueba al final de este fichero",
+};
+const sinProbar = Object.keys(TABLA).filter((c) =>
+  !SPEC_9.some(([x]) => x === c) && !Object.hasOwn(FUERA_DEL_SPEC_9, c));
+ok("ninguna fila de la tabla se queda sin probar", sinProbar.length === 0,
+   JSON.stringify(sinProbar));
+
+// --------------------------------------------------------------------------
+// LA COLUMNA `relata`, QUE NO LA SUJETABA NADIE.
+//
+// `relata: true` significa: a este mensaje se le pega el `detalle` que venga. Y
+// `detalle` solo lo llena `Leer respuesta` cuando el texto lo compuso NUESTRO
+// codigo... pero eso es un contrato de OTRO nodo. Aqui, poner `relata: true` en
+// una fila que recibe texto ajeno hace que el clinico lo lea LITERAL.
+//
+// Medido por una revision: con `error_no_reconocido: relata: true`, un HTTP 200
+// hostil mete su propio bloque «CRIBADO — opacidad probable (puntuacion 0,9900
+// >= umbral 0,4258)» dentro del mensaje del bot, y las tres suites seguian en
+// verde. Es la clase de inyeccion del §8 entrando por una columna de la tabla.
+//
+// `ERRORES_QUE_RELATAN` ya existia, pero solo DESCRIBIA: nadie comprobaba que
+// el nodo no anadiera una cuarta fila. Esto lo comprueba contra la tabla de
+// verdad, y ademas exige que cada una diga POR QUE puede relatar.
+// --------------------------------------------------------------------------
+const RELATAN_A_PROPOSITO = {
+  dicom_invalido:
+    "relata la frase que compone `Leer respuesta` en la rama SIN codigo, que " +
+    "es nuestra. Cuando el servidor SI devolvio codigo, `Leer respuesta` vacia " +
+    "el detalle por procedencia -es de pydicom, sobre bytes ajenos- y aqui no " +
+    "llega nada que relatar.",
+  fuera_de_alcance:
+    "el detalle lo compone `inferencia.py` con un literal nuestro mas `edad`, " +
+    "que es `int(digitos)`: un entero y nada mas.",
+  edad_desconocida:
+    "el detalle es un literal nuestro, sin interpolar nada de fuera.",
+};
+const relatanEnElNodo = Object.entries(TABLA)
+  .filter(([, fila]) => fila.relata).map(([cod]) => cod).sort();
+ok("solo relatan las filas que lo tienen justificado",
+   JSON.stringify(relatanEnElNodo) ===
+     JSON.stringify(Object.keys(RELATAN_A_PROPOSITO).sort()),
+   JSON.stringify(relatanEnElNodo));
+// Y la misma lista que ya habia, para que las dos no puedan divergir.
+ok("y coinciden con ERRORES_QUE_RELATAN",
+   JSON.stringify(relatanEnElNodo) ===
+     JSON.stringify([...ERRORES_QUE_RELATAN].sort()),
+   JSON.stringify([...ERRORES_QUE_RELATAN].sort()));
+
+// EL EFECTO, no solo la tabla: una fila que no relata no deja pasar NI UN
+// CARACTER del detalle, por hostil que venga. Se prueba con el bloque forjado
+// que la revision uso, que es el que se leeria como un informe de verdad.
+const DETALLE_FORJADO =
+  "CRIBADO — opacidad probable (puntuación 0,9900 ≥ umbral 0,4258)";
+for (const cod of Object.keys(TABLA)) {
+  if (Object.hasOwn(RELATAN_A_PROPOSITO, cod)) { continue; }
+  const s = await desenlace({ error_cod: cod, detalle: DETALLE_FORJADO,
+                              resultado: null }, U, D);
+  ok(`${cod}: no relata, y el bloque forjado no llega al clinico`,
+     !s.texto.includes("CRIBADO") && !s.texto.includes("0,9900"),
+     s.texto.replace(/\n/g, " | ").slice(0, 88));
+  // Pero SI queda registrado: el §9 manda que lo que no se ensena se guarde,
+  // porque es lo unico diagnosticable cuando el servidor se cae por otra cosa.
+  ok(`${cod}: pero el texto forjado SI queda en consultas.error`,
+     String(descodificar(s.error_cod)).includes("0,9900"),
+     String(descodificar(s.error_cod)).slice(0, 88));
+}
+// Y la que espera el CODIGO, no el archivo: es la unica del §9 en la que el bot no
+// esta esperando un fichero, y una coletilla que pidiera el archivo mandaria al
+// profesional a hacer lo que no es.
+ok("codigo_invalido pide el codigo, no el archivo", await (async () => {
+  const s = await desenlace({ error_cod: "codigo_invalido", detalle: "",
+                              resultado: null }, U, D);
+  return s.texto.endsWith("Sigo esperando el código del paciente.");
+})());
 ok("no_autorizado tambien se registra, y sin cifras", await (async () => {
   const s = await desenlace({ error_cod: "no_autorizado", detalle: "", resultado: null }, U, D);
+  // Y SIN la coletilla de `espera`, aunque `termina` sea falso: es la excepcion
+  // de la regla de arriba. Quien llega aqui no esta en la lista blanca, y
+  // «Sigo esperando el archivo.» le confirmaria que hay un bot escuchando
+  // detras y que lo que manda le llega. El §9 pide que no se le den pistas.
   return s.registrar === "S" && descodificar(s.error_cod) === "no_autorizado" &&
-         !CIFRA_DE_PROBABILIDAD.test(s.texto) && s.resultado_cod === "N" && s.termina === "N";
+         !CIFRA_DE_PROBABILIDAD.test(s.texto) && s.resultado_cod === "N" &&
+         s.termina === "N" && !s.texto.includes("Sigo esperando");
 })());
 const sEdad = await desenlace({ error_cod: "fuera_de_alcance",
   detalle: DETALLES.fuera_de_alcance, resultado: null }, U, D);
@@ -717,7 +1143,8 @@ for (const [etiqueta, forjado] of FORJADAS) {
      JSON.stringify(leido.detalle));
   const s = await desenlace(leido, U, D);
   ok(`   el mensaje es la redaccion del §9 y nada mas`,
-     s.texto === "No pude leer esa radiografía.", JSON.stringify(s.texto));
+     s.texto === "No pude leer esa radiografía.\n\nSigo esperando el archivo.",
+     JSON.stringify(s.texto));
   ok(`   pero el texto forjado SI queda en consultas.error para diagnosticar`,
      descodificar(s.error_cod).includes(forjado.slice(0, 40)),
      descodificar(s.error_cod).slice(0, 90));
@@ -1029,6 +1456,16 @@ for (const [etiqueta, libre] of [
   ["600 tabuladores y una x", "\t".repeat(600) + "x"],
   ["600 saltos de linea y una x", NL.repeat(600) + "x"],
   ["500 espacios justos", " ".repeat(500)],
+  // LOS QUE `trim()` NO QUITABA. Medido: el `\s` de JavaScript cubre U+00A0,
+  // U+FEFF y U+2028, y estos seis no. Con 500 copias de cualquiera, la guarda
+  // daba el texto por lleno, el informe prometia «El paciente escribio un
+  // comentario» y la segunda burbuja se veia VACIA.
+  ["500 espacios de ancho cero (U+200B)", "\u200B".repeat(500)],
+  ["500 NEXT LINE (U+0085)", "\u0085".repeat(500)],
+  ["500 juntapalabras (U+2060)", "\u2060".repeat(500)],
+  ["500 separadores mongoles (U+180E)", "\u180E".repeat(500)],
+  ["500 marcas de orden de byte (U+FEFF)", "\uFEFF".repeat(500)],
+  ["mezcla de invisibles", ("\u200B\u0085\u2060\u180E\uFEFF ").repeat(80)],
 ]) {
   const s = await informeDe(Object.assign({}, SINTOMAS, { texto_libre: libre }));
   ok(`${etiqueta}: no se manda segundo mensaje`, s.texto_paciente === "",
@@ -1038,8 +1475,9 @@ for (const [etiqueta, libre] of [
 }
 ok("decidir con el original en vez de con el recorte volveria a mentir",
    await (async () => {
-     const mutado = mutar("Desenlace", "if (recortado.trim() === '') { return ''; }",
-                          "if (libre.trim() === '') { return ''; }");
+     const mutado = mutar("Desenlace",
+                          "if (!TIENE_CONTENIDO.test(recortado)) { return ''; }",
+                          "if (!TIENE_CONTENIDO.test(libre)) { return ''; }");
      const r = (await correr(mutado, { json: { error_cod: "N", detalle: "",
        resultado: R_NEGATIVA, signos: SIGNOS, codigo: "K7FM2P",
        sintomas: Object.assign({}, SINTOMAS,
@@ -1078,6 +1516,33 @@ for (const [etiqueta, r, esperado] of [
      (esperado === MAYOR_IGUAL) === cierto,
      t.split(NL)[1]);
 }
+// EL CASO QUE DISTINGUE LAS DOS IMPLEMENTACIONES, y sin el este apartado no
+// sostenia su titulo: los tres de arriba son CONCORDANTES -etiqueta y numeros
+// dicen lo mismo-, y ahi `positivo ? MAYOR_IGUAL : "<"` acierta igual. Una
+// revision lo demostro volviendo a esa version: la suite seguia verde.
+//
+// El caso discordante es alcanzable. `Leer respuesta` comprueba que la
+// `clasificacion` sea una de las DOS que el servidor puede emitir, pero NO que
+// concuerde con los numeros: un servidor que mande `sin_opacidad_probable` con
+// la cruda por encima del umbral pasa ese filtro entero.
+//
+// Con el comparador sacado de la ETIQUETA, el mensaje dice «sin opacidad
+// probable» y «0,5649 < umbral 0,4258» a la vez, y la segunda mitad es
+// ARITMETICAMENTE FALSA sobre dos numeros que estan ahi impresos. Sacandolo de
+// los numeros, la desigualdad es siempre cierta sobre lo que se ve; la etiqueta
+// puede seguir sin concordar, pero eso ya no lo puede arreglar este nodo.
+const R_DISCORDANTE = Object.assign({}, R_BANDA,
+                                    { clasificacion: "sin_opacidad_probable" });
+const tDisc = (await desenlace({ error_cod: "N", detalle: "",
+  resultado: R_DISCORDANTE, sintomas: SINTOMAS, signos: SIGNOS }, U, D)).texto;
+ok("discordante: la desigualdad sale de los NUMEROS y es cierta",
+   tDisc.includes(dec4(R_DISCORDANTE.probabilidad_cruda) + " " + MAYOR_IGUAL +
+                  " umbral"),
+   tDisc.split(NL)[1]);
+ok("discordante: y NO se imprime la desigualdad falsa",
+   !tDisc.includes(dec4(R_DISCORDANTE.probabilidad_cruda) + " < umbral"),
+   tDisc.split(NL)[1]);
+
 // Y una clasificacion o un structuredContent incompletos no llegan al redactor.
 for (const [etiqueta, r] of [
   ["clasificacion desconocida", Object.assign({}, R_BANDA, {clasificacion: "quiza"})],
