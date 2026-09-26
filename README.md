@@ -177,7 +177,9 @@ trae además un bloque `combinacion`: la probabilidad posterior de opacidad
 compatible, calculada como `odds(PREVALENCIA_LOCAL) × RV clínica × RV imagen`.
 Se entrega como **horquilla** entre el supuesto de independencia y el de
 dependencia total cuando las dos evidencias apuntan al mismo lado, y como un
-número cuando se contradicen. Sin esos datos, la respuesta es la de siempre.
+número —o, si no se sabe si hay asma, como la horquilla de las dos
+puntuaciones posibles— cuando se contradicen. Sin esos datos, la respuesta es
+la de siempre.
 `PREVALENCIA_LOCAL` es obligatoria, como `AUC_VALIDACION`, y arranca en
 `0.1466` (la cohorte de Heckerling). Diseño y cifras:
 `docs/superpowers/specs/2026-09-26-sp4-combinacion-bayesiana-design.md`.

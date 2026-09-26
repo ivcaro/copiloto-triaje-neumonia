@@ -643,7 +643,7 @@ docker compose exec copiloto-mcp python -c "import urllib.request,json; print(js
 Respuesta esperada:
 
 ```
-{'estado': 'listo', 'modelo': 'efficientnet_b0_320px', 'umbral': 0.4258, 'calibrador': 'efficientnet_b0_320px_lote24_4+20ep'}
+{'estado': 'listo', 'modelo': 'efficientnet_b0_320px', 'umbral': 0.4258, 'calibrador': 'efficientnet_b0_320px_lote24_4+20ep', 'prevalencia_local': 0.1466}
 ```
 
 ### Comprobar que se alcanza por nombre de servicio
@@ -762,6 +762,12 @@ Cuatro cosas que esa línea tiene por un motivo:
   arrancando: un contenedor `Up` con los pesos mal cargados se ve idéntico a
   uno sano. Y `curl localhost:8000` **desde el host falla aunque todo esté
   perfecto**, porque el compose no publica puertos a propósito.
+
+**Primero el servidor, después el bot.** Cuando un cambio toca los dos (como
+SP4), se redespliega el servidor con esa línea y solo después se publican los
+nodos de n8n. Con el orden al revés nada se rompe, pero todos los informes
+dicen «SIN COMBINAR — el copiloto no devolvió la combinación en esta
+respuesta.»: ese es el síntoma.
 
 **Los pesos sobreviven al `git pull`.** Están en `.gitignore`, y ni `pull`, ni
 `checkout`, ni `reset --hard` tocan un fichero ignorado y sin seguimiento. El
@@ -1036,7 +1042,7 @@ sobre adultos.
 ## 10. Variables de entorno
 
 Se declaran en el `docker-compose.yml`. Solo hay que tocarlas si se reentrena
-el modelo.
+el modelo o hay un dato local de prevalencia (SP4).
 
 | Variable | Valor por defecto | Qué es |
 | :--- | :--- | :--- |
