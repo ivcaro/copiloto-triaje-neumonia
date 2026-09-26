@@ -31,6 +31,7 @@ import json
 import pathlib
 import re
 import sys
+import threading
 
 import psycopg
 
@@ -252,6 +253,74 @@ with psycopg.connect(DSN, autocommit=True) as cx:
     print("\n12. el flujo NUNCA escribe en consultas (es del profesional)")
     comprobar("consultas sigue vacia", cur.execute(
         "SELECT count(*) FROM consultas").fetchone()[0] == 0)
+
+
+# ---------------------------------------------------------------------------
+# 13. DOS MENSAJES A LA VEZ EN EL PASO 8
+#
+# Necesita DOS conexiones de verdad, no dos llamadas seguidas: lo que se prueba
+# es el cerrojo de fila de Postgres, y con una sola conexion las dos sentencias
+# van en serie y no hay nada que probar.
+#
+# Medido antes del arreglo: dos cuestionarios, DOS codigos al mismo paciente y
+# `limite_paciente` en 2, o sea dos de sus tres intentos diarios gastados por un
+# doble toque. Y `cuestionarios_iniciados` se queda en 1, con lo que el panel
+# del §16 ensena mas completados que iniciados, que es imposible y hace dudar
+# de todo lo demas que ensena.
+#
+# El arreglo es que `ses` BORRE la sesion en vez de leerla: un
+# `DELETE ... RETURNING` toma el cerrojo y solo una de las dos transacciones se
+# lleva la fila.
+# ---------------------------------------------------------------------------
+print("\n13. dos mensajes a la vez en el paso 8 dan UN solo codigo")
+CHAT_CARRERA = 999777001
+_sql_completar = re.sub(r"\$(\d+)", lambda m: "%(p" + m.group(1) + ")s",
+                        NODOS["Completar"]["parameters"]["query"])
+
+with psycopg.connect(DSN, autocommit=True) as cx, cx.cursor() as cur:
+    cur.execute("TRUNCATE sesiones_paciente, cuestionarios,"
+                " cuestionarios_iniciados, limite_paciente, consultas")
+    cur.execute("INSERT INTO sesiones_paciente (chat_id, paso, respuestas,"
+                " consentido_en) VALUES (%s, 8, %s::jsonb, now())",
+                (CHAT_CARRERA, json.dumps({"fiebre": "si", "tos": "seca"})))
+
+_salidas, _errores, _cerrojo = [], [], threading.Lock()
+
+
+def _un_mensaje():
+    try:
+        with psycopg.connect(DSN, autocommit=True) as c2, c2.cursor() as k:
+            _barrera.wait()
+            k.execute(_sql_completar, {"p1": CHAT_CARRERA})
+            fila = k.fetchone()
+            cols = [d.name for d in k.description]
+        with _cerrojo:
+            _salidas.append(dict(zip(cols, fila)) if fila else None)
+    except Exception as exc:                              # noqa: BLE001
+        with _cerrojo:
+            _errores.append(f"{type(exc).__name__}: {exc}")
+
+
+_barrera = threading.Barrier(2)
+_hilos = [threading.Thread(target=_un_mensaje) for _ in range(2)]
+for _h in _hilos:
+    _h.start()
+for _h in _hilos:
+    _h.join()
+
+comprobar("las dos consultas terminan sin reventar", not _errores,
+          "; ".join(_errores)[:160])
+with psycopg.connect(DSN, autocommit=True) as cx, cx.cursor() as cur:
+    comprobar("se crea UN cuestionario, no dos", cur.execute(
+        "SELECT count(*) FROM cuestionarios").fetchone()[0] == 1)
+    comprobar("se gasta UN intento del limite diario, no dos", cur.execute(
+        "SELECT coalesce(sum(cuantos), 0) FROM limite_paciente"
+    ).fetchone()[0] == 1)
+    comprobar("la sesion queda borrada", cur.execute(
+        "SELECT count(*) FROM sesiones_paciente").fetchone()[0] == 0)
+_codigos = [s["codigo"] for s in _salidas if s and s.get("codigo")]
+comprobar("solo UNA de las dos entrega codigo", len(_codigos) == 1,
+          str(_codigos))
 
 print(f"\n{'TODO VERDE' if not fallos else 'FALLOS: ' + ', '.join(fallos)}")
 sys.exit(1 if fallos else 0)
