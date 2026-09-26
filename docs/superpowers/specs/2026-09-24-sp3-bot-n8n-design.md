@@ -380,6 +380,10 @@ Por eso, además de la retención de nuestras tablas:
   none`** y **`Save failed production executions: none`**, o con la retención
   mínima que n8n permita sin tocar la configuración global del cliente.
 - Ningún nodo escribe el base64 en un campo que se persista.
+- **Desde SP4**, con la placa viajan al copiloto los cinco datos de la regla de
+  Heckerling —temperatura, pulso, crepitantes, murmullo y asma—, y nada más del
+  cuestionario. Van dentro del mismo cuerpo JSON-RPC que el base64, por la misma
+  red privada, y con la misma retención en `none`.
 - Si n8n no permitiera desactivarlo por workflow, se declara como deuda (§18) y
   se acuerda con el cliente (§17) antes de meter datos reales.
 
@@ -617,6 +621,13 @@ EVIDENCIA DE LA IMAGEN — reduce a 0,87× las probabilidades a favor de neumon�
 
 (Literal, de `pruebas/corpus/03-banda_contradictoria/`, placa `03cf9ba9…`, cruda
 0,5649.)
+
+**Desde SP4 (H6)**, entre `EXPLORADO` y el descargo va un cuarto bloque,
+`COMBINADO — …` (o `SIN COMBINAR — …` cuando faltan datos), y el descargo se
+queda en «Esto no es un diagnóstico.»: la frase «la combinación llega en la
+siguiente entrega» ya no sale. Los ejemplos de arriba son los de SP3 tal como
+el corpus los registró; el formato del bloque nuevo está en el §8 del spec de
+SP4.
 
 ### El aviso es asimétrico a propósito
 

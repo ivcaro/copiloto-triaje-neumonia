@@ -165,8 +165,9 @@ publica el 18000 en **todas** las interfaces del VPS, y eso deja un endpoint de
 inferencia **sin autenticación** abierto a internet en una máquina compartida con
 24 contenedores ajenos. Con la dirección delante solo escucha en el loopback del
 host — que es exactamente por donde entra el túnel de la línea siguiente, así
-que funciona igual y no abre nada. (`tests/test_contrato_mcp.py` todavía imprime
-la forma sin dirección en su mensaje de salto; la buena es esta.)
+que funciona igual y no abre nada. (`tests/test_contrato_mcp.py` ya imprime esta
+misma forma en su mensaje de salto: las dos órdenes llevan `127.0.0.1:` y
+`PREVALENCIA_LOCAL`.)
 
 Y en tu Windows, si el contenedor está en el VPS, un túnel más:
 

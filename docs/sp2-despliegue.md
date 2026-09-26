@@ -773,7 +773,7 @@ despliegue, y hay que revisar que `UMBRAL` y `AUC_VALIDACION` del compose sigan
 describiendo *esos* pesos:
 
 ```bash
-cd /opt/copiloto && sha256sum servidor/pesos_modelo_cpu.pt && grep -nE 'UMBRAL|AUC_VALIDACION' servidor/docker-compose.yml
+cd /opt/copiloto && sha256sum servidor/pesos_modelo_cpu.pt && grep -nE 'UMBRAL|AUC_VALIDACION|PREVALENCIA_LOCAL' servidor/docker-compose.yml
 ```
 
 **El disco, cada pocos redespliegues.** Como el tag es fijo, cada
@@ -1042,6 +1042,7 @@ el modelo.
 | :--- | :--- | :--- |
 | `UMBRAL` | `0.4258` | punto de operación; el de especificidad 0,70 y recall 0,8815 |
 | `AUC_VALIDACION` | **ninguno: es obligatoria** (el compose la pone a `0.8827`) | AUC en validación, **se le muestra al profesional** en cada respuesta |
+| `PREVALENCIA_LOCAL` | **ninguno: es obligatoria** (el compose la pone a `0.1466`) | probabilidad previa de la combinación bayesiana (SP4 §5): 134/914, la cohorte de derivación de Heckerling. **Se le muestra al profesional** en cada informe con combinación. Se cambia aquí, con su fuente, cuando haya dato del entorno real |
 | `RUTA_PESOS` | `/modelo/pesos_modelo_cpu.pt` | dentro de la imagen |
 | `RUTA_CALIBRADOR` | `/modelo/calibrador.json` | dentro de la imagen |
 | `OMP_NUM_THREADS` | `2` | hilos que usa torch. **Tiene que valer lo mismo que `cpus`** del bloque de límites: torch no lee el cgroup y sin esto abriría un hilo por núcleo del host |
@@ -1058,6 +1059,10 @@ silenciosa que existe para evitar: sobreviviría a un reentrenamiento y nadie se
 enteraría. El compose ya la declara, así que en el despliegue normal esto no se
 nota; se nota si alguien levanta el contenedor a mano y se la olvida, que es
 justo cuando conviene notarlo.
+
+`PREVALENCIA_LOCAL` sigue la misma regla y por la misma razón. Y `/salud` la
+publica (`"prevalencia_local": 0.1466`): es la forma de saber, desde fuera, que
+el contenedor que responde ya es el de SP4.
 
 ## 11. Cuando algo va mal
 
