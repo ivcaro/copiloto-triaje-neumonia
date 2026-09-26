@@ -841,6 +841,39 @@ for (const [etiqueta, parche, loQueDiriaSiPasara] of SIGNOS_ROTOS) {
      !s.texto.includes(loQueDiriaSiPasara),
      s.texto.split("\n").find((l) => l.includes("EXPLORADO")));
 }
+// --------------------------------------------------------------------------
+// EL CUESTIONARIO QUE LA LIMPIEZA YA BORRO.
+//
+// `cuestionarios` se borra a los 7 dias (§5.4) y la limpieza no mira si alguna
+// sesion de profesional sigue apuntando a ese codigo. Una revision lo reprodujo
+// contra una Postgres de verdad: `consultas.sintomas` acaba en NULL, en
+// silencio, y al redactor le llegan los sintomas vacios.
+//
+// Lo que sujeta esto es la primera linea de `redactarSintomas`. Sin ella,
+// `ORDEN_SINTOMAS.map()` entra a leer propiedades de `null`, el nodo LANZA, y
+// el profesional -que acaba de mandar la radiografia y esta esperando- no
+// recibe NADA. El peor desenlace del §9, por una puerta que el §9 no mira.
+//
+// Y lo que tiene que pasar en su lugar: que el informe llegue ENTERO. Los
+// sintomas del paciente se han perdido, pero la imagen no, y el cribado y la
+// evidencia son lo que el clinico vino a buscar.
+// --------------------------------------------------------------------------
+const D_SIN_CUESTIONARIO = Object.assign({}, D, { sintomas: null });
+const sSinQ = await desenlace({ error_cod: "N", detalle: "",
+  resultado: R_POSITIVA, sintomas: null, signos: SIGNOS }, U, D_SIN_CUESTIONARIO);
+ok("cuestionario borrado: el bot contesta igual, no se queda callado",
+   sSinQ.texto.length > 80, JSON.stringify(sSinQ.texto.slice(0, 60)));
+ok("cuestionario borrado: lo dice, en vez de inventarse los sintomas",
+   sSinQ.texto.includes("REFERIDO POR EL PACIENTE \u2014 (el cuestionario ya no est\u00e1)"),
+   sSinQ.texto.split(NL).find((l) => l.includes("REFERIDO")));
+ok("cuestionario borrado: y el informe de la imagen llega entero",
+   sSinQ.texto.includes("CRIBADO \u2014 opacidad probable") &&
+   sSinQ.texto.includes("EVIDENCIA DE LA IMAGEN \u2014") &&
+   sSinQ.texto.includes("EXPLORADO \u2014 38,2 \u00b0C"),
+   JSON.stringify(sSinQ.texto.slice(0, 70)));
+ok("cuestionario borrado: y la consulta se registra igual",
+   sSinQ.registrar === "S" && sSinQ.resultado_cod !== "N", sSinQ.registrar);
+
 // Y al reves: los signos buenos SI se imprimen. Sin esto, un `signosValidos`
 // que devolviera `false` siempre pasaria todo lo de arriba y el clinico no
 // veria nunca la exploracion que el mismo acaba de meter.
@@ -1438,6 +1471,33 @@ for (const [etiqueta, r, esperado] of [
      (esperado === MAYOR_IGUAL) === cierto,
      t.split(NL)[1]);
 }
+// EL CASO QUE DISTINGUE LAS DOS IMPLEMENTACIONES, y sin el este apartado no
+// sostenia su titulo: los tres de arriba son CONCORDANTES -etiqueta y numeros
+// dicen lo mismo-, y ahi `positivo ? MAYOR_IGUAL : "<"` acierta igual. Una
+// revision lo demostro volviendo a esa version: la suite seguia verde.
+//
+// El caso discordante es alcanzable. `Leer respuesta` comprueba que la
+// `clasificacion` sea una de las DOS que el servidor puede emitir, pero NO que
+// concuerde con los numeros: un servidor que mande `sin_opacidad_probable` con
+// la cruda por encima del umbral pasa ese filtro entero.
+//
+// Con el comparador sacado de la ETIQUETA, el mensaje dice «sin opacidad
+// probable» y «0,5649 < umbral 0,4258» a la vez, y la segunda mitad es
+// ARITMETICAMENTE FALSA sobre dos numeros que estan ahi impresos. Sacandolo de
+// los numeros, la desigualdad es siempre cierta sobre lo que se ve; la etiqueta
+// puede seguir sin concordar, pero eso ya no lo puede arreglar este nodo.
+const R_DISCORDANTE = Object.assign({}, R_BANDA,
+                                    { clasificacion: "sin_opacidad_probable" });
+const tDisc = (await desenlace({ error_cod: "N", detalle: "",
+  resultado: R_DISCORDANTE, sintomas: SINTOMAS, signos: SIGNOS }, U, D)).texto;
+ok("discordante: la desigualdad sale de los NUMEROS y es cierta",
+   tDisc.includes(dec4(R_DISCORDANTE.probabilidad_cruda) + " " + MAYOR_IGUAL +
+                  " umbral"),
+   tDisc.split(NL)[1]);
+ok("discordante: y NO se imprime la desigualdad falsa",
+   !tDisc.includes(dec4(R_DISCORDANTE.probabilidad_cruda) + " < umbral"),
+   tDisc.split(NL)[1]);
+
 // Y una clasificacion o un structuredContent incompletos no llegan al redactor.
 for (const [etiqueta, r] of [
   ["clasificacion desconocida", Object.assign({}, R_BANDA, {clasificacion: "quiza"})],
