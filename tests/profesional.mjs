@@ -536,6 +536,29 @@ ok("el base64 del DICOM NO viaja en la salida de este nodo (§5.4)", await (asyn
   return !("dicom_base64" in s) && !("cuerpo" in s);
 })());
 
+// LOS DOS `TOPE_DETALLE`, que estan duplicados en dos nodos y nada los ataba.
+// `Leer respuesta` acota en el origen y `Desenlace` otra vez, porque a este
+// ultimo lo alimentan cuatro sitios y basta que uno no lo haga. Si divergieran,
+// el de `Desenlace` manda para todo lo que pasa por `Leer respuesta` y el otro
+// no serviria de nada: dos numeros donde deberia haber uno, y el segundo
+// callado.
+const topeDe = (nombre) => {
+  const m = /const TOPE_DETALLE = (\d+);/.exec(codigo(nombre));
+  return m ? Number(m[1]) : null;
+};
+ok("los dos nodos declaran el MISMO tope de detalle",
+   topeDe("Desenlace") !== null && topeDe("Desenlace") === topeDe("Leer respuesta"),
+   JSON.stringify({ Desenlace: topeDe("Desenlace"),
+                    "Leer respuesta": topeDe("Leer respuesta") }));
+// Y que el tope ACOTE de verdad, que es lo que ninguna prueba sujetaba: con
+// 500 -> 3000 la suite seguia verde.
+const DETALLE_LARGO = "x".repeat(2000);
+const sDetalleLargo = await desenlace({ error_cod: "fuera_de_alcance",
+  detalle: DETALLE_LARGO, resultado: null }, U, D);
+ok("un detalle de 2 000 caracteres se recorta al tope",
+   (sDetalleLargo.texto.match(/x/g) || []).length === topeDe("Desenlace"),
+   String((sDetalleLargo.texto.match(/x/g) || []).length));
+
 console.log("\nI ter. LOS ENVIOS QUE NO SE RECUPERAN SOLOS");
 // --------------------------------------------------------------------------
 // Un envio de Telegram que falla no siempre cuesta lo mismo.
@@ -927,7 +950,18 @@ for (const [cod, termina] of SPEC_9) {
   // EL CRITERIO 7, para las once.
   ok(`${cod}: NINGUNA cifra de probabilidad en el mensaje`,
      !CIFRA_DE_PROBABILIDAD.test(s.texto), s.texto.replace(/\n/g, " | "));
-  ok(`${cod}: y NINGUN resultado junto al rechazo`, s.resultado_cod === "N");
+  // NO PODIA CAER, y por eso se le mete un resultado de verdad: todas las
+  // entradas de este bucle llevan `resultado: null`, asi que afirmar que no
+  // sale resultado era afirmar que null no es un resultado. Con un resultado
+  // POSITIVO al lado del codigo de error, lo que se comprueba es la regla del
+  // §9 de verdad: o hay desenlace clinico o hay rechazo, nunca los dos.
+  const conResultado = await desenlace(
+    { error_cod: cod, detalle: DETALLES[cod] || "", resultado: R_POSITIVA,
+      sintomas: SINTOMAS, signos: SIGNOS }, U, D);
+  ok(`${cod}: y NINGUN resultado junto al rechazo, ni forzandolo`,
+     conResultado.resultado_cod === "N" &&
+     !conResultado.texto.includes("CRIBADO"),
+     JSON.stringify(conResultado.resultado_cod));
 }
 
 // --------------------------------------------------------------------------
