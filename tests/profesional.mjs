@@ -187,6 +187,13 @@ const C_NEG_0 = {
   rv_imagen: R_NEGATIVA.razon_de_verosimilitud, concordantes: true,
   absorbe: "imagen", independencia: [0.0003], dependencia: [0.0028],
   minima: 0.0003, maxima: 0.0028 };
+// C_POS_2_3  asma no_se (2 o 3) contra la placa positiva: las dos RV clinicas
+//            a los dos lados de 1 (0,70 y 1,64), discordantes por D6.
+const C_POS_2_3 = {
+  prevalencia: 0.1466, puntuacion: [2, 3], rv_clinica: [0.7, 1.64],
+  rv_imagen: R_POSITIVA.razon_de_verosimilitud, concordantes: false,
+  absorbe: null, independencia: [0.7846, 0.8951], dependencia: null,
+  minima: 0.7846, maxima: 0.8951 };
 
 const sse = (obj) => `event: message\r\ndata: ${JSON.stringify(obj)}\r\n\r\n`;
 const sseExito = (r) => sse({
@@ -2170,10 +2177,22 @@ ok("asma no_se: UNA sola horquilla que funde las dos causas",
 ok("asma no_se: las dos RV clinicas y las dos puntuaciones, segun tenga asma o no",
    b34[1] === "(prevalencia 14,7 % × clínica 1,64–7,18 × imagen 30,3; Heckerling 3 o 4 de 5, según tenga asma o no)", b34[1]);
 ok("asma no_se: el aviso nombra el extremo de independencia (97) y el de dependencia (84)",
-   b34[2].includes("el 97 % supone que cada una aporta información nueva, y el 84 %, " +
+   (b34[2] || "").includes("el 97 % supone que cada una aporta información nueva, y el 84 %, " +
                    "que la auscultación no añade nada sobre la imagen"), b34[2]);
 ok("nunca se anidan dos rangos: un solo «entre» en todo el bloque",
    (b34.join(" ").match(/entre /g) || []).length === 1, b34.join(" | "));
+
+// D6: dos puntuaciones a los dos lados de 1 -solo pasa entre 2 y 3-, y
+// discordantes: la frase de "sentidos opuestos" seria verdad para una
+// hipotesis (con asma) y falsa para la otra (sin asma), asi que el aviso
+// tiene que decir de que depende en vez de afirmar sin condicion.
+const b23 = bloqueCombinado(await conCombinacion(C_POS_2_3, SINTOMAS)).split(NL);
+ok("D6: dos puntuaciones a los dos lados de 1 -> horquilla de independencia",
+   b23[0] === "COMBINADO — entre 78 % y 90 % de probabilidad de opacidad compatible", b23[0]);
+ok("D6: los factores con las dos RV y las dos puntuaciones",
+   b23[1] === "(prevalencia 14,7 % × clínica 0,70–1,64 × imagen 30,3; Heckerling 2 o 3 de 5, según tenga asma o no)", b23[1]);
+ok("D6: el aviso dice de que depende el sentido",
+   b23[2] === "⚠️ Según tenga asma o no, la clínica apunta en el mismo sentido que la imagen o en el contrario, y además no son pruebas independientes: la horquilla es orientativa. Decide usted.", b23[2]);
 
 const bB = bloqueCombinado(await conCombinacion(C_BANDA_0, SINTOMAS_SI, SIGNOS, R_BANDA)).split(NL);
 ok("un rango que se cierra deja de ser un rango: «2 %» a secas",
@@ -2208,9 +2227,35 @@ ok("ni 0 %: con un 0,0 exacto sale «< 1 %»", await (async () => {
 })());
 ok("absorbe «mixta»: el aviso dice que solo cuenta la mas informativa", await (async () => {
   const c = Object.assign({}, C_POS_3_4, { absorbe: "mixta" });
-  return bloqueCombinado(await conCombinacion(c, SINTOMAS)).split(NL)[2]
+  return (bloqueCombinado(await conCombinacion(c, SINTOMAS)).split(NL)[2] || "")
     .includes("y el 84 %, que solo cuenta la más informativa de las dos. Decide usted.");
 })());
+
+// Una cota (< 1 % o > 99 %) dentro de una horquilla se dice con PALABRAS, no
+// con el signo: «entre < 1 % y 2 %» anidaria un rango dentro de otro (§8.1
+// solo permite uno), y el aviso concordante deja de nombrar numeros -serian
+// "el < 1 %..."-, igual que cuando los dos extremos redondean igual.
+const NUMEROLESS =
+  "⚠️ La auscultación y la imagen miran la misma consolidación, así que no son " +
+  "pruebas independientes: la cifra puede exagerar. Decide usted.";
+const bCotaBaja = bloqueCombinado(await conCombinacion(
+  Object.assign({}, C_NEG_0, { independencia: [0.003], dependencia: [0.02],
+                               minima: 0.003, maxima: 0.02 }),
+  SINTOMAS_SI, SIGNOS, R_NEGATIVA)).split(NL);
+ok("cota dentro de la horquilla, lado bajo: se dice con palabras",
+   bCotaBaja[0] === "COMBINADO — entre menos de 1 % y 2 % de probabilidad de opacidad compatible", bCotaBaja[0]);
+ok("...y el aviso sigue siendo el numeroless (una cota nunca lleva numeros)",
+   bCotaBaja[2] === NUMEROLESS, bCotaBaja[2]);
+ok("nunca se anidan dos rangos, tampoco con una cota dentro: un solo «entre»",
+   (bCotaBaja.join(" ").match(/entre /g) || []).length === 1, bCotaBaja.join(" | "));
+
+const bCotaAlta = bloqueCombinado(await conCombinacion(
+  Object.assign({}, C_POS_3, { independencia: [0.995], dependencia: [0.84],
+                               minima: 0.84, maxima: 0.995 }))).split(NL);
+ok("cota dentro de la horquilla, lado alto: se dice con palabras",
+   bCotaAlta[0] === "COMBINADO — entre 84 % y más de 99 % de probabilidad de opacidad compatible", bCotaAlta[0]);
+ok("...y el mismo aviso numeroless",
+   bCotaAlta[2] === NUMEROLESS, bCotaAlta[2]);
 
 // SIN COMBINAR: los tres motivos, en su orden, y nunca una cifra.
 const SIN_SIGNOS = "SIN COMBINAR — faltan signos de la exploración, así que no hay puntuación de Heckerling.";

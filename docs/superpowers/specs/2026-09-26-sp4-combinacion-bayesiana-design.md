@@ -296,6 +296,8 @@ caso, porque tiene que ser verdad en cada uno:
 | Concordantes, y los dos extremos redondean distinto | los dos números: cuál supone independencia y cuál dependencia total, nombrando a **quién absorbe a quién** —«la auscultación no añade nada sobre la imagen» solo si la imagen es la más informativa; si lo es la clínica, al revés; si con el asma sin saber cambia de una puntuación a otra, «solo cuenta la más informativa de las dos» |
 | Concordantes, y los extremos redondean igual | sin números: «no son pruebas independientes: la cifra puede exagerar» |
 | Discordantes | «apuntan en sentidos opuestos, y además no son pruebas independientes: la cifra es orientativa» |
+| Concordantes, y un extremo es una cota (< 1 % o > 99 %) | sin números, como cuando redondean igual; la cabecera dice «entre menos de 1 % y 2 %» o «entre 84 % y más de 99 %»: la cota se dice con palabras, nunca con el signo dentro del rango |
+| Discordantes con el asma sin saber (una puntuación a cada lado de 1: solo pasa entre 2 y 3) | «según tenga asma o no, la clínica apunta en el mismo sentido que la imagen o en el contrario, y además no son pruebas independientes: la horquilla es orientativa» |
 
 Con las dos RV **por debajo** de 1 la exageración va hacia abajo: ahí el
 extremo bajo es el de independencia y el alto el de dependencia, y el ⚠️ los
