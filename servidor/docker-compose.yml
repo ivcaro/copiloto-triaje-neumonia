@@ -13,8 +13,19 @@ services:
     container_name: copiloto-mcp
     restart: unless-stopped
     # Sin `ports`: el servicio NO se expone a internet. n8n lo alcanza por
-    # nombre de servicio dentro de la red interna, que es lo que garantiza
-    # que la radiografia no salga de la maquina.
+    # nombre de servicio dentro de la red interna, asi que la radiografia no
+    # sale de la maquina EN ESTE TRAMO.
+    #
+    # El matiz importa y antes esta linea no lo tenia: decia «lo que garantiza
+    # que la radiografia no salga de la maquina», a secas, y eso es falso del
+    # recorrido completo. La placa llega hasta aqui POR TELEGRAM, o sea que ya
+    # paso por servidores que no controlamos. Lo que esta linea defiende es el
+    # tramo n8n -> copiloto, que si se queda dentro; el tramo Telegram -> n8n
+    # esta declarado como riesgo en el §5.5 del spec de SP3.
+    #
+    # Lo senalo un evaluador externo el 26-sep: «si la radiografia se sube por
+    # Telegram, pasa por servidores externos, asi que la afirmacion de que
+    # nunca sale del hospital no se sostiene».
     environment:
       UMBRAL: "0.4258"
       # 0.8827 y no 0.883: es el AUC MEDIDO de estos pesos
