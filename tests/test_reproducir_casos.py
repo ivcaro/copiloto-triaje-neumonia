@@ -410,3 +410,51 @@ def test_el_redactor_trata_el_413_del_transporte_como_lo_que_es():
     d = _redactar({"statusCode": 413, "cuerpo": "Request Entity Too Large"})
     assert d["error"].startswith("payload_excesivo_transporte:")
     assert "5 MB" in d["texto"]
+
+
+# --------------------------------------------------------------------------
+# --sin-bots y los hallazgos: el arnes tiene que mandar lo mismo que el bot.
+# --------------------------------------------------------------------------
+def test_el_modo_sin_bots_manda_los_cinco_datos_que_manda_el_bot():
+    """SP4 §9.3: si el arnes llamara sin `hallazgos`, el corpus diria
+    «SIN COMBINAR» para casos en los que el bot real combina, y el corpus
+    dejaria de ser un registro de lo que el clinico ve."""
+    from pruebas.reproducir_casos import SIGNOS, SINTOMAS, hallazgos_del_caso
+    assert hallazgos_del_caso(SINTOMAS, SIGNOS) == {
+        "temperatura_c": 38.2, "frecuencia_cardiaca": 104,
+        "crepitantes": True, "murmullo_disminuido": False, "asma": "no_se"}
+    assert hallazgos_del_caso(None, SIGNOS) is None
+    assert hallazgos_del_caso({**SINTOMAS, "asma": "quizas"}, SIGNOS) is None
+    assert hallazgos_del_caso(SINTOMAS, {}) is None
+    assert hallazgos_del_caso(SINTOMAS, {**SIGNOS, "crepitantes": "true"}) is None
+
+
+def test_la_llamada_sin_bots_lleva_los_hallazgos_en_el_json_rpc(tmp_path, monkeypatch):
+    import io
+    import json
+    import urllib.request
+    from pruebas import reproducir_casos as rc
+
+    capturada = {}
+
+    class Respuesta(io.BytesIO):
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def falso_urlopen(pet, timeout=None):
+        capturada["cuerpo"] = json.loads(pet.data)
+        return Respuesta(b"event: message\r\ndata: {}\r\n\r\n")
+
+    monkeypatch.setattr(urllib.request, "urlopen", falso_urlopen)
+    dcm = tmp_path / "a.dcm"
+    dcm.write_bytes(b"x")
+
+    rc.llamar_al_copiloto("http://x/mcp", dcm, rc.hallazgos_del_caso(rc.SINTOMAS))
+    assert capturada["cuerpo"]["params"]["arguments"]["hallazgos"]["asma"] == "no_se"
+    rc.llamar_al_copiloto("http://x/mcp", dcm, None)
+    assert "hallazgos" not in capturada["cuerpo"]["params"]["arguments"]

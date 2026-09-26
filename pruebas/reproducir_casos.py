@@ -135,6 +135,30 @@ SINTOMAS = {"fiebre": "si", "tos": "con_flema", "dias_evolucion": "3_a_7",
 BOTONES_PACIENTE = ("p1:si", "p2:con_flema", "p3:3_a_7", "p4:no", "p5:si",
                     "p6:no_se")
 
+# Los cinco datos que `A base64` manda con la placa (SP4 §9.3), sacados de lo
+# MISMO que el bot usa: los cuatro signos y el asma del cuestionario. Si falta
+# algo o viene con otro tipo, `None`, y el copiloto contesta sin combinacion,
+# exactamente como haria el bot. Es la misma regla que `hallazgosDe` en el nodo.
+ESTADOS_ASMA = ("si", "no", "no_se")
+
+
+def hallazgos_del_caso(sintomas, signos=SIGNOS):
+    if not sintomas or sintomas.get("asma") not in ESTADOS_ASMA:
+        return None
+    if not signos:
+        return None
+    numeros = ("temperatura_c", "frecuencia_cardiaca")
+    booleanos = ("crepitantes", "murmullo_disminuido")
+    for k in numeros:
+        v = signos.get(k)
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return None
+    for k in booleanos:
+        if not isinstance(signos.get(k), bool):
+            return None
+    return {**{k: signos[k] for k in numeros + booleanos},
+            "asma": sintomas["asma"]}
+
 # El comentario del perfil `con_comentario_del_paciente`. Imita a proposito un
 # rotulo del informe -«CRIBADO --»- porque es el ataque que el §8 describe: asi,
 # al leer el corpus, se VE que esas palabras llegan en un mensaje aparte con su
@@ -338,18 +362,23 @@ def nombre_fichero(caso):
 # --------------------------------------------------------------------------
 # El copiloto, y la redaccion con el codigo del workflow
 # --------------------------------------------------------------------------
-def llamar_al_copiloto(url, ruta_dcm, tiempo_limite=120):
+def llamar_al_copiloto(url, ruta_dcm, hallazgos=None, tiempo_limite=120):
     """Un `tools/call` suelto, como el del nodo `Llamar al copiloto`.
 
-    Devuelve (statusCode, cuerpo). `neverError: true` en el nodo significa que
-    un 413 o un 500 llegan al codigo como respuesta, no como excepcion: aqui se
-    hace lo mismo para que `Leer respuesta` vea lo que veria en n8n.
+    `hallazgos` viaja como segundo argumento del tool cuando lo hay (SP4), que
+    es lo que hace `A base64`. Devuelve (statusCode, cuerpo). `neverError:
+    true` en el nodo significa que un 413 o un 500 llegan al codigo como
+    respuesta, no como excepcion: aqui se hace lo mismo para que `Leer
+    respuesta` vea lo que veria en n8n.
     """
     b64 = base64.b64encode(pathlib.Path(ruta_dcm).read_bytes()).decode()
+    argumentos = {"dicom_base64": b64}
+    if hallazgos is not None:
+        argumentos["hallazgos"] = hallazgos
     cuerpo = json.dumps({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
         "params": {"name": "clasificar_radiografia",
-                   "arguments": {"dicom_base64": b64}}}).encode()
+                   "arguments": argumentos}}).encode()
     pet = urllib.request.Request(
         url, data=cuerpo,
         headers={"Content-Type": "application/json",
@@ -1268,7 +1297,8 @@ def main() -> int:
             signos = obs["signos"] if obs.get("signos") else SIGNOS
             t0 = int(time.time() * 1000)
             reloj = time.perf_counter()
-            estado, cuerpo = llamar_al_copiloto(url_copiloto, caso["ruta_dcm"])
+            estado, cuerpo = llamar_al_copiloto(
+                url_copiloto, caso["ruta_dcm"], hallazgos_del_caso(sintomas, signos))
             # Medido AQUI, no con el `ms` de `Desenlace`: `redactar()` corre una
             # sola vez al final, asi que aquel `ms` llegaba hasta el final de la
             # corrida entera y no hasta el final de esta llamada.
