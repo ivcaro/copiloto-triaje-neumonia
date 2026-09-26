@@ -591,9 +591,17 @@ def test_ningun_fallo_deja_al_profesional_sin_respuesta():
 def test_el_codigo_del_error_se_busca_dentro_del_texto():
     """§10.3: el SDK antepone su propio prefijo, asi que el codigo queda de
     SEGUNDO. Partir por el primer ':' devuelve
-    'Error executing tool clasificar_radiografia' para todos por igual."""
+    'Error executing tool clasificar_radiografia' para todos por igual.
+
+    Y se lee DETRAS de ese prefijo, no en cualquier posicion (Ruling 7): con
+    `indexOf(codigo + ':')` un valor del llamante interpolado en
+    `hallazgos_invalidos` se leia como codigo. (Antes esta prueba buscaba
+    `indexOf` en la fuente, y eso seguiria cierto por otra linea del nodo.)"""
     fuente = _nodo(_flujo(), "Leer respuesta")["parameters"]["jsCode"]
-    assert "indexOf" in fuente, "el codigo se BUSCA dentro del texto"
+    assert ("const PREFIJO_SDK = 'Error executing tool clasificar_radiografia: ';"
+            in fuente), "el codigo se lee detras del prefijo del SDK"
+    assert "cabeza.startsWith(codigo + ':')" in fuente
+    assert "texto.indexOf(codigo" not in fuente, "ni en cualquier posicion"
     assert ".split(':')" not in fuente.replace(" ", "")
     for codigo in ("base64_invalido", "dicom_invalido", "edad_desconocida",
                    "fuera_de_alcance", "payload_excesivo"):
