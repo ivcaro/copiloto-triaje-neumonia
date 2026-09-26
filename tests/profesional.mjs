@@ -450,6 +450,68 @@ ok("la expresion del nodo HTTP no lleva llaves anidadas", (() => {
   return j === "={{ $json.cuerpo_jsonrpc }}";
 })(), nodo("Llamar al copiloto").parameters.jsonBody);
 
+// --------------------------------------------------------------------------
+// SP4 §9.3: con la placa viajan los CINCO datos de Heckerling -los cuatro
+// signos crudos y el asma con sus tres estados-, y solo si estan los cinco.
+// Los cortes (37,8 °C; 100 lpm) NO se aplican aqui: van los numeros, y los
+// corta Python, que es donde se prueban.
+// --------------------------------------------------------------------------
+async function aBase64Con(decidir) {
+  const r = await correr(codigo("A base64"), ENTRADA_BIN, { Decidir: decidir }, {});
+  return { salida: r[0].json,
+           argumentos: JSON.parse(r[0].json.cuerpo_jsonrpc).params.arguments };
+}
+// Ruling 1 del controlador (26-sep): `SINTOMAS.asma` es "no" desde SP3, no
+// "no_se"; el literal que espera esta prueba es "no_se", asi que la entrada
+// usa una variante del fixture con `asma: "no_se"` para que dato de entrada y
+// literal esperado coincidan.
+ok("con los cuatro signos y el asma, `hallazgos` viaja con los cinco datos crudos",
+   await (async () => {
+     const { argumentos: a } = await aBase64Con(
+       { chat_id: 7, t0: 1, signos: SIGNOS,
+         sintomas: Object.assign({}, SINTOMAS, { asma: "no_se" }) });
+     return a.dicom_base64 === B64_HOLA &&
+            JSON.stringify(a.hallazgos) === JSON.stringify({
+              temperatura_c: 38.2, frecuencia_cardiaca: 104, crepitantes: true,
+              murmullo_disminuido: false, asma: "no_se" });
+   })());
+ok("y con el asma del fixture (\"no\") viaja \"no\": el asma va tal cual (D2)",
+   await (async () => {
+     const { argumentos: a } = await aBase64Con(
+       { chat_id: 7, t0: 1, signos: SIGNOS, sintomas: SINTOMAS });
+     return JSON.stringify(a.hallazgos) === JSON.stringify({
+              temperatura_c: 38.2, frecuencia_cardiaca: 104, crepitantes: true,
+              murmullo_disminuido: false, asma: "no" });
+   })());
+for (const [etiqueta, decidir] of [
+  ["sin signos", { chat_id: 7, t0: 1, signos: {}, sintomas: SINTOMAS }],
+  ["con un signo de menos",
+   { chat_id: 7, t0: 1, sintomas: SINTOMAS,
+     signos: { temperatura_c: 38.2, frecuencia_cardiaca: 104, crepitantes: true } }],
+  ["con un booleano en texto",
+   { chat_id: 7, t0: 1, sintomas: SINTOMAS,
+     signos: Object.assign({}, SIGNOS, { crepitantes: "true" }) }],
+  ["con una temperatura en texto",
+   { chat_id: 7, t0: 1, sintomas: SINTOMAS,
+     signos: Object.assign({}, SIGNOS, { temperatura_c: "38,2" }) }],
+  ["sin cuestionario", { chat_id: 7, t0: 1, signos: SIGNOS, sintomas: null }],
+  ["con un asma que no es de los tres",
+   { chat_id: 7, t0: 1, signos: SIGNOS,
+     sintomas: Object.assign({}, SINTOMAS, { asma: "quizas" }) }],
+  ["sin signos ni sintomas (la entrada de las pruebas de arriba)", { chat_id: 7, t0: 123 }],
+]) {
+  const { argumentos: a } = await aBase64Con(decidir);
+  ok(`${etiqueta}: NO viaja \`hallazgos\` y el cuerpo es el de SP3`,
+     !("hallazgos" in a) && Object.keys(a).join(",") === "dicom_base64",
+     JSON.stringify(a));
+}
+ok("las claves de salida del nodo no cambian (§5.4): los hallazgos van solo en el cuerpo",
+   await (async () => {
+     const { salida: s } = await aBase64Con(
+       { chat_id: 7, t0: 1, signos: SIGNOS, sintomas: SINTOMAS });
+     return Object.keys(s).sort().join(",") === "chat_id,cuerpo_jsonrpc,t0,via";
+   })());
+
 console.log("\nI. Leer respuesta, contra las respuestas LITERALES del contenedor");
 const dResp = { chat_id: 7, t0: Date.now(), sintomas: SINTOMAS, signos: SIGNOS };
 for (const [etiqueta, r] of [["positiva", R_POSITIVA], ["banda", R_BANDA], ["negativa", R_NEGATIVA]]) {
