@@ -71,15 +71,19 @@ async def cliente_de(motor):
         yield c
 
 
-async def _llamar_por_mcp(cliente, dicom) -> httpx.Response:
+async def _llamar_por_mcp(cliente, dicom, hallazgos=None) -> httpx.Response:
     """Llama a la herramienta por la puerta MCP. `dicom` son los bytes del
-    fichero, o ya el texto base64 cuando la prueba quiere uno invalido."""
+    fichero, o ya el texto base64 cuando la prueba quiere uno invalido.
+    `hallazgos`, si se da, viaja como segundo argumento del tool (SP4)."""
     b64 = dicom if isinstance(dicom, str) else base64.b64encode(dicom).decode()
+    argumentos = {"dicom_base64": b64}
+    if hallazgos is not None:
+        argumentos["hallazgos"] = hallazgos
     return await cliente.post(
         "/mcp", headers=CABECERAS_MCP,
         json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
               "params": {"name": "clasificar_radiografia",
-                         "arguments": {"dicom_base64": b64}}})
+                         "arguments": argumentos}})
 
 
 def _carga_del_evento(texto: str) -> dict:
@@ -418,3 +422,102 @@ async def test_mcp_acepta_una_cabecera_host_de_otro_contenedor(motor):
                                         **CABECERAS_MCP})
         assert r.status_code == 200
         assert "clasificar_radiografia" in r.text
+
+
+# Los cinco datos de SP4 §9.3. Con asma `no_se` salen DOS puntuaciones: 3 y 4.
+HALLAZGOS = {"temperatura_c": 38.2, "frecuencia_cardiaca": 104,
+             "crepitantes": True, "murmullo_disminuido": False,
+             "asma": "no_se"}
+CONTRATO_SP3 = {"probabilidad_cruda", "probabilidad_calibrada",
+                "razon_de_verosimilitud", "umbral", "clasificacion",
+                "edad_paciente", "modelo", "auc_validacion", "milisegundos"}
+
+
+@pytest.mark.asyncio
+async def test_la_herramienta_mcp_con_hallazgos_anade_exactamente_una_clave(
+        motor, tmp_path):
+    """La hermana de `test_la_herramienta_mcp_devuelve_exactamente_las_claves_del_contrato`,
+    que sigue afirmando el conjunto de SP3 SIN hallazgos (criterio 2)."""
+    ruta = tmp_path / "a.dcm"
+    crear_dicom(ruta, edad="054Y")
+    async with cliente_de(motor) as cliente:
+        salida = _extraer_resultado(
+            await _llamar_por_mcp(cliente, ruta.read_bytes(), HALLAZGOS))
+    assert set(salida) == CONTRATO_SP3 | {"combinacion"}
+    c = salida["combinacion"]
+    assert c["puntuacion"] == [3, 4]
+    assert c["rv_imagen"] == salida["razon_de_verosimilitud"]
+    assert c["prevalencia"] == 0.1466
+
+
+@pytest.mark.asyncio
+async def test_rest_acepta_los_hallazgos_como_json_en_el_formulario(motor, tmp_path):
+    ruta = tmp_path / "a.dcm"
+    crear_dicom(ruta, edad="054Y")
+    async with cliente_de(motor) as cliente:
+        r = await cliente.post("/inferir",
+                               files={"archivo": ("a.dcm", ruta.read_bytes())},
+                               data={"hallazgos": json.dumps(HALLAZGOS)})
+    assert r.status_code == 200, r.text
+    assert r.json()["combinacion"]["puntuacion"] == [3, 4]
+
+
+@pytest.mark.asyncio
+async def test_las_dos_puertas_dan_la_misma_combinacion(motor, tmp_path):
+    """El respaldo REST tiene que decir lo mismo que MCP tambien en lo nuevo."""
+    ruta = tmp_path / "a.dcm"
+    crear_dicom(ruta, edad="054Y")
+    datos = ruta.read_bytes()
+    async with cliente_de(motor) as cliente:
+        por_rest = (await cliente.post(
+            "/inferir", files={"archivo": ("a.dcm", datos)},
+            data={"hallazgos": json.dumps(HALLAZGOS)})).json()
+        por_mcp = _extraer_resultado(await _llamar_por_mcp(cliente, datos, HALLAZGOS))
+    sin_tiempo = lambda d: {k: v for k, v in d.items() if k != "milisegundos"}
+    assert sin_tiempo(por_mcp) == sin_tiempo(por_rest)
+
+
+@pytest.mark.asyncio
+async def test_las_dos_puertas_rechazan_igual_unos_hallazgos_invalidos(motor, tmp_path):
+    ruta = tmp_path / "a.dcm"
+    crear_dicom(ruta, edad="054Y")
+    datos = ruta.read_bytes()
+    malos = {**HALLAZGOS, "asma": "quizas"}
+    async with cliente_de(motor) as cliente:
+        r = await cliente.post("/inferir",
+                               files={"archivo": ("a.dcm", datos)},
+                               data={"hallazgos": json.dumps(malos)})
+        assert r.status_code == 422
+        assert r.json()["codigo"] == "hallazgos_invalidos"
+        assert "asma" in r.json()["detalle"]
+        respuesta = await _llamar_por_mcp(cliente, datos, malos)
+    assert _codigo_del_error_mcp(respuesta) == "hallazgos_invalidos"
+
+
+@pytest.mark.asyncio
+async def test_rest_rechaza_unos_hallazgos_que_no_son_un_objeto_json(motor, tmp_path):
+    ruta = tmp_path / "a.dcm"
+    crear_dicom(ruta, edad="054Y")
+    async with cliente_de(motor) as cliente:
+        for texto in ("{no es json", '"una cadena"', "[1, 2]"):
+            r = await cliente.post("/inferir",
+                                   files={"archivo": ("a.dcm", ruta.read_bytes())},
+                                   data={"hallazgos": texto})
+            assert r.status_code == 422, texto
+            assert r.json()["codigo"] == "hallazgos_invalidos", texto
+
+
+@pytest.mark.asyncio
+async def test_el_rechazo_por_edad_no_trae_combinacion_ni_por_mcp_ni_por_rest(motor, tmp_path):
+    """Restriccion 9: ninguna rama de error emite una cifra, tampoco la
+    nueva. Un menor con hallazgos perfectos recibe el rechazo de siempre."""
+    ruta = tmp_path / "n.dcm"
+    crear_dicom(ruta, edad="012Y")
+    datos = ruta.read_bytes()
+    async with cliente_de(motor) as cliente:
+        r = await cliente.post("/inferir", files={"archivo": ("n.dcm", datos)},
+                               data={"hallazgos": json.dumps(HALLAZGOS)})
+        assert r.status_code == 422 and r.json()["codigo"] == "fuera_de_alcance"
+        assert "combinacion" not in r.text
+        texto = _texto_del_error_mcp(await _llamar_por_mcp(cliente, datos, HALLAZGOS))
+    assert "combinacion" not in texto and "fuera_de_alcance" in texto

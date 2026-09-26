@@ -8,9 +8,10 @@ camino de error, que es donde la divergencia pasa mas desapercibida.
 from __future__ import annotations
 
 import base64
+import json
 from typing import Any
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -92,8 +93,14 @@ def construir_aplicacion(motor: Motor,
         description="Recibe una radiografia de torax en DICOM (base64) y "
                     "devuelve la evidencia de imagen: probabilidad calibrada "
                     "y razon de verosimilitud para combinar con la regla "
-                    "clinica. Solo valida para pacientes de 18 a 100 anios.")
-    def clasificar_radiografia(dicom_base64: str) -> dict[str, Any]:
+                    "clinica. Con `hallazgos` -temperatura_c, "
+                    "frecuencia_cardiaca, crepitantes, murmullo_disminuido y "
+                    "asma (si/no/no_se)- devuelve ademas `combinacion`: la "
+                    "probabilidad posterior por la regla de Heckerling. Solo "
+                    "valida para pacientes de 18 a 100 anios.")
+    def clasificar_radiografia(dicom_base64: str,
+                               hallazgos: dict[str, Any] | None = None
+                               ) -> dict[str, Any]:
         # Las tres ramas de fallo levantan ToolError y no ValueError: el SDK
         # documenta ToolError como "a failure you anticipated" y propaga su
         # texto al cliente, mientras que CUALQUIER otra excepcion la trata
@@ -130,7 +137,7 @@ def construir_aplicacion(motor: Motor,
             raise ToolError(
                 f"payload_excesivo: {len(datos)} bytes, maximo {MAXIMO_BYTES}")
         try:
-            return motor.clasificar(datos)
+            return motor.clasificar(datos, hallazgos)
         except ErrorDeInferencia as exc:
             raise ToolError(f"{exc.codigo}: {exc}") from exc
 
@@ -157,7 +164,22 @@ def construir_aplicacion(motor: Motor,
                 "prevalencia_local": motor.prevalencia_local}
 
     @api.post("/inferir")
-    async def inferir(archivo: UploadFile = File(...)):
+    async def inferir(archivo: UploadFile = File(...),
+                      hallazgos: str | None = Form(None)):
+        # `hallazgos` llega como texto JSON en el formulario, porque un
+        # multipart no lleva objetos. Aqui solo se parsea; lo valida `Motor`,
+        # igual que por MCP: las dos puertas tienen que decir lo mismo.
+        hallazgos_dict = None
+        if hallazgos is not None:
+            try:
+                hallazgos_dict = json.loads(hallazgos)
+            except ValueError:
+                hallazgos_dict = None
+            if not isinstance(hallazgos_dict, dict):
+                return JSONResponse(status_code=422, content={
+                    "codigo": "hallazgos_invalidos",
+                    "detalle": "«hallazgos» debe ser un objeto JSON con los "
+                               "cinco campos de la regla de Heckerling."})
         # Se lee por trozos y se para en cuanto se pasa del maximo: con un
         # `await archivo.read()` sin limite, una subida de 2 GB se traia
         # entera a memoria para DESPUES comparar su tamano y contestar 413.
@@ -178,7 +200,7 @@ def construir_aplicacion(motor: Motor,
                 "detalle": f"mas de {MAXIMO_BYTES} bytes"})
         datos = b"".join(trozos)
         try:
-            return motor.clasificar(datos)
+            return motor.clasificar(datos, hallazgos_dict)
         except ErrorDeInferencia as exc:
             # 422 y no 400: la peticion esta bien formada, lo que no sirve es
             # su contenido para este modelo.
