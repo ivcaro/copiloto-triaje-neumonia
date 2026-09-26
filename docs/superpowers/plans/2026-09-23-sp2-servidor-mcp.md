@@ -15,7 +15,14 @@ publica puertos.
 > anterior, Telegram → n8n, **sí** sale de la red del centro, porque el DICOM
 > llega por Telegram. Riesgo declarado en el §5.5 del diseño de SP3. El
 > comentario del compose del paso 3 habla del tramo de inferencia, que es el que
-> ese fichero configura, y por eso se mantiene tal cual.
+> ese fichero configura.
+>
+> **Ese comentario sí se corrigió después**, en `011134f`: decía «lo que
+> garantiza que la radiografía no salga de la máquina», a secas, y ahora dice
+> que no sale **en ese tramo**, remitiendo al §5.5. El bloque YAML transcrito en
+> el paso 3 de este plan conserva la redacción vieja **a propósito**: un plan es
+> el documento de lo que se planeó, y reescribirlo borraría que esto se
+> planeó así. Lo que manda es el fichero.
 
 **Arquitectura:** un solo proceso con tres capas. El núcleo de inferencia vive
 en el paquete y no sabe de HTTP; encima, dos puertas delgadas —MCP y REST— que
