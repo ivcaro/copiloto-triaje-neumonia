@@ -222,9 +222,24 @@ with psycopg.connect(DSN, autocommit=True) as cx:
                        " WHERE chat_id=%s", (DR,)).fetchone()
     comprobar("el codigo queda atado a la sesion y el paso avanza al 2",
               fila == (2, "K7FM2P"), str(fila))
+    # EL MISMO CODIGO OTRA VEZ. La etiqueta de esta comprobacion siempre dijo
+    # «no hace nada», que es la propiedad correcta -idempotencia-, pero lo que
+    # afirmaba era `codigo_invalido`, que es otra cosa: confundia «no cambia
+    # nada» con «el codigo no vale».
+    #
+    # Y esa confusion se la comia el profesional: un doble toque, o el reenvio
+    # de Telegram al reintentar, le decia que su codigo no existe o caduco, y
+    # escribia una fila `codigo_invalido` en `consultas`. La tasa de rechazo es
+    # LA senal de salud del §16, y un rechazo inventado la infla.
     r = ejecutar(cur, "Buscar cuestionario", ctx_buscar(DR, "K7FM2P"))
-    comprobar("repetir el codigo cuando ya no se esta en el paso 1 no hace nada",
-              r["error_cod"] == "codigo_invalido", str(r))
+    comprobar("repetir el codigo NO se reporta como invalido",
+              r["error_cod"] == "N", str(r))
+    comprobar("   y devuelve el mismo codigo, no NULL",
+              r["codigo"] == "K7FM2P", str(r["codigo"]))
+    fila = cur.execute("SELECT paso, codigo FROM sesiones_profesional"
+                       " WHERE chat_id=%s", (DR,)).fetchone()
+    comprobar("   y la sesion sigue EXACTAMENTE igual: ni avanza ni retrocede",
+              fila == (2, "K7FM2P"), str(fila))
     ejecutar(cur, "Abrir sesion", ctx_abrir(DR, "S"))
     r = ejecutar(cur, "Buscar cuestionario", ctx_buscar(DR, "CADUC2"))
     comprobar("un codigo CADUCADO da codigo_invalido (§9)",
