@@ -235,10 +235,17 @@ CONTRATO_SP3 = {"probabilidad_cruda", "probabilidad_calibrada",
 
 
 def test_sin_hallazgos_la_respuesta_es_la_de_sp3_clave_por_clave(motor, tmp_path):
-    """Criterio 2 del spec de SP4, en el nucleo: ni una clave mas."""
+    """Criterio 2 del spec de SP4, en el nucleo: ni una clave mas ni en otro
+    orden."""
     ruta = tmp_path / "a.dcm"
     crear_dicom(ruta, edad="054Y")
-    assert set(motor.clasificar(ruta.read_bytes())) == CONTRATO_SP3
+    salida = motor.clasificar(ruta.read_bytes())
+    assert set(salida) == CONTRATO_SP3
+    assert list(salida) == [
+        "probabilidad_cruda", "probabilidad_calibrada",
+        "razon_de_verosimilitud", "umbral", "clasificacion", "edad_paciente",
+        "modelo", "auc_validacion", "milisegundos",
+    ]
 
 
 def test_con_hallazgos_la_respuesta_trae_el_bloque_combinacion(motor, tmp_path):
@@ -246,6 +253,9 @@ def test_con_hallazgos_la_respuesta_trae_el_bloque_combinacion(motor, tmp_path):
     crear_dicom(ruta, edad="054Y")
     salida = motor.clasificar(ruta.read_bytes(), HALLAZGOS)
     assert set(salida) == CONTRATO_SP3 | {"combinacion"}
+    # La combinacion se calcula y se asigna ANTES que los milisegundos: si
+    # contara desde antes, milisegundos dejaria de ser el ultimo campo.
+    assert list(salida)[-1] == "milisegundos"
     c = salida["combinacion"]
     assert c["rv_imagen"] == salida["razon_de_verosimilitud"]
     assert c["prevalencia"] == motor.prevalencia_local == 0.1466

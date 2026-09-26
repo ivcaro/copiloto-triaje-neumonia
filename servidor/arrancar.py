@@ -35,7 +35,27 @@ if not os.environ.get("AUC_VALIDACION"):
         "arrancar, p. ej. AUC_VALIDACION=0.8827.")
 AUC_VALIDACION = float(os.environ["AUC_VALIDACION"])
 
-motor = Motor.cargar(RUTA_PESOS, RUTA_CALIBRADOR, UMBRAL, AUC_VALIDACION)
+# La prevalencia previa de la combinacion bayesiana (SP4 §5), con la MISMA
+# disciplina que AUC_VALIDACION y por la misma razon: es una cifra que acaba
+# delante de un clinico en cada informe con combinacion, y un valor por defecto
+# silencioso sobreviviria a un cambio de entorno sin que nadie lo mirara.
+# Arranca en 0,1466 -134/914, la cohorte de derivacion de Heckerling- y se
+# cambia en el compose, con su fuente al lado, cuando haya dato local.
+if not os.environ.get("PREVALENCIA_LOCAL"):
+    raise SystemExit(
+        "Falta la variable de entorno PREVALENCIA_LOCAL. Es la probabilidad "
+        "previa con la que se combina la regla clinica con la imagen y se le "
+        "muestra al profesional en cada informe, asi que no tiene valor por "
+        "defecto. Declarala en el docker-compose.yml (ya viene puesta) o "
+        "pasala al arrancar, p. ej. PREVALENCIA_LOCAL=0.1466.")
+PREVALENCIA_LOCAL = float(os.environ["PREVALENCIA_LOCAL"])
+if not 0.0 < PREVALENCIA_LOCAL < 1.0:
+    raise SystemExit(
+        f"PREVALENCIA_LOCAL vale {PREVALENCIA_LOCAL!r} y tiene que ser una "
+        "probabilidad estrictamente entre 0 y 1 (p. ej. 0.1466).")
+
+motor = Motor.cargar(RUTA_PESOS, RUTA_CALIBRADOR, UMBRAL, AUC_VALIDACION,
+                     PREVALENCIA_LOCAL)
 app = construir_aplicacion(motor)
 
 if __name__ == "__main__":

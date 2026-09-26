@@ -135,6 +135,14 @@ async def test_salud_responde_listo(motor):
 
 
 @pytest.mark.asyncio
+async def test_salud_publica_la_prevalencia_local(motor):
+    """Es la prueba de despliegue de SP4: un /salud sin esta clave es un
+    contenedor anterior (tests/test_contrato_sp4.py se salta por esto)."""
+    async with cliente_de(motor) as cliente:
+        assert (await cliente.get("/salud")).json()["prevalencia_local"] == 0.1466
+
+
+@pytest.mark.asyncio
 async def test_rest_clasifica_un_dicom(motor, tmp_path):
     ruta = tmp_path / "a.dcm"
     crear_dicom(ruta, edad="054Y")

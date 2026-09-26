@@ -8,6 +8,7 @@ radiografia.
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
 import pydicom.errors
@@ -108,7 +109,7 @@ class Motor:
         return self._transformar(
             Image.fromarray(arreglo).convert("RGB")).unsqueeze(0)
 
-    def clasificar(self, datos_dicom: bytes, hallazgos=None) -> dict:
+    def clasificar(self, datos_dicom: bytes, hallazgos: Mapping | None = None) -> dict:
         comienzo = time.perf_counter()
         # Los hallazgos se validan ANTES de tocar el DICOM: es barato, y si
         # vienen mal el error es de quien llama -nuestro bot-, no de la placa.

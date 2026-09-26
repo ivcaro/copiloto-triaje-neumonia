@@ -151,7 +151,10 @@ def construir_aplicacion(motor: Motor,
     def salud() -> dict[str, Any]:
         return {"estado": "listo", "modelo": motor.nombre_modelo,
                 "umbral": motor.umbral,
-                "calibrador": motor.calibrador.procedencia}
+                "calibrador": motor.calibrador.procedencia,
+                # SP4: la prueba de que este contenedor es el nuevo. Sin esta
+                # clave, `tests/test_contrato_sp4.py` se salta y lo dice.
+                "prevalencia_local": motor.prevalencia_local}
 
     @api.post("/inferir")
     async def inferir(archivo: UploadFile = File(...)):
