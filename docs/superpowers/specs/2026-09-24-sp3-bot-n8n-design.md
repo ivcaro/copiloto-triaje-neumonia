@@ -30,7 +30,7 @@ mezclados. Unirlos es H6.
 | # | Decisión | Razón |
 | :-- | :--- | :--- |
 | D1 | **Dos bots de Telegram separados** | Un paciente no puede recibir el resultado aunque falle una condición: su flujo no tiene ese camino. La separación deja de depender de que un `if` esté bien escrito |
-| D2 | **PostgreSQL propia** (`copiloto-bd`) | Los datos clínicos quedan en infraestructura que controlamos. Las PostgreSQL del VPS son del cliente y no se tocan |
+| D2 | **PostgreSQL propia** (`copiloto-bd`) | Los datos clínicos **se guardan** en infraestructura que controlamos. Las PostgreSQL del VPS son del cliente y no se tocan. Dónde *pasan* antes de guardarse es otra cosa, y no es esta: llegan por Telegram (§5.5) |
 | D3 | **SP3 sin la matemática** | H5 entrega algo demostrable; H6 añade la fórmula sobre datos ya recogidos, sin volver a tocar los bots |
 | D4 | **Cuestionario por botones**, texto libre opcional y fuera del cálculo | Un extractor probabilístico en la ENTRADA de un cálculo clínico no falla con un error: produce una probabilidad previa equivocada que nadie ve |
 | D5 | **DICOM como documento de Telegram** | El servidor solo acepta DICOM: la edad sale de la cabecera y el preprocesamiento debe ser el del entrenamiento. Telegram recomprime a JPEG lo enviado como *foto* |
@@ -42,6 +42,15 @@ mezclados. Unirlos es H6.
 | D11 | **Consentimiento explícito** antes de guardar nada | Es lo que un comité de ética preguntará en H7, y guardar síntomas sin decirlo no es defendible |
 | D12 | **Los síntomas se copian a `consultas`** al consultarse | Sin esto, H7 no tiene nada que validar: `cuestionarios` se borra a los 7 días. Solo perduran los casos que un clínico realmente usó |
 | D13 | **La etiqueta y la evidencia calibrada se presentan por separado** | Salen de escalas distintas y se contradicen en una banda real. Ver §8 |
+
+> **Corregido el 26-sep, a raíz de una evaluación externa.** D2 decía que «los
+> datos clínicos quedan en infraestructura que controlamos», sin más. Es cierto
+> del **almacenamiento** y falso del **recorrido**: los síntomas, los signos, el
+> código seudónimo y la radiografía llegan por Telegram, o sea que pasan por
+> infraestructura de un tercero antes de tocar `copiloto-bd`. Dicho sin acotar,
+> D2 parece una decisión sobre privacidad de extremo a extremo, cuando lo que
+> decide es de quién es la base de datos — que también importa, pero es otra
+> cosa. El tramo de entrada se declara como riesgo aceptado en el §5.5.
 
 ---
 
@@ -394,6 +403,91 @@ Las agrupaciones por día del dashboard y el `cuestionarios_iniciados.dia` usan
 proyecto. Se resuelve antes de H8 (§18).
 
 El borrado lo ejecuta `🩺 Copiloto Triaje: Mantenimiento`, diario.
+
+### 5.5. El canal de entrada: Telegram ve los datos antes que nosotros
+
+> **Añadido el 26-sep, a raíz de una evaluación externa.** El evaluador señaló
+> que el proyecto afirmaba, en varios sitios, que la radiografía «no sale de la
+> red local», y que con Telegram de por medio eso no se sostiene. Tiene razón.
+> Las afirmaciones están corregidas donde estaban —D2 de este spec, §1 y §10 del
+> diseño de SP2, el §1 de `docs/sp2-despliegue.md` y dos sitios del README— y el
+> riesgo se declara aquí, con nombre, en vez de quedar implícito en un compose
+> sin `ports`.
+
+**Los dos tramos, y solo el segundo es nuestro.** El error venía de tratarlos
+como si fueran uno:
+
+| Tramo | ¿Sale de la red del centro? | Quién lo ve, además de nosotros |
+| :--- | :--- | :--- |
+| paciente o profesional → **Telegram** → n8n | **Sí** | los servidores de Telegram: el DICOM completo, las respuestas del cuestionario y de los signos, el código seudónimo y la cuenta de quien los manda |
+| n8n → `copiloto-mcp` | **No** | nadie: el contenedor no publica puertos y solo se alcanza por nombre de servicio dentro de la red de Docker del VPS (§10 aquí, §1 del diseño de SP2) |
+
+**Qué expone el primer tramo.** Tres cosas, y conviene nombrarlas por separado
+porque no pesan lo mismo:
+
+- **El DICOM entero, con su cabecera.** Las placas de RSNA vienen anonimizadas;
+  una placa real sacada de un PACS **no tiene por qué venirlo**, y puede traer
+  nombre, número de historia y fecha de estudio. Eso es más dato personal del que
+  guarda `consultas`, y el bot no lo mira: lo reenvía tal cual al copiloto.
+- **Las respuestas clínicas**, que viajan como `callback_data` y texto de
+  mensaje: los siete síntomas, los cuatro signos y el código seudónimo.
+- **Quién habla con el bot y cuándo.** Es justo el dato que el seudónimo del §5.2
+  y la tabla aparte del §4.2 existen para no tener en nuestras tablas. Telegram
+  sí lo tiene, atado a una cuenta con número de teléfono.
+
+**Qué protege el cifrado, y qué no.** El tramo va cifrado en tránsito: HTTPS
+contra `api.telegram.org` y HTTPS hasta el webhook de n8n. Eso protege de quien
+escuche el cable; **no protege de Telegram**. El fichero se queda en su
+almacenamiento mientras exista para el bot —es de donde lo descarga `getFile`—,
+su borrado no lo controlamos y no lo podemos comprobar. Y los chats con un bot
+**no** llevan cifrado de extremo a extremo: en Telegram eso son los «chats
+secretos», que un bot no puede usar. Decir «va cifrado» y quedarse ahí sería el
+mismo error de antes escrito de otra manera.
+
+**Por qué se aceptó.** Telegram era la vía de entrega elegida del proyecto,
+antes de este diseño: es lo que el profesional ya tiene instalado, y lo que
+permite un piloto sin pedirle al centro que despliegue nada. La alternativa que
+elimina el riesgo es un canal propio, y un canal propio hay que instalarlo,
+publicarlo y mantenerlo dentro de la red del centro — en un piloto de una
+maestría, con dos integrantes y un VPS prestado, nadie lo va a instalar. Cambiar
+el canal ahora costaría el hito y todavía no protegería a nadie: en H5 solo
+circulan placas de RSNA y síntomas fabricados.
+
+**Qué lo acota hoy.** Cuatro cosas, y ninguna lo elimina:
+
+1. **Lo que circula en H5 no es de pacientes reales.** Las placas son de RSNA y
+   los síntomas de §13.1 son inventados. El riesgo se vuelve real el día que
+   entre la primera placa de un paciente, y ese día es H7.
+2. **El paciente nunca manda la imagen**, solo botones. El DICOM lo manda el
+   profesional, que está en una lista blanca de personas identificadas (§4.2, D6).
+3. **Por nuestra parte, lo que va por Telegram no lleva identidad del paciente**:
+   el único identificador que se cruza es el código seudónimo del §5.2. Lo que sí
+   puede llevarla es la cabecera del DICOM, y eso depende del PACS del centro, no
+   de nosotros — es la otra cara de la deuda del §18 sobre revalidar de dónde
+   sale la placa.
+4. **Nada de ese tramo se queda en nuestras tablas, ni en las ejecuciones de n8n
+   si el §5.4 se cumple.** Pero el §5.4 acota *nuestra* retención: no toca la de
+   Telegram, que es la que este apartado declara.
+
+**Qué haría falta para eliminarlo.** Sustituir Telegram por un canal que no salga
+de la red del centro. Tres formas, de menos a más trabajo:
+
+| Canal local | Qué implica |
+| :--- | :--- |
+| **Carga web propia**: una página servida por nosotros, autenticada, donde el profesional sube el DICOM contra el mismo `POST /inferir` que ya existe (§10 del diseño de SP2) | la más corta, porque la puerta REST está hecha y probada; faltan sesión, TLS y un sitio donde publicarla. Pierde la conversación por botones: el cuestionario del paciente habría que rehacerlo |
+| **App o cliente instalado** en el equipo del centro | quita el navegador de la ecuación y permite leer del PACS sin pasos manuales; es un proyecto aparte, no una variante de este |
+| **Servidor de ficheros dentro de la red del centro** —carpeta vigilada o un nodo DICOM— que n8n lea desde dentro | es lo que un hospital querría de verdad, y lo que un piloto no está en posición de pedir |
+
+Con cualquiera de los tres, «la radiografía no sale de la red del centro» pasa a
+ser cierta del recorrido completo. **Hasta entonces no se escribe**: ni en este
+spec, ni en el README, ni en la presentación del hito.
+
+**Lo que hay que decirle a quien consiente.** El consentimiento de D11 enumera
+qué se guarda, cuánto tiempo y quién lo ve (§6), y hoy no nombra a Telegram. Si
+el dato pasa por un tercero, el consentimiento tiene que decirlo, o D11 se queda
+corto justo en lo que un comité va a preguntar. El texto exacto no se inventa
+aquí: queda en la deuda del §18, junto al acuerdo con el cliente del §17, y se
+revisa antes de que entre el primer dato real.
 
 ---
 
@@ -1181,6 +1275,8 @@ necesitarlo.
 | Si n8n no deja desactivar el guardado de ejecuciones por workflow (§5.4) | antes de datos reales |
 | Las cotas de la RV de §10.5 son literales; cambian si se reentrena | al reentrenar |
 | Revalidar con el clínico que el DICOM se obtiene del PACS | antes de H7 |
+| Que el consentimiento de D11 nombre a Telegram como tercero por el que pasan la imagen y las respuestas (§5.5) | antes de datos reales, con el comité de H7 |
+| Decidir si el piloto con datos reales va por Telegram o por un canal local (§5.5) | antes de H7 |
 
 ---
 
@@ -1195,6 +1291,7 @@ necesitarlo.
 | Un despliegue del cliente reinicia n8n a mitad de conversación | el estado vive en PostgreSQL: se reanuda |
 | El cuestionario resulta largo y los pacientes abandonan | `cuestionarios_iniciados` lo mide; acortar es barato |
 | El paciente no llega nunca al bot | **no resuelto**: no hay plan de difusión. Es de producto, no técnico, y bloquea la validación de H7 |
+| **La radiografía y las respuestas clínicas pasan por los servidores de Telegram** | **Aceptado y declarado, no mitigado (§5.5).** Telegram era la vía de entrega elegida, y un canal propio no lo va a instalar nadie en un piloto. Hoy lo acota que solo circulan placas de RSNA y síntomas fabricados; deja de acotarlo la primera placa real, que es H7. Eliminarlo exige un canal local: carga web propia sobre el `POST /inferir` que ya existe, una app, o un servidor de ficheros en la red del centro |
 | **No existen datos reales que emparejen imagen y clínica** | **No resuelto, y es el riesgo mayor del proyecto.** RSNA trae imagen, etiqueta, edad y sexo; **no trae síntomas ni hallazgos de exploración**. Los casos de §13.2 llevan síntomas inventados, y eso vale para probar el sistema pero **no para validar la combinación bayesiana**: si se inventan síntomas correlacionados con la etiqueta y luego se "valida" que Bayes funciona, se ha validado la invención, no el método. H6 puede implementarse y probarse; **H7 necesita datos clínicos reales emparejados o un piloto prospectivo**. Decidir cuál antes de H6, porque cambia lo que H7 puede afirmar |
 
 ---

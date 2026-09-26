@@ -6,8 +6,11 @@ Proyecto Integrador (UEES, Maestría en IA). Dos sub-proyectos entregados:
   radiografías de tórax de adultos del dataset RSNA, con partición por paciente
   verificada sin fuga de datos.
 - **SP2 — servidor.** Sirve esa CNN en Docker por dos puertas —una herramienta
-  MCP y un `POST /inferir` de respaldo— para que n8n la consulte sin que la
-  imagen salga nunca de la red local. Ver `docs/sp2-despliegue.md`.
+  MCP y un `POST /inferir` de respaldo— para que n8n la consulte **sin que la
+  imagen salga del VPS en ese paso**: el contenedor no publica puertos. Antes de
+  llegar ahí el DICOM viaja **por Telegram**, que no es infraestructura nuestra;
+  es un riesgo declarado, no una omisión (§5.5 del diseño de SP3). Ver
+  `docs/sp2-despliegue.md`.
 
 La arquitectura se fijó **midiendo**, no a priori: las tres candidatas empatan
 en AUC 0,874-0,889, un margen del orden de la varianza entre dos ejecuciones de
@@ -137,7 +140,16 @@ sobre la curva ROC de validación.
 
 `servidor/` contiene el Dockerfile y el compose. El contenedor **no publica
 puertos**: se une a la red interna donde ya vive n8n, y ahí lo llaman por su
-nombre. Esa es la garantía de que la radiografía no sale de la red local.
+nombre. Esa es la garantía de que la radiografía no sale del VPS **desde n8n en
+adelante**.
+
+> **Corregido el 26-sep, a raíz de una evaluación externa.** Esta frase decía
+> que el compose es «la garantía de que la radiografía no sale de la red local»,
+> y así no se sostiene: el DICOM entra por Telegram. La garantía es real, pero
+> cubre un tramo —n8n → copiloto—, no el recorrido completo; presentar el
+> recorrido completo como consecuencia de que falte un `ports` es vender una
+> privacidad que el sistema no tiene. El tramo de entrada está declarado como
+> riesgo aceptado en el §5.5 del diseño de SP3.
 
 Lo que devuelve no es la salida cruda del modelo, que está desplazada por el
 `pos_weight` del entrenamiento. Se calibra con una isotónica ajustada sobre las

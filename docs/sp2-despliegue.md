@@ -27,9 +27,19 @@ al arrancar y lo expone por **dos puertas sobre el mismo núcleo**:
 Las dos puertas llaman a la misma función, así que no pueden divergir ni en el
 resultado ni en el mensaje de error.
 
-**El servicio no publica ningún puerto al host.** Es deliberado: la
-radiografía no debe salir de la máquina. Solo se alcanza desde dentro de la red
-de Docker, por el nombre de servicio `copiloto-mcp`.
+**El servicio no publica ningún puerto al host.** Es deliberado: una vez que la
+radiografía está en n8n, no sale de la máquina. Solo se alcanza desde dentro de
+la red de Docker, por el nombre de servicio `copiloto-mcp`.
+
+> **Corregido el 26-sep, a raíz de una evaluación externa.** Aquí se leía «la
+> radiografía no debe salir de la máquina», a secas. Eso describe bien el tramo
+> n8n → copiloto y calla el anterior: el profesional manda el DICOM **por
+> Telegram**, así que la imagen ya salió de la red del centro y pasó por los
+> servidores de Telegram antes de que este contenedor la vea. Sin acotar el
+> tramo, quien lee esta guía entiende que la imagen nunca sale de
+> infraestructura propia, y entonces la frase deja de describir el despliegue y
+> empieza a prometer una privacidad que no hay. El riesgo del tramo de entrada
+> está declarado en el §5.5 del diseño de SP3.
 
 ### Por qué estos pesos y no los que ganan la comparativa
 

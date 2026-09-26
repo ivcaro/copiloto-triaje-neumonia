@@ -6,8 +6,16 @@
 > pasos usan casillas (`- [ ]`) para el seguimiento.
 
 **Objetivo:** servir la CNN entrenada en SP1 como herramienta MCP desde un
-contenedor Docker, con endpoint REST de respaldo, consumible desde n8n sin que
-la radiografía salga de la red local.
+contenedor Docker, con endpoint REST de respaldo, consumible desde n8n **sin que
+la radiografía salga del VPS en el paso de inferencia**: el contenedor no
+publica puertos.
+
+> **Corregido el 26-sep, a raíz de una evaluación externa.** Decía «sin que la
+> radiografía salga de la red local», que no distingue los dos tramos. El
+> anterior, Telegram → n8n, **sí** sale de la red del centro, porque el DICOM
+> llega por Telegram. Riesgo declarado en el §5.5 del diseño de SP3. El
+> comentario del compose del paso 3 habla del tramo de inferencia, que es el que
+> ese fichero configura, y por eso se mantiene tal cual.
 
 **Arquitectura:** un solo proceso con tres capas. El núcleo de inferencia vive
 en el paquete y no sabe de HTTP; encima, dos puertas delgadas —MCP y REST— que

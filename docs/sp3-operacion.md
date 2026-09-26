@@ -97,6 +97,17 @@ crear.
    como foto te lo dirá y seguirá esperando el archivo: Telegram recomprime las
    fotos y destruye el DICOM.
 
+> **Prueba solo con placas de RSNA, nunca con la de un paciente. Añadido el
+> 26-sep, a raíz de una evaluación externa.** Mandar el DICOM por Telegram
+> **saca la imagen de la red local**: va cifrada en tránsito, pero pasa por los
+> servidores de Telegram y se queda en su almacenamiento mientras el fichero
+> exista para el bot. Del tramo siguiente, n8n → `copiloto-mcp`, ya no sale de la
+> máquina —el contenedor no publica puertos—, y es ese tramo, solo ese, el que el
+> despliegue garantiza. La cabecera de una placa de RSNA está anonimizada; la de
+> una placa sacada del PACS no tiene por qué estarlo, y puede llevar nombre y
+> número de historia. El riesgo está declarado en el §5.5 del spec, junto con lo
+> que haría falta para quitarlo.
+
 DICOM de prueba, cualquiera de aquí:
 
 ```

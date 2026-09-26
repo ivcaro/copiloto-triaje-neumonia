@@ -16,7 +16,21 @@ el conjunto de prueba, y pesos de 16 MB que cargan en CPU con
 debajo del presupuesto de 4 s.
 
 Ese modelo hoy solo se puede invocar desde un script. SP2 lo convierte en un
-servicio que n8n pueda llamar, sin que la radiografía salga de la red local.
+servicio que n8n pueda llamar **sin que la radiografía salga del VPS en el paso
+de inferencia**: el contenedor no publica puertos y solo lo alcanza la red de
+Docker donde ya vive n8n.
+
+> **Corregido el 26-sep, a raíz de una evaluación externa.** Esta línea decía
+> «sin que la radiografía salga de la red local», sin decir de qué tramo
+> hablaba, y así suelta es falsa: el DICOM entra al sistema **por Telegram**
+> (SP3, D5), o sea que sale de la red del centro y pasa por los servidores de
+> Telegram antes de que n8n lo vea. Lo que SP2 garantiza es el tramo siguiente,
+> n8n → copiloto. Acotada, la afirmación se sostiene y se puede comprobar —no
+> hay `ports` en el compose y el nombre de servicio solo resuelve dentro de la
+> red de Docker—; sin acotar, convierte una propiedad real del despliegue en una
+> promesa de privacidad que el sistema no cumple, y es justo la frase que un
+> comité de ética leerá como compromiso. El tramo de entrada queda declarado
+> como riesgo aceptado en el §5.5 del diseño de SP3.
 
 ## 2. Objetivo y criterios de aceptación
 
@@ -238,6 +252,7 @@ producción sin que ninguna prueba falle.
 | n8n no habla MCP como esperamos | El endpoint REST es la contingencia ya comprometida en el cronograma; existe desde el día uno, no como parche |
 | La imagen de Docker crece hasta hacerse inmanejable | Ruedas CPU de torch y `python:3.12-slim`; se mide el tamaño final y se registra |
 | El VPS no tiene memoria suficiente | Límites declarados en el compose; el modelo son 16 MB y torch en CPU pide unos 500 MB de RSS |
+| **El DICOM pasa por los servidores de Telegram antes de llegar a n8n** | **Aceptado y declarado, no mitigado.** SP2 solo responde del tramo n8n → copiloto; el de entrada lo fijó el proyecto al elegir Telegram como canal. Qué expone, qué lo acota hoy y qué haría falta para eliminarlo: §5.5 del diseño de SP3. Añadido el 26-sep a raíz de una evaluación externa |
 
 ## 11. Entregables de SP2
 
