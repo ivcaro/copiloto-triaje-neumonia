@@ -359,23 +359,42 @@ def figura_perdidas(corrida, destino):
     ax.annotate(
         f"mínimo de validación\népoca {e} — {d['perdida_val_minima']:.4f}",
         xy=(e, d["perdida_val_minima"]), xycoords="data",
-        xytext=(0.32, 0.26), textcoords="axes fraction",
+        xytext=(0.32, 0.20), textcoords="axes fraction",
         fontsize=9, color=COLOR_AVISO, ha="left",
         arrowprops=dict(arrowstyle="->", color=COLOR_AVISO, lw=1.2))
+    # La flecha apunta a la epoca DESDE LA QUE MEMORIZA -la primera, despues
+    # del minimo, en la que la validacion ya lo supera en mas de
+    # SUBIDA_SOBREAJUSTE-, que es lo que dice el rotulo. Antes apuntaba a la
+    # ultima epoca, y «a partir de aqui» senalaba el final. La subida
+    # acumulada hasta la ultima epoca va en el texto.
+    #
     # El texto va anclado a FRACCION DE EJES y no a coordenadas de datos: la
     # perdida final cambia mucho de una corrida a otra -de 0,82 a 1,37 entre
     # las tres arquitecturas- y con una posicion en datos el rotulo se salia
-    # del area y la flecha cruzaba el titulo.
-    ax.annotate(
-        f"a partir de aquí memoriza:\nla validación sube {d['subida_desde_el_minimo']:+.0%}",
-        xy=(ep[-1], d["perdida_val_final"]), xycoords="data",
-        xytext=(0.62, 0.90), textcoords="axes fraction",
-        fontsize=9, color=COLOR_VAL, ha="left",
-        arrowprops=dict(arrowstyle="->", color=COLOR_VAL, lw=1.2,
-                        connectionstyle="arc3,rad=-0.15"))
+    # del area y la flecha cruzaba el titulo. Para que tenga sitio se abre una
+    # franja libre encima de las curvas (un 18 % mas de eje), y va con fondo
+    # blanco porque cruza la linea naranja del minimo.
+    desde = d["sobreajuste_desde_la_epoca"]
+    if desde is not None:
+        abajo, arriba = ax.get_ylim()
+        ax.set_ylim(abajo, arriba + (arriba - abajo) * 0.18)
+        r_desde = next(r for r in h if r["epoca"] == desde)
+        ax.annotate(
+            f"a partir de aquí memoriza (época {desde}):\n"
+            f"al final, la validación sube {d['subida_desde_el_minimo']:+.0%}",
+            xy=(desde, r_desde["perdida_val"]), xycoords="data",
+            xytext=(0.42, 0.965), textcoords="axes fraction",
+            fontsize=9, color=COLOR_VAL, ha="left", va="top",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
+                      edgecolor=COLOR_VAL, linewidth=0.8),
+            arrowprops=dict(arrowstyle="->", color=COLOR_VAL, lw=1.2,
+                            connectionstyle="arc3,rad=-0.15"))
 
     _ejes(ax, f"Pérdida por época — {corrida['nombre']}",
           "época", "pérdida (BCE ponderada por el desbalance)")
+    # Abajo a la izquierda y no «donde quepa»: la franja libre de arriba es
+    # del rotulo de «memoriza», y ahi la leyenda lo tapaba.
+    ax.legend(fontsize=9, loc="lower left")
     _marcar_fases(ax, h)
     fig.tight_layout()
     fig.savefig(destino, dpi=DPI)
@@ -403,13 +422,21 @@ def figura_auc(corrida, destino):
         f"brecha final {d['brecha_auc_final']:.3f}\n"
         f"({d['auc_train_final']:.4f} vs {d['auc_val_final']:.4f})",
         xy=(ep[-1], (d["auc_train_final"] + d["auc_val_final"]) / 2),
-        xytext=(ep[-1] - 5.0, 0.90), fontsize=9,
+        xytext=(ep[-1] - 4.6, 0.90), fontsize=9,
         arrowprops=dict(arrowstyle="->", color="gray", lw=1.1))
-    ax.axvline(d["epoca_minimo_val"], color=COLOR_AVISO, linestyle="-.",
-               linewidth=1.2)
+    # La linea naranja es la epoca del minimo de la perdida de validacion, la
+    # misma que en la figura de perdidas: va rotulada y en la leyenda para que
+    # la figura se lea sola, sin la otra al lado.
+    e = d["epoca_minimo_val"]
+    ax.axvline(e, color=COLOR_AVISO, linestyle="-.", linewidth=1.2,
+               label=f"mínimo de la pérdida de validación (época {e})")
 
     _ejes(ax, f"AUC por época — {corrida['nombre']}", "época", "AUC-ROC")
     _marcar_fases(ax, h)
+    abajo, arriba = ax.get_ylim()
+    ax.text(e + 0.1, abajo + (arriba - abajo) * 0.03,
+            "mínimo de la pérdida\nde validación", fontsize=8,
+            color=COLOR_AVISO, va="bottom")
     fig.tight_layout()
     fig.savefig(destino, dpi=DPI)
     plt.close(fig)
@@ -417,18 +444,48 @@ def figura_auc(corrida, destino):
 
 
 def figura_brecha(corridas, destino):
-    """La brecha de las tres juntas: el diagnostico en un solo numero."""
+    """La brecha de las tres juntas: el diagnostico en un solo numero.
+
+    Anota los puntos criticos de cada corrida: la epoca del minimo de la
+    perdida de validacion, con un triangulo sobre su curva y la brecha en ese
+    punto en la leyenda, y el valor final de la brecha al extremo de la linea.
+    """
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(9, 5.5))
+    ultima = 0
     for c in corridas:
         h = c["historial"]
         pares = [(r["epoca"], _brecha(r)) for r in h if _brecha(r) is not None]
-        ax.plot([p[0] for p in pares], [p[1] for p in pares], "-o",
-                markersize=4, label=c["nombre"].replace("kaggle_", ""))
+        if not pares:
+            continue
+        d = diagnosticar(h)
+        e, b = d["epoca_minimo_val"], d["brecha_perdida_minima"]
+        etiqueta = c["nombre"].replace("kaggle_", "")
+        if b is not None:
+            etiqueta += f" — ▼ época {e}, brecha {b:.3f}"
+        linea, = ax.plot([p[0] for p in pares], [p[1] for p in pares], "-o",
+                         markersize=4, label=etiqueta)
+        color = linea.get_color()
+        if b is not None:
+            ax.plot([e], [b], "v", color=color, markeredgecolor="black",
+                    markersize=9, zorder=5)
+        ef, bf = pares[-1]
+        ax.annotate(f"final {bf:.3f}", xy=(ef, bf), xytext=(6, 0),
+                    textcoords="offset points", va="center", fontsize=9,
+                    color=color, fontweight="bold")
+        ultima = max(ultima, ef)
     ax.axhline(0, color="gray", linewidth=0.8)
+    # Margen a la derecha para el rotulo del valor final.
+    ax.set_xlim(right=ultima + 1.6)
     _ejes(ax, "Brecha entre validación y entrenamiento, por arquitectura",
           "época", "pérdida_val − pérdida_train")
+    # A media altura a la izquierda: arriba tapaba el rotulo «ajuste fino», y
+    # en esa zona las tres curvas todavia van pegadas al cero.
+    ax.legend(fontsize=9, loc="center left",
+              title="▼ = mínimo de la pérdida de validación", title_fontsize=9)
+    # Las tres corridas comparten el esquema de fases: basta con la primera.
+    _marcar_fases(ax, corridas[0]["historial"])
     fig.tight_layout()
     fig.savefig(destino, dpi=DPI)
     plt.close(fig)

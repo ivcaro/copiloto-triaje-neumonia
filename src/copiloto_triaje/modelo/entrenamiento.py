@@ -376,7 +376,7 @@ def entrenar(modelo, cargador_train, cargador_val, cfg, dispositivo,
             # pesos cambiaban -no el del modelo al cerrar la epoca- y se midio
             # sobre imagenes con `RandomAffine` y `ColorJitter` encima, que son
             # mas dificiles que las limpias de validacion. Comparar las dos
-            # puede dar la curva de entrenamiento POR DEBAJO de la de
+            # puede dar la curva de entrenamiento POR ENCIMA de la de
             # validacion, que leido de un vistazo parece underfitting y no lo
             # es: es la aumentacion.
             #
