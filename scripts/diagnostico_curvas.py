@@ -115,8 +115,9 @@ def diagnosticar(historial: list[dict]) -> dict:
     if ultimo.get("auc_train") is not None:
         brecha_auc = ultimo["auc_train"] - ultimo["auc"]
 
-    # La primera epoca en la que la perdida de validacion ya no vuelve a bajar
-    # del minimo: es donde empieza a memorizar, no donde se nota.
+    # La primera epoca posterior al minimo en la que la validacion ya lo supera
+    # en mas de SUBIDA_SOBREAJUSTE: la memorizacion CONFIRMADA (empieza en el
+    # minimo; aqui es donde deja de ser ruido).
     desde = None
     for r in historial:
         if r["epoca"] > minimo["epoca"] and \
