@@ -295,7 +295,9 @@ caso, porque tiene que ser verdad en cada uno:
 | :--- | :--- |
 | Concordantes, y los dos extremos redondean distinto | los dos números: cuál supone independencia y cuál dependencia total, nombrando a **quién absorbe a quién** —«la auscultación no añade nada sobre la imagen» solo si la imagen es la más informativa; si lo es la clínica, al revés; si con el asma sin saber cambia de una puntuación a otra, «solo cuenta la más informativa de las dos» |
 | Concordantes, y los extremos redondean igual | sin números: «no son pruebas independientes: la cifra puede exagerar» |
-| Discordantes | «apuntan en sentidos opuestos, y además no son pruebas independientes: la cifra es orientativa» |
+| Discordantes | «apuntan en sentidos opuestos, y además no son pruebas independientes: la cifra es orientativa» («la horquilla» si hay rango; «la cifra» si se cerró) |
+| Concordantes, y un extremo es una cota (< 1 % o > 99 %) | sin números, como cuando redondean igual; la cabecera dice «entre menos de 1 % y 2 %» o «entre 84 % y más de 99 %»: la cota se dice con palabras, nunca con el signo dentro del rango |
+| Discordantes con el asma sin saber y una puntuación a cada lado de 1 (solo pasa entre 2 y 3) | «que la clínica apunte en el mismo sentido que la imagen o en el contrario depende de si tiene asma, y además no son pruebas independientes: la horquilla es orientativa» («la horquilla» si hay rango; «la cifra» si se cerró). Si las dos RV clínicas se oponen a la imagen, vale la frase de «sentidos opuestos» |
 
 Con las dos RV **por debajo** de 1 la exageración va hacia abajo: ahí el
 extremo bajo es el de independencia y el alto el de dependencia, y el ⚠️ los
@@ -472,7 +474,8 @@ reproducirla**: es una prueba de mutación que se escribe sola.
 6. Ningún literal de la combinación afirma «neumonía»; los avisos sí pueden.
 6 bis. Con las dos evidencias del mismo lado de 1, el informe entrega un rango
    entre el supuesto de independencia y el de dependencia total. Con evidencias
-   discordantes entrega un número, y el aviso de discrepancia del §8 de SP3.
+   discordantes entrega un número —o, si no se sabe si hay asma, la horquilla
+   de las dos puntuaciones posibles—, y el aviso de discrepancia del §8 de SP3.
 7. Con signos incompletos el informe sale como en SP3 y dice por qué.
 8. `PREVALENCIA_LOCAL` no tiene valor por defecto silencioso: sin ella, el
    servidor no arranca. **Esto no rompe la compatibilidad del §9.2**, que es del

@@ -63,7 +63,8 @@ TOLERANCIA_RV = 1e-9
 # asi que es el que la gente copia y pega.
 ARRANCAR = ("docker run -d --rm --name copiloto-prueba "
             "-p 127.0.0.1:18000:8000 "
-            "-e UMBRAL=0.4258 -e AUC_VALIDACION=0.8827 -e OMP_NUM_THREADS=2 "
+            "-e UMBRAL=0.4258 -e AUC_VALIDACION=0.8827 "
+            "-e PREVALENCIA_LOCAL=0.1466 -e OMP_NUM_THREADS=2 "
             "copiloto-mcp:0.1.0")
 
 

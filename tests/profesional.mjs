@@ -146,6 +146,89 @@ const R_NEGATIVA_BORDE = {
   modelo: "efficientnet_b0_320px", auc_validacion: 0.8827, milisegundos: 42.6,
 };
 
+// Bloques `combinacion` (SP4 §9.2) CALCULADOS con heckerling.py -prevalencia
+// 0,1466, RV del §4 del spec y la RV real de cada placa de arriba-, no
+// tecleados. Los cuatro decimales son los que el servidor manda.
+//   C_POS_3    puntuacion 3 con la positiva clara: el ejemplo 1 del §8.
+//   C_POS_0    puntuacion 0 con la positiva clara: discordantes, ejemplo 2.
+//   C_POS_3_4  asma no_se (3 o 4) con la positiva clara: una sola horquilla.
+//   C_BANDA_0  puntuacion 0 con la banda: concordantes por debajo de 1 y los
+//              dos extremos redondean igual (2 %).
+//   C_BORDE_0  puntuacion 0 con la negativa del borde: por debajo de 1, y la
+//              mas informativa es la CLINICA.
+//   C_NEG_0    puntuacion 0 con la negativa clara: todo por debajo del 1 %.
+const C_POS_3 = {
+  prevalencia: 0.1466, puntuacion: [3], rv_clinica: [1.64],
+  rv_imagen: R_POSITIVA.razon_de_verosimilitud, concordantes: true,
+  absorbe: "imagen", independencia: [0.8951], dependencia: [0.8388],
+  minima: 0.8388, maxima: 0.8951 };
+const C_POS_0 = {
+  prevalencia: 0.1466, puntuacion: [0], rv_clinica: [0.12],
+  rv_imagen: R_POSITIVA.razon_de_verosimilitud, concordantes: false,
+  absorbe: null, independencia: [0.3844], dependencia: null,
+  minima: 0.3844, maxima: 0.3844 };
+const C_POS_3_4 = {
+  prevalencia: 0.1466, puntuacion: [3, 4], rv_clinica: [1.64, 7.18],
+  rv_imagen: R_POSITIVA.razon_de_verosimilitud, concordantes: true,
+  absorbe: "imagen", independencia: [0.8951, 0.9739],
+  dependencia: [0.8388, 0.8388], minima: 0.8388, maxima: 0.9739 };
+const C_BANDA_0 = {
+  prevalencia: 0.1466, puntuacion: [0], rv_clinica: [0.12],
+  rv_imagen: R_BANDA.razon_de_verosimilitud, concordantes: true,
+  absorbe: "clinica", independencia: [0.0176], dependencia: [0.0202],
+  minima: 0.0176, maxima: 0.0202 };
+const C_BORDE_0 = {
+  prevalencia: 0.1466, puntuacion: [0], rv_clinica: [0.12],
+  rv_imagen: R_NEGATIVA_BORDE.razon_de_verosimilitud, concordantes: true,
+  absorbe: "clinica", independencia: [0.0120], dependencia: [0.0202],
+  minima: 0.0120, maxima: 0.0202 };
+const C_NEG_0 = {
+  prevalencia: 0.1466, puntuacion: [0], rv_clinica: [0.12],
+  rv_imagen: R_NEGATIVA.razon_de_verosimilitud, concordantes: true,
+  absorbe: "imagen", independencia: [0.0003], dependencia: [0.0028],
+  minima: 0.0003, maxima: 0.0028 };
+// C_POS_2_3  asma no_se (2 o 3) contra la placa positiva: las dos RV clinicas
+//            a los dos lados de 1 (0,70 y 1,64), discordantes por D6.
+const C_POS_2_3 = {
+  prevalencia: 0.1466, puntuacion: [2, 3], rv_clinica: [0.7, 1.64],
+  rv_imagen: R_POSITIVA.razon_de_verosimilitud, concordantes: false,
+  absorbe: null, independencia: [0.7846, 0.8951], dependencia: null,
+  minima: 0.7846, maxima: 0.8951 };
+// C_POS_0_1  asma no_se (0 o 1) contra la placa positiva: las DOS RV clinicas
+//            se oponen a la imagen (0,12 y 0,20, ambas por debajo de 1);
+//            discordante para las dos hipotesis del asma (Ruling 6).
+const C_POS_0_1 = {
+  prevalencia: 0.1466, puntuacion: [0, 1], rv_clinica: [0.12, 0.2],
+  rv_imagen: R_POSITIVA.razon_de_verosimilitud, concordantes: false,
+  absorbe: null, independencia: [0.3844, 0.51], dependencia: null,
+  minima: 0.3844, maxima: 0.51 };
+// Tres mas de la revision final, tambien CALCULADOS con heckerling.py. Sin
+// ellos sobrevivian cuatro mutantes del ⚠️: todos los concordantes por debajo
+// de 1 tenian una sola puntuacion (min == max), y ningun discordante contra
+// la placa negativa tenia la cabecera cerrada.
+//   C_BANDA_0_1  asma no_se (0 o 1) con la banda: concordantes, las DOS RV
+//                por debajo de 1 y dos puntuaciones. El extremo de
+//                independencia es el BAJO y el de dependencia el ALTO (D7).
+//   C_NEG_3      puntuacion 3 (1,64) contra la negativa clara: discordantes
+//                con una sola puntuacion, y el asma se sabe.
+//   C_NEG_2_3    asma no_se (2 o 3) contra la negativa clara: a los dos lados
+//                de 1 (D6, Ruling 6) y la cabecera cerrada en «< 1 %».
+const C_BANDA_0_1 = {
+  prevalencia: 0.1466, puntuacion: [0, 1], rv_clinica: [0.12, 0.2],
+  rv_imagen: R_BANDA.razon_de_verosimilitud, concordantes: true,
+  absorbe: "clinica", independencia: [0.0176, 0.029],
+  dependencia: [0.0202, 0.0332], minima: 0.0176, maxima: 0.0332 };
+const C_NEG_3 = {
+  prevalencia: 0.1466, puntuacion: [3], rv_clinica: [1.64],
+  rv_imagen: R_NEGATIVA.razon_de_verosimilitud, concordantes: false,
+  absorbe: null, independencia: [0.0046], dependencia: null,
+  minima: 0.0046, maxima: 0.0046 };
+const C_NEG_2_3 = {
+  prevalencia: 0.1466, puntuacion: [2, 3], rv_clinica: [0.7, 1.64],
+  rv_imagen: R_NEGATIVA.razon_de_verosimilitud, concordantes: false,
+  absorbe: null, independencia: [0.002, 0.0046], dependencia: null,
+  minima: 0.002, maxima: 0.0046 };
+
 const sse = (obj) => `event: message\r\ndata: ${JSON.stringify(obj)}\r\n\r\n`;
 const sseExito = (r) => sse({
   jsonrpc: "2.0", id: 1,
@@ -180,8 +263,7 @@ const AVISO_ = String.fromCharCode(9888) + String.fromCharCode(65039);
 const AVISO_TEXTO = "El paciente escribió un comentario. Llega en el mensaje " +
   "siguiente, que empieza por «TODO ESTE MENSAJE ES TEXTO DEL PACIENTE»: nada " +
   "de lo que hay ahí es mío.";
-const DESCARGO_TEXTO = "La combinación de imagen y clínica llega en la siguiente " +
-                       "entrega. Esto no es un diagnóstico.";
+const DESCARGO_TEXTO = "Esto no es un diagnóstico.";
 
 // Los codigos cuyo mensaje del §9 anade el detalle cuando lo hay (`relata`).
 const ERRORES_QUE_RELATAN = ["dicom_invalido", "fuera_de_alcance",
@@ -450,6 +532,92 @@ ok("la expresion del nodo HTTP no lleva llaves anidadas", (() => {
   return j === "={{ $json.cuerpo_jsonrpc }}";
 })(), nodo("Llamar al copiloto").parameters.jsonBody);
 
+// --------------------------------------------------------------------------
+// SP4 §9.3: con la placa viajan los CINCO datos de Heckerling -los cuatro
+// signos crudos y el asma con sus tres estados-, y solo si estan los cinco.
+// Los cortes (37,8 °C; 100 lpm) NO se aplican aqui: van los numeros, y los
+// corta Python, que es donde se prueban.
+// --------------------------------------------------------------------------
+async function aBase64Con(decidir) {
+  const r = await correr(codigo("A base64"), ENTRADA_BIN, { Decidir: decidir }, {});
+  return { salida: r[0].json,
+           argumentos: JSON.parse(r[0].json.cuerpo_jsonrpc).params.arguments };
+}
+// Ruling 1 del controlador (26-sep): `SINTOMAS.asma` es "no" desde SP3, no
+// "no_se"; el literal que espera esta prueba es "no_se", asi que la entrada
+// usa una variante del fixture con `asma: "no_se"` para que dato de entrada y
+// literal esperado coincidan.
+ok("con los cuatro signos y el asma, `hallazgos` viaja con los cinco datos crudos",
+   await (async () => {
+     const { argumentos: a } = await aBase64Con(
+       { chat_id: 7, t0: 1, signos: SIGNOS,
+         sintomas: Object.assign({}, SINTOMAS, { asma: "no_se" }) });
+     return a.dicom_base64 === B64_HOLA &&
+            JSON.stringify(a.hallazgos) === JSON.stringify({
+              temperatura_c: 38.2, frecuencia_cardiaca: 104, crepitantes: true,
+              murmullo_disminuido: false, asma: "no_se" });
+   })());
+ok("y con el asma del fixture (\"no\") viaja \"no\": el asma va tal cual (D2)",
+   await (async () => {
+     const { argumentos: a } = await aBase64Con(
+       { chat_id: 7, t0: 1, signos: SIGNOS, sintomas: SINTOMAS });
+     return JSON.stringify(a.hallazgos) === JSON.stringify({
+              temperatura_c: 38.2, frecuencia_cardiaca: 104, crepitantes: true,
+              murmullo_disminuido: false, asma: "no" });
+   })());
+// El tercer estado, y el primero del enum: un `indexOf(...) < 1` dejaba a
+// todos los asmaticos sin combinacion y la suite seguia en verde.
+ok("y con asma \"si\" viaja \"si\"", await (async () => {
+  const { argumentos: a } = await aBase64Con(
+    { chat_id: 7, t0: 1, signos: SIGNOS,
+      sintomas: Object.assign({}, SINTOMAS, { asma: "si" }) });
+  return !!a.hallazgos && a.hallazgos.asma === "si";
+})());
+// El objeto se arma con las cinco claves explicitas, no copiando `signos`: una
+// clave de mas que viajara haria que el servidor contestara `sobran [...]`.
+ok("una clave de mas en los signos no viaja: `hallazgos` lleva EXACTAMENTE las cinco",
+   await (async () => {
+     const { argumentos: a } = await aBase64Con(
+       { chat_id: 7, t0: 1, signos: Object.assign({}, SIGNOS, { extra: 1 }),
+         sintomas: SINTOMAS });
+     return !!a.hallazgos && Object.keys(a.hallazgos).sort().join(",") ===
+       "asma,crepitantes,frecuencia_cardiaca,murmullo_disminuido,temperatura_c";
+   })());
+for (const [etiqueta, decidir] of [
+  ["sin signos", { chat_id: 7, t0: 1, signos: {}, sintomas: SINTOMAS }],
+  ["con un signo de menos",
+   { chat_id: 7, t0: 1, sintomas: SINTOMAS,
+     signos: { temperatura_c: 38.2, frecuencia_cardiaca: 104, crepitantes: true } }],
+  ["con un booleano en texto",
+   { chat_id: 7, t0: 1, sintomas: SINTOMAS,
+     signos: Object.assign({}, SIGNOS, { crepitantes: "true" }) }],
+  ["con una temperatura en texto",
+   { chat_id: 7, t0: 1, sintomas: SINTOMAS,
+     signos: Object.assign({}, SIGNOS, { temperatura_c: "38,2" }) }],
+  ["con un pulso que no es finito",
+   { chat_id: 7, t0: 1, sintomas: SINTOMAS,
+     signos: Object.assign({}, SIGNOS, { frecuencia_cardiaca: NaN }) }],
+  ["con el murmullo en texto",
+   { chat_id: 7, t0: 1, sintomas: SINTOMAS,
+     signos: Object.assign({}, SIGNOS, { murmullo_disminuido: "false" }) }],
+  ["sin cuestionario", { chat_id: 7, t0: 1, signos: SIGNOS, sintomas: null }],
+  ["con un asma que no es de los tres",
+   { chat_id: 7, t0: 1, signos: SIGNOS,
+     sintomas: Object.assign({}, SINTOMAS, { asma: "quizas" }) }],
+  ["sin signos ni sintomas (la entrada de las pruebas de arriba)", { chat_id: 7, t0: 123 }],
+]) {
+  const { argumentos: a } = await aBase64Con(decidir);
+  ok(`${etiqueta}: NO viaja \`hallazgos\` y el cuerpo es el de SP3`,
+     !("hallazgos" in a) && Object.keys(a).join(",") === "dicom_base64",
+     JSON.stringify(a));
+}
+ok("las claves de salida del nodo no cambian (§5.4): los hallazgos van solo en el cuerpo",
+   await (async () => {
+     const { salida: s } = await aBase64Con(
+       { chat_id: 7, t0: 1, signos: SIGNOS, sintomas: SINTOMAS });
+     return Object.keys(s).sort().join(",") === "chat_id,cuerpo_jsonrpc,t0,via";
+   })());
+
 console.log("\nI. Leer respuesta, contra las respuestas LITERALES del contenedor");
 const dResp = { chat_id: 7, t0: Date.now(), sintomas: SINTOMAS, signos: SIGNOS };
 for (const [etiqueta, r] of [["positiva", R_POSITIVA], ["banda", R_BANDA], ["negativa", R_NEGATIVA]]) {
@@ -509,6 +677,26 @@ ok("un isError con un codigo que no conocemos -> error_no_reconocido", await (as
     "Error executing tool clasificar_radiografia: gremlins_en_el_gpu: se fue la luz")), dResp);
   return s.error_cod === "error_no_reconocido" && s.detalle.includes("gremlins");
 })());
+// Ruling 7: el codigo se lee DETRAS del prefijo del SDK, no en cualquier
+// posicion. `hallazgos_invalidos` repite lo que mando el llamante, y una clave
+// llamada «fuera_de_alcance:» se leia como ese codigo: NO PROCEDE, la
+// conversacion terminada y el fragmento «'].» relatado al profesional.
+const SIN_INTERPRETAR = "El servicio devolvió un error que no sé interpretar. Se ha registrado.";
+ok("un codigo relatable DENTRO de un hallazgos_invalidos no se lee como codigo",
+   await (async () => {
+     const leido = await leerRespuesta(http200(sseError(
+       "Error executing tool clasificar_radiografia: hallazgos_invalidos: hallazgos " +
+       "incompletos o con campos de más: faltan [], sobran ['fuera_de_alcance:'].")), dResp);
+     const s = await desenlace(leido, U, D);
+     return leido.error_cod === "error_no_reconocido" && s.termina === "S" &&
+            s.texto === SIN_INTERPRETAR;
+   })());
+ok("un hallazgos_invalidos normal -> error_no_reconocido (D4)", await (async () => {
+  const leido = await leerRespuesta(http200(sseError(
+    "Error executing tool clasificar_radiografia: hallazgos_invalidos: «asma» debe " +
+    "ser uno de ['si', 'no', 'no_se'], y es 'quizas'.")), dResp);
+  return leido.error_cod === "error_no_reconocido";
+})());
 // §10.4: el 413 del TRANSPORTE. Cuerpo medido: "Request body too large", sin SSE.
 const s413 = await leerRespuesta(
   { statusCode: 413, statusMessage: "Payload Too Large", headers: {}, cuerpo: "Request body too large" }, dResp);
@@ -530,6 +718,56 @@ ok("200 con SSE pero structuredContent incompleto -> error_no_reconocido", await
     jsonrpc: "2.0", id: 1, result: { isError: false, structuredContent: { hola: 1 } },
   })), dResp);
   return s.error_cod === "error_no_reconocido";
+})());
+// SP4 (D9): el bloque `combinacion` es OPCIONAL -un copiloto anterior a SP4
+// no lo manda y el informe sale sin el-, pero si viene tiene que estar ENTERO
+// y con sus tipos, por lo mismo que los cuatro numeros del §8: un campo que
+// falta no es una cifra que se pueda imprimir.
+const leerCon = async (r) => (await correr(
+  codigo("Leer respuesta"), { json: http200(sseExito(r)) }, { Decidir: dResp }))[0].json;
+ok("sin `combinacion` (copiloto anterior a SP4) se lee como siempre", await (async () => {
+  const s = await leerCon(R_POSITIVA);
+  return s.error_cod === "N" && !("combinacion" in s.resultado);
+})());
+for (const [etiqueta, c] of [["ejemplo 1", C_POS_3], ["discordante", C_POS_0],
+                             ["asma no_se", C_POS_3_4], ["banda", C_BANDA_0],
+                             ["bordes inclusivos", Object.assign({}, C_NEG_0,
+                               { independencia: [0], dependencia: [1], minima: 0, maxima: 1 })]]) {
+  const s = await leerCon(Object.assign({}, R_POSITIVA, { combinacion: c }));
+  ok(`${etiqueta}: un bloque valido pasa ENTERO y tal cual`,
+     s.error_cod === "N" && JSON.stringify(s.resultado.combinacion) === JSON.stringify(c),
+     JSON.stringify(s.error_cod));
+}
+const ROTOS = [
+  ["minima > maxima", Object.assign({}, C_POS_3, { minima: 0.9, maxima: 0.8 })],
+  ["puntuacion fuera de 0-5", Object.assign({}, C_POS_3, { puntuacion: [6] })],
+  ["tres puntuaciones", Object.assign({}, C_POS_3, { puntuacion: [3, 4, 5], rv_clinica: [1, 2, 3], independencia: [0.1, 0.2, 0.3], dependencia: [0.1, 0.2, 0.3] })],
+  ["rv_clinica de otro largo", Object.assign({}, C_POS_3, { rv_clinica: [1.64, 7.18] })],
+  ["concordantes sin dependencia", Object.assign({}, C_POS_3, { dependencia: null })],
+  ["discordantes CON dependencia", Object.assign({}, C_POS_0, { dependencia: [0.5] })],
+  ["absorbe desconocido", Object.assign({}, C_POS_3, { absorbe: "nadie" })],
+  ["una posterior como texto", Object.assign({}, C_POS_3, { independencia: ["0,89"] })],
+  ["una posterior de mas de 1", Object.assign({}, C_POS_3, { maxima: 1.2 })],
+  ["prevalencia de 0", Object.assign({}, C_POS_3, { prevalencia: 0 })],
+  ["rv_imagen negativa", Object.assign({}, C_POS_3, { rv_imagen: -1 })],
+  ["rv_clinica de 0", Object.assign({}, C_POS_3, { rv_clinica: [0] })],
+  ["concordantes en texto", Object.assign({}, C_POS_3, { concordantes: "true" })],
+  ["puntuacion no entera", Object.assign({}, C_POS_3, { puntuacion: [3.5] })],
+  ["el bloque no es un objeto", "84-90"],
+  ["el bloque es una lista", [0.84, 0.9]],
+];
+for (const [etiqueta, c] of ROTOS) {
+  const s = await leerCon(Object.assign({}, R_POSITIVA, { combinacion: c }));
+  ok(`${etiqueta}: error_no_reconocido, y NO llega al redactor`,
+     s.error_cod === "error_no_reconocido" && s.resultado === null,
+     JSON.stringify(s.error_cod));
+}
+// `null` es «no vino» (el informe dira SIN COMBINAR); cualquier otro valor que
+// no sea un bloque valido se rechaza arriba.
+ok("`combinacion: null` pasa como ausente: sin error y el resultado llega", await (async () => {
+  const s = await leerCon(Object.assign({}, R_POSITIVA, { combinacion: null }));
+  return s.error_cod === "N" && s.resultado !== null &&
+         s.resultado.probabilidad_cruda === R_POSITIVA.probabilidad_cruda;
 })());
 ok("el base64 del DICOM NO viaja en la salida de este nodo (§5.4)", await (async () => {
   const s = await leerRespuesta(http200(sseExito(R_POSITIVA)), dResp);
@@ -622,7 +860,9 @@ console.log("\nI ante. LO QUE EL MODELO AFIRMA vs LO QUE ADVIERTE");
 // --------------------------------------------------------------------------
 for (const [etiqueta, r] of [["positiva", R_POSITIVA], ["banda", R_BANDA],
                              ["negativa", R_NEGATIVA],
-                             ["negativa del borde", R_NEGATIVA_BORDE]]) {
+                             ["negativa del borde", R_NEGATIVA_BORDE],
+                             ["positiva con combinacion", Object.assign({}, R_POSITIVA, { combinacion: C_POS_3 })],
+                             ["banda con combinacion", Object.assign({}, R_BANDA, { combinacion: C_BANDA_0 })]]) {
   const t = (await texto(r)).texto;
   const afirmaciones = t.split(NL).filter((l) => !l.trimStart().startsWith("\u26a0"));
   const advertencias = t.split(NL).filter((l) => l.trimStart().startsWith("\u26a0"));
@@ -1968,6 +2208,244 @@ for (const [, clave, min, max] of SPEC_4_4) {
   ok(`el rango de ${clave} es ${min} a ${max}`,
      new RegExp(`min:\\s*${num(min)}\\s*,\\s*max:\\s*${num(max)}\\b`).test(fuente),
      `min:${min} max:${max}`);
+}
+
+console.log("\nP. SP4 §8: el cuarto bloque, COMBINADO");
+// --------------------------------------------------------------------------
+// Las cifras de estos literales estan CALCULADAS (heckerling.py), no son
+// ilustraciones: son los tres ejemplos del §8 del spec de SP4 y los casos que
+// la tabla del ⚠️ del §8 distingue.
+// --------------------------------------------------------------------------
+const SINTOMAS_SI = Object.assign({}, SINTOMAS, { asma: "si" });
+const SINTOMAS_NO_SE = Object.assign({}, SINTOMAS, { asma: "no_se" });
+const conCombinacion =async (c, sint = SINTOMAS_SI, sig = SIGNOS, r = R_POSITIVA) =>
+  (await desenlace({ error_cod: "N", detalle: "",
+                     resultado: Object.assign({}, r, { combinacion: c }),
+                     sintomas: sint, signos: sig },
+                   U, Object.assign({}, D, { sintomas: sint, signos: sig }))).texto;
+const bloqueCombinado = (t) => t.split(NL + NL).find(
+  (b) => b.startsWith("COMBINADO") || b.startsWith("SIN COMBINAR")) || "";
+
+const tC3 = await conCombinacion(C_POS_3);
+const b3 = bloqueCombinado(tC3).split(NL);
+ok("ejemplo 1 del §8: la cabecera, literal",
+   b3[0] === "COMBINADO — entre 84 % y 90 % de probabilidad de opacidad compatible", b3[0]);
+ok("ejemplo 1: los tres factores y la puntuacion, literal",
+   b3[1] === "(prevalencia 14,7 % × clínica 1,64 × imagen 30,3; Heckerling 3 de 5)", b3[1]);
+ok("ejemplo 1: el aviso de dependencia con sus dos numeros, literal",
+   b3[2] === "⚠️ La auscultación y la imagen miran la misma consolidación, así que no son " +
+             "pruebas independientes: el 90 % supone que cada una aporta información nueva, " +
+             "y el 84 %, que la auscultación no añade nada sobre la imagen. Decide usted.", b3[2]);
+ok("ejemplo 1: tres lineas y nada mas", b3.length === 3, String(b3.length));
+ok("el bloque va DESPUES de lo explorado y ANTES del descargo", (() => {
+  const bl = tC3.split(NL + NL);
+  const i = bl.findIndex((b) => b.startsWith("COMBINADO"));
+  return i > 0 && bl[i - 1].includes("EXPLORADO") && bl[i + 1] === DESCARGO_TEXTO;
+})(), tC3);
+ok("el descargo ya no promete la siguiente entrega (D8)",
+   !tC3.includes("siguiente entrega") && tC3.includes(DESCARGO_TEXTO));
+ok("el resultado se guarda ENTERO, con el bloque (§10 de SP4)", await (async () => {
+  const s = await desenlace({ error_cod: "N", detalle: "",
+                              resultado: Object.assign({}, R_POSITIVA, { combinacion: C_POS_3 }),
+                              sintomas: SINTOMAS_SI, signos: SIGNOS }, U, D);
+  return JSON.stringify(JSON.parse(descodificar(s.resultado_cod)).combinacion) === JSON.stringify(C_POS_3);
+})());
+
+const b0 = bloqueCombinado(await conCombinacion(C_POS_0)).split(NL);
+ok("ejemplo 2: discordantes -> un numero, no una horquilla",
+   b0[0] === "COMBINADO — 38 % de probabilidad de opacidad compatible", b0[0]);
+ok("ejemplo 2: los factores, con la RV clinica de dos decimales",
+   b0[1] === "(prevalencia 14,7 % × clínica 0,12 × imagen 30,3; Heckerling 0 de 5)", b0[1]);
+ok("ejemplo 2: el aviso dice que apuntan en sentidos opuestos",
+   b0[2] === "⚠️ La clínica y la imagen apuntan en sentidos opuestos, y además no son " +
+             "pruebas independientes: la cifra es orientativa. Decide usted.", b0[2]);
+
+const b34 = bloqueCombinado(await conCombinacion(C_POS_3_4, SINTOMAS)).split(NL);
+ok("asma no_se: UNA sola horquilla que funde las dos causas",
+   b34[0] === "COMBINADO — entre 84 % y 97 % de probabilidad de opacidad compatible", b34[0]);
+ok("asma no_se: las dos RV clinicas y las dos puntuaciones, segun tenga asma o no",
+   b34[1] === "(prevalencia 14,7 % × clínica 1,64–7,18 × imagen 30,3; Heckerling 3 o 4 de 5, según tenga asma o no)", b34[1]);
+ok("asma no_se: el aviso nombra el extremo de independencia (97) y el de dependencia (84)",
+   (b34[2] || "").includes("el 97 % supone que cada una aporta información nueva, y el 84 %, " +
+                   "que la auscultación no añade nada sobre la imagen"), b34[2]);
+ok("nunca se anidan dos rangos: un solo «entre» en todo el bloque",
+   (b34.join(" ").match(/entre /g) || []).length === 1, b34.join(" | "));
+
+// D6: dos puntuaciones a los dos lados de 1 -solo pasa entre 2 y 3-, y
+// discordantes: la frase de "sentidos opuestos" seria verdad para una
+// hipotesis (con asma) y falsa para la otra (sin asma), asi que el aviso
+// tiene que decir de que depende en vez de afirmar sin condicion.
+const b23 = bloqueCombinado(await conCombinacion(C_POS_2_3, SINTOMAS)).split(NL);
+ok("D6: dos puntuaciones a los dos lados de 1 -> horquilla de independencia",
+   b23[0] === "COMBINADO — entre 78 % y 90 % de probabilidad de opacidad compatible", b23[0]);
+ok("D6: los factores con las dos RV y las dos puntuaciones",
+   b23[1] === "(prevalencia 14,7 % × clínica 0,70–1,64 × imagen 30,3; Heckerling 2 o 3 de 5, según tenga asma o no)", b23[1]);
+ok("D6: el aviso dice de que depende el sentido",
+   b23[2] === "⚠️ Que la clínica apunte en el mismo sentido que la imagen o en el contrario depende de si tiene asma, y además no son pruebas independientes: la horquilla es orientativa. Decide usted.", b23[2]);
+
+// Ruling 6: "dos puntuaciones" no basta para que el sentido dependa del asma.
+// Si las DOS RV clinicas se oponen a la imagen -aqui 0,12 y 0,20, las dos
+// por debajo de 1 contra una imagen a favor-, la frase de "sentidos
+// opuestos" es verdad para las dos hipotesis, y el aviso vuelve a ser el de
+// siempre (con "la horquilla" porque aqui si hay rango).
+const b01 = bloqueCombinado(await conCombinacion(C_POS_0_1, SINTOMAS)).split(NL);
+ok("Ruling 6: las dos RV clinicas se oponen a la imagen -> horquilla de independencia",
+   b01[0] === "COMBINADO — entre 38 % y 51 % de probabilidad de opacidad compatible", b01[0]);
+ok("Ruling 6: los factores con las dos RV y las dos puntuaciones",
+   b01[1] === "(prevalencia 14,7 % × clínica 0,12–0,20 × imagen 30,3; Heckerling 0 o 1 de 5, según tenga asma o no)", b01[1]);
+ok("Ruling 6: con las dos RV clinicas del mismo lado, el aviso vuelve a ser el de siempre",
+   b01[2] === "⚠️ La clínica y la imagen apuntan en sentidos opuestos, y además no son pruebas independientes: la horquilla es orientativa. Decide usted.", b01[2]);
+
+// Discordantes contra la placa NEGATIVA, con la cabecera cerrada en «< 1 %».
+// Con UNA puntuacion el asma se sabe y la frase es la de «sentidos opuestos»
+// (sin `dosPuntuaciones &&` diria «depende de si tiene asma»); con dos a los
+// dos lados de 1 dice de que depende, y en las dos el sustantivo sigue a la
+// cabecera: «la cifra», porque el rango se cerro.
+const bN3 = bloqueCombinado(await conCombinacion(C_NEG_3, SINTOMAS_SI, SIGNOS, R_NEGATIVA)).split(NL);
+ok("una puntuacion >= 1 contra la negativa: la cabecera, cerrada",
+   bN3[0] === "COMBINADO — < 1 % de probabilidad de opacidad compatible", bN3[0]);
+ok("...los factores",
+   bN3[1] === "(prevalencia 14,7 % × clínica 1,64 × imagen 0,02; Heckerling 3 de 5)", bN3[1]);
+ok("...y el aviso de sentidos opuestos, con «la cifra»",
+   bN3[2] === "⚠️ La clínica y la imagen apuntan en sentidos opuestos, y además no son pruebas independientes: la cifra es orientativa. Decide usted.", bN3[2]);
+const bN23 = bloqueCombinado(await conCombinacion(C_NEG_2_3, SINTOMAS_NO_SE, SIGNOS, R_NEGATIVA)).split(NL);
+ok("2 o 3 contra la negativa: la cabecera se cierra en «< 1 %» a secas",
+   bN23[0] === "COMBINADO — < 1 % de probabilidad de opacidad compatible", bN23[0]);
+ok("...los factores con las dos RV y las dos puntuaciones",
+   bN23[1] === "(prevalencia 14,7 % × clínica 0,70–1,64 × imagen 0,02; Heckerling 2 o 3 de 5, según tenga asma o no)", bN23[1]);
+ok("...y el aviso dice de que depende el sentido, con «la cifra» y no «la horquilla»",
+   bN23[2] === "⚠️ Que la clínica apunte en el mismo sentido que la imagen o en el contrario depende de si tiene asma, y además no son pruebas independientes: la cifra es orientativa. Decide usted.", bN23[2]);
+
+const bB = bloqueCombinado(await conCombinacion(C_BANDA_0, SINTOMAS_SI, SIGNOS, R_BANDA)).split(NL);
+ok("un rango que se cierra deja de ser un rango: «2 %» a secas",
+   bB[0] === "COMBINADO — 2 % de probabilidad de opacidad compatible", bB[0]);
+ok("banda: la RV de la imagen con dos decimales por debajo de 10",
+   bB[1] === "(prevalencia 14,7 % × clínica 0,12 × imagen 0,87; Heckerling 0 de 5)", bB[1]);
+ok("y con los extremos iguales el aviso va sin numeros",
+   bB[2] === "⚠️ La auscultación y la imagen miran la misma consolidación, así que no son " +
+             "pruebas independientes: la cifra puede exagerar. Decide usted.", bB[2]);
+
+const bE = bloqueCombinado(await conCombinacion(C_BORDE_0, SINTOMAS_SI, SIGNOS, R_NEGATIVA_BORDE)).split(NL);
+ok("las dos RV por debajo de 1: la horquilla sale igual",
+   bE[0] === "COMBINADO — entre 1 % y 2 % de probabilidad de opacidad compatible", bE[0]);
+ok("...y el aviso nombra bien cada extremo, y que aqui absorbe la CLINICA",
+   bE[2] === "⚠️ La auscultación y la imagen miran la misma consolidación, así que no son " +
+             "pruebas independientes: el 1 % supone que cada una aporta información nueva, " +
+             "y el 2 %, que la imagen no añade nada sobre la auscultación. Decide usted.", bE[2]);
+
+// D7 con DOS puntuaciones por debajo de 1: con una sola, min == max y da igual
+// de que lista se saque cada extremo. Aqui no: la independencia da el extremo
+// BAJO (el minimo de su lista, 1,76 %) y la dependencia el ALTO (el maximo de
+// la suya, 3,32 %), y el aviso nombra cada uno por su numero.
+const bB01 = bloqueCombinado(await conCombinacion(C_BANDA_0_1, SINTOMAS_NO_SE, SIGNOS, R_BANDA)).split(NL);
+ok("dos puntuaciones por debajo de 1: la cabecera",
+   bB01[0] === "COMBINADO — entre 2 % y 3 % de probabilidad de opacidad compatible", bB01[0]);
+ok("...los factores con las dos RV y las dos puntuaciones",
+   bB01[1] === "(prevalencia 14,7 % × clínica 0,12–0,20 × imagen 0,87; Heckerling 0 o 1 de 5, según tenga asma o no)", bB01[1]);
+ok("...y el aviso: el 2 % es la independencia, el 3 % la dependencia, y absorbe la clinica",
+   bB01[2] === "⚠️ La auscultación y la imagen miran la misma consolidación, así que no son " +
+               "pruebas independientes: el 2 % supone que cada una aporta información nueva, " +
+               "y el 3 %, que la imagen no añade nada sobre la auscultación. Decide usted.", bB01[2]);
+
+const bN = bloqueCombinado(await conCombinacion(C_NEG_0, SINTOMAS_SI, SIGNOS, R_NEGATIVA)).split(NL);
+ok("nunca 0 %: «< 1 %», y por eso el rango se cierra",
+   bN[0] === "COMBINADO — < 1 % de probabilidad de opacidad compatible", bN[0]);
+ok("nunca 100 %: «> 99 %», tambien con un 1,0 exacto", await (async () => {
+  const c = Object.assign({}, C_POS_3, { independencia: [1], dependencia: [0.9957],
+                                         minima: 0.9957, maxima: 1 });
+  const b = bloqueCombinado(await conCombinacion(c)).split(NL);
+  return b[0] === "COMBINADO — > 99 % de probabilidad de opacidad compatible";
+})());
+ok("ni 0 %: con un 0,0 exacto sale «< 1 %»", await (async () => {
+  const c = Object.assign({}, C_NEG_0, { independencia: [0], dependencia: [0], minima: 0, maxima: 0 });
+  return bloqueCombinado(await conCombinacion(c, SINTOMAS_SI, SIGNOS, R_NEGATIVA))
+    .startsWith("COMBINADO — < 1 % de probabilidad");
+})());
+ok("absorbe «mixta»: el aviso dice que solo cuenta la mas informativa", await (async () => {
+  const c = Object.assign({}, C_POS_3_4, { absorbe: "mixta" });
+  return (bloqueCombinado(await conCombinacion(c, SINTOMAS)).split(NL)[2] || "")
+    .includes("y el 84 %, que solo cuenta la más informativa de las dos. Decide usted.");
+})());
+
+// Una cota (< 1 % o > 99 %) dentro de una horquilla se dice con PALABRAS, no
+// con el signo: «entre < 1 % y 2 %» anidaria un rango dentro de otro (§8.1
+// solo permite uno), y el aviso concordante deja de nombrar numeros -serian
+// "el < 1 %..."-, igual que cuando los dos extremos redondean igual.
+const NUMEROLESS =
+  "⚠️ La auscultación y la imagen miran la misma consolidación, así que no son " +
+  "pruebas independientes: la cifra puede exagerar. Decide usted.";
+const bCotaBaja = bloqueCombinado(await conCombinacion(
+  Object.assign({}, C_NEG_0, { independencia: [0.003], dependencia: [0.02],
+                               minima: 0.003, maxima: 0.02 }),
+  SINTOMAS_SI, SIGNOS, R_NEGATIVA)).split(NL);
+ok("cota dentro de la horquilla, lado bajo: se dice con palabras",
+   bCotaBaja[0] === "COMBINADO — entre menos de 1 % y 2 % de probabilidad de opacidad compatible", bCotaBaja[0]);
+ok("...y el aviso sigue siendo el numeroless (una cota nunca lleva numeros)",
+   bCotaBaja[2] === NUMEROLESS, bCotaBaja[2]);
+ok("nunca se anidan dos rangos, tampoco con una cota dentro: un solo «entre»",
+   (bCotaBaja.join(" ").match(/entre /g) || []).length === 1, bCotaBaja.join(" | "));
+// El umbral bajo de la convencion entre 0,005 y 0,01: 0,0062 es la posterior de
+// independencia de la puntuacion 0 contra una imagen de RV ~0,30 (heckerling.py
+// da 0,0062 y 0,0202). Un `v < 0.005` imprimiria «entre 1 % y 2 %».
+const bUmbral = bloqueCombinado(await conCombinacion(
+  Object.assign({}, C_NEG_0, { independencia: [0.0062], dependencia: [0.0202],
+                               minima: 0.0062, maxima: 0.0202 }),
+  SINTOMAS_SI, SIGNOS, R_NEGATIVA)).split(NL);
+ok("0,0062 tambien es «menos de 1 %»: manda la convencion, no el redondeo",
+   bUmbral[0] === "COMBINADO — entre menos de 1 % y 2 % de probabilidad de opacidad compatible", bUmbral[0]);
+ok("...y el aviso va sin numeros", bUmbral[2] === NUMEROLESS, bUmbral[2]);
+
+const bCotaAlta = bloqueCombinado(await conCombinacion(
+  Object.assign({}, C_POS_3, { independencia: [0.995], dependencia: [0.84],
+                               minima: 0.84, maxima: 0.995 }))).split(NL);
+ok("cota dentro de la horquilla, lado alto: se dice con palabras",
+   bCotaAlta[0] === "COMBINADO — entre 84 % y más de 99 % de probabilidad de opacidad compatible", bCotaAlta[0]);
+ok("...y el mismo aviso numeroless",
+   bCotaAlta[2] === NUMEROLESS, bCotaAlta[2]);
+
+// SIN COMBINAR: los tres motivos, en su orden, y nunca una cifra.
+const SIN_SIGNOS = "SIN COMBINAR — faltan signos de la exploración, así que no hay puntuación de Heckerling.";
+const SIN_CUESTIONARIO = "SIN COMBINAR — falta el cuestionario del paciente: el asma entra en la puntuación de Heckerling.";
+const SIN_BLOQUE = "SIN COMBINAR — el copiloto no devolvió la combinación en esta respuesta.";
+ok("sin los cuatro signos: lo dice, y no imprime COMBINADO", await (async () => {
+  const t = await conCombinacion(C_POS_3, SINTOMAS_SI, {});
+  return t.includes(SIN_SIGNOS) && !t.includes("COMBINADO");
+})());
+ok("sin cuestionario: dice que falta el asma", (await conCombinacion(C_POS_3, null)).includes(SIN_CUESTIONARIO));
+ok("con un asma fuera de los tres: lo mismo",
+   (await conCombinacion(C_POS_3, Object.assign({}, SINTOMAS, { asma: "quizas" }))).includes(SIN_CUESTIONARIO));
+ok("con todo pero sin bloque (copiloto anterior a SP4): lo dice", await (async () => {
+  const t = await conCombinacion(undefined);
+  return t.includes(SIN_BLOQUE) && !t.includes("COMBINADO") && t.includes(DESCARGO_TEXTO);
+})());
+ok("sin cuestionario: SIN COMBINAR va entre EXPLORADO y el descargo, donde iria COMBINADO", await (async () => {
+  const bl = (await conCombinacion(C_POS_3, null)).split(NL + NL);
+  const i = bl.findIndex((b) => b.startsWith("SIN COMBINAR"));
+  return i > 0 && bl[i - 1].includes("EXPLORADO") && bl[i + 1] === DESCARGO_TEXTO;
+})());
+
+// A base64 y Desenlace tienen que estar de acuerdo en CUANDO hay combinacion:
+// si uno manda los hallazgos y el otro dice que faltan, el clinico lee una
+// contradiccion. Se comprueba por conducta, sobre las mismas entradas.
+for (const [etiqueta, sig, sint] of [
+  ["completo", SIGNOS, SINTOMAS],
+  ["sin signos", {}, SINTOMAS],
+  ["sin cuestionario", SIGNOS, null],
+  ["asma raro", SIGNOS, Object.assign({}, SINTOMAS, { asma: "x" })],
+  ["booleano en texto", Object.assign({}, SIGNOS, { crepitantes: "true" }), SINTOMAS],
+  ["temperatura en texto", Object.assign({}, SIGNOS, { temperatura_c: "38,2" }), SINTOMAS],
+  ["completo, asma si", SIGNOS, SINTOMAS_SI],
+  ["pulso en texto", Object.assign({}, SIGNOS, { frecuencia_cardiaca: "104" }), SINTOMAS],
+  // Con `String(sint.asma)`, ["si"] pasaba por "si" en Desenlace y no en
+  // A base64: el informe culpaba al copiloto de una combinacion que no se pidio.
+  ["asma en una lista", SIGNOS, Object.assign({}, SINTOMAS, { asma: ["si"] })],
+]) {
+  const { argumentos: a } = await aBase64Con({ chat_id: 7, t0: 1, signos: sig, sintomas: sint });
+  const t = await conCombinacion(C_POS_3, sint, sig);
+  const manda = "hallazgos" in a;
+  const faltan = t.includes(SIN_SIGNOS) || t.includes(SIN_CUESTIONARIO);
+  ok(`${etiqueta}: A base64 manda hallazgos (${manda}) exactamente cuando Desenlace no dice que faltan`,
+     manda === !faltan, t.split(NL).find((l) => l.startsWith("SIN COMBINAR")) || "");
 }
 
 console.log("\nO. los teclados repiten los prefijos de la tabla, y solo esos");

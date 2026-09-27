@@ -33,6 +33,15 @@ services:
       # respuesta. Redondeado a 0.883 salia como "0,8830", afirmando un cuarto
       # decimal que es falso, y es justo lo que esta variable existe para evitar.
       AUC_VALIDACION: "0.8827"
+      # 0.1466 = 134/914: la prevalencia de la cohorte de DERIVACION de la
+      # regla de Heckerling (Ann Intern Med 1990;113:664-70, via PMC7422644,
+      # tabla 2). Es la probabilidad previa de la combinacion bayesiana (SP4
+      # §5) y se le ensena al profesional en cada informe con combinacion.
+      # Sin default en el codigo a proposito, como AUC_VALIDACION: cuando
+      # haya dato del entorno real se cambia AQUI, con su fuente en este
+      # comentario. No es el 0.2215 del calibrador de imagen: RSNA son placas
+      # ya indicadas, no la poblacion que llega a consulta con tos.
+      PREVALENCIA_LOCAL: "0.1466"
       # torch NO mira el cgroup: sin esto abre un hilo por nucleo del HOST,
       # ignorando el limite de `cpus` de abajo, y se pelea por la CPU del VPS
       # con PostgreSQL y la API del cliente. Tiene que valer lo mismo que `cpus`.

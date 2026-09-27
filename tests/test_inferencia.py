@@ -8,6 +8,7 @@ import pytest
 import torch
 
 from copiloto_triaje.servicio.calibracion import Calibrador, ajustar_calibrador
+from copiloto_triaje.servicio.heckerling import combinar
 from copiloto_triaje.servicio.inferencia import ErrorDeInferencia, Motor
 
 from test_dicom import crear_dicom  # reutiliza el generador de DICOM sinteticos
@@ -28,7 +29,8 @@ def motor(tmp_path):
             return x.mean(dim=(1, 2, 3)).view(-1, 1)
 
     return Motor(modelo=Trivial(), calibrador=calibrador, umbral=0.5,
-                 tam_imagen=32, nombre_modelo="prueba", auc_validacion=0.88)
+                 tam_imagen=32, nombre_modelo="prueba", auc_validacion=0.88,
+                 prevalencia_local=0.1466)
 
 
 def test_clasificar_devuelve_el_contrato_completo(motor, tmp_path):
@@ -139,7 +141,8 @@ def test_el_contrato_emite_la_evidencia_ya_acotada_por_la_curva(tmp_path, logit,
             return torch.full((x.shape[0], 1), logit)
 
     motor = Motor(modelo=Saturado(), calibrador=real, umbral=0.4258,
-                  tam_imagen=32, nombre_modelo="prueba", auc_validacion=0.883)
+                  tam_imagen=32, nombre_modelo="prueba", auc_validacion=0.883,
+                  prevalencia_local=0.1466)
     ruta = tmp_path / "a.dcm"
     crear_dicom(ruta, edad="054Y")
     salida = motor.clasificar(ruta.read_bytes())
@@ -221,3 +224,98 @@ def test_los_mensajes_que_lee_un_clinico_estan_bien_escritos():
         assert not malas, f"{fichero}: sin tilde {malas} en «{texto}»"
         tuteo = [p for p in TUTEO if p in bajo]
         assert not tuteo, f"{fichero}: tuteo {tuteo} en «{texto}»"
+
+
+# Los cinco datos que el bot manda con la placa (SP4 §9.3): con 38,2 > 37,8,
+# 104 > 100 y crepitantes, tres puntos; el asma decide el cuarto.
+HALLAZGOS = {"temperatura_c": 38.2, "frecuencia_cardiaca": 104,
+             "crepitantes": True, "murmullo_disminuido": False, "asma": "si"}
+CONTRATO_SP3 = {"probabilidad_cruda", "probabilidad_calibrada",
+                "razon_de_verosimilitud", "umbral", "clasificacion",
+                "edad_paciente", "modelo", "auc_validacion", "milisegundos"}
+
+
+def test_sin_hallazgos_la_respuesta_es_la_de_sp3_clave_por_clave(motor, tmp_path):
+    """Criterio 2 del spec de SP4, en el nucleo: ni una clave mas ni en otro
+    orden."""
+    ruta = tmp_path / "a.dcm"
+    crear_dicom(ruta, edad="054Y")
+    salida = motor.clasificar(ruta.read_bytes())
+    assert set(salida) == CONTRATO_SP3
+    assert list(salida) == [
+        "probabilidad_cruda", "probabilidad_calibrada",
+        "razon_de_verosimilitud", "umbral", "clasificacion", "edad_paciente",
+        "modelo", "auc_validacion", "milisegundos",
+    ]
+
+
+def test_con_hallazgos_la_respuesta_trae_el_bloque_combinacion(motor, tmp_path):
+    ruta = tmp_path / "a.dcm"
+    crear_dicom(ruta, edad="054Y")
+    salida = motor.clasificar(ruta.read_bytes(), HALLAZGOS)
+    assert set(salida) == CONTRATO_SP3 | {"combinacion"}
+    # La combinacion se calcula y se asigna ANTES que los milisegundos: si
+    # `milisegundos` se asignara antes que `combinacion` dejaria de ser la
+    # ultima clave y no contaria la combinacion.
+    assert list(salida)[-1] == "milisegundos"
+    c = salida["combinacion"]
+    assert c["rv_imagen"] == salida["razon_de_verosimilitud"]
+    assert c["prevalencia"] == motor.prevalencia_local == 0.1466
+    assert c["puntuacion"] == [3]
+    assert 0.0 < c["minima"] <= c["maxima"] < 1.0
+
+
+def test_la_combinacion_usa_la_prevalencia_del_motor_y_no_una_fija(motor, tmp_path):
+    """Spec §5: la prevalencia es un parametro, no una constante escondida.
+    Con 0,1466 en todos los motores de prueba, un `combinacion(0.1466, ...)`
+    fijo en `inferencia.py` pasaba en verde: aqui el motor lleva otra."""
+    otro = Motor(modelo=motor.modelo, calibrador=motor.calibrador,
+                 umbral=motor.umbral, tam_imagen=motor.tam_imagen,
+                 nombre_modelo=motor.nombre_modelo,
+                 auc_validacion=motor.auc_validacion, prevalencia_local=0.3)
+    ruta = tmp_path / "a.dcm"
+    crear_dicom(ruta, edad="054Y")
+    salida = otro.clasificar(ruta.read_bytes(), HALLAZGOS)
+    c = salida["combinacion"]
+    assert c["prevalencia"] == 0.3
+    assert c["independencia"][0] == pytest.approx(
+        combinar(0.3, 1.64, salida["razon_de_verosimilitud"]), abs=5e-4)
+
+
+def test_unos_hallazgos_invalidos_se_rechazan_antes_de_leer_el_dicom(motor):
+    """D4: es barato, y si vienen mal el fallo es de quien llama, no de la
+    placa. Por eso gana incluso a un DICOM que no lo es."""
+    with pytest.raises(ErrorDeInferencia) as exc:
+        motor.clasificar(b"esto no es un dicom",
+                         {**HALLAZGOS, "crepitantes": "false"})
+    assert exc.value.codigo == "hallazgos_invalidos"
+    assert "crepitantes" in str(exc.value)
+
+
+def test_el_rechazo_por_edad_gana_a_la_combinacion(motor, tmp_path):
+    """Con hallazgos perfectos y un menor, la respuesta es el rechazo de
+    siempre y nada mas: ninguna rama de error emite una cifra."""
+    ruta = tmp_path / "n.dcm"
+    crear_dicom(ruta, edad="012Y")
+    with pytest.raises(ErrorDeInferencia) as exc:
+        motor.clasificar(ruta.read_bytes(), HALLAZGOS)
+    assert exc.value.codigo == "fuera_de_alcance"
+
+
+def test_la_prevalencia_local_es_obligatoria_y_una_probabilidad():
+    class Nada(torch.nn.Module):
+        def forward(self, x):
+            return x.mean(dim=(1, 2, 3)).view(-1, 1)
+    rng = np.random.default_rng(1)
+    y = (rng.random(200) < 0.2).astype(int)
+    cal = ajustar_calibrador(y, rng.random(200), 0.2, "prueba")
+    comunes = dict(modelo=Nada(), calibrador=cal, umbral=0.5, tam_imagen=32,
+                   nombre_modelo="prueba", auc_validacion=0.88)
+    with pytest.raises(TypeError):
+        Motor(**comunes)                                  # falta
+    # `nan` no cumple ninguna comparacion e `inf` no esta por debajo de 1: las
+    # dos tienen que caer en la misma guarda que un 1,5.
+    for mala in (0.0, 1.0, 1.5, -0.2, float("nan"), float("inf")):
+        with pytest.raises(ValueError):
+            Motor(**comunes, prevalencia_local=mala)
+    assert Motor(**comunes, prevalencia_local=0.1466).prevalencia_local == 0.1466

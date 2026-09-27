@@ -171,12 +171,27 @@ Los pesos (16 MB) **no viajan en el repo**: están en `.gitignore` y se copian a
 servidor por separado. `docs/sp2-despliegue.md` tiene el procedimiento completo,
 con los pre-chequeos de solo lectura y la vuelta atrás.
 
+**Desde SP4 (H6)**, si con la placa llegan los cinco datos de la regla de
+Heckerling —temperatura, pulso, crepitantes, murmullo y asma—, la respuesta
+trae además un bloque `combinacion`: la probabilidad posterior de opacidad
+compatible, calculada como `odds(PREVALENCIA_LOCAL) × RV clínica × RV imagen`.
+Se entrega como **horquilla** entre el supuesto de independencia y el de
+dependencia total cuando las dos evidencias apuntan al mismo lado, y como un
+número —o, si no se sabe si hay asma, como la horquilla de las dos
+puntuaciones posibles— cuando se contradicen. Sin esos datos, la respuesta es
+la de siempre.
+`PREVALENCIA_LOCAL` es obligatoria, como `AUC_VALIDACION`, y arranca en
+`0.1466` (la cohorte de Heckerling). Diseño y cifras:
+`docs/superpowers/specs/2026-09-26-sp4-combinacion-bayesiana-design.md`.
+
 ## Documentos
 
 - Diseño SP1: `docs/superpowers/specs/2026-09-16-sp1-nucleo-imagen-design.md`
 - Plan SP1: `docs/superpowers/plans/2026-09-16-sp1-nucleo-imagen.md`
 - Diseño SP2: `docs/superpowers/specs/2026-09-23-sp2-servidor-mcp-design.md`
 - Plan SP2: `docs/superpowers/plans/2026-09-23-sp2-servidor-mcp.md`
+- Diseño SP4: `docs/superpowers/specs/2026-09-26-sp4-combinacion-bayesiana-design.md`
+- Plan SP4: `docs/superpowers/plans/2026-09-26-sp4-combinacion-bayesiana.md`
 - Despliegue: `docs/sp2-despliegue.md`
 - Comparativa de arquitecturas: `docs/comparativa-corridas.md`
 - Frontera recall/especificidad: `docs/frontera-recall-especificidad.md`

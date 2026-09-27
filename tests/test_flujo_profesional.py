@@ -591,9 +591,17 @@ def test_ningun_fallo_deja_al_profesional_sin_respuesta():
 def test_el_codigo_del_error_se_busca_dentro_del_texto():
     """§10.3: el SDK antepone su propio prefijo, asi que el codigo queda de
     SEGUNDO. Partir por el primer ':' devuelve
-    'Error executing tool clasificar_radiografia' para todos por igual."""
+    'Error executing tool clasificar_radiografia' para todos por igual.
+
+    Y se lee DETRAS de ese prefijo, no en cualquier posicion (Ruling 7): con
+    `indexOf(codigo + ':')` un valor del llamante interpolado en
+    `hallazgos_invalidos` se leia como codigo. (Antes esta prueba buscaba
+    `indexOf` en la fuente, y eso seguiria cierto por otra linea del nodo.)"""
     fuente = _nodo(_flujo(), "Leer respuesta")["parameters"]["jsCode"]
-    assert "indexOf" in fuente, "el codigo se BUSCA dentro del texto"
+    assert ("const PREFIJO_SDK = 'Error executing tool clasificar_radiografia: ';"
+            in fuente), "el codigo se lee detras del prefijo del SDK"
+    assert "cabeza.startsWith(codigo + ':')" in fuente
+    assert "texto.indexOf(codigo" not in fuente, "ni en cualquier posicion"
     assert ".split(':')" not in fuente.replace(" ", "")
     for codigo in ("base64_invalido", "dicom_invalido", "edad_desconocida",
                    "fuera_de_alcance", "payload_excesivo"):
@@ -629,6 +637,11 @@ def test_ninguna_rama_de_error_puede_emitir_una_cifra_de_probabilidad():
     assert "probabilidad calibrada" not in fuera
     assert "razon_de_verosimilitud" not in fuera
     assert "probabilidad_calibrada" not in fuera
+    # SP4: las cifras de la combinacion tambien se formatean SOLO ahi dentro.
+    # `redactarCombinacion` esta anidada en `redactarResultado` a proposito.
+    assert "combinacion" in dentro
+    assert "combinacion" not in fuera
+    assert "COMBINADO" in dentro and "COMBINADO" not in fuera
     # La lista negra de palabras que antes lo guardaba tiene que estar FUERA: era
     # el ultimo rincon donde quedaba el patron que el §8 abandono, y se le colaban
     # tres cadenas forjadas. Lo que lo garantiza ahora es la procedencia del

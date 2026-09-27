@@ -138,7 +138,7 @@ lo va a usar un clínico y es donde las burbujas se parten.
 | 2 | Los botones **Acepto / No acepto** | Dos botones, en su fila, sin cortar el texto |
 | 3 | Las 7 preguntas | Los botones caben en el ancho del móvil; ninguna etiqueta se parte a media palabra |
 | 4 | El código que entrega | Se lee **dictándolo en voz alta** sin dudar: sin `0`/`O`, sin `1`/`I`/`L` |
-| 5 | Los tres bloques del §8 | **Cribado**, **Evidencia de la imagen** y lo referido/explorado quedan en renglones separados. La etiqueta y la razón de verosimilitud **nunca** en el mismo renglón |
+| 5 | Los cuatro bloques del §8 (el cuarto, COMBINADO, está en el §8 del spec de SP4) | **Cribado**, **Evidencia de la imagen** y lo referido/explorado quedan en renglones separados. La etiqueta y la razón de verosimilitud **nunca** en el mismo renglón |
 | 6 | El aviso de discrepancia | El ⚠️ se ve como un aviso y no como parte de la frase anterior |
 | 7 | Las tildes y los grados | `38,2 °C`, `neumonía`, `razón` — si sale `neumonia` o `38,2 C`, algo se comió el UTF-8 por el camino |
 | 8 | El mensaje aparte del paciente | Cuando el paciente escribió algo, llega **detrás** del informe, empezando por «TODO ESTE MENSAJE ES TEXTO DEL PACIENTE» |
@@ -157,7 +157,7 @@ propio fichero; aquí va cómo se corre.
 en el 18000. En el VPS:
 
 ```bash
-docker run -d --rm --name copiloto-prueba -p 127.0.0.1:18000:8000 -e UMBRAL=0.4258 -e AUC_VALIDACION=0.8827 -e OMP_NUM_THREADS=2 copiloto-mcp:0.1.0
+docker run -d --rm --name copiloto-prueba -p 127.0.0.1:18000:8000 -e UMBRAL=0.4258 -e AUC_VALIDACION=0.8827 -e PREVALENCIA_LOCAL=0.1466 -e OMP_NUM_THREADS=2 copiloto-mcp:0.1.0
 ```
 
 **El `127.0.0.1:` del `-p` no es adorno, y antes aquí no estaba.** Sin él Docker
@@ -165,8 +165,9 @@ publica el 18000 en **todas** las interfaces del VPS, y eso deja un endpoint de
 inferencia **sin autenticación** abierto a internet en una máquina compartida con
 24 contenedores ajenos. Con la dirección delante solo escucha en el loopback del
 host — que es exactamente por donde entra el túnel de la línea siguiente, así
-que funciona igual y no abre nada. (`tests/test_contrato_mcp.py` todavía imprime
-la forma sin dirección en su mensaje de salto; la buena es esta.)
+que funciona igual y no abre nada. (`tests/test_contrato_mcp.py` ya imprime esta
+misma forma en su mensaje de salto: las dos órdenes llevan `127.0.0.1:` y
+`PREVALENCIA_LOCAL`.)
 
 Y en tu Windows, si el contenedor está en el VPS, un túnel más:
 
