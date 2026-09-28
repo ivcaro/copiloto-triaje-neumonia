@@ -141,6 +141,242 @@ def leer_resultados(ruta) -> dict:
     return json.loads(Path(ruta).read_text(encoding="utf-8"))
 
 
+# ---------------------------------------------------------------------------
+# LAS FIGURAS
+#
+# Se dibujan LEYENDO el diccionario de resultados_simulacion.json, a 300 DPI y
+# con el estilo de scripts/diagnostico_curvas.py. matplotlib se importa DENTRO
+# de las funciones, y con el motor «Agg» (sin ventana), para que el calculo se
+# pueda correr -y probar- sin tenerlo instalado: es el extra `figuras` del
+# pyproject, no una dependencia del paquete.
+#
+# Los colores salen de una paleta comprobada para daltonismo; ademas cada
+# modelo lleva su marca, para que la identidad no dependa solo del color.
+# ---------------------------------------------------------------------------
+DPI = 300
+TINTA = "#0b0b0b"
+COLOR_DIAGONAL = "#7a7974"
+COLOR_MODELO = {"imagen": "#2a78d6", "clinica": "#eb6834",
+                "independencia": "#1baf7a", "conservador": "#4a3aa7"}
+MARCA_MODELO = {"imagen": "o", "clinica": "s", "independencia": "^", "conservador": "D"}
+NOMBRE_MODELO = {"imagen": "imagen sola", "clinica": "clínica sola",
+                 "independencia": "combinación por independencia",
+                 "conservador": "combinación conservadora"}
+# Las tres fracciones de la horquilla, en el orden del eje de λ: por debajo de
+# 0 (mas alla del extremo conservador), dentro, y por encima de 1.
+TRAMOS = (("bajo", "por el lado conservador (λ < 0)", "#2a78d6"),
+          ("contencion", "dentro de la horquilla", "#c9c8c3"),
+          ("sobre", "más allá de la independencia (λ > 1)", "#e34948"))
+LADOS = (("a_favor", "imagen a favor (RV ≥ 1)"),
+         ("en_contra", "imagen en contra (RV < 1)"))
+RAMPA_AZUL = ("#cde2fb", "#86b6ef", "#3987e5", "#1c5cab", "#0d366b")
+RAMPA_DIVERGENTE = ("#e34948", "#f0efec", "#2a78d6")
+FIGURAS_GLOBALES = ("horquilla_por_celda", "contencion_rejilla", "pendiente_rejilla")
+PREFIJO_FIABILIDAD = "fiabilidad_"
+REJILLAS = ("contencion", "pendiente")
+
+
+def _pyplot():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    return plt
+
+
+def _ejes(ax, titulo, x, y):
+    ax.set_title(titulo, fontsize=12, fontweight="bold")
+    ax.set_xlabel(x, fontsize=10)
+    ax.set_ylabel(y, fontsize=10)
+    ax.grid(True, alpha=0.3, linestyle="--")
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(fontsize=9)
+
+
+def _coma(valor, decimales: int) -> str:
+    """La cifra con coma decimal; «n/d» si no hay cifra."""
+    if valor is None or valor != valor:
+        return "n/d"
+    return f"{valor:.{decimales}f}".replace(".", ",")
+
+
+def _rho(valor) -> str:
+    return f"{valor:g}".replace(".", ",")
+
+
+def _guardar(plt, fig, destino, titulo) -> Path:
+    """300 DPI, y el titulo -con su rotulo- tambien en los metadatos del PNG."""
+    destino = Path(destino)
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(destino, dpi=DPI, metadata={"Title": titulo})
+    plt.close(fig)
+    return destino
+
+
+def slug_de_celda(celda: dict) -> str:
+    """`0a` para 0A; `r1-030_r0-000` para el resto (ρ × 100, tres cifras)."""
+    if celda["nombre"] == "0A":
+        return "0a"
+    return f"r1-{round(celda['rho1'] * 100):03d}_r0-{round(celda['rho0'] * 100):03d}"
+
+
+def celdas_con_figura(resultados: dict) -> list:
+    """0A y las destacadas, en el orden de la rejilla."""
+    return [c for c in resultados["celdas"] if c["nombre"] == "0A" or c["destacada"]]
+
+
+def figura_fiabilidad(celda: dict, destino) -> Path:
+    """La curva de fiabilidad por deciles de los cuatro modelos de una celda.
+
+    La ECE va en la leyenda AL LADO de su suelo: sola no dice nada."""
+    plt = _pyplot()
+    from matplotlib.ticker import FuncFormatter
+    fig, ax = plt.subplots(figsize=(9, 5.5))
+    ax.plot([0, 1], [0, 1], "--", color=COLOR_DIAGONAL, linewidth=1.2,
+            label="calibración perfecta")
+    for modelo in simulacion.MODELOS:
+        m = celda["modelos"][modelo]
+        curva = [b for b in m["fiabilidad"]
+                 if b["p_media"] is not None and b["observada"] is not None]
+        ax.plot([b["p_media"] for b in curva], [b["observada"] for b in curva],
+                "-" + MARCA_MODELO[modelo], color=COLOR_MODELO[modelo], linewidth=1.6,
+                markersize=5, markeredgecolor="white", markeredgewidth=0.6,
+                label=f"{NOMBRE_MODELO[modelo]} — ECE {_coma(m['ece'], 3)}"
+                      f" (suelo {_coma(m['suelo']['media'], 3)})")
+    ax.set_xlim(-0.02, 1.02)
+    ax.set_ylim(-0.02, 1.02)
+    for eje in (ax.xaxis, ax.yaxis):
+        eje.set_major_formatter(FuncFormatter(lambda v, _: _coma(v, 1)))
+    titulo = f"Fiabilidad por deciles — celda {celda['nombre']} — {ROTULO}"
+    _ejes(ax, titulo, "probabilidad predicha (media del decil)", "frecuencia observada")
+    ax.legend(fontsize=9, loc="upper left")
+    fig.tight_layout()
+    return _guardar(plt, fig, destino, titulo)
+
+
+def figura_horquilla(resultados: dict, destino) -> Path:
+    """Donde queda el oraculo respecto de la horquilla, en 0A y las destacadas.
+
+    Un panel por lado de la imagen; en cada celda, una barra apilada con las
+    tres fracciones de los casos concordantes. No es una cobertura."""
+    plt = _pyplot()
+    from matplotlib.patches import Patch
+    celdas = celdas_con_figura(resultados)
+    posiciones = list(range(len(celdas)))
+    fig, paneles = plt.subplots(1, 2, figsize=(9, 5.5), sharey=True)
+    for ax, (lado, rotulo) in zip(paneles, LADOS):
+        izquierda = [0.0] * len(celdas)
+        for clave, _, color in TRAMOS:
+            anchos = [100.0 * (c["horquilla"][lado][clave] or 0.0) for c in celdas]
+            ax.barh(posiciones, anchos, left=izquierda, height=0.68, color=color,
+                    edgecolor="white", linewidth=1.2)
+            for y, (x0, ancho) in enumerate(zip(izquierda, anchos)):
+                if ancho >= 12.0:
+                    ax.text(x0 + ancho / 2, y, f"{_coma(ancho, 0)} %", ha="center",
+                            va="center", fontsize=8,
+                            color=TINTA if clave == "contencion" else "white")
+            izquierda = [a + b for a, b in zip(izquierda, anchos)]
+        _ejes(ax, rotulo, "% de los casos concordantes", "")
+        ax.set_title(rotulo, fontsize=10)
+        ax.set_xlim(0, 100)
+        ax.grid(False, axis="y")
+    paneles[0].set_yticks(posiciones)
+    paneles[0].set_yticklabels([c["nombre"] for c in celdas], fontsize=9)
+    paneles[0].set_ylabel("celda (ρ1; ρ0)", fontsize=10)
+    paneles[0].invert_yaxis()
+    titulo = f"El oráculo frente a la horquilla, por celda y lado — {ROTULO}"
+    fig.suptitle(titulo, fontsize=12, fontweight="bold")
+    fig.legend(handles=[Patch(facecolor=color, label=nombre) for _, nombre, color in TRAMOS],
+               loc="lower center", ncol=3, fontsize=9, frameon=False)
+    fig.tight_layout(rect=(0, 0.06, 1, 1))
+    return _guardar(plt, fig, destino, titulo)
+
+
+def figura_rejilla(resultados: dict, destino, que: str) -> Path:
+    """Mapa de calor ρ1 × ρ0 con la cifra escrita en cada casilla.
+
+    `contencion`: la de `horquilla.todos`, en un solo tono. `pendiente`: la del
+    modelo de independencia, en dos tonos alrededor de 1 (por debajo exagera;
+    por encima se queda corta)."""
+    if que not in REJILLAS:
+        raise ValueError(f"que debe ser uno de {REJILLAS}: {que!r}")
+    plt = _pyplot()
+    from matplotlib.colors import LinearSegmentedColormap, Normalize, TwoSlopeNorm
+    from matplotlib.ticker import FuncFormatter
+    rejilla = [float(r) for r in resultados["parametros"]["rejilla"]]
+    lugar = {round(r, 6): i for i, r in enumerate(rejilla)}
+    numeros = [[float("nan")] * len(rejilla) for _ in rejilla]
+    for c in resultados["celdas"]:
+        valor = (c["horquilla"]["todos"]["contencion"] if que == "contencion"
+                 else c["modelos"]["independencia"]["pendiente"])
+        if valor is not None:
+            numeros[lugar[round(c["rho1"], 6)]][lugar[round(c["rho0"], 6)]] = (
+                100.0 * valor if que == "contencion" else float(valor))
+    if que == "contencion":
+        mapa = LinearSegmentedColormap.from_list("azul", RAMPA_AZUL)
+        norma = Normalize(vmin=0.0, vmax=100.0)
+        decimales, unidad, centro, corte = 1, " %", 0.0, 0.5
+        titulo = f"Contención del oráculo en la horquilla, por celda — {ROTULO}"
+        barra = "contención (% de los casos concordantes)"
+    else:
+        presentes = [v for fila in numeros for v in fila if v == v]
+        desvio = max([abs(v - 1.0) for v in presentes] + [0.05])
+        mapa = LinearSegmentedColormap.from_list("divergente", RAMPA_DIVERGENTE)
+        norma = TwoSlopeNorm(vcenter=1.0, vmin=1.0 - desvio, vmax=1.0 + desvio)
+        decimales, unidad, centro, corte = 2, "", 0.5, 0.3
+        titulo = f"Pendiente de la independencia, por celda — {ROTULO}"
+        barra = "pendiente de calibración (< 1 exagera; > 1 se queda corta)"
+    mapa = mapa.with_extremes(bad="#f0efec")
+    fig, ax = plt.subplots(figsize=(9, 5.5))
+    imagen = ax.imshow(numeros, cmap=mapa, norm=norma, origin="lower", aspect="auto")
+    for i, fila in enumerate(numeros):
+        for j, v in enumerate(fila):
+            oscuro = v == v and abs(float(norma(v)) - centro) > corte
+            ax.text(j, i, _coma(v, decimales) + (unidad if v == v else ""),
+                    ha="center", va="center", fontsize=10 if len(rejilla) <= 5 else 8,
+                    color="white" if oscuro else TINTA)
+    _ejes(ax, titulo, "ρ0 (dependencia entre los casos sin neumonía)",
+          "ρ1 (dependencia entre los casos con neumonía)")
+    ax.grid(False)
+    ax.set_xticks(range(len(rejilla)))
+    ax.set_xticklabels([_rho(r) for r in rejilla])
+    ax.set_yticks(range(len(rejilla)))
+    ax.set_yticklabels([_rho(r) for r in rejilla])
+    cifras = 0 if que == "contencion" else 2
+    cbar = fig.colorbar(imagen, ax=ax, format=FuncFormatter(lambda v, _: _coma(v, cifras)))
+    cbar.set_label(barra, fontsize=10)
+    fig.tight_layout()
+    return _guardar(plt, fig, destino, titulo)
+
+
+def figuras_presentes(carpeta) -> list[Path]:
+    """Los PNG PROPIOS que hay en la carpeta, ordenados: los `fiabilidad_*.png`
+    y los tres globales. Cualquier otro PNG es de otro y no se toca."""
+    carpeta = Path(carpeta)
+    if not carpeta.is_dir():
+        return []
+    globales = {f"{nombre}.png" for nombre in FIGURAS_GLOBALES}
+    return sorted(p for p in carpeta.glob("*.png")
+                  if p.name.startswith(PREFIJO_FIABILIDAD) or p.name in globales)
+
+
+def figuras(resultados: dict, carpeta) -> list[Path]:
+    """Dibuja todas las figuras y devuelve sus rutas en orden.
+
+    Borra antes las propias que hubiera: si cambian las celdas destacadas, una
+    `fiabilidad_*.png` de la corrida anterior quedaria en la carpeta con cifras
+    que ya no son las del JSON."""
+    carpeta = Path(carpeta)
+    carpeta.mkdir(parents=True, exist_ok=True)
+    for rancia in figuras_presentes(carpeta):
+        rancia.unlink()
+    rutas = [figura_fiabilidad(c, carpeta / f"{PREFIJO_FIABILIDAD}{slug_de_celda(c)}.png")
+             for c in celdas_con_figura(resultados)]
+    rutas.append(figura_horquilla(resultados, carpeta / "horquilla_por_celda.png"))
+    rutas.append(figura_rejilla(resultados, carpeta / "contencion_rejilla.png", "contencion"))
+    rutas.append(figura_rejilla(resultados, carpeta / "pendiente_rejilla.png", "pendiente"))
+    return rutas
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--replicas", type=int, default=simulacion.B_REPLICAS,
@@ -151,7 +387,8 @@ def main(argv=None) -> int:
     p.add_argument("--salida", default=str(CARPETA),
                    help="carpeta de resultados_simulacion.json y de las figuras")
     p.add_argument("--analisis", default=str(ANALISIS), help="el documento de análisis")
-    p.add_argument("--sin-figuras", action="store_true")
+    p.add_argument("--sin-figuras", action="store_true",
+                   help="no dibuja: deja las figuras que hubiera como estaban")
     p.add_argument("--solo-documento", action="store_true",
                    help="no recalcula: lee el JSON de --salida y regenera figuras y documento")
     args = p.parse_args(argv)
@@ -164,6 +401,10 @@ def main(argv=None) -> int:
         print(f"resultados: {ruta}")
     elif not ruta.is_file():
         raise SystemExit(f"no existe {ruta}: corre primero sin --solo-documento")
+    resultados = leer_resultados(ruta)
+    if not args.sin_figuras:
+        for figura in figuras(resultados, salida):
+            print(f"figura: {figura}")
     return 0
 
 

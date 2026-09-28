@@ -117,9 +117,118 @@ def test_main_escribe_los_resultados_donde_se_le_dice(validar, tmp_path, monkeyp
         return {"rotulo": validar.ROTULO, "celdas": []}
 
     monkeypatch.setattr(validar, "calcular", calcular_falso)
-    assert validar.main(["--replicas", "3", "--procesos", "1", "--salida", str(tmp_path)]) == 0
+    assert validar.main(["--replicas", "3", "--procesos", "1", "--salida", str(tmp_path),
+                         "--sin-figuras"]) == 0
     assert llamadas == [(3, 1)]
     assert validar.leer_resultados(tmp_path / "resultados_simulacion.json")["celdas"] == []
     assert "resultados_simulacion.json" in capsys.readouterr().out
     with pytest.raises(SystemExit):
         validar.main(["--procesos", "0", "--salida", str(tmp_path)])
+
+
+# --------------------------------------------------------------------------
+# Las figuras (tarea 5). Cada prueba que dibuja pide matplotlib: sin el extra
+# `figuras` instalado se saltan, y las del calculo siguen corriendo.
+# --------------------------------------------------------------------------
+NOMBRES_MINIMOS = ["fiabilidad_0a.png", "fiabilidad_r1-030_r0-030.png",
+                   "horquilla_por_celda.png", "contencion_rejilla.png",
+                   "pendiente_rejilla.png"]
+
+
+def test_el_slug_de_celda(validar, resultados_minimos):
+    assert [validar.slug_de_celda(c) for c in resultados_minimos["celdas"]] == [
+        "0a", "r1-000_r0-030", "r1-030_r0-000", "r1-030_r0-030"]
+    assert validar.slug_de_celda(
+        {"nombre": "(0,15; 0,6)", "rho1": 0.15, "rho0": 0.6}) == "r1-015_r0-060"
+    assert validar.FIGURAS_GLOBALES == (
+        "horquilla_por_celda", "contencion_rejilla", "pendiente_rejilla")
+    assert validar.PREFIJO_FIABILIDAD == "fiabilidad_"
+    assert validar.DPI == 300
+
+
+def test_las_figuras_salen_con_su_nombre_a_300_dpi_y_con_el_rotulo(
+        validar, resultados_minimos, tmp_path):
+    pytest.importorskip("matplotlib")
+    from PIL import Image
+    rutas = validar.figuras(resultados_minimos, tmp_path / "figuras")
+    assert [r.name for r in rutas] == NOMBRES_MINIMOS
+    assert all(r.parent == tmp_path / "figuras" for r in rutas)
+    for ruta in rutas:
+        assert ruta.stat().st_size > 10_000
+        with Image.open(ruta) as imagen:
+            assert imagen.format == "PNG"
+            assert imagen.size == (2700, 1650)            # 9 x 5,5 pulgadas a 300 DPI
+            assert imagen.info["dpi"] == pytest.approx((300, 300), abs=1)
+            assert "simulación semisintética" in imagen.info["Title"]
+    titulos = {}
+    for ruta in rutas:
+        with Image.open(ruta) as imagen:
+            titulos[ruta.name] = imagen.info["Title"]
+    assert "0A" in titulos["fiabilidad_0a.png"]
+    assert "(0,3; 0,3)" in titulos["fiabilidad_r1-030_r0-030.png"]
+    assert validar.figuras_presentes(tmp_path / "figuras") == sorted(rutas)
+
+
+def test_cada_figura_se_puede_dibujar_por_separado(validar, resultados_minimos, tmp_path):
+    pytest.importorskip("matplotlib")
+    celda = resultados_minimos["celdas"][3]
+    destino = tmp_path / "una.png"
+    assert validar.figura_fiabilidad(celda, destino) == destino
+    assert validar.figura_horquilla(resultados_minimos, tmp_path / "dos.png").is_file()
+    assert validar.figura_rejilla(resultados_minimos, tmp_path / "tres.png",
+                                  "contencion").is_file()
+    assert validar.figura_rejilla(resultados_minimos, tmp_path / "cuatro.png",
+                                  "pendiente").is_file()
+    assert destino.stat().st_size > 10_000
+    with pytest.raises(ValueError, match="contencion"):
+        validar.figura_rejilla(resultados_minimos, tmp_path / "cinco.png", "auc")
+    assert not (tmp_path / "cinco.png").exists()
+
+
+def test_las_figuras_borran_las_propias_rancias_y_respetan_las_ajenas(
+        validar, resultados_minimos, tmp_path):
+    pytest.importorskip("matplotlib")
+    rancia = tmp_path / "fiabilidad_viejo.png"
+    rancia.write_bytes(b"rancio")
+    ajena = tmp_path / "latencia.png"
+    ajena.write_bytes(b"ajeno")
+    otra = tmp_path / "resultados_simulacion.json"
+    otra.write_text("{}", encoding="utf-8")
+    assert validar.figuras_presentes(tmp_path) == [rancia]
+    rutas = validar.figuras(resultados_minimos, tmp_path)
+    assert not rancia.exists()
+    assert ajena.read_bytes() == b"ajeno"
+    assert otra.read_text(encoding="utf-8") == "{}"
+    assert sorted(p.name for p in tmp_path.glob("*.png")) == sorted(
+        NOMBRES_MINIMOS + ["latencia.png"])
+    assert validar.figuras_presentes(tmp_path) == sorted(rutas)
+    assert validar.figuras_presentes(tmp_path / "no_existe") == []
+
+
+def test_main_dibuja_las_figuras_leyendo_el_json(
+        validar, resultados_minimos, tmp_path, monkeypatch, capsys):
+    pytest.importorskip("matplotlib")
+    leidos = []
+    leer = validar.leer_resultados
+
+    def leer_espia(ruta):
+        leidos.append(ruta)
+        return leer(ruta)
+
+    monkeypatch.setattr(validar, "calcular", lambda replicas, procesos: resultados_minimos)
+    monkeypatch.setattr(validar, "leer_resultados", leer_espia)
+    assert validar.main(["--replicas", "2", "--procesos", "1", "--salida", str(tmp_path)]) == 0
+    assert leidos == [tmp_path / "resultados_simulacion.json"]
+    assert sorted(p.name for p in tmp_path.glob("*.png")) == sorted(NOMBRES_MINIMOS)
+    salida = capsys.readouterr().out
+    assert [linea[len("figura: "):] for linea in salida.splitlines()
+            if linea.startswith("figura: ")] == [str(tmp_path / n) for n in NOMBRES_MINIMOS]
+
+
+def test_main_sin_figuras_no_dibuja_nada(validar, tmp_path, capsys):
+    """La unica prueba que corre la rejilla entera (25 celdas, sin bootstrap)."""
+    assert validar.main(["--replicas", "0", "--procesos", "1", "--salida", str(tmp_path),
+                         "--sin-figuras"]) == 0
+    assert [p.name for p in tmp_path.iterdir()] == ["resultados_simulacion.json"]
+    assert len(validar.leer_resultados(tmp_path / "resultados_simulacion.json")["celdas"]) == 25
+    assert "figura:" not in capsys.readouterr().out
