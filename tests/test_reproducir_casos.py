@@ -31,8 +31,8 @@ sys.path.insert(0, str(REPO))
 
 from copiloto_triaje.datos.dicom import leer_dicom_desde_bytes  # noqa: E402
 from pruebas.reproducir_casos import (  # noqa: E402
-    MAXIMO_BYTES, PERFILES, SIGNOS, _coincide, _fabricar, nombre_fichero,
-    resumen, texto_del_caso,
+    MAXIMO_BYTES, PERFILES, SIGNOS, SINTOMAS, _coincide, _fabricar,
+    nombre_fichero, resumen, texto_del_caso,
 )
 
 REDACTOR = REPO / "pruebas" / "redactar.mjs"
@@ -349,7 +349,7 @@ def _sse(resultado=None, texto_error=None):
     return "event: message\ndata: " + json.dumps(sobre) + "\n\n"
 
 
-def _redactar(http, sintomas=None):
+def _redactar(http, sintomas=None, signos=None):
     if shutil.which("node") is None:
         pytest.skip("sin `node` no se puede ejecutar el jsCode del workflow")
     decidir = {"chat_id": 7, "t0": 0, "codigo": "K7FM2P",
@@ -357,8 +357,7 @@ def _redactar(http, sintomas=None):
                                         "dias_evolucion": "3_a_7",
                                         "disnea": "no", "dolor_toracico": "si",
                                         "asma": "no_se", "texto_libre": None},
-               "signos": {"temperatura_c": 38.2, "frecuencia_cardiaca": 104,
-                          "crepitantes": True, "murmullo_disminuido": False}}
+               "signos": signos if signos is not None else SIGNOS}
     entrada = [{"http": http, "decidir": decidir,
                 "normalizar": {"chat_id": 7, "t0": 0}}]
     salida = subprocess.run([shutil.which("node"), str(REDACTOR)],
@@ -466,3 +465,65 @@ def test_la_llamada_sin_bots_lleva_los_hallazgos_en_el_json_rpc(tmp_path, monkey
     assert capturada["cuerpo"]["params"]["arguments"]["hallazgos"]["asma"] == "no_se"
     rc.llamar_al_copiloto("http://x/mcp", dcm, None)
     assert "hallazgos" not in capturada["cuerpo"]["params"]["arguments"]
+
+
+# --------------------------------------------------------------------------
+# --casos: la sesion con el medico (SP5 §5.6). El arnes teclea la clinica de
+# CADA caso, y los mensajes los redactan los nodos reales.
+# --------------------------------------------------------------------------
+def test_los_botones_y_los_signos_de_cada_caso_reproducen_las_constantes():
+    from pruebas.reproducir_casos import (
+        BOTONES_PACIENTE, SIGNOS_BOTONES, SIGNOS_TECLEADOS, botones_del_paciente,
+        signos_botones, signos_tecleados,
+    )
+    assert botones_del_paciente(SINTOMAS) == BOTONES_PACIENTE
+    assert signos_tecleados(SIGNOS) == SIGNOS_TECLEADOS
+    assert signos_botones(SIGNOS) == SIGNOS_BOTONES
+    otros = {"temperatura_c": 37.8, "frecuencia_cardiaca": 101,
+             "crepitantes": False, "murmullo_disminuido": True}
+    assert signos_tecleados(otros) == ("37,8", "101")
+    assert signos_botones(otros) == ("s4:no", "s5:si")
+    assert botones_del_paciente({**SINTOMAS, "fiebre": "no", "asma": "si"})[0] == "p1:no"
+    assert botones_del_paciente({**SINTOMAS, "fiebre": "no", "asma": "si"})[5] == "p6:si"
+
+
+def test_casos_desde_fichero_construye_los_casos_de_la_sesion(tmp_path):
+    from pruebas.reproducir_casos import (
+        PERFIL_SESION, SIGNOS, SINTOMAS, casos_desde_fichero, hallazgos_del_caso,
+    )
+    dcm = tmp_path / "a.dcm"
+    dcm.write_bytes(b"x")
+    signos = {"temperatura_c": 37.9, "frecuencia_cardiaca": 100,
+              "crepitantes": True, "murmullo_disminuido": False}
+    sintomas = {**SINTOMAS, "fiebre": "si", "asma": "no"}
+    fichero = tmp_path / "casos.json"
+    fichero.write_text(json.dumps([
+        {"patientId": "p-1", "ruta_dcm": str(dcm), "signos": signos, "sintomas": sintomas},
+        {"patientId": "p-2", "ruta_dcm": str(dcm), "signos": SIGNOS, "sintomas": SINTOMAS},
+        {"patientId": "p-3", "ruta_dcm": str(dcm), "signos": signos,
+         "sintomas": {**sintomas, "asma": "no_se"}},
+    ]), encoding="utf-8")
+    casos = casos_desde_fichero(fichero)
+    assert [c["patientId"] for c in casos] == ["p-1", "p-2", "p-3"]
+    assert all(c["perfil"] is PERFIL_SESION for c in casos)
+    assert hallazgos_del_caso(casos[0]["sintomas"], casos[0]["signos"]) == {**signos, "asma": "no"}
+    assert hallazgos_del_caso(casos[2]["sintomas"], casos[2]["signos"])["asma"] == "no_se"
+    # un caso a medias no se acepta: el arnes diria «SIN COMBINAR» y nadie lo notaria
+    fichero.write_text(json.dumps([{"patientId": "p-4", "ruta_dcm": str(dcm),
+                                    "signos": {"temperatura_c": 38.0}, "sintomas": SINTOMAS}]),
+                       encoding="utf-8")
+    with pytest.raises(SystemExit, match="cinco hallazgos"):
+        casos_desde_fichero(fichero)
+    fichero.write_text(json.dumps([{"patientId": "p-5", "ruta_dcm": str(tmp_path / "no.dcm"),
+                                    "signos": signos, "sintomas": sintomas}]), encoding="utf-8")
+    with pytest.raises(SystemExit, match="no existe la placa"):
+        casos_desde_fichero(fichero)
+
+
+def test_el_explorado_del_mensaje_repite_los_signos_del_caso():
+    """Los nodos reales redactan EXPLORADO con lo que el arnes tecleo: 37,8 y
+    100 exactos (no puntuan) tienen que salir tal cual, no como 38 y 100."""
+    signos = {"temperatura_c": 37.8, "frecuencia_cardiaca": 101,
+              "crepitantes": False, "murmullo_disminuido": True}
+    d = _redactar({"statusCode": 200, "cuerpo": _sse(UN_RESULTADO)}, signos=signos)
+    assert "EXPLORADO — 37,8 °C, 101 lpm, crepitantes no, murmullo disminuido" in d["texto"]

@@ -136,6 +136,33 @@ SINTOMAS = {"fiebre": "si", "tos": "con_flema", "dias_evolucion": "3_a_7",
 BOTONES_PACIENTE = ("p1:si", "p2:con_flema", "p3:3_a_7", "p4:no", "p5:si",
                     "p6:no_se")
 
+# El orden de las seis preguntas del cuestionario. Con esto los botones y los
+# signos se componen para CUALQUIER caso, y no solo para los fijos de arriba:
+# la sesion con el medico (SP5 §5.6) manda por `--casos` la clinica de cada
+# caso, y el arnes tiene que teclear exactamente esa.
+CLAVES_PACIENTE = ("fiebre", "tos", "dias_evolucion", "disnea", "dolor_toracico",
+                   "asma")
+
+
+def botones_del_paciente(sintomas):
+    """Los seis botones del cuestionario para estos sintomas: `p{i}:{valor}`."""
+    return tuple(f"p{i}:{sintomas[k]}" for i, k in enumerate(CLAVES_PACIENTE, 1))
+
+
+def signos_tecleados(signos):
+    """Lo que el profesional teclea: la temperatura con coma decimal y una
+    decima, el pulso entero. 37,8 exactos se teclean como «37,8»: es el corte,
+    y que no puntue es justo lo que la sesion quiere ver redactado."""
+    return (f"{float(signos['temperatura_c']):.1f}".replace(".", ","),
+            str(int(round(signos["frecuencia_cardiaca"]))))
+
+
+def signos_botones(signos):
+    """Los dos botones de la exploracion: s4 crepitantes, s5 murmullo."""
+    return ("s4:si" if signos["crepitantes"] else "s4:no",
+            "s5:si" if signos["murmullo_disminuido"] else "s5:no")
+
+
 # Los cinco datos que `A base64` manda con la placa (SP4 §9.3), sacados de lo
 # MISMO que el bot usa: los cuatro signos y el asma del cuestionario. Si falta
 # algo o viene con otro tipo, `None`, y el copiloto contesta sin combinacion,
@@ -270,6 +297,50 @@ CLASES_RSNA = {
     "Normal": "placa normal",
 }
 POR_CLAVE = {p.clave: p for p in PERFILES}
+
+# El perfil de los casos que llegan por `--casos`: la sesion con el medico
+# (SP5 §5.6). No esta en PERFILES a proposito: no es parte del corpus, y por
+# eso tampoco se puede pedir con `--solo`.
+PERFIL_SESION = Perfil(
+    0, "sesion", "Casos de la sesión con el médico (viñetas semisintéticas)",
+    "de un fichero `--casos`: placa real del conjunto de prueba y clínica del "
+    "generador de SP5",
+    "que EXPLORADO y REFERIDO POR EL PACIENTE repitan la viñeta de cada caso")
+
+
+def casos_desde_fichero(ruta):
+    """Los casos de `--casos`: una lista JSON de
+    {patientId, ruta_dcm, signos, sintomas}. Se comprueba cada uno ANTES de
+    empezar: un caso a medias haria que el arnes dijera «SIN COMBINAR» de un
+    caso que el medico va a leer como combinado."""
+    ruta = pathlib.Path(ruta)
+    datos = json.loads(ruta.read_text(encoding="utf-8"))
+    if not isinstance(datos, list) or not datos:
+        raise SystemExit(f"{ruta} no es una lista de casos")
+    meta = _metadatos()
+    casos = []
+    for i, d in enumerate(datos):
+        faltan = [k for k in ("patientId", "ruta_dcm", "signos", "sintomas") if k not in d]
+        if faltan:
+            raise SystemExit(f"al caso {i} de {ruta} le faltan {faltan}")
+        if hallazgos_del_caso(d["sintomas"], d["signos"]) is None:
+            raise SystemExit(f"el caso {d['patientId']} no lleva los cinco hallazgos "
+                             f"con su tipo: no se puede combinar")
+        if not pathlib.Path(d["ruta_dcm"]).is_file():
+            raise SystemExit(f"no existe la placa {d['ruta_dcm']} del caso {d['patientId']}")
+        edad, clase, sexo = meta.get(d["patientId"], (None, "?", "?"))
+        casos.append({
+            "perfil": PERFIL_SESION,
+            "patientId": d["patientId"],
+            "ruta_dcm": d["ruta_dcm"],
+            "cruda_cache": d.get("cruda"),
+            "edad_rsna": edad,
+            "clase_rsna": clase,
+            "sexo_rsna": sexo,
+            "sintomas": dict(d["sintomas"]),
+            "signos": dict(d["signos"]),
+        })
+    return casos
 
 
 # --------------------------------------------------------------------------
@@ -598,7 +669,7 @@ class Bots:
         if self._esperar("SELECT count(*) FROM sesiones_paciente WHERE"
                          " chat_id = %s", (chat,), 1, intentos=20) != 1:
             return None, "el bot del paciente no abrio la sesion tras aceptar"
-        for dato in BOTONES_PACIENTE:
+        for dato in botones_del_paciente(sintomas):
             self._post(self.ruta_paciente, self._boton(chat, dato))
         if sintomas.get("texto_libre"):
             self._post(self.ruta_paciente,
@@ -666,7 +737,7 @@ class Bots:
         time.sleep(PAUSA)
         return respuesta["result"]["document"]["file_id"], len(datos)
 
-    def conversacion_del_profesional(self, codigo, ruta_dcm):
+    def conversacion_del_profesional(self, codigo, ruta_dcm, signos=SIGNOS):
         """Devuelve la fila de `consultas` que nacio, o None con el motivo."""
         chat = self.profesional
         ruta = self.ruta_profesional
@@ -685,13 +756,13 @@ class Bots:
         if self._esperar("SELECT paso FROM sesiones_profesional WHERE"
                          " chat_id = %s", (chat,), 2, intentos=20) != 2:
             return None, f"el codigo {codigo} no se acepto"
-        for texto, siguiente in zip(SIGNOS_TECLEADOS, (3, 4)):
+        for texto, siguiente in zip(signos_tecleados(signos), (3, 4)):
             self._post(ruta, self._mensaje(chat, texto))
             if self._esperar("SELECT paso FROM sesiones_profesional WHERE"
                              " chat_id = %s", (chat,), siguiente,
                              intentos=20) != siguiente:
                 return None, f"el signo {texto} no avanzo al paso {siguiente}"
-        for dato, siguiente in zip(SIGNOS_BOTONES, (5, 6)):
+        for dato, siguiente in zip(signos_botones(signos), (5, 6)):
             self._post(ruta, self._boton(chat, dato))
             if self._esperar("SELECT paso FROM sesiones_profesional WHERE"
                              " chat_id = %s", (chat,), siguiente,
@@ -1204,6 +1275,10 @@ def main() -> int:
                    help="no tocar n8n, Telegram ni la base: solo redactar")
     p.add_argument("--salida", default=str(CORPUS),
                    help=f"donde escribir el corpus (por defecto {CORPUS})")
+    p.add_argument("--casos", metavar="JSON",
+                   help="los casos de la sesión con el médico (SP5 §5.6): "
+                        "placa, signos y síntomas de cada uno; ignora "
+                        "--por-perfil y --solo, y deja <salida>/mensajes.json")
     args = p.parse_args()
 
     url_copiloto = os.environ.get("COPILOTO_URL",
@@ -1223,7 +1298,8 @@ def main() -> int:
 
     destino = pathlib.Path(args.salida)
     comprobar_el_copiloto(url_copiloto)
-    casos = construir_casos(args.por_perfil, args.solo, destino)
+    casos = (casos_desde_fichero(args.casos) if args.casos
+             else construir_casos(args.por_perfil, args.solo, destino))
     print(f"{len(casos)} casos, copiloto en {url_copiloto}")
     if con_bots:
         # 16 updates por caso mas la subida de la placa, cada uno con su pausa.
@@ -1286,7 +1362,7 @@ def main() -> int:
                 else:
                     obs["codigo"] = codigo
                     consulta, fallo = bots.conversacion_del_profesional(
-                        codigo, caso["ruta_dcm"])
+                        codigo, caso["ruta_dcm"], caso.get("signos") or SIGNOS)
                     if consulta is None:
                         obs["fallo"] = fallo
                         print(f"        {fallo}")
@@ -1299,7 +1375,7 @@ def main() -> int:
                 obs["bloques"] = "observados"
             sintomas = (obs["sintomas"] if obs.get("sintomas") is not None
                         else caso["sintomas"])
-            signos = obs["signos"] if obs.get("signos") else SIGNOS
+            signos = obs["signos"] if obs.get("signos") else (caso.get("signos") or SIGNOS)
             t0 = int(time.time() * 1000)
             reloj = time.perf_counter()
             estado, cuerpo = llamar_al_copiloto(
@@ -1329,6 +1405,26 @@ def main() -> int:
             caso, obs = fila[0], fila[1]
             if obs.get("con_bots") and not obs.get("fallo"):
                 obs["coincide"] = _coincide(obs, caso, redaccion)
+        if args.casos:
+            # Lo que `scripts/preparar_sesion.py --fase mensajes` lee: el texto
+            # que redactaron los nodos reales y el bloque `combinacion` que
+            # devolvio el copiloto, por caso. Ademas del corpus legible.
+            destino.mkdir(parents=True, exist_ok=True)
+            mensajes = {}
+            for caso, obs, redaccion in filas:
+                mensajes[caso["patientId"]] = {
+                    "texto": redaccion["texto"],
+                    "texto_paciente": redaccion.get("texto_paciente"),
+                    "error": redaccion["error"],
+                    "resultado": redaccion["resultado"],
+                    "codigo": obs.get("codigo"),
+                    "ms_extremo": obs.get("ms_extremo"),
+                    "con_bots": obs["con_bots"],
+                    "fallo": obs.get("fallo"),
+                }
+            (destino / "mensajes.json").write_text(
+                json.dumps(mensajes, ensure_ascii=False, indent=1), encoding="utf-8")
+            print(f"mensajes de la sesión: {destino / 'mensajes.json'}")
     finally:
         if bd is not None:
             bd.execute("DELETE FROM sesiones_profesional WHERE chat_id = %s",
