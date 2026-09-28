@@ -1459,7 +1459,7 @@ def _coincide(obs, caso, redaccion):
     seguia poniendo «coinciden: si»: los dos bloques clinicos no entraban en la
     comparacion. Son justo los que un clinico lee primero.
     """
-    enviados = (caso["sintomas"], SIGNOS)
+    enviados = (caso["sintomas"], caso.get("signos") or SIGNOS)
     guardados = (obs.get("sintomas"), obs.get("signos"))
     if obs.get("sintomas") is not None and guardados[0] != enviados[0]:
         faltan = [k for k in enviados[0]

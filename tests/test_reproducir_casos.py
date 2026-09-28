@@ -267,6 +267,25 @@ def test_coincide_mira_tambien_los_dos_bloques_clinicos():
     assert "signos" in _coincide(sin_signos, caso, red)
 
 
+def test_coincide_compara_con_los_signos_del_caso_y_no_con_los_fijos():
+    """Con `--casos` el bot guarda exactamente los signos que se tecleo para
+    ESE caso, que no tienen por que ser los fijos `SIGNOS` (38,2 / 104). Si
+    `_coincide` siguiera comparando contra `SIGNOS`, casi todos los casos de
+    la sesion saldrian «NO coincide» aunque el bot hubiera guardado justo lo
+    que se le mando."""
+    propios = {"temperatura_c": 37.9, "frecuencia_cardiaca": 100,
+               "crepitantes": True, "murmullo_disminuido": False}
+    caso = dict(_caso(), signos=propios)
+    red = {"resultado": UN_RESULTADO, "error": None}
+    guardo_lo_mismo = {"resultado": UN_RESULTADO, "error": None,
+                       "sintomas": dict(SINTOMAS_ENVIADOS), "signos": dict(propios)}
+    assert _coincide(guardo_lo_mismo, caso, red) == "sí"
+
+    guardo_otra_cosa = dict(guardo_lo_mismo, signos=dict(SIGNOS))
+    assert _coincide(guardo_otra_cosa, caso, red).startswith("NO")
+    assert "signos" in _coincide(guardo_otra_cosa, caso, red)
+
+
 def test_el_resumen_cuenta_el_aviso_por_placa_y_no_por_caso(tmp_path):
     """El perfil 04 reusa a proposito la primera placa de la banda. Contando casos,
     esa placa se contaba dos veces y el «8 de 11» era un «7 de 10» mal sumado."""
