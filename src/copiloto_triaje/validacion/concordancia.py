@@ -511,7 +511,7 @@ def _origen(o: dict) -> str:
 
 def _huellas(h: dict | None) -> str:
     if not h:
-        return "no calculadas (el análisis no recibió los ficheros de la sesión)"
+        return "sin huellas (el análisis no recibió los ficheros de la sesión)"
     return f"sha256 de mensajes.json `{h['mensajes_json']}` y de clave.json `{h['clave_json']}`"
 
 

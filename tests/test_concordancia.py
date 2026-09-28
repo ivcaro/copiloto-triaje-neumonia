@@ -338,7 +338,7 @@ def test_el_acta_se_rellena_desde_sesion_json_y_no_deja_huecos(tmp_path):
     plano = _plano(acta)
     assert f"**Fechas:** lectura el {cc._fecha(INICIO + 100000)}." in plano
     assert "no hay controles (solo la lectura sin copiloto)" in plano
-    assert "no calculadas (el análisis no recibió los ficheros de la sesión)" in plano
+    assert "**Congelado verificable:** sin huellas (el análisis no recibió los ficheros de la sesión)." in plano
     assert "casos cuya horquilla cruza un límite: 1 de 24" in plano
     assert "(0 de 24 horquillas son un solo porcentaje: en ellas solo cuenta el valor exacto)" in plano
     # acuerdo perfecto: los tres kappas valen 1 y su límite inferior queda por encima de 0,4
@@ -612,9 +612,22 @@ def test_analizar_sesion_escribe_sesion_json_y_un_acta_sin_huecos(tmp_path, modo
     assert s["huellas"]["mensajes_json"] == _sha256(sesion / "corpus" / "mensajes.json")
     texto = acta.read_text(encoding="utf-8")
     assert "{{" not in texto and "}}" not in texto
-    assert s["huellas"]["clave_json"] in texto
+    plano = _plano(texto)
+    assert (f"**Congelado verificable:** sha256 de mensajes.json `{s['huellas']['mensajes_json']}` "
+            f"y de clave.json `{s['huellas']['clave_json']}`.") in plano
     assert ("lectura 1 el" in texto) == (modo == "lectura2")
     assert ("lectura secuencial" in texto) == (modo == "planb")
+    # las frases nuevas del acta, en el fichero que se escribe
+    assert "se generaron con bots contra el sistema desplegado, con la prevalencia desplegada (0,1466)" in plano
+    assert "**Frente a 0,4 y 0,6:** El kappa ponderado (" in plano
+    assert "casos cuya horquilla cruza un límite: 1 de 24." in plano
+    assert "horquillas son un solo porcentaje: en ellas solo cuenta el valor exacto" in plano
+    assert "Los síntomas referidos son un fondo constante en todos los casos" in plano
+    assert "## Pregunta sobre el PACS" in texto
+    assert ("Razones individuales de los controles (lectura 2 / lectura 1): "
+            + ("1,00; 1,00; 1,00; 1,00." if modo == "lectura2" else "no hay controles en el plan B.")) in plano
+    assert "| c-02 | positiva clara | baja | intermedia (8 %) | entre 3 % y 13 % | dudoso |" in texto
+    assert "_" not in plano.split("## Desacuerdos")[1].split("## Pregunta")[0]    # sin claves internas
     # sin mensajes.json no se escribe nada: el acta no podría citar su huella
     (sesion / "corpus" / "mensajes.json").unlink()
     r = subprocess.run([sys.executable, script, "--sesion", str(sesion), *argumentos,
