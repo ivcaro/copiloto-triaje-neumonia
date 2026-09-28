@@ -27,6 +27,7 @@
     }
     return {
       lectura: datos.lectura,
+      preparacion: datos.preparacion,
       modo: datos.modo === "secuencial" ? "secuencial" : "simple",
       practica: datos.practica.map((c) => Object.assign({}, c, { practica: true })),
       casos: datos.casos.map((c) => Object.assign({}, c, { practica: false })),
@@ -35,23 +36,31 @@
     };
   }
 
-  function mismosIds(a, b) {
+  // Lo que el médico ve de cada caso: si algo de esto cambió, las respuestas
+  // guardadas son de otros casos aunque los ids coincidan.
+  const LO_QUE_SE_VE = ["id", "placa", "vineta", "mensaje"];
+
+  function mismosCasos(a, b) {
     if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) { return false; }
     for (let i = 0; i < a.length; i++) {
-      if (a[i].id !== b[i].id) { return false; }
+      for (const k of LO_QUE_SE_VE) {
+        if (a[i][k] !== b[i][k]) { return false; }
+      }
     }
     return true;
   }
 
   // Decide si un estado guardado en localStorage sirve para esta carga de la
-  // página (misma lectura, mismos casos y práctica, en el mismo orden) y, si
-  // sirve, cómo retomarlo: el caso a medias reinicia su reloj; la respuesta
+  // página (misma lectura, misma preparación —la marca de preparar_sesion
+  // que distingue el ensayo y cada elección—, y los mismos casos y práctica,
+  // en el mismo orden y con la misma placa, viñeta y mensaje) y, si sirve,
+  // cómo retomarlo: el caso a medias reinicia su reloj; la respuesta
   // pendiente de un plan B ya revelado se conserva con su reloj reiniciado;
   // una lectura terminada se devuelve intacta para que la pantalla final
   // vuelva a mostrarse.
   function retomar(previo, datos, ahora) {
-    if (!previo || previo.lectura !== datos.lectura ||
-        !mismosIds(previo.casos, datos.casos) || !mismosIds(previo.practica, datos.practica)) {
+    if (!previo || previo.lectura !== datos.lectura || previo.preparacion !== datos.preparacion ||
+        !mismosCasos(previo.casos, datos.casos) || !mismosCasos(previo.practica, datos.practica)) {
       return nuevoEstado(datos);
     }
     if (previo.fase === "fin") { return previo; }
@@ -69,14 +78,20 @@
     return e;
   }
 
+  // Vacío antes de Number(): Number("") y Number(null) valen 0, y un
+  // porcentaje sin escribir no es un 0 %.
+  function vacio(v) { return v === null || v === undefined || String(v).trim() === ""; }
+
   function validarBanda(r) {
     if (!BANDAS.includes(r.banda)) { throw new Error("elija una banda: baja, intermedia o alta"); }
+    if (vacio(r.porcentaje)) { throw new Error("falta el porcentaje: un entero de 0 a 100"); }
     const p = Number(r.porcentaje);
     if (!Number.isInteger(p) || p < 0 || p > 100) { throw new Error("el porcentaje es un entero de 0 a 100"); }
   }
 
   function validarNotas(r) {
     for (const k of NOTAS) {
+      if (vacio(r[k])) { throw new Error("faltan notas: las tres van de 1 a 5"); }
       const v = Number(r[k]);
       if (!Number.isInteger(v) || v < 1 || v > 5) { throw new Error("las tres notas van de 1 a 5"); }
     }

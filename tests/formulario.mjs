@@ -8,8 +8,9 @@ const { Formulario } = require("../pruebas/formulario/formulario.js");
 let ok = 0;
 function prueba(nombre, fn) { fn(); ok += 1; console.log("OK  " + nombre); }
 
+const PREPARACION = "20261006-20261005T101010";
 const datos = (modo) => ({
-  lectura: 2, modo,
+  lectura: 2, modo, preparacion: PREPARACION,
   practica: [{ id: "pr-1", placa: "placas/pr-1.png", vineta: "práctica", mensaje: "M0", control: false }],
   casos: [
     { id: "c-1", placa: "placas/c-1.png", vineta: "v1", mensaje: "M1", control: false },
@@ -113,7 +114,8 @@ prueba("retomar: sin estado guardado o con otra lectura, arranca de cero", () =>
   assert.equal(fresco.respuestas.length, 0);
   assert.equal(fresco.fase, "practica");
 
-  const previoOtraLectura = Formulario.nuevoEstado({ lectura: 1, modo: "simple", practica: [], casos: d.casos });
+  const previoOtraLectura = Formulario.nuevoEstado({ lectura: 1, modo: "simple", preparacion: PREPARACION,
+    practica: [], casos: d.casos });
   const otro = Formulario.retomar(previoOtraLectura, d, 0);      // d.lectura es 2
   assert.equal(otro.fase, "practica");                           // arrancó de cero, con la práctica de d
   assert.equal(otro.respuestas.length, 0);
@@ -124,7 +126,7 @@ prueba("retomar: si los ids de los casos no coinciden con los datos actuales, ar
   const previo = Formulario.nuevoEstado(d);
   Formulario.abrir(previo, 0);
   Formulario.enviar(previo, conNotas, 500);                      // termina la práctica
-  const otrosDatos = { lectura: 2, modo: "simple", practica: d.practica,
+  const otrosDatos = { lectura: 2, modo: "simple", preparacion: PREPARACION, practica: d.practica,
     casos: [{ id: "z-9", placa: "placas/z-9.png", vineta: "otro run", mensaje: null, control: true }] };
   const nuevo = Formulario.retomar(previo, otrosDatos, 1000);
   assert.equal(nuevo.respuestas.length, 0);
@@ -158,6 +160,54 @@ prueba("retomar en plan B tras revelar conserva la respuesta pendiente y reinici
   const fila = retomado.respuestas[0];
   assert.equal(fila.banda, "intermedia"); assert.equal(fila.segundos, 30);
   assert.equal(fila.banda_con, "alta"); assert.equal(fila.segundos_con, 3);
+});
+
+prueba("un porcentaje o una nota vacíos se rechazan: no son un 0", () => {
+  const e = Formulario.nuevoEstado({ lectura: 1, modo: "simple", practica: [], casos: datos("simple").casos });
+  Formulario.abrir(e, 0);
+  for (const vacio of ["", "  ", null, undefined]) {
+    assert.throws(() => Formulario.enviar(e, Object.assign({}, conNotas, { porcentaje: vacio }), 1), /porcentaje/);
+    assert.throws(() => Formulario.enviar(e, Object.assign({}, conNotas, { utilidad: vacio }), 1), /notas/);
+  }
+  const s = Formulario.nuevoEstado({ lectura: 1, modo: "secuencial", practica: [], casos: datos("secuencial").casos });
+  Formulario.abrir(s, 0);
+  Formulario.enviar(s, { banda: "baja", porcentaje: "0" }, 10);     // un 0 escrito sí vale
+  assert.throws(() => Formulario.enviarConAyuda(s, Object.assign({}, conNotas, { porcentaje: "" }), 20), /porcentaje/);
+  assert.equal(e.respuestas.length, 0);
+  assert.equal(s.respuestas.length, 0);
+  assert.equal(s.pendiente.porcentaje, 0);
+});
+
+prueba("nuevoEstado copia la preparación de los datos", () => {
+  assert.equal(Formulario.nuevoEstado(datos("simple")).preparacion, PREPARACION);
+});
+
+prueba("retomar: otra preparación con los mismos casos arranca de cero (el ensayo no contamina)", () => {
+  const d = datos("simple");
+  const previo = Formulario.nuevoEstado(d);
+  Formulario.abrir(previo, 0);
+  Formulario.enviar(previo, conNotas, 500);
+  const otra = Object.assign({}, d, { preparacion: "20261001-20260930T090000" });
+  const r = Formulario.retomar(JSON.parse(JSON.stringify(previo)), otra, 1000);
+  assert.equal(r.respuestas.length, 0);
+  assert.equal(r.fase, "practica");
+  assert.equal(r.preparacion, "20261001-20260930T090000");
+  // y con la misma preparación sí retoma (tras pasar por localStorage)
+  assert.equal(Formulario.retomar(JSON.parse(JSON.stringify(previo)), d, 1000).respuestas.length, 1);
+});
+
+prueba("retomar: misma preparación pero otra viñeta, placa o mensaje arranca de cero", () => {
+  const d = datos("simple");
+  const previo = Formulario.nuevoEstado(d);
+  Formulario.abrir(previo, 0);
+  Formulario.enviar(previo, conNotas, 500);
+  const cambiar = (k, v) => Object.assign({}, d, {
+    casos: d.casos.map((c, i) => (i === 1 ? Object.assign({}, c, { [k]: v }) : c)) });
+  for (const [k, v] of [["vineta", "otra viñeta"], ["placa", "placas/otra.png"], ["mensaje", "M9"]]) {
+    const r = Formulario.retomar(JSON.parse(JSON.stringify(previo)), cambiar(k, v), 1000);
+    assert.equal(r.respuestas.length, 0, k);
+    assert.equal(r.casos[1][k], v);
+  }
 });
 
 prueba("retomar con la lectura terminada la deja intacta, con sus respuestas", () => {

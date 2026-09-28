@@ -59,21 +59,34 @@
 <script>
 (function () {
   // ?lectura=1 | 2 | planb -> datos_lectura1.js | datos_lectura2.js | datos_planb.js
+  // ?nuevo=1 descarta el estado guardado de esta lectura y esta preparación.
   var params = new URLSearchParams(location.search);
   var lectura = params.get("lectura") || "1";
   var fichero = lectura === "planb" ? "datos_planb.js" : "datos_lectura" + lectura + ".js";
-  var clave = "sesion-h7-" + lectura;
+  var clave = null;        // "sesion-h7-" + lectura + "-" + preparación, en arrancar()
   var estado = null;
+  var retomadas = 0;       // respuestas que traía el estado retomado
 
   function guardar() { try { localStorage.setItem(clave, JSON.stringify(estado)); } catch (e) {} }
   function recuperar() { try { var t = localStorage.getItem(clave); return t ? JSON.parse(t) : null; } catch (e) { return null; } }
 
   function arrancar() {
-    // Formulario.retomar decide si el estado guardado sirve (misma lectura y
-    // mismos casos) y, si sirve, cómo retomarlo: el caso a medias reinicia su
-    // reloj, la respuesta pendiente de un plan B revelado se conserva, y una
-    // lectura terminada se deja intacta para que vuelva a verse la pantalla final.
+    // La clave de localStorage lleva la preparación (la marca que
+    // preparar_sesion pone a cada elección): el ensayo y una elección
+    // anterior no se retoman en la sesión real.
+    clave = "sesion-h7-" + lectura + "-" + window.DATOS.preparacion;
+    if (params.get("nuevo") === "1") {
+      try { localStorage.removeItem(clave); } catch (e) {}
+      // Sin ?nuevo=1 en la dirección: recargar a mitad de lectura no la borra.
+      try { params.delete("nuevo"); history.replaceState(null, "", "?" + params.toString()); } catch (e) {}
+    }
+    // Formulario.retomar decide si el estado guardado sirve (misma lectura,
+    // misma preparación y mismos casos) y, si sirve, cómo retomarlo: el caso a
+    // medias reinicia su reloj, la respuesta pendiente de un plan B revelado se
+    // conserva, y una lectura terminada se deja intacta para que vuelva a
+    // verse la pantalla final.
     estado = Formulario.retomar(recuperar(), window.DATOS, Date.now());
+    retomadas = estado.respuestas.length;
     pintar();
   }
 
@@ -81,7 +94,9 @@
     var c = Formulario.casoActual(estado);
     document.getElementById("cabecera").textContent =
       "Lectura " + estado.lectura + (estado.modo === "secuencial" ? " (plan B)" : "") +
-      ". Un caso por pantalla; no se puede volver atrás. La clínica de cada caso es simulada.";
+      ". Un caso por pantalla; no se puede volver atrás. La clínica de cada caso es simulada." +
+      " Los síntomas referidos son iguales en todos los casos." +
+      (retomadas ? " Se retoma: " + retomadas + (retomadas === 1 ? " respuesta guardada." : " respuestas guardadas.") : "");
     if (!c) {
       document.getElementById("caso").hidden = true;
       document.getElementById("fin").hidden = false;
@@ -111,6 +126,7 @@
         ? Formulario.enviarConAyuda(estado, r, Date.now())
         : Formulario.enviar(estado, r, Date.now());
       guardar();
+      retomadas = 0;       // el aviso de retomado solo se ve hasta el primer envío
       pintar();
       if (res.revelar) { window.scrollTo(0, 0); }
     } catch (e) {
