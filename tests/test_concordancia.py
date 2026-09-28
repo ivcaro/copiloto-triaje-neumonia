@@ -9,6 +9,7 @@ Los kappas se comprueban contra un ejemplo calculado a mano de 8 casos:
 """
 import csv
 import json
+import math
 import pathlib
 
 import numpy as np
@@ -71,6 +72,16 @@ def test_acuerdo_continuo_acota_0_y_100_y_mide_spearman():
     assert r["fraccion_dentro_de_la_horquilla"] == pytest.approx(1.0)
 
 
+def test_acuerdo_continuo_con_porcentaje_constante_da_spearman_nan_sin_avisos():
+    # Ruling 5: un vector de rangos constante (porcentaje del médico fijo)
+    # no debe llamar a np.corrcoef; el resultado es NaN, no un aviso.
+    r = cc.acuerdo_continuo([50, 50, 50, 50], [0.08, 0.45, 0.9, 0.45])
+    assert math.isnan(r["spearman"])
+    # el sistema constante también degenera, en el otro eje
+    r2 = cc.acuerdo_continuo([10, 40, 70, 90], [0.5, 0.5, 0.5, 0.5])
+    assert math.isnan(r2["spearman"])
+
+
 def test_razon_de_tiempos_pareada():
     r = cc.razon_de_tiempos([60, 80, 100, 120], [30, 40, 50, 60])
     assert r["razon_medias_geometricas"] == pytest.approx(0.5)
@@ -78,6 +89,28 @@ def test_razon_de_tiempos_pareada():
     assert r["n"] == 4 and r["ic95_bca"][0] <= 0.5 <= r["ic95_bca"][1]
     with pytest.raises(ValueError):
         cc.razon_de_tiempos([1, 2], [1])
+
+
+def test_razon_corregida_colapsa_cuando_todas_las_razones_son_iguales():
+    # Ruling 6: con/sin exactamente 0,5 y controles exactamente 1,0 (como en
+    # la sesión fabricada) el intervalo percentil colapsa sobre el punto.
+    ln_con = np.log([0.5] * 20)
+    ln_ctl = np.log([1.0] * 4)
+    r = cc.razon_corregida(ln_con, ln_ctl)
+    assert r["punto"] == pytest.approx(0.5)
+    assert r["ic95"] == pytest.approx([0.5, 0.5])
+
+
+def test_razon_corregida_con_tiempos_variables_da_un_intervalo_que_contiene_el_punto():
+    ln_con = np.log([0.35, 0.42, 0.58, 0.5, 0.47, 0.61, 0.39, 0.55])
+    ln_ctl = np.log([0.85, 1.05, 1.2, 0.95])
+    r = cc.razon_corregida(ln_con, ln_ctl)
+    assert r["ic95"][0] <= r["punto"] <= r["ic95"][1]
+    assert r["ic95"][0] < r["ic95"][1]
+    # reproducible: misma semilla, mismo intervalo
+    assert cc.razon_corregida(ln_con, ln_ctl)["ic95"] == r["ic95"]
+    with pytest.raises(ValueError):
+        cc.razon_corregida([], [1.0])
 
 
 # --------------------------------------------------------------------------
@@ -166,6 +199,7 @@ def test_analizar_una_sesion_fabricada(tmp_path):
     assert l2s["tiempo"]["razon_medias_geometricas"] == pytest.approx(0.5)
     assert l2s["tiempo"]["controles"]["media_geometrica"] == pytest.approx(1.0)
     assert l2s["tiempo"]["razon_corregida_por_releer"] == pytest.approx(0.5)
+    assert l2s["tiempo"]["ic95_razon_corregida"] == pytest.approx([0.5, 0.5])
     assert s["plan_b"] is None
     assert s["texto_fijado"] == cc.TEXTO_FIJADO
 
@@ -215,3 +249,52 @@ def test_el_acta_se_rellena_desde_sesion_json_y_no_deja_huecos(tmp_path):
     assert "no medido" in acta       # sin lectura 2 ni plan B, el tiempo no se midió
     with pytest.raises(KeyError):
         cc.rellenar_acta("{{no_existe}}", {})
+
+
+def _plantilla():
+    return (pathlib.Path(__file__).resolve().parents[1] / "docs" / "validacion-semisintetica"
+            / "acta-h7-plantilla.md").read_text(encoding="utf-8")
+
+
+def test_el_acta_del_plan_b_describe_una_sola_sesion_secuencial(tmp_path):
+    # Ruling 7: bajo plan B, el método y las fechas no deben describir dos
+    # lecturas separadas por siete días ni dejar «lectura 2 el —».
+    clave = _clave()
+    casos = {c["patientId"]: c for c in clave["casos"]}
+    filas = [_fila(1, i + 1, casos[pid], casos[pid]["categoria"]["primaria"],
+                   int(casos[pid]["categoria"]["punto_medio"] * 100), 40.0,
+                   notas={"correccion": 4, "utilidad": 4, "lenguaje": 4},
+                   banda_con=casos[pid]["categoria"]["primaria"], pct_con=50, seg_con=20.0)
+             for i, pid in enumerate(clave["ordenes"]["lectura1"])]
+    _csv(tmp_path / "planb.csv", filas)
+    l1 = cc.leer_csv(tmp_path / "planb.csv")
+    pb = cc.leer_csv(tmp_path / "planb.csv")
+    s = cc.analizar(clave, l1, planb=pb)
+    acta = cc.rellenar_acta(_plantilla(), cc.valores_para_acta(s, clave, l1, pb))
+    assert "{{" not in acta
+    assert "lectura secuencial" in acta
+    assert "siete días" not in acta
+    assert "lectura 2 el —" not in acta
+
+
+def test_el_acta_de_dos_lecturas_usa_los_recuentos_reales_no_cifras_tecleadas(tmp_path):
+    # Ruling 7: el método debe citar los n_con_mensaje/n_controles reales de
+    # la sesión, no los «20 casos y 4 controles» tecleados de la plantilla
+    # anterior.
+    clave = _clave()
+    casos = {c["patientId"]: c for c in clave["casos"]}
+    controles = set(clave["ordenes"]["controles"])
+    l1 = [_fila(1, i + 1, casos[pid], casos[pid]["categoria"]["primaria"], 50, 60.0)
+          for i, pid in enumerate(clave["ordenes"]["lectura1"])]
+    l2 = [_fila(2, i + 1, casos[pid], casos[pid]["categoria"]["primaria"], 50, 60.0,
+                control=pid in controles)
+          for i, pid in enumerate(clave["ordenes"]["lectura2"])]
+    _csv(tmp_path / "l1.csv", l1)
+    _csv(tmp_path / "l2.csv", l2)
+    l1r, l2r = cc.leer_csv(tmp_path / "l1.csv"), cc.leer_csv(tmp_path / "l2.csv")
+    s = cc.analizar(clave, l1r, l2r)
+    assert s["lectura2"]["n_con_mensaje"] == 20 and s["lectura2"]["n_controles"] == 4
+    acta = cc.rellenar_acta(_plantilla(), cc.valores_para_acta(s, clave, l1r, l2r))
+    assert "{{" not in acta
+    assert f"en {s['lectura2']['n_con_mensaje']} casos" in acta
+    assert f"{s['lectura2']['n_controles']} controles sin mensaje" in acta

@@ -145,8 +145,12 @@ def acuerdo_continuo(pct_medico, p_sistema, minima=None, maxima=None) -> dict:
     pm = np.clip(pct, 0.5, 99.5) / 100.0
     d = np.log(pm / (1 - pm)) - np.log(p / (1 - p))
     de = float(d.std(ddof=1)) if d.size > 1 else 0.0
-    salida = {"n": int(pct.size),
-              "spearman": float(np.corrcoef(rankdata(pct), rankdata(p))[0, 1]) if pct.size > 1 else float("nan"),
+    if pct.size > 1:
+        rp, rs = rankdata(pct), rankdata(p)
+        spearman = float("nan") if (np.ptp(rp) == 0 or np.ptp(rs) == 0) else float(np.corrcoef(rp, rs)[0, 1])
+    else:
+        spearman = float("nan")
+    salida = {"n": int(pct.size), "spearman": spearman,
               "diferencia_media_log_odds": float(d.mean()), "de": de,
               "limites_95": [float(d.mean() - 1.96 * de), float(d.mean() + 1.96 * de)],
               "acotados_0_o_100": acotados}
@@ -172,6 +176,28 @@ def razon_de_tiempos(t_sin, t_con) -> dict:
             "ic95_bca": bca(ln, razon) if ln.size >= 3 else [r, r],
             "reduccion_pct": float((1.0 - r) * 100.0),
             "razones": [float(x) for x in np.exp(ln)]}
+
+
+def razon_corregida(ln_con, ln_ctl, B: int = B_BOOTSTRAP, semilla: int = SEMILLA_BOOTSTRAP,
+                     alfa: float = 0.05) -> dict:
+    """Razon de tiempos corregida por releer: exp(mean(ln_con) - mean(ln_ctl)),
+    con un intervalo percentil del 95 % por bootstrap estratificado (los pares
+    con mensaje y los controles se remuestrean por separado, con reemplazo,
+    cada uno dentro de su propio estrato, con una sola `default_rng(semilla)`)."""
+    ln_con = np.asarray(ln_con, dtype=float)
+    ln_ctl = np.asarray(ln_ctl, dtype=float)
+    if ln_con.size == 0 or ln_ctl.size == 0:
+        raise ValueError("hacen falta pares con mensaje y controles")
+    punto = float(np.exp(ln_con.mean() - ln_ctl.mean()))
+    rng = np.random.default_rng(semilla)
+    n_con, n_ctl = ln_con.size, ln_ctl.size
+    boots = np.empty(B, dtype=float)
+    for i in range(B):
+        muestra_con = ln_con[rng.integers(0, n_con, n_con)]
+        muestra_ctl = ln_ctl[rng.integers(0, n_ctl, n_ctl)]
+        boots[i] = np.exp(muestra_con.mean() - muestra_ctl.mean())
+    lo, hi = np.percentile(boots, [100 * alfa / 2, 100 * (1 - alfa / 2)])
+    return {"punto": punto, "ic95": [float(lo), float(hi)]}
 
 
 # --------------------------------------------------------------------------
@@ -266,8 +292,15 @@ def analizar(clave: dict, lectura1: list, lectura2: list | None = None,
         razones_c = [f["segundos"] / t1[f["id"]] for f in controles]
         media_c = float(np.exp(np.mean(np.log(razones_c)))) if razones_c else None
         tiempo["controles"] = {"n": len(controles), "razones": razones_c, "media_geometrica": media_c}
-        tiempo["razon_corregida_por_releer"] = (tiempo["razon_medias_geometricas"] / media_c
-                                                if media_c else None)
+        if razones_c:
+            ln_con = np.log([f["segundos"] / t1[f["id"]] for f in con])
+            ln_ctl = np.log(razones_c)
+            rc = razon_corregida(ln_con, ln_ctl)
+            tiempo["razon_corregida_por_releer"] = rc["punto"]
+            tiempo["ic95_razon_corregida"] = rc["ic95"]
+        else:
+            tiempo["razon_corregida_por_releer"] = None
+            tiempo["ic95_razon_corregida"] = None
         tiempo["medido"] = True
         salida["lectura2"] = {
             "n_con_mensaje": len(con), "n_controles": len(controles),
@@ -320,35 +353,50 @@ def valores_para_acta(sesion: dict, clave: dict, lectura1: list | None = None,
         f"| {d['id']} | {d['estrato']} | {d['sistema']} | {d['medico']} ({d['porcentaje']} %) | "
         f"{_f(d['horquilla'][0] * 100, 0)}-{_f(d['horquilla'][1] * 100, 0)} % | {d['comentario']} |"
         for d in sesion["desacuerdos"]) or "| (ninguno) | | | | | |"
+    fecha1 = _fecha(lectura1[0]["abierto_en"]) if lectura1 else "—"
+    fecha2 = _fecha(lectura2[0]["abierto_en"]) if lectura2 else "—"
     l2 = sesion.get("lectura2")
     pb = sesion.get("plan_b")
     if l2:
         t = l2["tiempo"]
+        ic_corregida = t.get("ic95_razon_corregida")
+        corregida = (f"{_f(t['razon_corregida_por_releer'])} (IC 95 % {_f(ic_corregida[0])} a {_f(ic_corregida[1])})"
+                     if ic_corregida else _f(t["razon_corregida_por_releer"]))
         tiempo = (f"razón de medias geométricas con/sin {_f(t['razon_medias_geometricas'])} "
                   f"(IC 95 % BCa {_f(t['ic95_bca'][0])} a {_f(t['ic95_bca'][1])}; n = {t['n']}), "
                   f"reducción {_f(t['reduccion_pct'], 0)} %; controles releídos sin copiloto: "
                   f"media geométrica {_f(t['controles']['media_geometrica'])} (n = {t['controles']['n']}); "
-                  f"razón corregida por releer {_f(t['razon_corregida_por_releer'])}. La reducción mezcla "
+                  f"razón corregida por releer {corregida}. La reducción mezcla "
                   f"el efecto del copiloto con el de releer; los controles lo estiman de forma descriptiva.")
         influencia = (f"kappa con el mensaje delante {_kappa_texto(l2['kappa_con_mensaje'])}; "
                       f"cambió de banda en {l2['cambios_de_banda']} de {l2['n_con_mensaje']} casos")
         u = l2["utilidad"]
+        fechas = f"lectura 1 el {fecha1}; lectura 2 el {fecha2}"
+        metodo = (f"Dos lecturas del mismo conjunto: la primera sin copiloto el {fecha1}; la segunda, "
+                  f"con el mensaje real del sistema en {l2['n_con_mensaje']} casos y {l2['n_controles']} "
+                  f"controles sin mensaje, el {fecha2}. El kappa sale solo de la primera.")
     elif pb:
         tiempo = (f"no medido (plan B, una sola sesión); leer el mensaje añadió una mediana de "
                   f"{_f(pb['segundos_adicionales_leer_mensaje']['mediana'], 0)} s por caso")
         influencia = (f"kappa tras revelar el mensaje {_kappa_texto(pb['kappa_con_mensaje'])}; "
                       f"cambió de banda en {pb['cambios_de_banda']} de {pb['kappa_con_mensaje']['n']} casos")
         u = pb["utilidad"]
+        fechas = f"sesión única el {fecha1}"
+        metodo = (f"Una sola sesión el {fecha1}, en lectura secuencial caso a caso: primero banda, "
+                  f"porcentaje y tiempo sin ayuda; después el formulario reveló el mensaje y pidió "
+                  f"banda final, porcentaje final y las tres notas. El kappa sale de la primera "
+                  f"respuesta; la reducción del tiempo no se midió.")
     else:
         tiempo = "no medido"
         influencia = "no medida"
         u = None
+        fechas = f"lectura el {fecha1}"
+        metodo = f"Solo la lectura sin copiloto, el {fecha1}."
     utilidad = ("; ".join(f"{n} {_f(u[n]['media'], 1)} (n = {u[n]['n']})" for n in NOTAS) if u else "no medida")
     a = sesion["acuerdo_continuo"]
     return {
         "rotulo": sesion["rotulo"], "n": str(sesion["n"]),
-        "fecha_lectura1": _fecha(lectura1[0]["abierto_en"]) if lectura1 else "—",
-        "fecha_lectura2": _fecha(lectura2[0]["abierto_en"]) if lectura2 else "—",
+        "fechas": fechas, "metodo": metodo,
         "prevalencia_sesion": _f(clave.get("prevalencia_sesion"), 4),
         "categoria_de": sesion["categoria_de"],
         "kappa_ponderado": _kappa_texto(k["ponderado_lineal"]),

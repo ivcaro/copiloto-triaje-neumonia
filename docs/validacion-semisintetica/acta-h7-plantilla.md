@@ -7,7 +7,7 @@ exactitud clínica.
 **Participante:** médico general colaborador, de forma voluntaria; sin datos
 personales en ningún fichero del proyecto.
 
-**Fechas:** lectura 1 el {{fecha_lectura1}}; lectura 2 el {{fecha_lectura2}}.
+**Fechas:** {{fechas}}.
 
 **Casos:** {{n}}, elegidos con semilla por estratos (tabla al final). Los
 mensajes del sistema se generaron con la prevalencia desplegada
@@ -16,10 +16,7 @@ mensajes del sistema se generaron con la prevalencia desplegada
 
 ## Método
 
-Dos lecturas del mismo conjunto: la primera sin copiloto (placa y viñeta;
-banda y porcentaje); la segunda, al menos siete días después, con el mensaje
-real del sistema en 20 casos y 4 controles sin mensaje. El kappa sale solo de
-la primera. Pregunta al médico: probabilidad de que la placa muestre una
+{{metodo}} Pregunta al médico: probabilidad de que la placa muestre una
 opacidad o infiltrado compatible con neumonía, en tres bandas (< 20 %,
 20-70 %, > 70 %; convención del equipo) y como porcentaje entero. Instrumento:
 el formulario local, un caso por pantalla, sin volver atrás; el tiempo va de
