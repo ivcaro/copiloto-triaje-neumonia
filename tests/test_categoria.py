@@ -76,12 +76,15 @@ def _cruces_dobles(prevalencia):
     return cruces
 
 
-@pytest.mark.parametrize("prevalencia", [PREVALENCIA_COHORTE, 0.2215, 0.05])
+@pytest.mark.parametrize("prevalencia", [PREVALENCIA_COHORTE, 0.2215, 0.05, 0.034])
 def test_ninguna_horquilla_cruza_los_dos_limites_con_las_tablas_actuales(prevalencia):
     """Spec §5.3 y §8: barrido de la RV de imagen desplegada (0,016-77,3) por las
-    48 combinaciones de hallazgos. El umbral analítico está por debajo de ≈ 2,6 %."""
+    48 combinaciones de hallazgos. El umbral está en ≈ 3,3 % (Ruling 10): con
+    0,034 ya no hay cruces dobles."""
     assert _cruces_dobles(prevalencia) == 0
 
 
-def test_con_una_prevalencia_bajo_el_umbral_analitico_si_hay_cruces_dobles():
-    assert _cruces_dobles(0.02) > 0
+@pytest.mark.parametrize("prevalencia", [0.02, 0.032])
+def test_con_una_prevalencia_bajo_el_umbral_analitico_si_hay_cruces_dobles(prevalencia):
+    """Con 0,032 cruza por la vía del asma `no_se` con puntuación [4, 5]."""
+    assert _cruces_dobles(prevalencia) > 0

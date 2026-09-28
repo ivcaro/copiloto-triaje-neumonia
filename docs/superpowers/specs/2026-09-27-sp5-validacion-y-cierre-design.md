@@ -555,7 +555,7 @@ el 70 % (barrido de RV de imagen 0,016-77,3 × 48 combinaciones de hallazgos ×
 dos previos, 27-sep); tiene explicación analítica —el cociente de odds de los
 dos extremos vale `min(RV_clínica, RV_imagen) ≤ 17,5`, y cruzar 20 y 70 % a
 la vez exige además `odds_previas × max(RV_clínica, RV_imagen) < 0,25`, lo que
-solo ocurre con prevalencia declarada por debajo de ≈ 2,6 %— y una prueba lo
+solo ocurre con prevalencia declarada por debajo de ≈ 3,3 %— y una prueba lo
 afirma con los dos previos y con el umbral analítico (§8). Como
 `PREVALENCIA_LOCAL` es configurable, la regla «cruza → intermedia» del análisis
 de sensibilidad cubre el caso si algún despliegue lo produjera. Los mensajes

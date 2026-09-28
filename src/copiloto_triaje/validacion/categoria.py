@@ -13,7 +13,10 @@ horquilla cruza un limite, intermedia». Con las tablas actuales ninguna
 horquilla cruza a la vez el 20 % y el 70 % (prueba): el cociente de odds de
 los dos extremos vale min(RV_clinica, RV_imagen) ≤ 17,5, y cruzar los dos
 exige ademas odds_previas × max(RV) < 0,25, que solo ocurre con prevalencia
-declarada por debajo de ≈ 2,6 %.
+declarada por debajo de ≈ 3,3 %. El caso limite es el asma `no_se` con
+puntuacion [4, 5], donde la minima sale de la RV de 4 puntos (7,18) y la
+maxima de la de 5 (17,5) por la de la imagen; la prueba lo fija con 0,032
+(cruza) y 0,034 (no cruza).
 """
 from __future__ import annotations
 
