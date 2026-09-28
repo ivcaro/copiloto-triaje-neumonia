@@ -220,6 +220,28 @@ def test_el_veredicto_lee_el_intervalo_y_dice_cuando_solo_hay_estimacion(
         if contencion is not None and 0.8995 < contencion < 0.9:
             # lo que el lector ve al lado del veredicto
             assert f"| {nombre} | 90,0 % " in documento
+    # junto a la tabla se dice con que se decide, y que el JSON va sin redondear
+    horquilla = _seccion(texto, "La horquilla frente al oráculo")
+    assert ("Se decide con la contención tal como se imprime (un «90,0 %» alcanza un umbral "
+            "del 90 %); el campo `se_sostiene` del fichero de resultados se calcula sin "
+            "redondear:") in horquilla
+
+
+def test_el_umbral_se_imprime_con_los_decimales_con_que_se_compara(resultados_minimos):
+    assert [informe._umbral(x) for x in (0.9, 0.905, 0.8, 0.9004, 1.0)] == [
+        "90", "90,5", "80", "90", "100"]
+    otro = copy.deepcopy(resultados_minimos)
+    otro["parametros"]["hipotesis_contencion"] = 0.905
+    for celda in otro["celdas"]:
+        celda["hipotesis"]["umbral"] = 0.905
+    otro["celdas"][3]["horquilla"]["todos"]["contencion"] = 0.902
+    otro["celdas"][3]["intervalos"]["horquilla.todos.contencion"] = [0.88, 0.904]
+    documento = informe.redactar(otro)
+    # un 90,2 % no alcanza un 90,5 %, y la fila lo deja ver
+    assert "| (0,3; 0,3) | 90,2 % (IC 95 %: 88,0 a 90,4) | ≥ 90,5 % | no se sostiene |" in documento
+    assert "en ≥ 90,5 % de los concordantes»" in documento
+    assert "(contención ≥ 90,5 % de los concordantes)" in documento
+    assert "≥ 90 %" not in documento and "≥ 91 %" not in documento
 
 
 def test_la_lectura_se_genera_desde_las_cifras(texto, resultados_minimos):
@@ -254,29 +276,34 @@ def test_la_lectura_de_la_hipotesis_cuenta_0a_aparte_y_lee_los_intervalos(
         "0A es la comprobación de la métrica y se cuenta aparte. "
         "Celdas con dependencia: 3; con intervalo, 1. "
         "Donde hay intervalo decide el intervalo entero. "
-        "Celdas en las que se sostiene: ninguna. "
-        "Celdas en las que no se sostiene: 1, que es (0,3; 0,3). "
-        "Celdas en las que no se puede decir, porque la estimación y su intervalo no quedan "
-        "enteros a un lado del umbral: ninguna. "
+        "Con intervalo, celdas en las que se sostiene: ninguna. "
+        "Con intervalo, celdas en las que no se sostiene: 1, que es (0,3; 0,3). "
+        "Con intervalo, celdas en las que no se puede decir, porque la estimación y su "
+        "intervalo no quedan enteros a un lado del umbral: ninguna. "
         "Sin intervalo, 2: solo hay estimación puntual. "
-        "Celdas en las que la estimación alcanza el umbral: ninguna.")
+        "Sin intervalo, celdas en las que la estimación alcanza el umbral: ninguna.")
+    # cada cuenta dice de que celdas es: la tabla del veredicto tiene mas
+    # filas «no se sostiene» que celdas con intervalo
+    assert not re.search(r"(?<!intervalo, )celdas en las que", _hipotesis(texto))
     # ninguna frase pone «ninguna» detras de un verbo: «no se sostiene en
     # ninguna» diria lo contrario de lo que cuenta
     for documento in (texto, informe.redactar(resultados_minimos, {})):
         assert not re.search(r"\b(en|de) ninguna\b", documento)
     # 0A no cuenta aunque se sostenga; la que solo tiene estimacion se dice
     otro = _con_hipotesis(resultados_minimos, 1, 0.913, None)
-    assert ("Sin intervalo, 2: solo hay estimación puntual. Celdas en las que la "
-            "estimación alcanza el umbral: 1, que es (0; 0,3).") in _hipotesis(
+    assert ("Sin intervalo, 2: solo hay estimación puntual. Sin intervalo, celdas en las "
+            "que la estimación alcanza el umbral: 1, que es (0; 0,3).") in _hipotesis(
         informe.redactar(otro))
-    assert "Celdas en las que se sostiene: ninguna." in _hipotesis(informe.redactar(otro))
+    assert "Con intervalo, celdas en las que se sostiene: ninguna." in _hipotesis(
+        informe.redactar(otro))
     otro = _con_hipotesis(resultados_minimos, 3, 0.95, (0.91, 0.97))
-    assert ("Celdas en las que se sostiene: 1, que es (0,3; 0,3). Celdas en las que no se "
-            "sostiene: ninguna.") in _hipotesis(informe.redactar(otro))
+    assert ("Con intervalo, celdas en las que se sostiene: 1, que es (0,3; 0,3). Con "
+            "intervalo, celdas en las que no se sostiene: ninguna.") in _hipotesis(
+        informe.redactar(otro))
     otro = _con_hipotesis(resultados_minimos, 3, 0.91, (0.88, 0.97))
     frase = _hipotesis(informe.redactar(otro))
-    assert ("Celdas en las que se sostiene: ninguna. Celdas en las que no se sostiene: "
-            "ninguna.") in frase
+    assert ("Con intervalo, celdas en las que se sostiene: ninguna. Con intervalo, celdas "
+            "en las que no se sostiene: ninguna.") in frase
     assert "a un lado del umbral: 1, que es (0,3; 0,3)." in frase
     # sin bootstrap no hay intervalos que leer, y no se finge
     otro = copy.deepcopy(resultados_minimos)
@@ -415,7 +442,10 @@ def test_los_limites_del_spec_estan_escritos(texto):
     assert "- si el sistema reproduce caso a caso" in limites
     assert "- si, **cuando** la puntuación tiene la exactitud publicada" in limites
     # cada punto remite a donde se responde
-    assert "las pruebas de `tests/test_validacion_0a.py`" in limites
+    assert ("(0A: lo comprueban las pruebas de `tests/test_validacion_0a.py`; la fila 0A de "
+            "la horquilla lo acompaña, como control más débil y solo para los concordantes)"
+            ) in limites
+    assert limites.count("caso a caso") == 1
     assert ("Lo demás se lee en «Lectura de los resultados» y, lo del previo, en "
             "«Sensibilidad al previo».") in limites
     assert "Cada placa con su clínica sorteada es una viñeta." in _seccion(
@@ -444,8 +474,16 @@ def test_los_limites_dicen_lo_que_dice_esta_corrida(texto, resultados_minimos):
     del otro["celdas"][0]
     limites = _seccion(informe.redactar(otro),
                        "Lo que esta simulación puede afirmar y lo que no")
-    assert "Esta corrida no incluye la celda 0A" in limites
+    assert ("Esta corrida no incluye la celda 0A: de los dos primeros puntos no dice nada."
+            ) in limites
     assert "En esta corrida, la fila 0A" not in limites
+    # sin casos con horquilla la comprobacion no se puede hacer: no es un fallo
+    otro = copy.deepcopy(resultados_minimos)
+    otro["celdas"][0]["horquilla"]["todos"].update(
+        n=0, bajo=None, sobre=None, contencion=None)
+    limites = _seccion(informe.redactar(otro),
+                       "Lo que esta simulación puede afirmar y lo que no")
+    assert "la fila 0A de la horquilla **no se puede comprobar**; la pendiente" in limites
 
 
 def test_la_escala_legible_rotula_las_puntuaciones_poco_informativas(texto, resultados_minimos):
@@ -531,22 +569,27 @@ def test_la_fila_0a_dice_si_la_metrica_se_cumple(texto, resultados_minimos):
     assert "Se cumple: la métrica de la horquilla pasa su comprobación en el caso nulo." in cero
     assert "NO se cumple" not in cero
     n = resultados_minimos["celdas"][0]["horquilla"]["todos"]["n"]
-    for cambio, fuera in ((dict(bajo=10 / n, contencion=1 - 10 / n), "10"),
-                          (dict(sobre=3 / n, contencion=1 - 3 / n), "3"),
+    for cambio, fuera in ((dict(bajo=10 / n, contencion=1 - 10 / n), "quedan fuera de la horquilla 10"),
+                          (dict(sobre=3 / n, contencion=1 - 3 / n), "quedan fuera de la horquilla 3"),
                           # un solo caso fuera se imprime «0,0 %» y «100,0 %»
-                          (dict(bajo=1 / n, contencion=1 - 1 / n), "1")):
+                          (dict(bajo=1 / n, contencion=1 - 1 / n), "queda fuera de la horquilla 1")):
         otro = copy.deepcopy(resultados_minimos)
         otro["celdas"][0]["horquilla"]["todos"].update(cambio)
         cero = _seccion(informe.redactar(otro), "Escenario 0A: la aritmética")
-        assert (f"**NO se cumple: quedan fuera de la horquilla {fuera} de los "
-                f"{informe.entero(n)} concordantes. La métrica de la horquilla o el "
-                f"generador tienen un defecto") in cero, cambio
+        assert (f"**NO se cumple: {fuera} de los {informe.entero(n)} concordantes. La "
+                f"métrica de la horquilla o el generador tienen un defecto") in cero, cambio
         assert "Se cumple: la métrica" not in cero
+    # sin casos no se puede comprobar, que no es lo mismo que no cumplirse
     otro = copy.deepcopy(resultados_minimos)
     otro["celdas"][0]["horquilla"]["todos"].update(
         n=0, bajo=None, sobre=None, contencion=None)
-    assert "**NO se cumple: no hay casos concordantes con horquilla. La métrica" in _seccion(
-        informe.redactar(otro), "Escenario 0A: la aritmética")
+    documento = informe.redactar(otro)
+    cero = _seccion(documento, "Escenario 0A: la aritmética")
+    assert "**No se puede comprobar: no hay casos concordantes con horquilla" in cero
+    assert "NO se cumple" not in cero and "Se cumple: la métrica" not in cero
+    assert "tienen un defecto" not in cero
+    assert "Horquilla: no hay casos con horquilla." in _seccion(
+        documento, "Lectura de los resultados")
     otro = copy.deepcopy(resultados_minimos)
     del otro["celdas"][0]
     documento = informe.redactar(otro)
@@ -571,10 +614,11 @@ def test_la_pendiente_de_0a_dice_si_su_intervalo_contiene_el_1(resultados_minimo
         cero["intervalos"]["modelos.independencia.pendiente"] = intervalo
         lectura = _seccion(informe.redactar(otro), "Lectura de los resultados")
         assert ("- **0A.** La pendiente de la combinación por independencia es "
-                + esperado + " En la horquilla, ") in lectura
+                + esperado + " Horquilla: queda dentro el 100,0 %; ninguna cola tiene casos."
+                ) in lectura
     del cero["intervalos"]["modelos.independencia.pendiente"]
     lectura = _seccion(informe.redactar(otro), "Lectura de los resultados")
-    assert "independencia es 1,03. En la horquilla, " in lectura
+    assert "independencia es 1,03. Horquilla: " in lectura
 
 
 def _con_pendiente(resultados, clave, pendiente, intervalo):
@@ -613,9 +657,9 @@ def test_la_pendiente_de_la_independencia_se_lee_con_su_intervalo(resultados_min
         lectura = _con_pendiente(resultados_minimos, "independencia", pendiente, (0.9, 1.1))
         assert "menor que 1: 0 de 1. Una pendiente" in lectura   # ni de un lado ni del otro
         assert "En sentido contrario, la estimación de la pendiente de la comb" not in lectura
-    assert ("Las comparaciones se hacen con las cifras tal como se imprimen: «por encima» y "
-            "«por debajo» son estrictos, y un umbral «≥» se alcanza también con la igualdad."
-            ) in lectura
+    assert ("Las comparaciones con un umbral o con un valor de referencia se hacen con las "
+            "cifras tal como se imprimen: «por encima» y «por debajo» son estrictos, y un "
+            "umbral «≥» se alcanza también con la igualdad.") in lectura
     # «exagera» y «se queda corta» se dicen del intervalo, nunca de la estimacion sola
     assert not re.search(r"que 1 \((exagera|se queda)", lectura)
 
@@ -753,6 +797,12 @@ def test_el_reparto_de_0c(texto, resultados_minimos):
     solo_iguales = con([0.12, 0.20, 0.70, 1.64, 7.18, 17.5])
     assert "La RV de la derivación es igual de extrema en k = 0, 1, 2, 3, 4 y 5 (" in solo_iguales
     assert "no es uniforme" not in solo_iguales
+    # «menos» e «igual», sin «más»: nunca es mas extrema, y no hay optimismo
+    # que repartir
+    sin_mas = con([0.12, 0.01, 0.1, 9.0, 99.0, 99.0])
+    assert ("La RV de la derivación es menos extrema en k = 1, 2, 3, 4 y 5 y igual de "
+            "extrema en k = 0 (") in sin_mas
+    assert "no es uniforme" not in sin_mas
 
 
 def test_la_nota_del_rho_extremo_sale_de_la_rejilla(texto, resultados_minimos):
@@ -825,7 +875,10 @@ def test_las_semillas_van_sin_separador_y_la_prevalencia_es_la_del_conjunto(
     assert "la prevalencia de la población simulada" not in texto
     sensibilidad = _seccion(texto, "Sensibilidad al previo")
     assert "usa como previo 0,2215 (el de «Insumos y parámetros»)" in sensibilidad
-    assert "donde el previo correcto es 0,2215 tiene un efecto analítico" in sensibilidad
+    assert "donde el análisis principal usa 0,2215 tiene un efecto analítico" in sensibilidad
+    assert "previo correcto" not in texto
+    assert "cifras que lo llevan (comparadas sin redondear)." in _seccion(
+        texto, "Lectura de los resultados")
     assert "(estimaciones puntuales):" in _seccion(texto, "Lectura de los resultados")
 
 
