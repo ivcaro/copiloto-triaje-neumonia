@@ -10,7 +10,10 @@ sistema suma evidencia.
 - La horquilla frente al oraculo: posicion λ, las dos colas y la contencion,
   con la tolerancia ε = 0,015 (el redondeo maximo de las RV publicadas, la
   misma de 0A.3).
-- Ayudantes del bootstrap: percentiles y cuantiles ponderados.
+- Un solo numero o un rango frente al oraculo: error puntual (los
+  discordantes) y contencion en un rango (el asma desconocida).
+- Percentiles, para los intervalos del bootstrap, y cuantiles ponderados,
+  para la escala legible.
 """
 from __future__ import annotations
 
@@ -65,11 +68,19 @@ def pendiente_de_calibracion(y, p, pasos: int = 50) -> float:
         g = np.array([np.sum(y - mu), np.sum((y - mu) * x)])
         h = np.array([[np.sum(w), np.sum(w * x)],
                       [np.sum(w * x), np.sum(w * x * x)]])
-        paso = np.linalg.solve(h, g)
-        a, b = a + paso[0], b + paso[1]
-        if float(np.max(np.abs(paso))) < 1e-10:
+        try:
+            paso = np.linalg.solve(h, g)
+        except np.linalg.LinAlgError:
             break
-    return float(b)
+        a, b = a + paso[0], b + paso[1]
+        if not np.all(np.isfinite(paso)):
+            break
+        if float(np.max(np.abs(paso))) < 1e-10:
+            return float(b)
+    # Con las clases separadas del todo (o una sola p) no hay pendiente finita
+    # que estimar: se dice, en vez de devolver la ultima iteracion.
+    raise ArithmeticError(f"la regresión de calibración no converge en {pasos} pasos: "
+                          "¿las p separan del todo las clases, o son todas iguales?")
 
 
 def intercepto_de_calibracion(y, p) -> float:
@@ -123,6 +134,19 @@ def resumen_de_modelo(y, p, orden) -> dict:
             "ece": ece(y, p, orden)}
 
 
+def _log_odds(*vectores) -> list:
+    """Los vectores como float, de la misma forma y SIN NaN. Un NaN no es
+    mayor ni menor que nada: sin esta guarda, un caso sin dato (la dependencia
+    vacia de un discordante) contaria en silencio como «dentro»."""
+    v = [np.asarray(x, dtype=float) for x in vectores]
+    if any(x.ndim != 1 or x.shape != v[0].shape for x in v):
+        raise ValueError("los vectores deben tener la misma forma")
+    if any(np.isnan(x).any() for x in v):
+        raise ValueError("hay valores sin dato (NaN): se mide solo donde hay dato; "
+                         "filtra los casos antes de medir")
+    return v
+
+
 def _cuartiles(x) -> dict:
     if x.size == 0:
         return {"q1": None, "mediana": None, "q3": None}
@@ -135,11 +159,7 @@ def horquilla(l_oraculo, l_dependencia, l_independencia, epsilon: float = EPSILO
     log-odds. λ = 0 es el extremo conservador y λ = 1 la independencia,
     apunte la evidencia hacia donde apunte. Las colas cuentan los casos en
     que el oraculo queda MAS ALLA de un extremo en mas de ε log-odds."""
-    o = np.asarray(l_oraculo, dtype=float)
-    d = np.asarray(l_dependencia, dtype=float)
-    i = np.asarray(l_independencia, dtype=float)
-    if not (o.shape == d.shape == i.shape) or o.ndim != 1:
-        raise ValueError("los tres vectores deben tener la misma forma")
+    o, d, i = _log_odds(l_oraculo, l_dependencia, l_independencia)
     delta = i - d
     con = delta != 0.0
     n = int(con.sum())
@@ -158,7 +178,8 @@ def horquilla(l_oraculo, l_dependencia, l_independencia, epsilon: float = EPSILO
 def error_puntual(l_sistema, l_oraculo) -> dict:
     """Un solo numero del sistema frente al oraculo: |Δ logit| mediano y el
     sesgo (mediana de sistema − oraculo; positivo: el sistema da de mas)."""
-    e = np.asarray(l_sistema, dtype=float) - np.asarray(l_oraculo, dtype=float)
+    sistema, oraculo = _log_odds(l_sistema, l_oraculo)
+    e = sistema - oraculo
     if e.size == 0:
         return {"n": 0, "error_abs_mediano": None, "sesgo_mediano": None}
     return {"n": int(e.size), "error_abs_mediano": float(np.median(np.abs(e))),
@@ -167,9 +188,9 @@ def error_puntual(l_sistema, l_oraculo) -> dict:
 
 def contencion_en_rango(l_oraculo, l_minima, l_maxima, epsilon: float = EPSILON) -> dict:
     """Fraccion de casos con el oraculo dentro de [minima − ε, maxima + ε]."""
-    o = np.asarray(l_oraculo, dtype=float)
-    lo = np.asarray(l_minima, dtype=float)
-    hi = np.asarray(l_maxima, dtype=float)
+    o, lo, hi = _log_odds(l_oraculo, l_minima, l_maxima)
+    if np.any(lo > hi):
+        raise ValueError("la mínima no puede superar a la máxima")
     if o.size == 0:
         return {"n": 0, "bajo": None, "sobre": None, "contencion": None}
     bajo, sobre = o < lo - epsilon, o > hi + epsilon

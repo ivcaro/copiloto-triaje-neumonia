@@ -51,6 +51,15 @@ def test_un_modelo_que_se_queda_corto_tiene_pendiente_mayor_que_uno():
         _logit(0.9) / _logit(0.7), abs=1e-8)
 
 
+def test_sin_pendiente_finita_se_dice_y_no_se_devuelve_la_ultima_iteracion():
+    """Clases separadas del todo: la verosimilitud no tiene máximo finito."""
+    with pytest.raises(ArithmeticError, match="no converge"):
+        metricas.pendiente_de_calibracion([0, 0, 1, 1], [0.1, 0.2, 0.8, 0.9])
+    # todas las p iguales: la pendiente no está identificada
+    with pytest.raises(ArithmeticError, match="no converge"):
+        metricas.pendiente_de_calibracion([0, 1, 0, 1], [0.5, 0.5, 0.5, 0.5])
+
+
 def test_el_intercepto_es_el_desplazamiento_en_log_odds():
     """Dice 0,2 donde ocurre 0,3: hay que sumar logit 0,3 − logit 0,2."""
     y, p = _grupos((0.2, 10, 3))
@@ -109,6 +118,10 @@ def test_resumen_de_modelo_lleva_las_cinco_cifras():
     r = metricas.resumen_de_modelo(y, p, np.arange(20))
     assert set(r) == {"auc", "brier", "pendiente", "intercepto", "ece"}
     assert all(isinstance(v, float) for v in r.values())
+    assert r == {"auc": metricas.auc(y, p), "brier": metricas.brier(y, p),
+                 "pendiente": metricas.pendiente_de_calibracion(y, p),
+                 "intercepto": metricas.intercepto_de_calibracion(y, p),
+                 "ece": metricas.ece(y, p, np.arange(20))}
 
 
 def test_vectores_de_distinta_forma_se_rechazan():
@@ -146,6 +159,12 @@ def test_la_tolerancia_es_la_de_0a3_y_se_puede_cambiar():
     assert metricas.EPSILON == 0.015
     h = metricas.horquilla(L_ORA, L_DEP, L_IND, epsilon=0.0)
     assert h["sobre"] == pytest.approx(3 / 5) and h["contencion"] == pytest.approx(1 / 5)
+    assert h["bajo"] == pytest.approx(1 / 5)
+    # y del lado conservador: 0,01 más allá cuenta dentro; 0,02, fuera
+    dentro = metricas.horquilla([-0.01, 1.01], [0.0, 1.0], [1.0, 0.0])
+    assert (dentro["bajo"], dentro["sobre"], dentro["contencion"]) == (0.0, 0.0, 1.0)
+    fuera = metricas.horquilla([-0.02, 1.02], [0.0, 1.0], [1.0, 0.0])
+    assert (fuera["bajo"], fuera["sobre"], fuera["contencion"]) == (1.0, 0.0, 0.0)
 
 
 def test_sin_ningun_caso_con_horquilla_no_hay_fracciones():
@@ -154,6 +173,31 @@ def test_sin_ningun_caso_con_horquilla_no_hay_fracciones():
                  "lambda": {"q1": None, "mediana": None, "q3": None},
                  "bajo": None, "sobre": None, "contencion": None}
     assert metricas.horquilla([], [], [])["n"] == 0
+
+
+def test_un_valor_sin_dato_no_cuenta_como_contenido():
+    """Un NaN no es mayor ni menor que nada: sin la guarda, un caso sin
+    horquilla (un discordante, con la dependencia vacía) contaría «dentro»
+    aunque el oráculo quedara a 4 log-odds."""
+    with pytest.raises(ValueError, match="sin dato"):
+        metricas.horquilla([0.5, 5.0], [0.0, None], [1.0, 1.0])
+    with pytest.raises(ValueError, match="sin dato"):
+        metricas.horquilla([float("nan")], [0.0], [1.0])
+    with pytest.raises(ValueError, match="sin dato"):
+        metricas.contencion_en_rango([0.5], [float("nan")], [1.0])
+    with pytest.raises(ValueError, match="sin dato"):
+        metricas.error_puntual([0.5], [float("nan")])
+
+
+def test_los_vectores_de_log_odds_tienen_que_casar():
+    with pytest.raises(ValueError, match="misma forma"):
+        metricas.horquilla([0.5], [0.0, 0.0], [1.0, 1.0])
+    with pytest.raises(ValueError, match="misma forma"):
+        metricas.error_puntual([1.0], [0.5, 2.5, 0.0])
+    with pytest.raises(ValueError, match="misma forma"):
+        metricas.contencion_en_rango([0.5, 0.5], [0.0], [1.0])
+    with pytest.raises(ValueError, match="mínima"):
+        metricas.contencion_en_rango([0.5], [1.0], [0.0])
 
 
 def test_error_puntual_y_contencion_en_rango():
