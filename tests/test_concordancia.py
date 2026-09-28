@@ -99,11 +99,72 @@ def test_acuerdo_continuo_acota_0_y_100_y_mide_spearman():
     (0.8000, 0.9900, 100, False),   # 0,99 exacto se imprime «99 %»
     (0.0060, 0.3000, 0, True),      # 0,0060 se imprime «< 1 %»: el límite inferior es 0
     (0.0100, 0.3000, 0, False),     # 0,01 exacto se imprime «1 %»
+    # los DOS extremos bajo 0,01: el bot imprime un solo «< 1 %», que no admite el 1
+    (0.0030, 0.0080, 0, True),
+    (0.0030, 0.0080, 1, False),
+    (0.0070, 0.0070, 0, True),      # un discordante: «< 1 %», y es de un solo valor
+    (0.0070, 0.0070, 1, False),
+    # y los dos sobre 0,99: un solo «> 99 %», que no admite el 99
+    (0.9920, 0.9980, 100, True),
+    (0.9920, 0.9980, 99, False),
 ])
 def test_dentro_de_la_horquilla_compara_enteros_como_los_imprime_el_bot(minima, maxima, pct, dentro):
     r = cc.acuerdo_continuo([pct, 50], [0.5, 0.5], minima=[minima, 0.4], maxima=[maxima, 0.6])
     assert r["fraccion_dentro_de_la_horquilla"] == pytest.approx(0.5 + 0.5 * dentro)
-    assert r["horquillas_de_anchura_cero"] == int(cc.porcentaje_entero(minima) == cc.porcentaje_entero(maxima))
+    # «de un solo valor» es lo que el bot imprime como un solo valor
+    un_solo_valor = cc._pct_como_el_bot(minima) == cc._pct_como_el_bot(maxima)
+    assert r["horquillas_de_anchura_cero"] == int(un_solo_valor)
+    assert cc._horquilla_como_el_bot(minima, maxima).count("%") == (1 if un_solo_valor else 2)
+
+
+def test_un_extremo_de_la_horquilla_es_un_entero_con_la_regla_del_bot():
+    casos = [(0.0, 0, "< 1 %"), (0.0099, 0, "< 1 %"), (0.01, 1, "1 %"), (0.0149, 1, "1 %"),
+             (0.4406, 44, "44 %"), (0.984, 98, "98 %"), (0.985, 99, "99 %"), (0.99, 99, "99 %"),
+             (0.9901, 100, "> 99 %"), (0.995, 100, "> 99 %"), (1.0, 100, "> 99 %")]
+    for x, entero, impreso in casos:
+        assert cc._entero_como_el_bot(x) == entero, x
+        assert cc._pct_como_el_bot(x) == impreso, x
+    # de 0,01 a 0,99 el entero nunca es 0 ni 100: las cotas no se confunden
+    for x in np.linspace(0.01, 0.99, 981):
+        assert 1 <= cc._entero_como_el_bot(float(x)) <= 99
+
+
+def test_un_kappa_que_es_exactamente_un_umbral_lo_alcanza(tmp_path):
+    """Con 24 casos el kappa es un racional. Esta tabla da 0,4 exacto
+    (1 − 24·7/280), y la coma flotante lo deja un ulp por debajo."""
+    tabla = {("baja", "baja"): 13, ("baja", "intermedia"): 3, ("intermedia", "baja"): 2,
+             ("intermedia", "intermedia"): 5, ("alta", "baja"): 1}
+    a = [fila for (fila, _), n in tabla.items() for _ in range(n)]
+    b = [columna for (_, columna), n in tabla.items() for _ in range(n)]
+    assert len(a) == 24
+    k = cc.kappa_con_intervalos(a, b, tipo="lineal")
+    assert k["kappa"] == pytest.approx(0.4, abs=1e-12)
+    assert k["kappa"] != 0.4, "si algun dia sale 0,4 exacto, esta prueba no prueba nada"
+    k["frente_a_umbrales"] = cc.frente_a_umbrales(k)
+    assert k["frente_a_umbrales"]["puntual_ge_0_4"] is True
+    assert k["frente_a_umbrales"]["puntual_ge_0_6"] is False
+    frase = cc._criterio("El kappa ponderado", k)
+    assert frase.startswith("El kappa ponderado (0,40) alcanza el mínimo de 0,4 de la Semana 1 "
+                            "y no el objetivo de 0,6;")
+    assert "0,400000" not in frase and "0,399" not in frase
+
+    def con(kappa, li_a=0.1, li_b=0.1):
+        r = {"kappa": kappa, "ic95": [li_a, 1.0], "ic95_bca": [li_b, 1.0]}
+        r["frente_a_umbrales"] = cc.frente_a_umbrales(r)
+        return r
+    un_ulp = 0.3999999999999999
+    assert con(un_ulp)["frente_a_umbrales"]["puntual_ge_0_4"] is True
+    assert con(0.5999999999999999)["frente_a_umbrales"]["puntual_ge_0_6"] is True
+    assert cc._criterio("K", con(0.5999999999999999)).startswith(
+        "K (0,60) alcanza el mínimo de 0,4 de la Semana 1 y el objetivo de 0,6;")
+    # lo mismo en los limites inferiores: un limite que es el umbral no queda por debajo
+    u = con(0.7, li_a=un_ulp, li_b=0.39)["frente_a_umbrales"]
+    assert (u["li_analitico_lt_0_4"], u["li_bca_lt_0_4"]) == (False, True)
+    assert "con el BCa (0,39) y no con el método analítico (0,40)" in cc._criterio(
+        "K", con(0.7, li_a=un_ulp, li_b=0.39))
+    # y lo que a seis decimales NO es el umbral sigue sin alcanzarlo, y se ve
+    assert con(0.399999)["frente_a_umbrales"]["puntual_ge_0_4"] is False
+    assert cc._criterio("K", con(0.399999)).startswith("K (0,399999) no alcanza el mínimo")
 
 
 @pytest.mark.filterwarnings("error::RuntimeWarning")
@@ -406,6 +467,15 @@ def test_pegado_a_un_umbral_imprime_los_decimales_que_lo_distinguen():
     assert cc._f_frente_a_umbral(0.41) == "0,41" and cc._f_frente_a_umbral(0.5) == "0,50"
     assert cc._f_frente_a_umbral(-0.12) == "-0,12"
     assert cc._f_frente_a_umbral(float("nan")) == "—"
+    assert cc._f_frente_a_umbral(None) == "—"
+    # hasta seis decimales, los que hagan falta para que no se lea el umbral
+    assert cc._f_frente_a_umbral(0.39996) == "0,39996"
+    assert cc._f_frente_a_umbral(0.399996) == "0,399996"
+    assert cc._f_frente_a_umbral(0.600004) == "0,600004"
+    # y lo que a seis decimales es el umbral, se imprime como el umbral
+    assert cc._f_frente_a_umbral(0.3999999999999999) == "0,40"
+    assert cc._f_frente_a_umbral(0.4000000004) == "0,40"
+    assert cc._f_frente_a_umbral(0.6000000000000001) == "0,60"
 
 
 def test_la_fecha_es_la_de_ecuador_continental_y_no_la_de_la_maquina():
@@ -417,6 +487,22 @@ def test_la_fecha_es_la_de_ecuador_continental_y_no_la_de_la_maquina():
     assert cc._fecha(ms(2026, 10, 7, 4, 59, 59)) == "2026-10-06"     # las 23:59:59 del 6 en UTC−5
     assert cc._fecha(ms(2026, 10, 7, 5, 0, 0)) == "2026-10-07"       # las 00:00:00 del 7
     assert cc._fecha(None) == "—" and cc._fecha(0) == "—"
+
+
+def test_la_fecha_sale_de_la_zona_de_la_sesion_y_de_ninguna_otra(monkeypatch):
+    """En una maquina que ya esta en UTC−5 la prueba de arriba pasaria tambien
+    con la hora local: aqui se cambia la zona y el dia tiene que cambiar."""
+    import datetime
+    instante = int(datetime.datetime(2026, 10, 7, 4, 59, 59,
+                                     tzinfo=datetime.timezone.utc).timestamp() * 1000)
+    assert cc._fecha(instante) == "2026-10-06"
+    monkeypatch.setattr(cc, "ZONA_DE_LA_SESION",
+                        datetime.timezone(datetime.timedelta(hours=9)))
+    assert cc._fecha(instante) == "2026-10-07"
+    monkeypatch.setattr(cc, "ZONA_DE_LA_SESION",
+                        datetime.timezone(datetime.timedelta(hours=-12)))
+    assert cc._fecha(instante) == "2026-10-06"
+    assert cc._fecha(instante + 8 * 3600 * 1000) == "2026-10-07"
 
 
 def test_el_acta_dice_la_zona_horaria_de_las_fechas(tmp_path):

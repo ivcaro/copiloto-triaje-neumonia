@@ -143,18 +143,31 @@ def kappa_con_intervalos(a, b, tipo: str = "lineal") -> dict:
 # --------------------------------------------------------------------------
 # Acuerdo continuo y tiempos
 # --------------------------------------------------------------------------
+def _entero_como_el_bot(x: float) -> int:
+    """Un extremo de la horquilla como el ENTERO que el medico puede contestar,
+    con la convencion de Desenlace: por debajo de 0,01 el bot imprime «< 1 %»
+    y el entero es 0; por encima de 0,99 imprime «> 99 %» y es 100; si no,
+    `porcentaje_entero` (Math.round), que da de 1 a 99."""
+    if x < 0.01:
+        return 0
+    if x > 0.99:
+        return 100
+    return porcentaje_entero(x)
+
+
 def acuerdo_continuo(pct_medico, p_sistema, minima=None, maxima=None) -> dict:
     """Spearman entre el porcentaje del medico y el punto medio del sistema;
     Bland-Altman en log-odds con 0 y 100 acotados a 0,5 y 99,5; y la fraccion
     de porcentajes que caen dentro de la horquilla.
 
     «Dentro» compara el porcentaje entero del medico, SIN acotar, con la
-    horquilla tal como la imprime el bot: `porcentaje_entero` de la minima y
-    de la maxima (Math.round en Desenlace), salvo en las cotas: una minima
-    por debajo de 0,01 se imprime «< 1 %» y su limite es 0, y una maxima por
-    encima de 0,99 se imprime «> 99 %» y su limite es 100. Una horquilla de
-    un solo valor (los discordantes con el asma conocida) solo admite ese
-    entero, y se cuentan aparte para que el acta lo diga."""
+    horquilla tal como la imprime el bot: los DOS extremos pasan por
+    `_entero_como_el_bot`. Un extremo por debajo de 0,01 se imprime «< 1 %» y
+    vale 0; uno por encima de 0,99 se imprime «> 99 %» y vale 100. Si los dos
+    extremos dan el mismo entero el bot imprime un solo valor (los
+    discordantes con el asma conocida, y cualquier horquilla entera bajo el
+    1 % o sobre el 99 %): solo admite ese entero, y se cuentan aparte para
+    que el acta lo diga."""
     pct = np.asarray(pct_medico, dtype=float)
     p = np.asarray(p_sistema, dtype=float)
     acotados = int(np.sum((pct <= 0) | (pct >= 100)))
@@ -171,8 +184,8 @@ def acuerdo_continuo(pct_medico, p_sistema, minima=None, maxima=None) -> dict:
               "limites_95": [float(d.mean() - 1.96 * de), float(d.mean() + 1.96 * de)],
               "acotados_0_o_100": acotados}
     if minima is not None and maxima is not None:
-        lo = np.array([0 if x < 0.01 else porcentaje_entero(x) for x in minima], dtype=int)
-        hi = np.array([100 if x > 0.99 else porcentaje_entero(x) for x in maxima], dtype=int)
+        lo = np.array([_entero_como_el_bot(x) for x in minima], dtype=int)
+        hi = np.array([_entero_como_el_bot(x) for x in maxima], dtype=int)
         dentro = (pct >= lo) & (pct <= hi)
         salida["fraccion_dentro_de_la_horquilla"] = float(dentro.mean())
         salida["horquillas_de_anchura_cero"] = int(np.sum(lo == hi))
@@ -276,12 +289,17 @@ def _notas(filas) -> dict:
 def frente_a_umbrales(k: dict) -> dict | None:
     """El kappa frente al 0,4 de la Semana 1 y el 0,6 (spec §5.5, §11.4):
     la estimacion puntual y el limite inferior de cada intervalo. None si el
-    kappa no es calculable."""
+    kappa no es calculable.
+
+    Se compara a seis decimales (`_a_seis`): con 24 casos un kappa es un
+    racional que puede valer EXACTAMENTE 0,4 o 0,6, y la coma flotante lo
+    deja en 0,3999999999999999. Eso alcanza el umbral."""
     if k["kappa"] is None or math.isnan(k["kappa"]):
         return None
-    return {"puntual_ge_0_4": bool(k["kappa"] >= 0.4), "puntual_ge_0_6": bool(k["kappa"] >= 0.6),
-            "li_analitico_lt_0_4": bool(k["ic95"][0] < 0.4),
-            "li_bca_lt_0_4": bool(k["ic95_bca"][0] < 0.4)}
+    return {"puntual_ge_0_4": bool(_a_seis(k["kappa"]) >= 0.4),
+            "puntual_ge_0_6": bool(_a_seis(k["kappa"]) >= 0.6),
+            "li_analitico_lt_0_4": bool(_a_seis(k["ic95"][0]) < 0.4),
+            "li_bca_lt_0_4": bool(_a_seis(k["ic95_bca"][0]) < 0.4)}
 
 
 def _con_umbrales(k: dict) -> dict:
@@ -447,12 +465,10 @@ def _kappa_texto(k: dict) -> str:
 
 def _pct_como_el_bot(x: float) -> str:
     """Un extremo de la horquilla como lo imprime Desenlace: entero con
-    Math.round (`porcentaje_entero`), y nunca 0 % ni 100 %."""
-    if x < 0.01:
-        return "< 1 %"
-    if x > 0.99:
-        return "> 99 %"
-    return f"{porcentaje_entero(x)} %"
+    Math.round (`porcentaje_entero`), y nunca 0 % ni 100 %. Las cotas son las
+    de `_entero_como_el_bot`: estan escritas una sola vez."""
+    entero = _entero_como_el_bot(x)
+    return {0: "< 1 %", 100: "> 99 %"}.get(entero, f"{entero} %")
 
 
 def _horquilla_como_el_bot(minima: float, maxima: float) -> str:
@@ -469,16 +485,24 @@ UMBRALES_KAPPA = (0.4, 0.6)
 _DECIMALES_MAXIMOS = 6
 
 
+def _a_seis(x: float) -> float:
+    """Un kappa a seis decimales, que es con lo que se compara con los
+    umbrales y lo mas que se imprime: lo que a seis decimales es el umbral, es
+    el umbral."""
+    return round(x, _DECIMALES_MAXIMOS)
+
+
 def _f_frente_a_umbral(x) -> str:
     """Un kappa, o un limite de su intervalo, para la frase que lo compara
-    con 0,4 y 0,6. La comparacion es sin redondear: si los dos decimales de
-    siempre dieran justo un umbral sin que el valor lo sea (0,3996 → «0,40»),
-    la frase se contradiria; entonces se imprime con tres decimales, y con
-    los que hagan falta (hasta seis) si tres aun dan el umbral."""
+    con 0,4 y 0,6. Si los dos decimales de siempre dieran justo un umbral sin
+    que el valor lo sea (0,3996 → «0,40»), la frase se contradiria; entonces
+    se imprime con tres decimales, y con los que hagan falta (hasta seis) si
+    tres aun dan el umbral. Un valor que a seis decimales ES el umbral se
+    imprime como el umbral, y `frente_a_umbrales` lo trata igual."""
     if x is None or (isinstance(x, float) and math.isnan(x)):
         return _f(x)
     for umbral in UMBRALES_KAPPA:
-        if x != umbral and round(x, 2) == umbral:
+        if _a_seis(x) != umbral and round(x, 2) == umbral:
             for decimales in range(3, _DECIMALES_MAXIMOS + 1):
                 if round(x, decimales) != umbral:
                     break

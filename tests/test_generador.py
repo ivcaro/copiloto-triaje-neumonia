@@ -125,8 +125,13 @@ def test_sortear_caso_fuerza_el_asma_declarada(prueba):
 def test_sortear_caso_rechaza_un_asma_que_no_es_un_estado(prueba, asma):
     q, y = prueba
     m = oraculo.ajustar(q, y, 0.3, 0.3)
+    rng = np.random.default_rng(1)
+    antes = rng.bit_generator.state
     with pytest.raises(ValueError, match="asma"):
-        generador.sortear_caso(m, 0, np.random.default_rng(1), asma=asma)
+        generador.sortear_caso(m, 0, rng, asma=asma)
+    # se rechaza ANTES de sortear nada: si consumiera el generador, los casos
+    # siguientes de la sesion serian otros
+    assert rng.bit_generator.state == antes
 
 
 @pytest.mark.parametrize("asma", ["si", "no", "no_se"])

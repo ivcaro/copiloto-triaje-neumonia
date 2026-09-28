@@ -552,11 +552,10 @@ antemano:** la banda del extremo de independencia, la del extremo conservador,
 y la regla «si la horquilla cruza un límite, intermedia» con el número de casos
 que cruzan. Con las tablas actuales ninguna horquilla cruza a la vez el 20 % y
 el 70 % (barrido de RV de imagen 0,016-77,3 × 48 combinaciones de hallazgos ×
-dos previos, 27-sep); tiene explicación analítica —el cociente de odds de los
-dos extremos vale `min(RV_clínica, RV_imagen) ≤ 17,5`, y cruzar 20 y 70 % a
-la vez exige además `odds_previas × max(RV_clínica, RV_imagen) < 0,25`, lo que
-solo ocurre con prevalencia declarada por debajo de ≈ 3,3 %— y una prueba lo
-afirma con los dos previos y con el umbral analítico (§8). Como
+dos previos, 27-sep); tiene explicación analítica —solo ocurre con una
+prevalencia declarada por debajo de ≈ 3,3 %; la cuenta está al final de este
+apartado— y una prueba lo afirma con los dos previos y con el umbral
+analítico (§8). Como
 `PREVALENCIA_LOCAL` es configurable, la regla «cruza → intermedia» del análisis
 de sensibilidad cubre el caso si algún despliegue lo produjera. Los mensajes
 de la sesión se generan con la prevalencia desplegada, **0,1466**, y el acta
@@ -566,8 +565,10 @@ no el del §4.
 **De dónde sale el ≈ 3,3 %: la vía de dos puntuaciones.** Cruzar el 20 % y el
 70 % a la vez exige que las odds de la mínima queden por debajo de 0,25 y las
 de la máxima por encima de 7/3, es decir, un cociente de odds entre los dos
-extremos mayor que ≈ 9,33. Con una sola puntuación ese cociente es
-`min(RV_clínica, RV_imagen)`, la única RV clínica que pasa de 9,33 es la de 5
+extremos mayor que ≈ 9,33. Con una sola puntuación y las dos RV a favor ese
+cociente es `min(RV_clínica, RV_imagen)` (con las dos en contra no pasa de
+8,33, y en los casos discordantes la horquilla es un punto); la única RV
+clínica que pasa de 9,33 es la de 5
 puntos (17,5), y la mínima vale entonces al menos `odds_previas × 17,5`: el
 cruce doble exigiría una prevalencia por debajo de ≈ 1,4 %. El umbral más alto,
 y por eso el que cuenta, es el del asma `no_se` con los otros cuatro hallazgos

@@ -249,8 +249,9 @@ def test_fase_mensajes_con_bots_no_pide_la_imagen(sesion_elegida):
 def test_fase_mensajes_sin_bots_exige_el_tag_y_el_digest_de_la_imagen(sesion_elegida):
     preparar, salida = sesion_elegida
     _escribir_mensajes(salida, _mensajes_coherentes(_leer_clave(salida)))
-    with pytest.raises(SystemExit, match="--imagen-digest"):
+    with pytest.raises(SystemExit, match="--imagen-digest") as rechazo:
         preparar.fase_mensajes(salida, imagen_tag="h7-sesion")
+    assert "los mensajes no se generaron con bots" in str(rechazo.value)
     assert not (salida / "formulario" / "datos_lectura2.js").exists()
     assert _leer_clave(salida)["fase"] == "elegir"
 

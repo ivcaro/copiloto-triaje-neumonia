@@ -31,6 +31,10 @@ COLUMNAS = ("patientId", "edad", "sexo", "vista", "etiqueta", "cruda")
 
 
 def sha256_de(ruta) -> str:
+    """El sha256 de los BYTES de un fichero, tal como estan: sin normalizar
+    finales de linea. Es el de los ficheros que NO se versionan y que el acta
+    cita (`mensajes.json`, `clave.json`): quien los guarda comprueba esos
+    bytes. Para un insumo versionado, `huella_de_texto`."""
     h = hashlib.sha256()
     with pathlib.Path(ruta).open("rb") as f:
         for bloque in iter(lambda: f.read(1 << 20), b""):
