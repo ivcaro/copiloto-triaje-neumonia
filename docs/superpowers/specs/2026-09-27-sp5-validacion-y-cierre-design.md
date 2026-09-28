@@ -21,7 +21,9 @@ dos parámetros y su dirección es un resultado, no una premisa (§4.5); la
 sesión son **dos lecturas del mismo conjunto** y el kappa sale solo de la
 lectura sin copiloto (§5.4); al tribunal se le da un **repositorio nuevo** con
 historial limpio (§6.1); y el spec recoge lo que exige la descripción de la
-entrega final del curso (§6.7).
+entrega final del curso (§6.7). El 28-sep el equipo decidió que ese
+repositorio nuevo sea **público**, de un solo commit, sin secretos y solo con
+datos de prueba; el spec lo incorpora.
 
 ---
 
@@ -30,9 +32,9 @@ entrega final del curso (§6.7).
 Mide lo que el proyecto afirma y dice con precisión lo que no puede afirmar:
 una **validación cuantitativa** de la combinación sobre un emparejamiento
 declarado como semisintético, y la **sesión de concordancia con un médico**
-que la Semana 1 prometió como H7. Después cierra: entrega un repositorio sin
-ninguna cadena que identifique al cliente, a la empresa ni a los integrantes,
-ni en el texto ni en el historial (§6.1); escribe el informe final con la
+que la Semana 1 prometió como H7. Después cierra: publica un repositorio
+nuevo, de un solo commit, sin ninguna cadena que identifique al cliente, a la
+empresa ni a los integrantes, sin secretos y solo con datos de prueba (§6.1); escribe el informe final con la
 tabla «prometido vs. entregado»; cumple lo que exige la entrega final del
 curso; y deja la deuda por escrito.
 
@@ -95,9 +97,12 @@ entradas del 25-sep). Cada cita lleva su sección:
 Dos decisiones del equipo (27-sep) que el spec absorbe: **no habrá piloto con
 pacientes reales** —no lo prometió la Semana 1 (§7.8 lo excluye); lo pidió SP3
 §19 para poder afirmar exactitud clínica, y no hay tiempo de conseguir datos
-emparejados— y **el repositorio no se hace público**: se comparte por
-invitación, sin ninguna cadena que identifique al cliente, a la empresa ni a
-los integrantes (§6.1; el coste en la rúbrica del curso, en §6.7).
+emparejados— y **el repositorio que se publica es uno nuevo**, de un solo
+commit y sin historial, sin ninguna cadena que identifique al cliente, a la
+empresa ni a los integrantes, sin secretos y solo con datos de prueba (§6.1).
+Esta segunda decisión es del 28-sep y sustituye a la del 27-sep de dejarlo
+privado: el curso penaliza con −15 % un repositorio privado o inaccesible
+(§6.7).
 
 ## 3. El riesgo que SP3 y SP4 dejaron abierto, y qué se puede cerrar
 
@@ -701,40 +706,54 @@ de H7 se presentan a la tutora en la tutoría del 17-oct, como pide la Semana
 
 ## 6. El cierre (H8)
 
-### 6.1. El repositorio que se comparte: nuevo, con historial limpio
+### 6.1. El repositorio que se publica: nuevo, público, de un solo commit
 
 Ninguna cadena que identifique al cliente, a la empresa ni a los integrantes en
-lo que se comparte, ni en el texto ni en el historial. Anonimizar solo el
-árbol de trabajo no basta: los 198 commits llevan el nombre y el correo del
-equipo (con el dominio de la empresa), y los blobs antiguos contienen el
-dominio del cliente y los nombres de sus contenedores y bots. Por eso:
+lo que se publica; ningún secreto; ningún dato que no sea de prueba. Anonimizar
+solo el árbol de trabajo no basta: los 198 commits llevan el nombre y el
+correo del equipo (con el dominio de la empresa), y los blobs antiguos
+contienen el dominio del cliente y los nombres de sus contenedores y bots. Por
+eso (decisión del 28-sep):
 
-- **Al tribunal se le da un repositorio nuevo**, en una cuenta u organización
-  sin nombres, construido sobre una copia con `git filter-repo`
-  (`--replace-text` con la lista, `--mailmap` a un autor neutro), que conserva
-  el historial que la rúbrica valora (commits, ramas, tags). Si el historial
-  reescrito no pasa la comprobación de abajo, se cae a un solo commit con el
-  árbol limpio, y se dice.
+- **Se publica un repositorio nuevo, público**, en una cuenta u organización
+  sin nombres, con **un solo commit** que contiene el árbol anonimizado y un
+  autor neutro. **No se reescribe el historial: no viaja.** La rúbrica valora
+  los commits frecuentes, las ramas y los tags; se pierden a propósito y el
+  README lo dice: el desarrollo se hizo en un repositorio privado con ~200
+  commits, resumidos aquí en uno.
 - **El repositorio actual queda privado, sin invitados**, como traza de
-  auditoría.
-- **Comprobación antes de compartir** (`scripts/verificar_anonimato.py`,
-  fuera de la suite): sobre **todos los blobs de todas las revisiones** y sobre
-  autor, correo y committer de `git log --all`, ninguna huella de la lista.
+  auditoría y como historial de desarrollo.
+- **Comprobación antes de publicar** (`scripts/verificar_anonimato.py`, fuera
+  de la suite), sobre el árbol del repositorio nuevo y sobre autor, correo y
+  committer de su único commit: ninguna huella de la lista, y **ningún
+  secreto**: patrones de token de bot de Telegram, de clave de API, de
+  contraseña en URL, y ningún `.env`, `kaggle.json` ni fichero de claves; los
+  ficheros de configuración del repositorio nuevo llevan solo valores de
+  ejemplo (`ejemplo.test`, `cambiar-esto`).
+- **Solo datos de prueba.** Las únicas tablas de datos son puntuaciones del
+  modelo sobre identificadores públicos de RSNA (`crudas_prueba.csv`
+  congelada) y resultados de simulación rotulados (§6.7.7). El corpus del
+  arnés, `consultas` y cualquier CSV de la sesión con el médico no se
+  publican; las viñetas de la sesión que se citen en el acta son sintéticas y
+  se rotulan.
 - **Nombres y roles del equipo van en el informe del AVA y en los videos**, no
   en el repositorio: la regla de anonimato es del repositorio.
 
-**Qué protege el anonimato y qué no.** La lista negra y la reescritura del
-historial quitan *cadenas*: del cliente (dominio, red, contenedores, bots), de
+**Qué protege el anonimato y qué no.** La lista negra y el commit único quitan
+*cadenas*: del cliente (dominio, red, contenedores, bots), de
 la empresa (correo y dominio de los commits), de la máquina (usuario y rutas)
 y de los integrantes (nombres y filiación personal). Protegen al cliente y a
 la empresa de quedar ligados al proyecto, y dejan el texto y el historial sin
 nombres propios para que el repositorio pueda clonarse, bifurcarse o
 compartirse más adelante sin arrastrarlos. **No ocultan la identidad del
-equipo** a quien tiene el repositorio: el README enlaza los dos videos, que
+equipo** a quien visite el repositorio: el README enlaza los dos videos, que
 nombran a los integrantes (§6.4, §11.7), y remite la autoría al informe del
 AVA (§6.7.5). Es una decisión, no una fuga: el repositorio no los nombra por
-texto, y los videos son el único camino, revocables o no listados con
-independencia del repositorio. Como los videos sí se comparten, **no nombran
+texto, y los videos son el único camino, no listados y revocables con
+independencia del repositorio. Si el equipo prefiere que ni ese camino exista,
+los enlaces a los videos van solo en la entrega del AVA y el README dice que
+los videos se entregaron por el aula virtual; eso cuesta el punto de la rúbrica
+que pide los enlaces en el README, y se decide antes de publicar. Como los videos sí se comparten, **no nombran
 al cliente ni muestran su infraestructura**: ningún nombre de contenedor ni
 dominio en pantalla (regla de captura para el guion, §6.4).
 
@@ -751,7 +770,7 @@ con la decisión por fila:
 | nombres del equipo, la universidad como filiación personal | spec SP1, `notebooks/eda_rsna.ipynb`, «Windows de …» en `docs/sp3-operacion.md`, «máquina de …» en el plan SP4, este spec | «el equipo», «la máquina de desarrollo». La universidad se conserva **solo** como institución del curso en el README (decisión explícita; se puede quitar) |
 | usuario de Windows en rutas absolutas | `pruebas/puntuaciones.py`, `pruebas/seleccionar_casos.py`, `tests/test_contrato_mcp.py` (código que se ejecuta) y 10 ficheros de docs y planes | variable **`RSNA_RAIZ` sin valor por defecto**; las pruebas que la usan se saltan sin ella; en docs, `<RSNA_RAIZ>`. Rutas relativas es además lo que pide la rúbrica |
 | ciudad en el huso horario | `America/Guayaquil` en los tres workflows, `bd/esquema.sql`, `bd/limpieza.sql` y 4 pruebas | **se conserva**: es configuración funcional que identifica un huso horario, no al equipo; simplemente no entra en la lista negra |
-| cuenta propietaria del remoto | `docs/sp2-despliegue.md` (URL de GitHub), configuración local | el repositorio nuevo vive en otra cuenta; las URL de docs apuntan a él |
+| cuenta propietaria del remoto | `docs/sp2-despliegue.md` (URL de GitHub), configuración local | el repositorio nuevo vive en una cuenta u organización sin nombres; las URL de docs apuntan a él |
 | proveedor y ciudad del VPS, `chat_id` de prueba, correos | docs | quitados o marcadores |
 | `docs/superpowers/**` (specs, planes) | sustitución **mecánica** de identificadores, sin reescribir la prosa |
 
@@ -806,7 +825,7 @@ las decida sobre la marcha:
 | `samples/` con 20 imágenes (anexo D) | cumplido si los términos de RSNA lo permiten | se releen los términos aceptados en Kaggle; si no lo permiten, descopado con la razón y con las instrucciones de descarga |
 | Plan de mantenimiento (§7.10) | cumplido con cambio | sección del informe: reentrenamiento anual o ante cambio de equipo, y `docs/sp3-operacion.md` |
 | «Asignación de historias registrada en el repositorio» (§8.1) | cumplido con cambio | registrada en el informe del AVA, no en el repositorio (anonimato) |
-| Repositorio GitHub público (H8) | cumplido con cambio | privado, compartido por invitación, historial limpio (§6.1) |
+| Repositorio GitHub público (H8) | cumplido con cambio | público, pero en un repositorio nuevo de un solo commit, sin historial ni cadenas identificativas ni secretos (§6.1) |
 | Video de sustentación (H8) | cumplido con cambio | dos videos según el curso (§6.4) |
 | Datos emparejados reales / piloto prospectivo | no prometido en la Semana 1 | abierto desde SP3 §19; trabajo futuro con MIMIC |
 | **Añadido:** tabla de fairness por subgrupos (excluida en §7.4) | añadido | el curso la pide (§6.7.3) |
@@ -849,7 +868,7 @@ se pudo y declarada donde no:
   entregue la última semana. No hay demo en vivo. **Regla de captura:** nada
   del cliente en pantalla (§6.1). El dashboard de SP3 §15 **no existe** y no
   aparece en el guion.
-- **Repositorio:** el del §6.1, con README de portada, `LICENSE`,
+- **Repositorio:** el público del §6.1, con README de portada, `LICENSE`,
   `requirements.txt` y los documentos del §6.7.
 
 ### 6.5. Deuda: lo que se decide y lo que se deja escrito
@@ -890,7 +909,7 @@ nuevo: la semana 6 solo documenta, graba y empaqueta.
 | 13-15 oct | **lectura 2** (7 días o más después de la lectura 1); `analizar_sesion`; acta |
 | 16 oct | acta enviada al médico para revisión; todo fusionado; tag `sp5-codigo` |
 | 17 oct | resultados de H7 presentados a la tutora (tutoría) |
-| 17-24 oct | documentos del curso, informe, videos, repositorio nuevo (§6.1), release con los pesos, README |
+| 17-24 oct | documentos del curso, informe, videos, repositorio nuevo público (§6.1), release con los pesos, README |
 
 **Orden de recorte** si el calendario aprieta: (1) 0B, la extracción de
 Ebell; (2) el bootstrap fuera de las seis celdas destacadas; (3) la
@@ -903,13 +922,13 @@ tabla del §6.2 ni los documentos obligatorios del curso.
 La descripción de la entrega final (PDF del curso, 13 páginas) fija cosas que
 el borrador ignoraba. Decisiones:
 
-1. **Preguntas por escrito a la tutora antes del 1-oct:** si la invitación al
-   repositorio privado evita el −15 % de «repositorio privado o inaccesible»;
-   si el bot de Telegram vale como «interfaz de usuario» (20 % de la nota)
-   dando de alta el chat del evaluador en la lista blanca del profesional y
-   aportando DICOM de muestra; y qué pide exactamente el Workshop S5
-   (`optimizacion.md`: sensibilidad, partial dependence, ranking de
-   hiperparámetros).
+1. **Preguntas por escrito a la tutora antes del 1-oct:** si el bot de
+   Telegram vale como «interfaz de usuario» (20 % de la nota) dando de alta el
+   chat del evaluador en la lista blanca del profesional y aportando DICOM de
+   muestra; y qué pide exactamente el Workshop S5 (`optimizacion.md`:
+   sensibilidad, partial dependence, ranking de hiperparámetros). El −15 % por
+   «repositorio privado o inaccesible» no aplica: el repositorio nuevo es
+   público (§6.1).
 2. **Interfaz:** si el bot no vale, una app mínima (Gradio o Streamlit) sobre
    `POST /inferir` y `heckerling.combinacion` —subir una placa, teclear los
    cinco hallazgos, ver la horquilla y el mismo texto del bot, con ejemplos
@@ -931,10 +950,10 @@ el borrador ignoraba. Decisiones:
 4. **Estructura de carpetas:** no se reestructura el repositorio; la sección
    «Estructura del proyecto» del README mapea cada carpeta exigida a la
    nuestra.
-5. **Autores en el README:** el curso pide nombres y roles; el repositorio no
-   los lleva por texto (§6.1). El README remite a la autoría del informe del
-   AVA y enlaza los videos, y el riesgo en la rúbrica se asume, salvo que la
-   respuesta de la tutora (punto 1) cambie la decisión.
+5. **Autores en el README:** el curso pide nombres y roles; el repositorio
+   público no los lleva por texto (§6.1). El README remite a la autoría del
+   informe del AVA y enlaza los videos (o dice que se entregaron por el aula
+   virtual, §6.1), y el riesgo en la rúbrica se asume.
 6. **Pesos del modelo** (16 MB): asset de un release del repositorio nuevo, con
    su `sha256`; el README explica cómo obtenerlos y cómo construir la imagen.
 7. **Rótulo «simulación semisintética»** en todo artefacto *de resultados* del
@@ -954,7 +973,8 @@ el borrador ignoraba. Decisiones:
   datos sintéticos.
 - No usa MIMIC ni ningún dato de paciente real.
 - No implementa el LLM: se descopa con su razón (§6.2).
-- No hace público el repositorio: lo comparte por invitación (§6.1).
+- No hace público el repositorio actual ni su historial: publica uno nuevo,
+  de un solo commit, sin cadenas identificativas ni secretos (§6.1).
 - No añade pasos a los bots: la sesión se hace con el formulario.
 - No mide exactitud clínica, y no lo afirma en ningún sitio: lo contrario se
   escribe en el informe, en el acta y en la tabla del §6.2 (§4.7).
@@ -1015,8 +1035,9 @@ Todas en la suite, sin red:
 2. `--casos` en `pruebas/reproducir_casos.py`; `scripts/preparar_sesion.py`,
    el formulario, `scripts/analizar_sesion.py`, la plantilla del acta y el
    **acta de H7** rellena tras la sesión.
-3. `tests/test_anonimato.py` con sus huellas, `scripts/verificar_anonimato.py`,
-   el repositorio nuevo del §6.1 y el release con los pesos.
+3. `tests/test_anonimato.py` con sus huellas, `scripts/verificar_anonimato.py`
+   (huellas y secretos), el repositorio nuevo público del §6.1 y el release con
+   los pesos.
 4. Los `docs/` del §6.7, `LICENSE`, `requirements.txt`, README de portada.
 5. Informe final (formato de la universidad) con la tabla del §6.2 y los KPIs
    del §6.3; guion y grabación del pitch; video de respuestas; entrada nueva
@@ -1033,8 +1054,8 @@ Todas en la suite, sin red:
 | La contención de la horquilla sale baja o el oráculo sale por el lado de independencia | es un resultado; se reporta con su dirección y se repiensa la cota en el informe |
 | Un kappa con un evaluador y 24 casos | intervalo de 0,5-0,6 declarado por adelantado (§5.5) |
 | Alguien lee la simulación como datos o como exactitud clínica | rótulo «simulación semisintética» en cada artefacto de resultados; §4.7 en el informe, el acta y la tabla del §6.2 |
-| El historial reescrito conserva alguna cadena | `verificar_anonimato.py` sobre todos los blobs; si no pasa, un solo commit (§6.1) |
-| El curso penaliza el repositorio privado o exige otra interfaz | preguntas antes del 1-oct; interfaz mínima reservada el 10-12 oct (§6.7) |
+| Se publica una cadena identificativa o un secreto | no hay historial que limpiar (un solo commit); `verificar_anonimato.py` (huellas y patrones de secretos) sobre el árbol y el commit antes de publicar (§6.1) |
+| El curso exige otra interfaz | pregunta antes del 1-oct; interfaz mínima reservada el 10-12 oct (§6.7) |
 | No hay corrida con bots contra el VPS antes del 16-oct | la latencia de extremo a extremo se declara no medida (§6.3) |
 | Redesplegar el compose con la red renombrada | el usuario ejecuta los comandos en el VPS, con la guía actualizada; se hace fuera de las fechas de la sesión |
 
@@ -1062,8 +1083,8 @@ Todas en la suite, sin red:
    debajo de 0,4, la fila de H7 del §6.2 pasa a «no cumplido, causa
    documentada caso por caso».
 5. `tests/test_anonimato.py` en verde sobre el árbol, y
-   `scripts/verificar_anonimato.py` en verde sobre todas las revisiones del
-   repositorio que se comparte, autor y committer incluidos.
+   `scripts/verificar_anonimato.py` en verde sobre el árbol del repositorio
+   publicado y los metadatos de su único commit (huellas y secretos).
 6. Todo el código de SP5 fusionado a más tardar el 16-oct (tag `sp5-codigo`);
    desde el 17 sin código nuevo.
 7. El informe final tiene la tabla del §6.2 completa y los KPIs del §6.3; los
