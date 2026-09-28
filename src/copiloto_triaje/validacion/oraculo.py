@@ -131,7 +131,7 @@ def matriz_k4() -> np.ndarray:
     return m
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class Modelo:
     rho1: float
     rho0: float
@@ -140,6 +140,8 @@ class Modelo:
     z0: np.ndarray      # z_0(q_i) de TODAS las placas
     tau1: np.ndarray
     tau0: np.ndarray
+    q1: np.ndarray      # las q de la clase 1: definen F̂_1 para CUALQUIER q
+    q0: np.ndarray      # las q de la clase 0: definen F̂_0 para CUALQUIER q
 
     def z_propia(self) -> np.ndarray:
         """z_y(q_i) de cada placa dentro de SU clase: para SORTEAR. El oraculo
@@ -147,7 +149,8 @@ class Modelo:
         return np.where(self.etiquetas == 1, self.z1, self.z0)
 
     def probabilidades(self):
-        """(P(k | q_i, 1), P(k | q_i, 0)) para todas las placas, las dos en el mismo q."""
+        """(P(k | q_i, 1), P(k | q_i, 0)) para todas las placas, las dos en el
+        mismo q. Es `_probabilidades_en(modelo, q)` con el q completo del ajuste."""
         return (probabilidad_k_dado_q(self.z1, self.rho1, self.tau1),
                 probabilidad_k_dado_q(self.z0, self.rho0, self.tau0))
 
@@ -157,10 +160,35 @@ def ajustar(q, etiquetas, rho1: float = 0.0, rho0: float = 0.0) -> Modelo:
     for rho in (rho1, rho0):
         if not 0.0 <= rho < 1.0:
             raise ValueError(f"rho debe estar en [0, 1), y es {rho!r}")
+    q = np.asarray(q, dtype=float)
     y = np.asarray(etiquetas, dtype=int)
     z1, z0 = puntuaciones_normales(q, y)
     return Modelo(float(rho1), float(rho0), y, z1, z0,
-                  umbrales(z1[y == 1], rho1, 1), umbrales(z0[y == 0], rho0, 0))
+                  umbrales(z1[y == 1], rho1, 1), umbrales(z0[y == 0], rho0, 0),
+                  q[y == 1].copy(), q[y == 0].copy())
+
+
+def _probabilidades_en(modelo: Modelo, q):
+    """(P(k | q, 1), P(k | q, 0)) en los q que se pasan, sean o no los del
+    ajuste: z_y(q) sale de la F̂_y de las q de cada clase guardadas en el
+    modelo. Asi el oraculo es funcion del q que recibe y no de la posicion de
+    la fila, que es lo que necesita un remuestreo de placas (spec §4.6)."""
+    z1 = ndtri(fda_rango_medio(modelo.q1, q))
+    z0 = ndtri(fda_rango_medio(modelo.q0, q))
+    return (probabilidad_k_dado_q(z1, modelo.rho1, modelo.tau1),
+            probabilidad_k_dado_q(z0, modelo.rho0, modelo.tau0))
+
+
+def _q_y_puntuacion(q, k, maximo: int, nombre: str):
+    """q como vector float y k como vector int de la misma forma, con k en 0..maximo."""
+    q = np.asarray(q, dtype=float)
+    k = np.asarray(k, dtype=int)
+    if q.ndim != 1 or q.shape != k.shape:
+        raise ValueError(f"q y {nombre} deben ser vectores de la misma forma, "
+                         f"y son {q.shape} y {k.shape}")
+    if k.size and (int(k.min()) < 0 or int(k.max()) > maximo):
+        raise ValueError(f"{nombre} debe estar en 0..{maximo}")
+    return q, k
 
 
 def log_rv_condicional(modelo: Modelo) -> np.ndarray:
@@ -171,21 +199,24 @@ def log_rv_condicional(modelo: Modelo) -> np.ndarray:
 
 
 def logit_oraculo(modelo: Modelo, q, k) -> np.ndarray:
-    """logit P(Y = 1 | q, k) = q + ln P(k | q, 1) − ln P(k | q, 0)."""
-    k = np.asarray(k, dtype=int)
-    return (np.asarray(q, dtype=float)
-            + log_rv_condicional(modelo)[np.arange(k.size), k])
+    """logit P(Y = 1 | q, k) = q + ln P(k | q, 1) − ln P(k | q, 0), evaluado
+    en los q que se pasan (no en las filas del ajuste): `q` y `k` son vectores
+    de la misma forma, en cualquier orden y con repeticiones, y k va de 0 a 5."""
+    q, k = _q_y_puntuacion(q, k, 5, "k")
+    p1, p0 = _probabilidades_en(modelo, q)
+    filas = np.arange(k.size)
+    return q + np.log(p1[filas, k]) - np.log(p0[filas, k])
 
 
 def logit_oraculo_no_se(modelo: Modelo, q, k4) -> np.ndarray:
-    """Con el asma oculta el sistema ve k4 (los cuatro signos): el oraculo
-    condiciona en (q, k4) y marginaliza el asma con la regla de reparto."""
-    k4 = np.asarray(k4, dtype=int)
-    p1, p0 = modelo.probabilidades()
+    """Con el asma oculta el sistema ve k4 (los cuatro signos, 0 a 4): el
+    oraculo condiciona en (q, k4) y marginaliza el asma con la regla de
+    reparto. Como `logit_oraculo`, es funcion del q que recibe."""
+    q, k4 = _q_y_puntuacion(q, k4, 4, "k4")
+    p1, p0 = _probabilidades_en(modelo, q)
     m = matriz_k4()
     filas = np.arange(k4.size)
-    return (np.asarray(q, dtype=float)
-            + np.log((p1 @ m)[filas, k4]) - np.log((p0 @ m)[filas, k4]))
+    return q + np.log((p1 @ m)[filas, k4]) - np.log((p0 @ m)[filas, k4])
 
 
 def correlacion_teorica(modelo: Modelo, y: int) -> float:
