@@ -251,7 +251,7 @@ derivación sobre las bandas de validación externa (0-1 → 0,19; 2-3 → 1,04;
 4-5 → 8,33). La diferencia `ln RV_derivación − ln RV_validación` por
 puntuación es fija: −0,46; +0,05; −0,40; +0,46; −0,15; +0,74 (k = 0..5). La
 derivación es más extrema que la validación en k = 0, 2, 3 y 5 y menos en
-k = 4: el «optimismo» no es uniforme. Se reporta la tabla completa y
+k = 1 y 4: el «optimismo» no es uniforme. Se reporta la tabla completa y
 **cuántos casos del conjunto cambiarían de banda** si el sistema usara las
 bandas de validación. Es un cálculo, no un experimento, y se rotula así.
 
@@ -562,6 +562,27 @@ de sensibilidad cubre el caso si algún despliegue lo produjera. Los mensajes
 de la sesión se generan con la prevalencia desplegada, **0,1466**, y el acta
 lo dice: la categoría del sistema en la sesión usa el previo del despliegue,
 no el del §4.
+
+**De dónde sale el ≈ 3,3 %: la vía de dos puntuaciones.** Cruzar el 20 % y el
+70 % a la vez exige que las odds de la mínima queden por debajo de 0,25 y las
+de la máxima por encima de 7/3, es decir, un cociente de odds entre los dos
+extremos mayor que ≈ 9,33. Con una sola puntuación ese cociente es
+`min(RV_clínica, RV_imagen)`, la única RV clínica que pasa de 9,33 es la de 5
+puntos (17,5), y la mínima vale entonces al menos `odds_previas × 17,5`: el
+cruce doble exigiría una prevalencia por debajo de ≈ 1,4 %. El umbral más alto,
+y por eso el que cuenta, es el del asma `no_se` con los otros cuatro hallazgos
+presentes: el sistema entrega dos puntuaciones, [4, 5], y
+`heckerling.combinacion` funde en una sola horquilla los extremos de las dos.
+Con una imagen a favor y no más informativa que los 4 puntos (RV de imagen
+entre 1 y 7,18), la mínima es la dependencia total de la puntuación 4,
+`odds_previas × 7,18`, y la máxima es la independencia de la puntuación 5,
+`odds_previas × 17,5 × RV_imagen`; el cociente, `17,5 × RV_imagen / 7,18`,
+llega a 17,5. La mínima baja del 20 % si `odds_previas × 7,18 < 0,25`, o sea
+con una prevalencia por debajo de ≈ 3,36 %; como la banda se decide sobre el
+porcentaje entero (19 % o menos: una mínima menor que 0,195), el umbral
+efectivo es ≈ 3,26 %. De ahí el «≈ 3,3 %», y por eso la prueba lo fija con
+0,032 (hay cruces dobles, todos por esta vía) y 0,034 (ninguno). Las dos
+prevalencias que se usan, 0,1466 y 0,2215, quedan muy por encima.
 
 ### 5.4. Diseño: dos lecturas del mismo conjunto
 
