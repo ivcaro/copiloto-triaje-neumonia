@@ -735,6 +735,22 @@ def test_la_tolerancia_es_la_de_0a3_y_se_puede_cambiar():
     assert (fuera["bajo"], fuera["sobre"], fuera["contencion"]) == (1.0, 0.0, 0.0)
 
 
+def test_la_contencion_se_cuenta_y_un_90_por_ciento_exacto_lo_es():
+    """Restando, 1 − 0,06 − 0,04 da 0,8999999999999999 y no alcanza el 0,90."""
+    assert 1.0 - 0.06 - 0.04 < 0.9
+    n = 2000
+    oraculo = np.array([-1.0] * 120 + [2.0] * 80 + [0.5] * (n - 200))
+    h = metricas.horquilla(oraculo, np.zeros(n), np.ones(n))
+    assert (h["bajo"], h["sobre"], h["contencion"]) == (0.06, 0.04, 0.9)
+    assert h["contencion"] >= 0.90
+    r = metricas.contencion_en_rango(oraculo, np.zeros(n), np.ones(n))
+    assert (r["bajo"], r["sobre"], r["contencion"]) == (0.06, 0.04, 0.9)
+    # en todos los repartos de colas que suman un 10 %
+    for bajos in range(0, 201, 8):
+        oraculo = np.array([-1.0] * bajos + [2.0] * (200 - bajos) + [0.5] * (n - 200))
+        assert metricas.horquilla(oraculo, np.zeros(n), np.ones(n))["contencion"] == 0.9
+
+
 def test_sin_ningun_caso_con_horquilla_no_hay_fracciones():
     h = metricas.horquilla([0.3], [0.0], [0.0])
     assert h == {"n": 0, "sin_horquilla": 1,
@@ -802,7 +818,7 @@ def test_cuantiles_ponderados():
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_metricas.py -q`
 
-Esperado: `8 failed, 18 passed`; los fallos son
+Esperado: `9 failed, 18 passed`; los fallos son
 `AttributeError: module 'copiloto_triaje.validacion.metricas' has no attribute 'horquilla'`
 (y `error_puntual`, `percentiles`, `cuantiles_ponderados`).
 
@@ -834,10 +850,12 @@ def horquilla(l_oraculo, l_dependencia, l_independencia, epsilon: float = EPSILO
     sentido = np.sign(delta[con])
     bajo = (o[con] - d[con]) * sentido < -epsilon
     sobre = (o[con] - i[con]) * sentido > epsilon
+    # La contencion se CUENTA, no se resta: 1 − 0,06 − 0,04 da
+    # 0,8999999999999999, y un 90 % exacto no alcanzaria su umbral.
     return {"n": n, "sin_horquilla": int((~con).sum()),
             "lambda": _cuartiles((o[con] - d[con]) / delta[con]),
             "bajo": float(bajo.mean()), "sobre": float(sobre.mean()),
-            "contencion": float(1.0 - bajo.mean() - sobre.mean())}
+            "contencion": float((~(bajo | sobre)).mean())}
 
 
 def error_puntual(l_sistema, l_oraculo) -> dict:
@@ -860,7 +878,7 @@ def contencion_en_rango(l_oraculo, l_minima, l_maxima, epsilon: float = EPSILON)
         return {"n": 0, "bajo": None, "sobre": None, "contencion": None}
     bajo, sobre = o < lo - epsilon, o > hi + epsilon
     return {"n": int(o.size), "bajo": float(bajo.mean()), "sobre": float(sobre.mean()),
-            "contencion": float(1.0 - bajo.mean() - sobre.mean())}
+            "contencion": float((~(bajo | sobre)).mean())}
 
 
 def percentiles(valores, alfa: float = 0.05) -> list:
@@ -891,7 +909,7 @@ def cuantiles_ponderados(valores, pesos, cuantiles=CUARTILES) -> np.ndarray:
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_metricas.py -q`
 
-Esperado: `26 passed`.
+Esperado: `27 passed`.
 
 - [ ] **Paso 10: Una sola definición de la tolerancia**
 
@@ -921,7 +939,7 @@ TOLERANCIA = metricas.EPSILON   # 0,015: el redondeo máximo de las RV publicada
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_validacion_0a.py tests/test_metricas.py -q`
 
-Esperado: `36 passed` (las 26 de las métricas y las 10 de 0A).
+Esperado: `37 passed` (las 27 de las métricas y las 10 de 0A).
 
 - [ ] **Paso 11: Commit**
 
@@ -2627,9 +2645,9 @@ git commit -m "feat(validacion): validar_combinacion.py corre la rejilla y escri
 ### Tarea 5: Las figuras
 
 **Ficheros:**
-- Modificar: `scripts/validar_combinacion.py` (bloque nuevo «LAS FIGURAS» antes de `main()`, y dos cambios dentro de `main()`)
+- Modificar: `scripts/validar_combinacion.py` (bloque nuevo «LAS FIGURAS» antes de `main()`, y tres cambios dentro de `main()`)
 - Modificar: `pyproject.toml` (el extra `figuras`)
-- Prueba: `tests/test_validar_combinacion.py` (un cambio en una prueba de la tarea 4 y once pruebas nuevas al final)
+- Prueba: `tests/test_validar_combinacion.py` (el `import copy`, un cambio en una prueba de la tarea 4 y doce pruebas nuevas al final)
 
 **Interfaces:**
 - Consume: del propio script, `ROTULO`, `NOMBRE_RESULTADOS`, `leer_resultados(ruta) -> dict`,
@@ -2651,12 +2669,16 @@ git commit -m "feat(validacion): validar_combinacion.py corre la rejilla y escri
   - `figuras(resultados: dict, carpeta) -> list[Path]` (en orden: las `fiabilidad_<slug>.png`
     en el orden de la rejilla, `horquilla_por_celda.png`, `contencion_rejilla.png`, `pendiente_rejilla.png`);
   - `figuras_presentes(carpeta) -> list[Path]` (los PNG propios que existen, ordenados; `[]` si la carpeta no existe);
-  - privadas `_pyplot()` (sin matplotlib sale con `SystemExit` y dice qué instalar),
+  - privadas `_pyplot()` (sin matplotlib sale con `SystemExit` y dice qué instalar; si lo que
+    falta es otra cosa, deja pasar el error),
     `_luminancia(color) -> float`, `_tinta_sobre(color) -> str` (blanco o `TINTA`: la que más
     contrasta con el color pintado), `_ejes(ax, titulo, x, y)`, `_coma(valor, decimales)`,
     `_rho(valor)`, `_guardar(plt, fig, destino, titulo) -> Path`;
-  - `main()`: tras escribir el JSON lo lee con `leer_resultados(ruta)` y, salvo `--sin-figuras`,
-    llama a `figuras(resultados, salida)` e imprime `figura: <ruta>` por cada una.
+  - `main()`: con `--solo-documento` comprueba primero que el JSON existe; después, salvo con
+    `--sin-figuras`, comprueba ANTES de calcular que se puede dibujar (`_pyplot()`); tras
+    escribir el JSON lo lee con `leer_resultados(ruta)` y llama a
+    `figuras(resultados, salida)`, que imprime `figura: <ruta>` por cada una. `figuras()`
+    comprueba lo mismo antes de borrar las figuras que hubiera.
   - Todo PNG mide 2700 × 1650 píxeles (9 × 5,5 pulgadas a 300 DPI) y lleva su título —con
     «simulación semisintética» y, si es de una celda, el nombre de la celda— también en el
     metadato `Title` del PNG (`PIL.Image.open(ruta).info["Title"]`).
@@ -2673,7 +2695,22 @@ git commit -m "feat(validacion): validar_combinacion.py corre la rejilla y escri
 
 - [ ] **Paso 1: Escribir las pruebas que fallan**
 
-En `tests/test_validar_combinacion.py` hay que hacer dos cosas.
+En `tests/test_validar_combinacion.py` hay que hacer tres cosas.
+
+(0) El `import copy`, al principio del fichero. Busca exactamente:
+
+```python
+"""scripts/validar_combinacion.py: la rejilla, el JSON y sus huellas."""
+import json
+```
+
+y sustitúyelo por:
+
+```python
+"""scripts/validar_combinacion.py: la rejilla, el JSON y sus huellas."""
+import copy
+import json
+```
 
 (a) La prueba `test_main_escribe_los_resultados_donde_se_le_dice` (de la tarea 4) llama a
 `main()` con un `calcular` falso que devuelve `"celdas": []`; desde esta tarea `main()` dibujaría
@@ -2755,17 +2792,37 @@ def test_cada_figura_se_puede_dibujar_por_separado(validar, resultados_minimos, 
     assert not (tmp_path / "cinco.png").exists()
 
 
+def _contraste(una: float, otra: float) -> float:
+    """La razon de contraste de WCAG 2 entre dos luminancias."""
+    clara, oscura = max(una, otra), min(una, otra)
+    return (clara + 0.05) / (oscura + 0.05)
+
+
 def test_la_tinta_es_la_que_mas_contrasta_con_el_color_pintado(validar):
     pytest.importorskip("matplotlib")
-    for claro in ("#e34948", "#2a78d6", "#3987e5", "#c9c8c3", "#f0efec", "white"):
+    # la luminancia relativa de WCAG 2: sus tres coeficientes y su gamma
+    assert validar._luminancia("#ff0000") == pytest.approx(0.2126)
+    assert validar._luminancia("#00ff00") == pytest.approx(0.7152)
+    assert validar._luminancia("#0000ff") == pytest.approx(0.0722)
+    assert validar._luminancia("white") == pytest.approx(1.0)
+    assert validar._luminancia("black") == 0.0
+    assert validar._luminancia("#808080") == pytest.approx(0.2159, abs=1e-4)
+    for claro in ("#e34948", "#f0a09f", "#c9c8c3", "#f0efec", "#cde2fb", "white"):
         assert validar._tinta_sobre(claro) == validar.TINTA, claro
     for oscuro in ("#1c5cab", "#0d366b", validar.TINTA, "black"):
         assert validar._tinta_sobre(oscuro) == "white", oscuro
     # tal como lo da un mapa de color: una tupla RGBA
     assert validar._tinta_sobre((0.05, 0.21, 0.42, 1.0)) == "white"
     assert validar._tinta_sobre((0.91, 0.55, 0.54, 1.0)) == validar.TINTA
-    assert validar._luminancia("white") == pytest.approx(1.0)
-    assert validar._luminancia("black") == 0.0
+    # y en cualquier color, tambien donde las dos casi empatan, la elegida
+    # contrasta al menos tanto como la otra
+    tinta = validar._luminancia(validar.TINTA)
+    for color in validar.RAMPA_AZUL + validar.RAMPA_DIVERGENTE + tuple(
+            c for _, _, c in validar.TRAMOS):
+        fondo = validar._luminancia(color)
+        elegida, otra = ((1.0, tinta) if validar._tinta_sobre(color) == "white"
+                         else (tinta, 1.0))
+        assert _contraste(fondo, elegida) >= _contraste(fondo, otra), color
 
 
 def test_las_casillas_y_las_barras_se_escriben_con_la_tinta_que_contrasta(
@@ -2780,28 +2837,30 @@ def test_las_casillas_y_las_barras_se_escriben_con_la_tinta_que_contrasta(
         return escribir(self, x, y, texto, **kwargs)
 
     monkeypatch.setattr(Axes, "text", escribir_espia)
-    validar.figura_rejilla(resultados_minimos, tmp_path / "pendiente.png", "pendiente")
-    pendientes = {c["nombre"]: c["modelos"]["independencia"]["pendiente"]
-                  for c in resultados_minimos["celdas"]}
-    # todas las pendientes de la rejilla minima caen en la mitad roja o en el
-    # gris del centro: ninguna casilla es bastante oscura para el blanco
-    assert all(0.6 < p < 1.1 for p in pendientes.values())
-    assert len(escritos) == 4
+    # cifras puestas a mano, lejos del punto en que la tinta cambia (la
+    # contencion cambia hacia el 59 %): la prueba es del dibujo, no de la
+    # simulacion. Con la regla vieja (por posicion en la escala) el 55 % y las
+    # pendientes 0,65 y 1,30 irian en blanco.
+    trucados = copy.deepcopy(resultados_minimos)
+    for celda, contencion, pendiente in zip(
+            trucados["celdas"], (1.0, 0.20, 0.55, 0.70), (1.0, 0.65, 0.79, 1.30)):
+        celda["horquilla"]["todos"]["contencion"] = contencion
+        celda["modelos"]["independencia"]["pendiente"] = pendiente
+    validar.figura_rejilla(trucados, tmp_path / "pendiente.png", "pendiente")
+    assert escritos == [("1,00", validar.TINTA), ("0,65", validar.TINTA),
+                        ("0,79", validar.TINTA), ("1,30", validar.TINTA)]
+
+    escritos.clear()
+    validar.figura_rejilla(trucados, tmp_path / "contencion.png", "contencion")
+    assert escritos == [("100,0 %", "white"), ("20,0 %", validar.TINTA),
+                        ("55,0 %", validar.TINTA), ("70,0 %", "white")]
+
+    escritos.clear()
+    for lado in ("a_favor", "en_contra"):
+        trucados["celdas"][3]["horquilla"][lado].update(bajo=0.25, contencion=0.5, sobre=0.25)
+    validar.figura_horquilla(trucados, tmp_path / "horquilla.png")
+    assert ("25 %", validar.TINTA) in escritos and ("50 %", validar.TINTA) in escritos
     assert all(color == validar.TINTA for _, color in escritos)
-
-    escritos.clear()
-    validar.figura_rejilla(resultados_minimos, tmp_path / "contencion.png", "contencion")
-    por_texto = dict(escritos)
-    assert por_texto["100,0 %"] == "white"                  # 0A: el azul mas oscuro
-    contenciones = [100 * c["horquilla"]["todos"]["contencion"]
-                    for c in resultados_minimos["celdas"]]
-    for valor in contenciones:
-        texto = f"{valor:.1f}".replace(".", ",") + " %"
-        assert por_texto[texto] == ("white" if valor > 60 else validar.TINTA), texto
-
-    escritos.clear()
-    validar.figura_horquilla(resultados_minimos, tmp_path / "horquilla.png")
-    assert escritos and all(color == validar.TINTA for _, color in escritos)
 
 
 def test_la_leyenda_de_fiabilidad_da_la_ece_con_la_media_y_el_p95_de_su_suelo(
@@ -2841,16 +2900,51 @@ def test_el_rojo_es_exagerar_en_la_horquilla_y_en_la_pendiente(validar):
 def test_sin_matplotlib_se_calcula_y_dibujar_lo_dice(
         validar, resultados_minimos, tmp_path, monkeypatch):
     import sys
+    calculos = []
+
+    def calcular_falso(replicas, procesos):
+        calculos.append(replicas)
+        return resultados_minimos
+
     monkeypatch.setitem(sys.modules, "matplotlib", None)      # como si no estuviera instalado
-    monkeypatch.setattr(validar, "calcular", lambda replicas, procesos: resultados_minimos)
+    monkeypatch.setattr(validar, "calcular", calcular_falso)
     orden = ["--replicas", "2", "--procesos", "1", "--salida", str(tmp_path)]
     assert validar.main(orden + ["--sin-figuras"]) == 0
     assert [p.name for p in tmp_path.iterdir()] == ["resultados_simulacion.json"]
+    assert calculos == [2]
+    # con figuras de una corrida anterior: pedir dibujar sale ANTES de calcular
+    # y ANTES de borrarlas
+    previa = tmp_path / "fiabilidad_0a.png"
+    previa.write_bytes(b"de la corrida anterior")
     with pytest.raises(SystemExit, match="--sin-figuras"):
         validar.main(orden)
-    assert list(tmp_path.glob("*.png")) == []
+    assert calculos == [2]
+    assert previa.read_bytes() == b"de la corrida anterior"
+    with pytest.raises(SystemExit, match="extra `figuras`"):
+        validar.figuras(resultados_minimos, tmp_path)
+    assert previa.read_bytes() == b"de la corrida anterior"
+    with pytest.raises(SystemExit, match="--sin-figuras"):
+        validar.main(orden + ["--solo-documento"])
+    assert [p.name for p in tmp_path.glob("*.png")] == ["fiabilidad_0a.png"]
+    # y si lo que falta es el JSON, se dice eso: es lo primero que hay que arreglar
+    with pytest.raises(SystemExit, match="no existe .*corre primero sin --solo-documento"):
+        validar.main(["--salida", str(tmp_path / "vacia"), "--solo-documento"])
     with pytest.raises(ValueError, match="contencion"):      # se rechaza antes de importar nada
         validar.figura_rejilla(resultados_minimos, tmp_path / "x.png", "auc")
+
+
+def test_si_falta_otra_cosa_no_se_dice_que_falta_matplotlib(validar, monkeypatch):
+    import builtins
+    importar = builtins.__import__
+
+    def sin_numpy(nombre, *args, **kwargs):
+        if nombre == "matplotlib":
+            raise ModuleNotFoundError("No module named 'numpy'", name="numpy")
+        return importar(nombre, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", sin_numpy)
+    with pytest.raises(ModuleNotFoundError, match="numpy"):
+        validar._pyplot()
 
 
 def test_las_figuras_borran_las_propias_rancias_y_respetan_las_ajenas(
@@ -2912,7 +3006,7 @@ def test_main_sin_figuras_no_dibuja_nada(validar, tmp_path, capsys):
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_validar_combinacion.py`
 
-Esperado: `10 failed, 11 passed`. Fallan las diez que dibujan o usan lo nuevo:
+Esperado: `11 failed, 11 passed`. Fallan las once que dibujan o usan lo nuevo:
 
 ```
 E       AttributeError: module 'validar_combinacion' has no attribute 'slug_de_celda'
@@ -2928,14 +3022,15 @@ FAILED tests/test_validar_combinacion.py::test_las_casillas_y_las_barras_se_escr
 FAILED tests/test_validar_combinacion.py::test_la_leyenda_de_fiabilidad_da_la_ece_con_la_media_y_el_p95_de_su_suelo
 FAILED tests/test_validar_combinacion.py::test_el_rojo_es_exagerar_en_la_horquilla_y_en_la_pendiente
 FAILED tests/test_validar_combinacion.py::test_sin_matplotlib_se_calcula_y_dibujar_lo_dice
+FAILED tests/test_validar_combinacion.py::test_si_falta_otra_cosa_no_se_dice_que_falta_matplotlib
 FAILED tests/test_validar_combinacion.py::test_las_figuras_borran_las_propias_rancias_y_respetan_las_ajenas
 FAILED tests/test_validar_combinacion.py::test_main_dibuja_las_figuras_leyendo_el_json
-10 failed, 11 passed
+11 failed, 11 passed
 ```
 
 `test_main_sin_figuras_no_dibuja_nada` y la prueba modificada en (a) PASAN ya en este paso: el
 `main()` de la tarea 4 acepta `--sin-figuras` y todavía no dibuja. Es lo esperado: esas dos
-pruebas guardan el comportamiento, no lo estrenan. La última de las diez falla porque `main()`
+pruebas guardan el comportamiento, no lo estrenan. La última de las once falla porque `main()`
 aún no lee el JSON que acaba de escribir.
 
 - [ ] **Paso 3: Declarar el extra `figuras`**
@@ -3002,9 +3097,12 @@ REJILLAS = ("contencion", "pendiente")
 def _pyplot():
     try:
         import matplotlib
-    except ImportError:
-        raise SystemExit("para dibujar hace falta matplotlib, que es el extra `figuras` "
-                         "(pip install -e .[figuras]); sin él, corre con --sin-figuras") from None
+    except ModuleNotFoundError as error:
+        if error.name != "matplotlib":          # falta otra cosa: que se vea cual
+            raise
+        raise SystemExit('para dibujar hace falta matplotlib, que es el extra `figuras` '
+                         '(pip install -e ".[figuras]"); sin él, corre con --sin-figuras'
+                         ) from None
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     return plt
@@ -3208,7 +3306,8 @@ def figuras(resultados: dict, carpeta) -> list[Path]:
 
     Borra antes las propias que hubiera: si cambian las celdas destacadas, una
     `fiabilidad_*.png` de la corrida anterior quedaria en la carpeta con cifras
-    que ya no son las del JSON."""
+    que ya no son las del JSON. Sin matplotlib sale ANTES de borrar nada."""
+    _pyplot()
     carpeta = Path(carpeta)
     carpeta.mkdir(parents=True, exist_ok=True)
     for rancia in figuras_presentes(carpeta):
@@ -3254,11 +3353,38 @@ y sustitúyelo por:
     return 0
 ```
 
+Y, para que sin matplotlib no se calcule en vano (pero diciendo antes, si es el
+caso, que lo que falta es el JSON), busca exactamente:
+
+```python
+    salida = Path(args.salida)
+    ruta = salida / NOMBRE_RESULTADOS
+    if not args.solo_documento:
+        escribir_resultados(calcular(args.replicas, args.procesos), ruta)
+        print(f"resultados: {ruta}")
+    elif not ruta.is_file():
+        raise SystemExit(f"no existe {ruta}: corre primero sin --solo-documento")
+```
+
+y sustitúyelo por:
+
+```python
+    salida = Path(args.salida)
+    ruta = salida / NOMBRE_RESULTADOS
+    if args.solo_documento and not ruta.is_file():
+        raise SystemExit(f"no existe {ruta}: corre primero sin --solo-documento")
+    if not args.sin_figuras:
+        _pyplot()                 # sin matplotlib se sale ANTES de calcular nada
+    if not args.solo_documento:
+        escribir_resultados(calcular(args.replicas, args.procesos), ruta)
+        print(f"resultados: {ruta}")
+```
+
 - [ ] **Paso 6: Correr las pruebas y ver que pasan**
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_validar_combinacion.py`
 
-Esperado: `21 passed`, sin avisos (tarda cerca de medio minuto). Si aparece un `PendingDeprecationWarning` de
+Esperado: `22 passed`, sin avisos (tarda cerca de medio minuto). Si aparece un `PendingDeprecationWarning` de
 `set_bad`, el bloque no se copió bien: el código usa `mapa.with_extremes(bad=...)`.
 
 - [ ] **Paso 7: Correr los vecinos**
@@ -3304,7 +3430,7 @@ git commit -m "feat(validacion): las figuras de la simulacion, a 300 DPI y desde
 **Ficheros:**
 - Crear: `src/copiloto_triaje/validacion/informe.py`
 - Modificar: `scripts/validar_combinacion.py` (el `import` del paquete, un bloque nuevo «EL DOCUMENTO» antes de `main()`, y dos líneas al final de `main()`)
-- Prueba: `tests/test_informe.py` (nuevo, 20 pruebas)
+- Prueba: `tests/test_informe.py` (nuevo, 38 pruebas)
 - Prueba: `tests/test_validar_combinacion.py` (una fixture `autouse` al principio, un cambio en una prueba de la tarea 4 y cuatro pruebas nuevas al final)
 
 **Interfaces:**
@@ -3501,37 +3627,189 @@ def test_cambiar_una_cifra_del_diccionario_cambia_el_texto(texto, resultados_min
     assert informe.redactar(resultados_minimos) == texto      # no toca el diccionario
 
 
-def test_el_veredicto_sale_de_la_hipotesis_de_cada_celda(texto, resultados_minimos):
-    horquilla = _seccion(texto, "La horquilla frente al oráculo")
+SIN_INTERVALO = " (estimación puntual, sin intervalo)"
+NO_SE_PUEDE = ("no se puede decir: la estimación y su intervalo no quedan enteros a un lado "
+               "del umbral")
+
+
+def _veredictos(documento: str) -> dict:
+    """{celda: veredicto}, leido de la tabla del veredicto."""
+    horquilla = _seccion(documento, "La horquilla frente al oráculo")
+    tabla = horquilla.split("| celda | contención | umbral | veredicto |\n")[1]
+    filas = tabla.split("\n\n")[0].splitlines()
+    assert filas[0] == "| :--- | ---: | ---: | :--- |"
+    return {f.split(" | ")[0][2:]: f.split(" | ")[-1][:-2] for f in filas[1:]}
+
+
+def _con_hipotesis(resultados, indice, contencion, intervalo):
+    """Una copia con la contencion de una celda puesta a mano. El JSON lleva
+    ademas `se_sostiene`, calculado sobre la estimacion sin redondear."""
+    otro = copy.deepcopy(resultados)
+    celda = otro["celdas"][indice]
+    celda["hipotesis"]["se_sostiene"] = contencion is not None and contencion >= 0.9
+    celda["hipotesis"]["contencion"] = contencion
+    celda["horquilla"]["todos"]["contencion"] = contencion
+    if intervalo is None:
+        celda.get("intervalos", {}).pop("horquilla.todos.contencion", None)
+    else:
+        celda["intervalos"]["horquilla.todos.contencion"] = list(intervalo)
+    return otro
+
+
+def test_el_veredicto_lee_el_intervalo_y_dice_cuando_solo_hay_estimacion(
+        texto, resultados_minimos):
     celda = resultados_minimos["celdas"][3]
     assert celda["hipotesis"]["se_sostiene"] is False
-    assert "| (0,3; 0,3) | " in horquilla
-    veredictos = {l.split(" | ")[0][2:]: l.split(" | ")[-1].rstrip(" |")
-                  for l in horquilla.splitlines() if l.endswith("se sostiene |")}
-    assert veredictos == {"0A": "se sostiene", "(0; 0,3)": "no se sostiene",
-                          "(0,3; 0)": "no se sostiene", "(0,3; 0,3)": "no se sostiene"}
+    assert celda["intervalos"]["horquilla.todos.contencion"][1] < 0.9
+    assert "intervalos" not in resultados_minimos["celdas"][1]
+    assert _veredictos(texto) == {
+        "0A": "se sostiene",
+        "(0; 0,3)": "no se sostiene" + SIN_INTERVALO,
+        "(0,3; 0)": "no se sostiene" + SIN_INTERVALO,
+        "(0,3; 0,3)": "no se sostiene"}
+    casos = [
+        (3, 0.95, (0.91, 0.97), "se sostiene"),
+        (3, 0.95, (0.90, 0.97), "se sostiene"),                  # el umbral vale
+        (3, 0.95, (0.8996, 0.97), "se sostiene"),                # se imprime «90,0»
+        (3, 0.90, (0.90, 0.90), "se sostiene"),
+        # restando en coma flotante, un 90 % exacto es 0,8999999999999999
+        (3, 1.0 - 0.06 - 0.04, (0.91, 0.95), "se sostiene"),
+        (3, 0.8996, (0.91, 0.95), "se sostiene"),                # se imprime «90,0 %»
+        (3, 0.8996, None, "se sostiene" + SIN_INTERVALO),
+        (3, 0.85, (0.80, 0.8996), NO_SE_PUEDE),                  # se imprime «90,0»
+        (3, 0.91, (0.88, 0.97), NO_SE_PUEDE),                    # el intervalo lo cruza
+        (3, 0.89, (0.85, 0.93), NO_SE_PUEDE),
+        (3, 0.91, (0.80, 0.89), NO_SE_PUEDE),            # la estimacion, del otro lado
+        (3, 0.89, (0.91, 0.95), NO_SE_PUEDE),            # y al reves
+        (3, 0.85, (0.80, 0.89), "no se sostiene"),
+        (3, 0.8994, (0.80, 0.8994), "no se sostiene"),           # se imprime «89,9»
+        (3, 0.95, None, "se sostiene" + SIN_INTERVALO),
+        (1, 0.913, None, "se sostiene" + SIN_INTERVALO),
+        (1, 0.437, None, "no se sostiene" + SIN_INTERVALO),
+        (3, None, (0.80, 0.89),
+         "no se puede decir: no hay casos concordantes con horquilla"),
+        (3, 0.85, (float("nan"), 0.89), "no se sostiene" + SIN_INTERVALO),
+    ]
+    for indice, contencion, intervalo, esperado in casos:
+        otro = _con_hipotesis(resultados_minimos, indice, contencion, intervalo)
+        nombre = otro["celdas"][indice]["nombre"]
+        documento = informe.redactar(otro)
+        assert _veredictos(documento)[nombre] == esperado, (contencion, intervalo)
+        if contencion is not None and 0.8995 < contencion < 0.9:
+            # lo que el lector ve al lado del veredicto
+            assert f"| {nombre} | 90,0 % " in documento
+    # junto a la tabla se dice con que se decide, y que el JSON va sin redondear
+    horquilla = _seccion(texto, "La horquilla frente al oráculo")
+    assert ("Se decide con la contención tal como se imprime (un «90,0 %» alcanza un umbral "
+            "del 90 %); el campo `se_sostiene` del fichero de resultados se calcula sin "
+            "redondear:") in horquilla
+
+
+def test_el_umbral_se_imprime_con_los_decimales_con_que_se_compara(resultados_minimos):
+    assert [informe._umbral(x) for x in (0.9, 0.905, 0.8, 0.9004, 1.0)] == [
+        "90", "90,5", "80", "90", "100"]
     otro = copy.deepcopy(resultados_minimos)
-    otro["celdas"][3]["hipotesis"]["se_sostiene"] = True
-    nuevo = _seccion(informe.redactar(otro), "La horquilla frente al oráculo")
-    assert [l for l in nuevo.splitlines()
-            if l.startswith("| (0,3; 0,3) | ") and l.endswith("| se sostiene |")]
+    otro["parametros"]["hipotesis_contencion"] = 0.905
+    for celda in otro["celdas"]:
+        celda["hipotesis"]["umbral"] = 0.905
+    otro["celdas"][3]["horquilla"]["todos"]["contencion"] = 0.902
+    otro["celdas"][3]["intervalos"]["horquilla.todos.contencion"] = [0.88, 0.904]
+    documento = informe.redactar(otro)
+    # un 90,2 % no alcanza un 90,5 %, y la fila lo deja ver
+    assert "| (0,3; 0,3) | 90,2 % (IC 95 %: 88,0 a 90,4) | ≥ 90,5 % | no se sostiene |" in documento
+    assert "en ≥ 90,5 % de los concordantes»" in documento
+    assert "(contención ≥ 90,5 % de los concordantes)" in documento
+    assert "≥ 90 %" not in documento and "≥ 91 %" not in documento
 
 
 def test_la_lectura_se_genera_desde_las_cifras(texto, resultados_minimos):
     lectura = _seccion(texto, "Lectura de los resultados")
     celda = resultados_minimos["celdas"][3]
     assert celda["modelos"]["independencia"]["pendiente"] < 1
-    assert "menor que 1: 1 de 1" in lectura
-    assert "Se sostiene en 1 de las 4 celdas de la rejilla: 0A." in lectura
+    assert "menor que 1: 1 de 1: (0,3; 0,3), " in lectura
     assert informe.porcentaje(celda["horquilla"]["a_favor"]["bajo"]) in lectura
     otro = copy.deepcopy(resultados_minimos)
     otro["celdas"][3]["modelos"]["independencia"]["pendiente"] = 1.25
     otro["celdas"][3]["intervalos"]["modelos.independencia.pendiente"] = [1.1, 1.4]
-    for celda in otro["celdas"]:
-        celda["hipotesis"]["se_sostiene"] = False
     nueva = _seccion(informe.redactar(otro), "Lectura de los resultados")
-    assert "menor que 1: 0 de 1" in nueva
-    assert "No se sostiene en ninguna de las 4 celdas de la rejilla." in nueva
+    assert "menor que 1: 0 de 1. Una pendiente menor que 1 es" in nueva
+
+
+def _hipotesis(documento: str) -> str:
+    """La frase de la hipotesis, de la lectura."""
+    lectura = _seccion(documento, "Lectura de los resultados")
+    frases = [l for l in lectura.splitlines() if l.startswith("- **La hipótesis de la horquilla**")]
+    assert len(frases) == 1
+    return frases[0]
+
+
+def test_la_lectura_de_la_hipotesis_cuenta_0a_aparte_y_lee_los_intervalos(
+        texto, resultados_minimos):
+    # la precondicion: en la rejilla minima ninguna celda con dependencia
+    # llega al umbral, ni de lejos
+    assert [c["horquilla"]["todos"]["contencion"] < 0.8
+            for c in resultados_minimos["celdas"][1:]] == [True] * 3
+    assert _hipotesis(texto) == (
+        "- **La hipótesis de la horquilla** (contención ≥ 90 % de los concordantes). "
+        "0A es la comprobación de la métrica y se cuenta aparte. "
+        "Celdas con dependencia: 3; con intervalo, 1. "
+        "Donde hay intervalo decide el intervalo entero. "
+        "Con intervalo, celdas en las que se sostiene: ninguna. "
+        "Con intervalo, celdas en las que no se sostiene: 1, que es (0,3; 0,3). "
+        "Con intervalo, celdas en las que no se puede decir, porque la estimación y su "
+        "intervalo no quedan enteros a un lado del umbral: ninguna. "
+        "Sin intervalo, 2: solo hay estimación puntual. "
+        "Sin intervalo, celdas en las que la estimación alcanza el umbral: ninguna.")
+    # cada cuenta dice de que celdas es: la tabla del veredicto tiene mas
+    # filas «no se sostiene» que celdas con intervalo
+    assert not re.search(r"(?<!intervalo, )celdas en las que", _hipotesis(texto))
+    # ninguna frase pone «ninguna» detras de un verbo: «no se sostiene en
+    # ninguna» diria lo contrario de lo que cuenta
+    for documento in (texto, informe.redactar(resultados_minimos, {})):
+        assert not re.search(r"\b(en|de) ninguna\b", documento)
+    # 0A no cuenta aunque se sostenga; la que solo tiene estimacion se dice
+    otro = _con_hipotesis(resultados_minimos, 1, 0.913, None)
+    assert ("Sin intervalo, 2: solo hay estimación puntual. Sin intervalo, celdas en las "
+            "que la estimación alcanza el umbral: 1, que es (0; 0,3).") in _hipotesis(
+        informe.redactar(otro))
+    assert "Con intervalo, celdas en las que se sostiene: ninguna." in _hipotesis(
+        informe.redactar(otro))
+    otro = _con_hipotesis(resultados_minimos, 3, 0.95, (0.91, 0.97))
+    assert ("Con intervalo, celdas en las que se sostiene: 1, que es (0,3; 0,3). Con "
+            "intervalo, celdas en las que no se sostiene: ninguna.") in _hipotesis(
+        informe.redactar(otro))
+    otro = _con_hipotesis(resultados_minimos, 3, 0.91, (0.88, 0.97))
+    frase = _hipotesis(informe.redactar(otro))
+    assert ("Con intervalo, celdas en las que se sostiene: ninguna. Con intervalo, celdas "
+            "en las que no se sostiene: ninguna.") in frase
+    assert "a un lado del umbral: 1, que es (0,3; 0,3)." in frase
+    # sin bootstrap no hay intervalos que leer, y no se finge
+    otro = copy.deepcopy(resultados_minimos)
+    for celda in otro["celdas"]:
+        celda.pop("intervalos", None)
+    documento = informe.redactar(otro)
+    frase = _hipotesis(documento)
+    assert "Celdas con dependencia: 3; con intervalo, 0. Sin intervalo, 3:" in frase
+    assert "Donde hay intervalo" not in frase
+    assert "- **Los intervalos.**" not in documento
+    assert "- **Los intervalos.**" in texto
+    # todas con intervalo: no se habla de estimaciones sueltas
+    otro = copy.deepcopy(resultados_minimos)
+    for celda in otro["celdas"][1:3]:
+        celda["intervalos"] = {"horquilla.todos.contencion": [0.4, 0.5]}
+    frase = _hipotesis(informe.redactar(otro))
+    assert "Celdas con dependencia: 3; con intervalo, 3." in frase
+    assert "Sin intervalo" not in frase and "estimación alcanza" not in frase
+    # una celda sin casos concordantes con horquilla se cuenta aparte
+    otro = _con_hipotesis(resultados_minimos, 2, None, None)
+    frase = _hipotesis(informe.redactar(otro))
+    assert frase.endswith("Celdas sin casos concordantes con horquilla: 1, que es (0,3; 0).")
+    assert "Sin intervalo, 1:" in frase
+    assert "sin casos concordantes" not in _hipotesis(texto)
+    # sin 0A no se habla de 0A
+    otro = copy.deepcopy(resultados_minimos)
+    del otro["celdas"][0]
+    assert "0A" not in _hipotesis(informe.redactar(otro))
 
 
 def test_la_lectura_cuenta_las_cifras_fuera_de_su_intervalo(resultados_minimos):
@@ -3637,6 +3915,53 @@ def test_los_limites_del_spec_estan_escritos(texto):
     assert "la exactitud es la publicada y la dependencia es la supuesta" in limites
     assert "**No puede afirmar**" in limites
     assert "reproduce caso a caso la posterior del generador" in limites
+    # el alcance no afirma un resultado: lo que dice esta corrida va aparte
+    assert "**Puede decir:**" in limites and "**Puede afirmar:**" not in limites
+    assert "- si el sistema reproduce caso a caso" in limites
+    assert "- si, **cuando** la puntuación tiene la exactitud publicada" in limites
+    # cada punto remite a donde se responde
+    assert ("(0A: lo comprueban las pruebas de `tests/test_validacion_0a.py`; la fila 0A de "
+            "la horquilla lo acompaña, como control más débil y solo para los concordantes)"
+            ) in limites
+    assert limites.count("caso a caso") == 1
+    assert ("Lo demás se lee en «Lectura de los resultados» y, lo del previo, en "
+            "«Sensibilidad al previo».") in limites
+    assert "Cada placa con su clínica sorteada es una viñeta." in _seccion(
+        texto, "Insumos y parámetros")
+
+
+def test_los_limites_dicen_lo_que_dice_esta_corrida(texto, resultados_minimos):
+    limites = _seccion(texto, "Lo que esta simulación puede afirmar y lo que no")
+    cero = resultados_minimos["celdas"][0]
+    m = cero["modelos"]["independencia"]
+    assert m["ece"] <= m["suelo"]["p95"]
+    assert ("En esta corrida, la fila 0A de la horquilla se cumple; la pendiente de la "
+            "combinación por independencia en 0A es "
+            + informe.numero(m["pendiente"], 2)) in limites
+    assert (f"y su ECE ({informe.numero(m['ece'], 3)}) no supera el percentil 95 de su "
+            f"suelo") in limites
+    otro = copy.deepcopy(resultados_minimos)
+    otro["celdas"][0]["horquilla"]["todos"].update(bajo=0.01, contencion=0.99)
+    otro["celdas"][0]["modelos"]["independencia"]["ece"] = 0.5
+    otro["celdas"][0]["intervalos"]["modelos.independencia.pendiente"] = [1.05, 1.2]
+    limites = _seccion(informe.redactar(otro),
+                       "Lo que esta simulación puede afirmar y lo que no")
+    assert "la fila 0A de la horquilla **no se cumple**" in limites
+    assert "su intervalo no contiene el 1" in limites
+    assert "y su ECE (0,500) supera el percentil 95 de su suelo" in limites
+    del otro["celdas"][0]
+    limites = _seccion(informe.redactar(otro),
+                       "Lo que esta simulación puede afirmar y lo que no")
+    assert ("Esta corrida no incluye la celda 0A: de los dos primeros puntos no dice nada."
+            ) in limites
+    assert "En esta corrida, la fila 0A" not in limites
+    # sin casos con horquilla la comprobacion no se puede hacer: no es un fallo
+    otro = copy.deepcopy(resultados_minimos)
+    otro["celdas"][0]["horquilla"]["todos"].update(
+        n=0, bajo=None, sobre=None, contencion=None)
+    limites = _seccion(informe.redactar(otro),
+                       "Lo que esta simulación puede afirmar y lo que no")
+    assert "la fila 0A de la horquilla **no se puede comprobar**; la pendiente" in limites
 
 
 def test_la_escala_legible_rotula_las_puntuaciones_poco_informativas(texto, resultados_minimos):
@@ -3685,6 +4010,378 @@ def test_las_definiciones_del_diseno_que_la_prosa_da_por_fijas_son_las_del_codig
     assert simulacion.POCO_INFORMATIVA == 0.5
     assert simulacion.EXTREMAS == (0, 1, 4, 5)
     assert simulacion.HIPOTESIS_CONTENCION == 0.90
+
+
+# --------------------------------------------------------------------------
+# Una prueba por rama: cada frase cuya verdad depende de los datos, con
+# resultados trucados para que caiga en cada una de sus ramas.
+# --------------------------------------------------------------------------
+def test_la_ece_se_lee_frente_al_p95_de_su_suelo(texto, resultados_minimos):
+    suelo = {"media": 0.010, "p95": 0.020}
+    assert informe._frente_al_suelo(0.020, suelo).startswith("no supera el percentil 95")
+    # las dos se imprimen «0,020»: el documento no puede decir que una supera a la otra
+    assert informe._frente_al_suelo(0.0201, suelo).startswith("no supera el percentil 95")
+    assert informe._frente_al_suelo(0.0204, {"media": 0.01, "p95": 0.0196}).startswith(
+        "no supera")
+    assert informe._frente_al_suelo(0.0206, suelo).startswith("supera el percentil 95")
+    assert informe._frente_al_suelo(0.015, suelo).startswith("no supera")   # no es la media
+    for ece, p95 in ((None, 0.02), (0.02, None), (float("nan"), 0.02)):
+        assert informe._frente_al_suelo(ece, {"media": 0.01, "p95": p95}) == (
+            "no se puede comparar con su suelo")
+    otro = copy.deepcopy(resultados_minimos)
+    otro["imagen_sola"]["ece"] = otro["imagen_sola"]["suelo"]["p95"] + 0.001
+    imagen = _seccion(informe.redactar(otro), "La imagen sola")
+    assert ") supera el percentil 95 de su suelo: hay descalibración" in imagen
+    otro["imagen_sola"]["ece"] = otro["imagen_sola"]["suelo"]["p95"] - 0.001
+    imagen = _seccion(informe.redactar(otro), "La imagen sola")
+    assert ") no supera el percentil 95 de su suelo: no se distingue" in imagen
+    otro["celdas"][0]["modelos"]["independencia"]["ece"] = 0.5
+    assert ") supera el percentil 95 de su suelo" in _seccion(
+        informe.redactar(otro), "Escenario 0A: la aritmética")
+    assert ") no supera el percentil 95 de su suelo" in _seccion(
+        texto, "Escenario 0A: la aritmética")
+
+
+def test_la_fila_0a_dice_si_la_metrica_se_cumple(texto, resultados_minimos):
+    cero = _seccion(texto, "Escenario 0A: la aritmética")
+    assert "Se cumple: la métrica de la horquilla pasa su comprobación en el caso nulo." in cero
+    assert "NO se cumple" not in cero
+    n = resultados_minimos["celdas"][0]["horquilla"]["todos"]["n"]
+    for cambio, fuera in ((dict(bajo=10 / n, contencion=1 - 10 / n), "quedan fuera de la horquilla 10"),
+                          (dict(sobre=3 / n, contencion=1 - 3 / n), "quedan fuera de la horquilla 3"),
+                          # un solo caso fuera se imprime «0,0 %» y «100,0 %»
+                          (dict(bajo=1 / n, contencion=1 - 1 / n), "queda fuera de la horquilla 1")):
+        otro = copy.deepcopy(resultados_minimos)
+        otro["celdas"][0]["horquilla"]["todos"].update(cambio)
+        cero = _seccion(informe.redactar(otro), "Escenario 0A: la aritmética")
+        assert (f"**NO se cumple: {fuera} de los {informe.entero(n)} concordantes. La "
+                f"métrica de la horquilla o el generador tienen un defecto") in cero, cambio
+        assert "Se cumple: la métrica" not in cero
+    # sin casos no se puede comprobar, que no es lo mismo que no cumplirse
+    otro = copy.deepcopy(resultados_minimos)
+    otro["celdas"][0]["horquilla"]["todos"].update(
+        n=0, bajo=None, sobre=None, contencion=None)
+    documento = informe.redactar(otro)
+    cero = _seccion(documento, "Escenario 0A: la aritmética")
+    assert "**No se puede comprobar: no hay casos concordantes con horquilla" in cero
+    assert "NO se cumple" not in cero and "Se cumple: la métrica" not in cero
+    assert "tienen un defecto" not in cero
+    assert "Horquilla: no hay casos con horquilla." in _seccion(
+        documento, "Lectura de los resultados")
+    otro = copy.deepcopy(resultados_minimos)
+    del otro["celdas"][0]
+    documento = informe.redactar(otro)
+    assert "Esta corrida no incluye la celda 0A." in _seccion(
+        documento, "Escenario 0A: la aritmética")
+    assert "Esta corrida no calculó 0C." in _seccion(
+        documento, "0C: optimismo de la derivación (cálculo, no experimento)")
+    assert "- **0A.**" not in documento
+
+
+def test_la_pendiente_de_0a_dice_si_su_intervalo_contiene_el_1(resultados_minimos):
+    otro = copy.deepcopy(resultados_minimos)
+    cero = otro["celdas"][0]
+    cero["modelos"]["independencia"]["pendiente"] = 1.03
+    for intervalo, esperado in (([0.91, 1.09], "1,03 (IC 95 %: 0,91 a 1,09); su intervalo contiene el 1."),
+                                ([1.0, 1.09], "1,03 (IC 95 %: 1,00 a 1,09); su intervalo contiene el 1."),
+                                ([1.004, 1.09], "1,03 (IC 95 %: 1,00 a 1,09); su intervalo contiene el 1."),
+                                ([1.01, 1.09], "1,03 (IC 95 %: 1,01 a 1,09); su intervalo no contiene el 1."),
+                                ([0.8, 0.99], "1,03 (IC 95 %: 0,80 a 0,99); su intervalo no contiene el 1."),
+                                ([0.9, 0.996], "1,03 (IC 95 %: 0,90 a 1,00); su intervalo contiene el 1."),
+                                ([0.9, 0.994], "1,03 (IC 95 %: 0,90 a 0,99); su intervalo no contiene el 1.")):
+        cero["intervalos"]["modelos.independencia.pendiente"] = intervalo
+        lectura = _seccion(informe.redactar(otro), "Lectura de los resultados")
+        assert ("- **0A.** La pendiente de la combinación por independencia es "
+                + esperado + " Horquilla: queda dentro el 100,0 %; ninguna cola tiene casos."
+                ) in lectura
+    del cero["intervalos"]["modelos.independencia.pendiente"]
+    lectura = _seccion(informe.redactar(otro), "Lectura de los resultados")
+    assert "independencia es 1,03. Horquilla: " in lectura
+
+
+def _con_pendiente(resultados, clave, pendiente, intervalo):
+    otro = copy.deepcopy(resultados)
+    celda = otro["celdas"][3]
+    celda["modelos"][clave]["pendiente"] = pendiente
+    if intervalo is None:
+        del celda["intervalos"][f"modelos.{clave}.pendiente"]
+    else:
+        celda["intervalos"][f"modelos.{clave}.pendiente"] = list(intervalo)
+    return _seccion(informe.redactar(otro), "Lectura de los resultados")
+
+
+def test_la_pendiente_de_la_independencia_se_lee_con_su_intervalo(resultados_minimos):
+    lectura = _con_pendiente(resultados_minimos, "independencia", 0.8, (0.7, 0.9))
+    assert ("- **La independencia.** Celdas destacadas en las que la estimación de la "
+            "pendiente de la combinación por independencia es menor que 1: 1 de 1: "
+            "(0,3; 0,3), 0,80 (IC 95 %: 0,70 a 0,90). Una pendiente menor que 1 es la forma "
+            "cuantitativa de «exagera».") in lectura
+    assert ("- De esas, con el intervalo entero por debajo de 1 (exagera): 1 de 1: "
+            "(0,3; 0,3).") in lectura
+    assert "En sentido contrario, la estimación de la pendiente de la combinación" not in lectura
+    lectura = _con_pendiente(resultados_minimos, "independencia", 0.95, (0.85, 1.0))
+    assert "- De esas, con el intervalo entero por debajo de 1 (exagera): 0 de 1." in lectura
+    lectura = _con_pendiente(resultados_minimos, "independencia", 0.8, None)
+    assert "menor que 1: 1 de 1: (0,3; 0,3), 0,80. Una pendiente" in lectura
+    assert "con el intervalo entero por debajo de 1" not in lectura.split(
+        "**El extremo conservador.**")[0]
+    lectura = _con_pendiente(resultados_minimos, "independencia", 1.25, (1.1, 1.4))
+    assert ("- En sentido contrario, la estimación de la pendiente de la combinación por "
+            "independencia es mayor que 1: 1 de 1: (0,3; 0,3), 1,25 (IC 95 %: 1,10 a 1,40)."
+            ) in lectura
+    assert ("- De esas, con el intervalo entero por encima de 1 (se queda corta): 1 de 1: "
+            "(0,3; 0,3).") in lectura
+    for pendiente in (1.0, 0.996, 1.004):                    # las tres se imprimen «1,00»
+        lectura = _con_pendiente(resultados_minimos, "independencia", pendiente, (0.9, 1.1))
+        assert "menor que 1: 0 de 1. Una pendiente" in lectura   # ni de un lado ni del otro
+        assert "En sentido contrario, la estimación de la pendiente de la comb" not in lectura
+    assert ("Las comparaciones con un umbral o con un valor de referencia se hacen con las "
+            "cifras tal como se imprimen: «por encima» y «por debajo» son estrictos, y un "
+            "umbral «≥» se alcanza también con la igualdad.") in lectura
+    # «exagera» y «se queda corta» se dicen del intervalo, nunca de la estimacion sola
+    assert not re.search(r"que 1 \((exagera|se queda)", lectura)
+
+
+def test_la_pendiente_del_extremo_conservador_se_lee_con_su_intervalo(resultados_minimos):
+    lectura = _con_pendiente(resultados_minimos, "conservador", 1.12, (1.02, 1.21))
+    assert ("- **El extremo conservador.** Celdas destacadas en las que la estimación de su "
+            "pendiente es mayor que 1: 1 de 1: (0,3; 0,3), 1,12 (IC 95 %: 1,02 a 1,21)."
+            ) in lectura
+    assert ("- De esas, con el intervalo entero por encima de 1 (se queda corto): 1 de 1: "
+            "(0,3; 0,3).") in lectura
+    # la estimacion por encima de 1 no basta si el intervalo contiene el 1
+    lectura = _con_pendiente(resultados_minimos, "conservador", 1.03, (0.95, 1.12))
+    assert "pendiente es mayor que 1: 1 de 1: (0,3; 0,3), 1,03" in lectura
+    assert "- De esas, con el intervalo entero por encima de 1 (se queda corto): 0 de 1." in lectura
+    # un extremo 1,004 se imprime «1,00»: no queda por encima de 1
+    lectura = _con_pendiente(resultados_minimos, "conservador", 1.13, (1.004, 1.17))
+    assert "(0,3; 0,3), 1,13 (IC 95 %: 1,00 a 1,17)." in lectura
+    assert "- De esas, con el intervalo entero por encima de 1 (se queda corto): 0 de 1." in lectura
+    lectura = _con_pendiente(resultados_minimos, "conservador", 1.13, (1.006, 1.17))
+    assert ("- De esas, con el intervalo entero por encima de 1 (se queda corto): 1 de 1: "
+            "(0,3; 0,3).") in lectura
+    # y si queda entero por debajo, ni el extremo conservador basta: se dice
+    lectura = _con_pendiente(resultados_minimos, "conservador", 0.9, (0.84, 0.98))
+    assert "pendiente es mayor que 1: 0 de 1." in lectura
+    assert ("- En sentido contrario, la estimación de la pendiente del extremo conservador "
+            "es menor que 1: 1 de 1: (0,3; 0,3), 0,90 (IC 95 %: 0,84 a 0,98).") in lectura
+    assert ("- De esas, con el intervalo entero por debajo de 1 (también el extremo "
+            "conservador exagera): 1 de 1: (0,3; 0,3).") in (
+        lectura.split("**El extremo conservador.**")[1])
+    assert not re.search(r"que 1 \((también|se queda)", lectura)
+
+
+def test_las_diferencias_pareadas_se_leen_por_su_intervalo(resultados_minimos):
+    def lectura(clave, metrica, intervalo):
+        otro = copy.deepcopy(resultados_minimos)
+        otro["celdas"][3]["intervalos"][f"pareadas.{clave}.{metrica}"] = list(intervalo)
+        return _seccion(informe.redactar(otro), "Lectura de los resultados")
+
+    def frase(texto, titulo):
+        return next(l for l in texto.splitlines()
+                    if l.startswith(f"- **Frente a la imagen sola: {titulo}.**"))
+
+    cabecera = "Celdas destacadas con intervalo: 1. "
+    la = frase(lectura("independencia", "auc", (0.01, 0.03)), "ΔAUC, combinación, independencia")
+    assert la.endswith(cabecera + "Con el intervalo entero del lado de la mejora (por "
+                       "encima de 0): 1, que es (0,3; 0,3). Con el intervalo entero del lado "
+                       "contrario: ninguna. Con el 0 dentro del intervalo: ninguna.")
+    la = frase(lectura("independencia", "auc", (-0.03, -0.01)), "ΔAUC, combinación, independencia")
+    assert la.endswith("(por encima de 0): ninguna. Con el intervalo entero del lado "
+                       "contrario: 1, que es (0,3; 0,3). Con el 0 dentro del intervalo: "
+                       "ninguna.")
+    for intervalo in ((-0.01, 0.0), (-0.01, 0.02), (0.0004, 0.03), (-0.03, -0.0004)):
+        la = frase(lectura("independencia", "auc", intervalo),
+                   "ΔAUC, combinación, independencia")
+        assert la.endswith("(por encima de 0): ninguna. Con el intervalo entero del lado "
+                           "contrario: ninguna. Con el 0 dentro del intervalo: 1, que es "
+                           "(0,3; 0,3)."), intervalo
+    # en el Brier la mejora es bajar
+    la = frase(lectura("conservador", "brier", (-0.02, -0.01)),
+               "ΔBrier, combinación, extremo conservador")
+    assert la.endswith(cabecera + "Con el intervalo entero del lado de la mejora (por "
+                       "debajo de 0): 1, que es (0,3; 0,3). Con el intervalo entero del lado "
+                       "contrario: ninguna. Con el 0 dentro del intervalo: ninguna.")
+    la = frase(lectura("conservador", "brier", (0.001, 0.01)),
+               "ΔBrier, combinación, extremo conservador")
+    assert la.endswith("Con el intervalo entero del lado contrario: 1, que es (0,3; 0,3). "
+                       "Con el 0 dentro del intervalo: ninguna.")
+    # sin intervalos no hay frase
+    otro = copy.deepcopy(resultados_minimos)
+    for celda in otro["celdas"]:
+        celda.pop("intervalos", None)
+    assert "Frente a la imagen sola" not in informe.redactar(otro)
+    assert len([l for l in informe.redactar(resultados_minimos).splitlines()
+                if l.startswith("- **Frente a la imagen sola: ")]) == 4
+
+
+def test_las_colas_en_todas_sus_ramas():
+    def colas(bajo, sobre):
+        dentro = None if bajo is None or sobre is None else 1.0 - bajo - sobre
+        return informe._colas({"bajo": bajo, "sobre": sobre, "contencion": dentro})
+
+    assert colas(None, 0.1) == colas(0.1, None) == "no hay casos con horquilla"
+    assert colas(0.0, 0.0) == "queda dentro el 100,0 %; ninguna cola tiene casos"
+    assert colas(0.2, 0.2) == ("queda dentro el 60,0 %; las dos colas pesan lo mismo "
+                               "(20,0 % cada una)")
+    # las dos se imprimen «20,0 %»: ninguna es «la mayor»
+    assert colas(0.2001, 0.2004) == ("queda dentro el 60,0 %; las dos colas pesan lo mismo "
+                                     "(20,0 % cada una)")
+    # con un solo caso en una cola no se dice que ninguna tiene casos
+    assert colas(0.0004, 0.0) == ("queda dentro el 100,0 %; las dos colas pesan lo mismo "
+                                  "(0,0 % cada una)")
+    assert colas(0.3, 0.1) == ("queda dentro el 60,0 %; la cola mayor es la del lado "
+                               "conservador (30,0 %, frente a 10,0 % más allá de la "
+                               "independencia)")
+    assert colas(0.1, 0.3) == ("queda dentro el 60,0 %; la cola mayor es la de más allá de "
+                               "la independencia (30,0 %, frente a 10,0 % por el lado "
+                               "conservador)")
+
+
+def test_el_reparto_de_0c(texto, resultados_minimos):
+    titulo = "0C: optimismo de la derivación (cálculo, no experimento)"
+    por_puntuacion = resultados_minimos["celdas"][0]["optimismo_de_la_derivacion"][
+        "por_puntuacion"]
+    assert [(f["k"], f["rv_derivacion"], f["rv_validacion"]) for f in por_puntuacion] == [
+        (0, 0.12, 0.19), (1, 0.20, 0.19), (2, 0.70, 1.04),
+        (3, 1.64, 1.04), (4, 7.18, 8.33), (5, 17.5, 8.33)]
+    assert ("La RV de la derivación es más extrema que la de validación en k = 0, 2, 3 y 5 "
+            "y menos extrema en k = 1 y 4 (más extrema: más lejos de 1). El «optimismo» de "
+            "la derivación no es uniforme.") in _seccion(texto, titulo)
+
+    def con(validacion):
+        otro = copy.deepcopy(resultados_minimos)
+        filas = otro["celdas"][0]["optimismo_de_la_derivacion"]["por_puntuacion"]
+        for fila, rv in zip(filas, validacion):
+            fila["rv_validacion"] = rv
+        return _seccion(informe.redactar(otro), titulo)
+
+    todas = con([0.5, 0.5, 0.9, 1.1, 2.0, 2.0])
+    assert ("La RV de la derivación es más extrema que la de validación en k = 0, 1, 2, 3, "
+            "4 y 5 (más extrema: más lejos de 1).") in todas
+    assert "no es uniforme" not in todas
+    ninguna = con([0.01, 0.01, 0.1, 9.0, 99.0, 99.0])
+    assert "La RV de la derivación es menos extrema en k = 0, 1, 2, 3, 4 y 5 (" in ninguna
+    assert "no es uniforme" not in ninguna
+    empate = con([0.12, 0.19, 1.04, 1.04, 8.33, 8.33])
+    assert ("más extrema que la de validación en k = 2, 3 y 5, menos extrema en k = 1 y 4 "
+            "y igual de extrema en k = 0 (") in empate
+    assert "no es uniforme" in empate
+    # «más» e «igual», sin «menos»: tampoco es uniforme
+    sin_menos = con([0.12, 0.5, 0.9, 1.1, 2.0, 2.0])
+    assert ("La RV de la derivación es más extrema que la de validación en k = 1, 2, 3, 4 "
+            "y 5 y igual de extrema en k = 0 (") in sin_menos
+    assert "no es uniforme" in sin_menos
+    solo_iguales = con([0.12, 0.20, 0.70, 1.64, 7.18, 17.5])
+    assert "La RV de la derivación es igual de extrema en k = 0, 1, 2, 3, 4 y 5 (" in solo_iguales
+    assert "no es uniforme" not in solo_iguales
+    # «menos» e «igual», sin «más»: nunca es mas extrema, y no hay optimismo
+    # que repartir
+    sin_mas = con([0.12, 0.01, 0.1, 9.0, 99.0, 99.0])
+    assert ("La RV de la derivación es menos extrema en k = 1, 2, 3, 4 y 5 y igual de "
+            "extrema en k = 0 (") in sin_mas
+    assert "no es uniforme" not in sin_mas
+
+
+def test_la_nota_del_rho_extremo_sale_de_la_rejilla(texto, resultados_minimos):
+    nota = "sobre la puntuación es un caso extremo, no plausible"
+    assert max(resultados_minimos["parametros"]["rejilla"]) < informe.RHO_EXTREMO
+    assert nota not in texto
+    otro = copy.deepcopy(resultados_minimos)
+    otro["parametros"]["rejilla"] = [0.0, 0.3, 0.6]
+    assert f"Un ρ de 0,6 {nota}" in _seccion(
+        informe.redactar(otro), "Dependencia entre clínica e imagen")
+
+
+def test_sin_destacadas_y_sin_sensibilidad_se_dice(resultados_minimos):
+    otro = copy.deepcopy(resultados_minimos)
+    for celda in otro["celdas"]:
+        celda["destacada"] = False
+        celda.pop("sensibilidad_al_previo", None)
+    documento = informe.redactar(otro)
+    assert "esta corrida no tiene celdas destacadas." in _seccion(
+        documento, "Insumos y parámetros")
+    assert "Esta corrida no tiene celdas destacadas." in _seccion(
+        documento, "Cuánto de su evidencia conserva la puntuación")
+    assert "- Esta corrida no tiene celdas destacadas." in _seccion(
+        documento, "Lectura de los resultados")
+    assert "Esta corrida no calculó la sensibilidad al previo." in _seccion(
+        documento, "Sensibilidad al previo")
+    assert "Hacia qué lado cae el oráculo" not in documento
+
+
+def test_la_fraccion_de_0a_solo_se_da_por_entera_si_lo_es(texto, resultados_minimos):
+    titulo = "Cuánto de su evidencia conserva la puntuación"
+    assert ("es 1,00 con la imagen a favor y 1,00 con la imagen en contra: sin dependencia "
+            "la puntuación conserva toda su evidencia.") in _seccion(texto, titulo)
+    otro = copy.deepcopy(resultados_minimos)
+    otro["celdas"][0]["escala_legible"]["en_contra"]["fraccion_mediana_extremas"] = 0.8
+    escala = _seccion(informe.redactar(otro), titulo)
+    assert ("es 1,00 con la imagen a favor y 0,80 con la imagen en contra: **sin "
+            "dependencia tendría que ser 1,00 en los dos lados, y no lo es.**") in escala
+    assert "conserva toda su evidencia." not in escala.split("### Celda")[0].split("\n\n")[-2]
+
+
+def test_la_expectativa_no_se_presenta_como_declarada_a_ciegas(texto):
+    horquilla = _seccion(texto, "La horquilla frente al oráculo")
+    assert "**Hipótesis declarada de antemano, a refutar celda a celda:**" in horquilla
+    assert "medida sobre el conjunto durante el diseño y no declarada a ciegas" in horquilla
+    assert "antes de correr nada" not in texto
+
+
+def test_las_semillas_van_sin_separador_y_la_prevalencia_es_la_del_conjunto(
+        texto, resultados_minimos):
+    insumos = _seccion(texto, "Insumos y parámetros")
+    assert "(semilla 20261009)" in insumos
+    assert "clínica de la réplica b, 10000 + b; placas de la réplica b, 20000 + b." in insumos
+    assert "20 261 009" not in texto and "10 000" not in texto
+    assert "con la semilla 1 sobre todas las placas" in _seccion(
+        texto, "Lectura de los resultados")
+    assert "que cubre el redondeo de las RV publicadas" in insumos
+    assert "redondeo máximo" not in texto
+    otro = copy.deepcopy(resultados_minimos)
+    otro["insumos"]["positivas"] = 1000
+    otro["insumos"]["placas"] = 4000
+    insumos = _seccion(informe.redactar(otro), "Insumos y parámetros")
+    assert "(una por paciente; 1 000 positivas, prevalencia 0,2500)" in insumos
+    # el previo es el del calibrador, y si no es la prevalencia del conjunto se dice
+    assert ("Previo del análisis principal: 0,2215, el del calibrador, que **no es la "
+            "prevalencia del conjunto** (0,2500). El previo desplegado, 0,1466,") in insumos
+    assert ("Previo del análisis principal: 0,2215, el del calibrador, que es la "
+            "prevalencia del conjunto. El previo desplegado, 0,1466,") in _seccion(
+        texto, "Insumos y parámetros")
+    assert "la prevalencia de la población simulada" not in texto
+    sensibilidad = _seccion(texto, "Sensibilidad al previo")
+    assert "usa como previo 0,2215 (el de «Insumos y parámetros»)" in sensibilidad
+    assert "donde el análisis principal usa 0,2215 tiene un efecto analítico" in sensibilidad
+    assert "previo correcto" not in texto
+    assert "cifras que lo llevan (comparadas sin redondear)." in _seccion(
+        texto, "Lectura de los resultados")
+    assert "(estimaciones puntuales):" in _seccion(texto, "Lectura de los resultados")
+
+
+def test_las_columnas_de_texto_van_a_la_izquierda(texto):
+    assert informe._tabla(["celda", "n", "veredicto"], [["a", "1", "x"]],
+                          texto=("veredicto",)) == [
+        "| celda | n | veredicto |", "| :--- | ---: | :--- |", "| a | 1 | x |", ""]
+    assert informe._tabla(["a", "b"], [])[1] == "| :--- | ---: |"
+    guias = {l: texto.splitlines()[i + 1] for i, l in enumerate(texto.splitlines())
+             if l.startswith("| ") and texto.splitlines()[i + 1].startswith("| :---")}
+    assert guias["| celda | contención | umbral | veredicto |"].endswith("| :--- |")
+    assert all(g.endswith("| :--- |") for c, g in guias.items() if c.endswith("| rótulo |"))
+    assert all(g.endswith("| :--- |") for c, g in guias.items()
+               if c.endswith("| en qué sentido |"))
+
+
+def test_las_listas_de_celdas_no_llevan_doble_parentesis(texto, resultados_minimos):
+    otro = copy.deepcopy(resultados_minimos)
+    for celda in otro["celdas"][1:]:
+        celda["destacada"] = True
+    for documento in (texto, informe.redactar(otro)):
+        assert "((" not in documento and "))" not in documento
+    assert "las figuras que ya hubiera" not in texto
+    assert "que pueden ser de una corrida anterior" in informe.redactar(
+        resultados_minimos, {"contencion_rejilla": "f/contencion_rejilla.png"})
 ```
 
 - [ ] **Paso 2: Correr las pruebas y ver que fallan**
@@ -3818,6 +4515,35 @@ def _intervalo(celda: dict, ruta: str, formato) -> str:
     return f" (IC 95 %: {formato(par[0])} a {formato(par[1])})"
 
 
+def _par(celda: dict, ruta: str):
+    """El intervalo de esa ruta, o None si la celda no lo lleva o no son dos
+    cifras."""
+    par = (celda.get("intervalos") or {}).get(ruta)
+    if not par or _falta(par[0]) or _falta(par[1]):
+        return None
+    return par
+
+
+def _a_la_vista(x, decimales: int) -> float:
+    """La cifra con los decimales con que se imprime. Las comparaciones de la
+    prosa se hacen asi: el documento no afirma de una cifra lo que su forma
+    impresa no deja ver (un extremo 1,004 se imprime «1,00» y no queda por
+    encima de 1)."""
+    return float(f"{float(x):.{decimales}f}")
+
+
+def _umbral(x) -> str:
+    """Un umbral, en porcentaje y con los decimales que tenga: «90», «90,5».
+    Se imprime con la misma precision con que `_alcanza` lo compara."""
+    return f"{_a_la_vista(100.0 * x, 1):g}".replace(".", ",")
+
+
+def _alcanza(x, umbral) -> bool:
+    """Si una fraccion alcanza un umbral que se cumple con la igualdad («≥»),
+    con las dos cifras tal como se imprimen: en porcentaje y con un decimal."""
+    return _a_la_vista(100.0 * x, 1) >= _a_la_vista(100.0 * umbral, 1)
+
+
 def _cifra(celda: dict, ruta: str, decimales: int, signo: bool = False) -> str:
     return (numero(_valor(celda, ruta), decimales, signo)
             + _intervalo(celda, ruta, lambda v: numero(v, decimales, signo)))
@@ -3837,10 +4563,11 @@ def _cuartiles(d: dict, decimales: int = 2) -> str:
             f"({numero(d['q1'], decimales)} a {numero(d['q3'], decimales)})")
 
 
-def _tabla(cabeceras, filas, izquierdas: int = 1) -> list:
-    """Una tabla de Markdown: las primeras columnas a la izquierda, las
-    cifras a la derecha."""
-    guia = [":---" if i < izquierdas else "---:" for i in range(len(cabeceras))]
+def _tabla(cabeceras, filas, izquierdas: int = 1, texto=()) -> list:
+    """Una tabla de Markdown: las primeras columnas y las de `texto` (por su
+    cabecera) a la izquierda, las cifras a la derecha."""
+    guia = [":---" if i < izquierdas or cabecera in texto else "---:"
+            for i, cabecera in enumerate(cabeceras)]
     lineas = ["| " + " | ".join(cabeceras) + " |", "| " + " | ".join(guia) + " |"]
     lineas += ["| " + " | ".join(str(c) for c in fila) + " |" for fila in filas]
     return lineas + [""]
@@ -3852,6 +4579,26 @@ def _lista(nombres) -> str:
     if len(nombres) <= 1:
         return "".join(nombres)
     return ", ".join(nombres[:-1]) + " y " + nombres[-1]
+
+
+def _nombradas(celdas) -> str:
+    """Cuantas celdas y cuales: «ninguna», «1, que es a», «3, que son a, b y c»."""
+    nombres = [c["nombre"] for c in celdas]
+    if not nombres:
+        return "ninguna"
+    return f"{len(nombres)}, que {'es' if len(nombres) == 1 else 'son'} {_lista(nombres)}"
+
+
+def _con_su_cifra(celdas, ruta: str, decimales: int) -> str:
+    """«: a, 0,87 (IC 95 %: 0,81 a 0,92); b, ...», o nada si no hay celdas."""
+    if not celdas:
+        return ""
+    return ": " + "; ".join(f"{c['nombre']}, {_cifra(c, ruta, decimales)}" for c in celdas)
+
+
+def _semilla(x) -> str:
+    """Una semilla se copia y se pega: sin separador de millares."""
+    return SIN_CIFRA if _falta(x) else str(int(x))
 
 
 def _transiciones(bandas: dict) -> str:
@@ -3871,7 +4618,7 @@ def _frente_al_suelo(ece, suelo: dict) -> str:
     """La ECE solo se lee al lado de su suelo de ruido."""
     if _falta(ece) or _falta(suelo["p95"]):
         return "no se puede comparar con su suelo"
-    if ece <= suelo["p95"]:
+    if _a_la_vista(ece, 3) <= _a_la_vista(suelo["p95"], 3):
         return "no supera el percentil 95 de su suelo: no se distingue del ruido de muestreo"
     return "supera el percentil 95 de su suelo: hay descalibración más allá del ruido de muestreo"
 
@@ -3893,6 +4640,94 @@ def _destacadas(resultados: dict) -> list:
 def _completas(resultados: dict) -> list:
     """0A y las destacadas, en el orden de la rejilla."""
     return [c for c in resultados["celdas"] if c["nombre"] == "0A" or c["destacada"]]
+
+
+def _la_fila_0a_se_cumple(cero: dict) -> bool:
+    """Colas exactamente 0 y contencion 100 %: la comprobacion de la metrica.
+    Es exacta, no «tal como se imprime»: un solo caso fuera la incumple."""
+    h = cero["horquilla"]["todos"]
+    return h["bajo"] == 0 and h["sobre"] == 0 and h["contencion"] == 1
+
+
+def _estado_de_0a(cero: dict) -> str:
+    """`cumple`, `no_cumple` o `sin_casos`: sin casos con horquilla la
+    comprobacion no se puede hacer, que no es lo mismo que fallarla."""
+    h = cero["horquilla"]["todos"]
+    if _falta(h["bajo"]) or _falta(h["sobre"]) or not h["n"]:
+        return "sin_casos"
+    return "cumple" if _la_fila_0a_se_cumple(cero) else "no_cumple"
+
+
+def _la_fila_0a(cero: dict) -> str:
+    """Lo que se dice debajo de la fila 0A. Si no se cumple se da la cuenta:
+    la tabla puede imprimir «0,0 %» con un caso fuera."""
+    estado = _estado_de_0a(cero)
+    if estado == "sin_casos":
+        return ("**No se puede comprobar: no hay casos concordantes con horquilla, y las "
+                "tablas de la horquilla de este documento no se pueden leer.**")
+    if estado == "cumple":
+        return "Se cumple: la métrica de la horquilla pasa su comprobación en el caso nulo."
+    h = cero["horquilla"]["todos"]
+    fuera = round((h["bajo"] + h["sobre"]) * h["n"])
+    return (f"**NO se cumple: {'queda' if fuera == 1 else 'quedan'} fuera de la horquilla "
+            f"{entero(fuera)} de los {entero(h['n'])} concordantes. La métrica de la "
+            f"horquilla o el generador tienen un defecto, y las tablas de la horquilla de "
+            f"este documento no se pueden leer hasta corregirlo.**")
+
+
+def _que_previo(insumos: dict) -> str:
+    """El previo del analisis principal es el del calibrador: se dice si es,
+    como tiene que ser, la prevalencia del conjunto."""
+    del_conjunto = (insumos["positivas"] / insumos["placas"] if insumos["placas"] else None)
+    if numero(del_conjunto, 4) == numero(insumos["prevalencia"], 4):
+        return "el del calibrador, que es la prevalencia del conjunto"
+    return (f"el del calibrador, que **no es la prevalencia del conjunto** "
+            f"({numero(del_conjunto, 4)})")
+
+
+def _pendiente_de_0a(cero: dict) -> str:
+    """La pendiente de la independencia en 0A, con lo que dice su intervalo."""
+    par = _par(cero, "modelos.independencia.pendiente")
+    return (_cifra(cero, "modelos.independencia.pendiente", 2)
+            + ("" if par is None else
+               "; su intervalo contiene el 1"
+               if _a_la_vista(par[0], 2) <= 1 <= _a_la_vista(par[1], 2)
+               else "; su intervalo no contiene el 1"))
+
+
+VEREDICTOS = {
+    "se_sostiene": "se sostiene",
+    "no_se_sostiene": "no se sostiene",
+    "no_se_puede_decir": "no se puede decir: la estimación y su intervalo no quedan "
+                         "enteros a un lado del umbral",
+    "punto_si": "se sostiene (estimación puntual, sin intervalo)",
+    "punto_no": "no se sostiene (estimación puntual, sin intervalo)",
+    "sin_casos": "no se puede decir: no hay casos concordantes con horquilla",
+}
+
+
+def _veredicto(celda: dict) -> tuple:
+    """(clave, texto) del veredicto de la hipotesis en una celda. Con
+    intervalo decide el intervalo ENTERO, y tiene que quedar del mismo lado
+    del umbral que la estimacion; sin el, solo esta la estimacion puntual, y
+    el texto lo dice. Todo, con las cifras tal como se imprimen: una
+    contencion que se imprime «90,0 %» alcanza un umbral del 90 %."""
+    umbral = celda["hipotesis"]["umbral"]
+    punto = celda["horquilla"]["todos"]["contencion"]
+    if _falta(punto):
+        clave = "sin_casos"
+    else:
+        par = _par(celda, "horquilla.todos.contencion")
+        alcanza = _alcanza(punto, umbral)
+        if par is None:
+            clave = "punto_si" if alcanza else "punto_no"
+        elif alcanza and _alcanza(par[0], umbral):
+            clave = "se_sostiene"
+        elif not alcanza and not _alcanza(par[1], umbral):
+            clave = "no_se_sostiene"
+        else:
+            clave = "no_se_puede_decir"
+    return clave, VEREDICTOS[clave]
 
 
 # ---------------------------------------------------------------------------
@@ -3929,13 +4764,15 @@ def _insumos(r: dict) -> list:
         "",
         f"- **Placas y verdad:** las {entero(i['placas'])} placas del conjunto de prueba de "
         f"RSNA (una por paciente; {entero(i['positivas'])} positivas, prevalencia "
-        f"{numero(i['prevalencia'], 4)}), nunca usadas para entrenar ni calibrar, con su "
+        f"{numero(i['positivas'] / i['placas'] if i['placas'] else None, 4)}), nunca "
+        f"usadas para entrenar ni calibrar, con su "
         f"etiqueta real de opacidad. Es un desenlace análogo al de Heckerling (infiltrado "
         f"radiográfico) en una población distinta: RSNA no es una cohorte con sospecha de "
         f"neumonía.",
         "- **Clínica:** a cada placa se le sortea la puntuación de Heckerling dada su "
         "etiqueta, con las frecuencias publicadas de la cohorte de derivación. No se "
-        "inventa la exactitud de la regla: se usa la publicada, tal como la usa el sistema.",
+        "inventa la exactitud de la regla: se usa la publicada, tal como la usa el sistema. "
+        "Cada placa con su clínica sorteada es una viñeta.",
         "- **Dependencia:** la estructura de dependencia entre clínica e imagen es un "
         "supuesto: nula en 0A y barrida en el resto de la rejilla.",
         "- **Transporte:** el generador supone que la distribución de la puntuación por "
@@ -3948,27 +4785,27 @@ def _insumos(r: dict) -> list:
         f"(sha256 `{huella(i['crudas_sha256'])}…`), generadas con los pesos de sha256 "
         f"`{huella(i['pesos_sha256'])}…`.",
         f"- Calibrador: `{i['calibrador']}` (sha256 `{huella(i['calibrador_sha256'])}…`).",
-        f"- Previo del análisis principal: {numero(i['prevalencia'], 4)}, la prevalencia de "
-        f"la población simulada. El previo desplegado, "
+        f"- Previo del análisis principal: {numero(i['prevalencia'], 4)}, {_que_previo(i)}. "
+        f"El previo desplegado, "
         f"{numero(p['previo_desplegado'], 4)}, solo entra en la sensibilidad al previo.",
         f"- Rejilla: ρ1 y ρ0 toman los valores {' / '.join(rho(x) for x in p['rejilla'])}: "
         f"{entero(len(r['celdas']))} celdas. El origen es 0A y se cuenta aparte; "
         + (f"celdas destacadas: {_lista(destacadas)}." if destacadas
            else "esta corrida no tiene celdas destacadas."),
         f"- Bootstrap: {replicas}.",
-        f"- Semillas: clínica de la estimación puntual, {entero(p['semilla_puntual'])}; "
-        f"clínica de la réplica b, {entero(p['semilla_clinica'])} + b; placas de la réplica "
-        f"b, {entero(p['semilla_indices'])} + b.",
+        f"- Semillas: clínica de la estimación puntual, {_semilla(p['semilla_puntual'])}; "
+        f"clínica de la réplica b, {_semilla(p['semilla_clinica'])} + b; placas de la "
+        f"réplica b, {_semilla(p['semilla_indices'])} + b.",
         f"- Tolerancia de las colas de la horquilla: ε = {numero(p['epsilon'], 3)} log-odds, "
-        f"el redondeo máximo de las RV publicadas (la misma tolerancia de la comprobación "
-        f"0A).",
+        f"que cubre el redondeo de las RV publicadas (la misma tolerancia de la "
+        f"comprobación 0A).",
         f"- ECE: {entero(p['bins'])} tramos de igual masa, con los empates rotos por el orden "
         f"del identificador de la placa. Su suelo de ruido: "
         f"{entero(p['repeticiones_suelo'])} juegos de etiquetas simuladas con las "
-        f"probabilidades del propio modelo (semilla {entero(p['semilla_suelo'])}); se "
+        f"probabilidades del propio modelo (semilla {_semilla(p['semilla_suelo'])}); se "
         f"publican la media y el percentil 95.",
         f"- Hipótesis de la horquilla: contención ≥ "
-        f"{numero(100.0 * p['hipotesis_contencion'], 0)} % de los concordantes.",
+        f"{_umbral(p['hipotesis_contencion'])} % de los concordantes.",
         "",
     ]
 
@@ -4017,8 +4854,8 @@ def _escenario_0a(r: dict) -> list:
         f"de ε = {numero(r['parametros']['epsilon'], 3)} log-odds en todos los casos. Son "
         "pruebas, no estadísticas: una RV o un corte mutados las hacen fallar.",
         "",
-        "Lo que 0A demuestra es que el sistema calcula lo que dice calcular; no que la "
-        "posterior sea exacta en pacientes.",
+        "Lo que 0A puede demostrar es que el sistema calcula lo que dice calcular; no que "
+        "la posterior sea exacta en pacientes.",
         "",
     ]
     cero = _cero(r)
@@ -4026,7 +4863,6 @@ def _escenario_0a(r: dict) -> list:
         return lineas + ["Esta corrida no incluye la celda 0A.", ""]
     n = cero["recuentos"]
     h = cero["horquilla"]["todos"]
-    limpia = h["bajo"] == 0 and h["sobre"] == 0 and h["contencion"] == 1
     lineas += [
         f"Los cuatro modelos puntuales en 0A, sobre los {entero(n['asma_conocida'])} casos "
         f"con el asma conocida:",
@@ -4047,9 +4883,7 @@ def _escenario_0a(r: dict) -> list:
                 [[cero["nombre"], entero(h["n"]), _fraccion(cero, "horquilla.todos.bajo"),
                   _fraccion(cero, "horquilla.todos.sobre"),
                   _fraccion(cero, "horquilla.todos.contencion")]]),
-        ("Se cumple: la métrica de la horquilla mide lo que tiene que medir." if limpia else
-         "**NO se cumple: la métrica de la horquilla o el generador tienen un defecto, y las "
-         "tablas de la horquilla de este documento no se pueden leer hasta corregirlo.**"),
+        _la_fila_0a(cero),
         "",
     ]
     return lineas
@@ -4115,7 +4949,7 @@ def _dependencia(r: dict) -> list:
 
 def _horquilla(r: dict) -> list:
     p = r["parametros"]
-    umbral = numero(100.0 * p["hipotesis_contencion"], 0)
+    umbral = _umbral(p["hipotesis_contencion"])
     celdas = _completas(r)
     lineas = [
         "## La horquilla frente al oráculo",
@@ -4135,9 +4969,9 @@ def _horquilla(r: dict) -> list:
         "",
         f"**Hipótesis declarada de antemano, a refutar celda a celda:** «el oráculo queda "
         f"dentro de la horquilla en ≥ {umbral} % de los concordantes». La expectativa, "
-        f"escrita antes de correr nada, era que solo se sostuviera en 0A y en las celdas más "
-        f"suaves. Una contención baja es un resultado igual de publicable, y obliga a "
-        f"repensar la cota, no a ocultarla.",
+        f"medida sobre el conjunto durante el diseño y no declarada a ciegas, era que solo "
+        f"se sostuviera en 0A y en las celdas más suaves. Una contención baja es un "
+        f"resultado igual de publicable, y obliga a repensar la cota, no a ocultarla.",
         "",
     ]
     filas = []
@@ -4154,13 +4988,18 @@ def _horquilla(r: dict) -> list:
     sin_horquilla = sum(c["horquilla"]["todos"]["sin_horquilla"] for c in celdas)
     lineas += [f"Casos concordantes sin horquilla (RV de imagen exactamente 1) en estas "
                f"celdas: {entero(sin_horquilla)}.", "",
-               "El veredicto, celda a celda, sobre todos los concordantes:", ""]
+               "El veredicto, celda a celda, sobre todos los concordantes. Donde hay "
+               "intervalo decide el intervalo entero: si la estimación y su intervalo no "
+               "quedan enteros a un lado del umbral, no se puede decir. Donde no lo hay "
+               "solo está la estimación puntual, y el veredicto lo dice. Se decide con la "
+               f"contención tal como se imprime (un «{porcentaje(p['hipotesis_contencion'])}» "
+               f"alcanza un umbral del {umbral} %); el campo `se_sostiene` del fichero de "
+               "resultados se calcula sin redondear:", ""]
     lineas += _tabla(
         ["celda", "contención", "umbral", "veredicto"],
         [[c["nombre"], _fraccion(c, "horquilla.todos.contencion"),
-          f"≥ {numero(100.0 * c['hipotesis']['umbral'], 0)} %",
-          "se sostiene" if c["hipotesis"]["se_sostiene"] else "no se sostiene"]
-         for c in r["celdas"]])
+          f"≥ {_umbral(c['hipotesis']['umbral'])} %", _veredicto(c)[1]]
+         for c in r["celdas"]], texto=("veredicto",))
     lineas += ["**Casos discordantes** (clínica e imagen en lados opuestos): el sistema da un "
                "solo número, el de la independencia. Error frente al oráculo, en log-odds; "
                "el sesgo es sistema menos oráculo:", ""]
@@ -4205,10 +5044,15 @@ def _escala_legible(r: dict) -> list:
     ]
     cero = _cero(r)
     if cero is not None:
+        fracciones = [cero["escala_legible"][lado]["fraccion_mediana_extremas"]
+                      for lado, _ in LADOS_DE_LA_IMAGEN]
+        entera = all(numero(f, 2) == numero(1.0, 2) for f in fracciones)
         lineas += ["En 0A la fracción mediana de las puntuaciones extremas (k ≤ 1 y k ≥ 4) es "
-                   + _lista([f"{numero(cero['escala_legible'][lado]['fraccion_mediana_extremas'], 2)} "
-                             f"{nombre}" for lado, nombre in LADOS_DE_LA_IMAGEN])
-                   + ": sin dependencia la puntuación conserva toda su evidencia.", ""]
+                   + _lista([f"{numero(f, 2)} {nombre}"
+                             for f, (_, nombre) in zip(fracciones, LADOS_DE_LA_IMAGEN)])
+                   + (": sin dependencia la puntuación conserva toda su evidencia." if entera
+                      else f": **sin dependencia tendría que ser {numero(1.0, 2)} en los dos "
+                           f"lados, y no lo es.**"), ""]
     destacadas = _destacadas(r)
     if not destacadas:
         return lineas + ["Esta corrida no tiene celdas destacadas.", ""]
@@ -4227,7 +5071,7 @@ def _escala_legible(r: dict) -> list:
                   numero(f["casos_esperados"], 1), _cuartiles(f["log_rv"]),
                   _cuartiles(f["fraccion"]), porcentaje(f["signo_invertido"]),
                   "poco informativa" if f["poco_informativa"] else ""]
-                 for f in e["por_puntuacion"]])
+                 for f in e["por_puntuacion"]], texto=("rótulo",))
     return lineas
 
 
@@ -4262,17 +5106,17 @@ def _sensibilidad(r: dict) -> list:
     previo, principal = numero(s["previo"], 4), numero(s["previo_principal"], 4)
     d = s["desplazamiento_log_odds"]
     lineas += [
-        f"El análisis principal usa {principal}, la prevalencia de la población simulada; el "
-        f"sistema desplegado arranca con {previo}. Declarar {previo} en una población de "
-        f"{principal} tiene un efecto analítico: todas las odds posteriores se multiplican "
+        f"El análisis principal usa como previo {principal} (el de «Insumos y parámetros»); "
+        f"el sistema desplegado arranca con {previo}. Declarar {previo} donde el análisis "
+        f"principal usa {principal} tiene un efecto analítico: todas las odds posteriores se multiplican "
         f"por {numero(math.exp(d), 3)}, es decir, se desplazan {numero(d, 2, signo=True)} en "
         f"log-odds por igual. El intercepto de calibración debe moverse, por tanto, en "
         f"torno a {numero(-d, 2, signo=True)} respecto del principal.",
         "",
         "**El AUC no cambia** (un desplazamiento común no altera el orden de los casos) y "
         "no se reporta en esta tabla. **Esto no recomienda configurar el despliegue con "
-        f"{principal}:** es la prevalencia del conjunto de datos de un reto, no la de ningún "
-        "servicio.",
+        f"{principal}:** es el previo de un conjunto de datos de un reto, no la prevalencia "
+        "de ningún servicio.",
         "",
         f"Con el previo {previo} (casos con el asma conocida); «principal» es la misma cifra "
         f"con {principal}. Las bandas son < 20 %, 20-70 % y > 70 %:",
@@ -4295,7 +5139,7 @@ def _sensibilidad(r: dict) -> list:
     lineas += _tabla(["celda", "modelo", "Brier", "Brier principal", "ECE",
                       "suelo de la ECE (media; p95)", "ECE principal", "intercepto",
                       "intercepto principal", "diferencia", "cambian de banda",
-                      "en qué sentido"], filas, izquierdas=2)
+                      "en qué sentido"], filas, izquierdas=2, texto=("en qué sentido",))
     lineas += ["La categoría que el sistema imprime (todos los casos, también los del asma "
                "desconocida):", ""]
     lineas += _tabla(
@@ -4304,7 +5148,7 @@ def _sensibilidad(r: dict) -> list:
           f"{entero(c['sensibilidad_al_previo']['categoria_del_sistema']['cambian'])} de "
           f"{entero(c['sensibilidad_al_previo']['categoria_del_sistema']['casos'])}",
           _transiciones(c["sensibilidad_al_previo"]["categoria_del_sistema"])]
-         for c in celdas])
+         for c in celdas], texto=("en qué sentido",))
     return lineas
 
 
@@ -4314,15 +5158,19 @@ def _optimismo(r: dict) -> list:
     if cero is None or "optimismo_de_la_derivacion" not in cero:
         return lineas + ["Esta corrida no calculó 0C.", ""]
     o = cero["optimismo_de_la_derivacion"]
-    mas, menos = [], []
+    mas, menos, iguales = [], [], []
     for f in o["por_puntuacion"]:
-        extrema = abs(math.log(f["rv_derivacion"])) > abs(math.log(f["rv_validacion"]))
-        (mas if extrema else menos).append(str(f["k"]))
+        derivacion = abs(math.log(f["rv_derivacion"]))
+        validacion = abs(math.log(f["rv_validacion"]))
+        (mas if derivacion > validacion else menos if derivacion < validacion
+         else iguales).append(str(f["k"]))
     reparto = []
     if mas:
         reparto.append(f"más extrema que la de validación en k = {_lista(mas)}")
     if menos:
         reparto.append(f"menos extrema en k = {_lista(menos)}")
+    if iguales:
+        reparto.append(f"igual de extrema en k = {_lista(iguales)}")
     lineas += [
         "El sistema usa las RV de la cohorte de derivación, por puntuación; la validación "
         "externa solo las publica por bandas de puntuación. **Esto es un cálculo, no un "
@@ -4334,7 +5182,8 @@ def _optimismo(r: dict) -> list:
                 [[str(f["k"]), numero(f["rv_derivacion"], 2), numero(f["rv_validacion"], 2),
                   numero(f["diferencia_log"], 2, signo=True)] for f in o["por_puntuacion"]]),
         f"La RV de la derivación es {_lista(reparto)} (más extrema: más lejos de 1)."
-        + (" El «optimismo» de la derivación no es uniforme." if mas and menos else ""),
+        + (" El «optimismo» de la derivación no es uniforme."
+           if mas and (menos or iguales) else ""),
         "",
         f"Si el sistema usara las RV de la validación, cambiarían de banda "
         f"{entero(o['bandas']['cambian'])} de los {entero(o['bandas']['casos'])} casos con el "
@@ -4349,10 +5198,11 @@ def _colas(h: dict) -> str:
     dentro = f"queda dentro el {porcentaje(h['contencion'])}"
     bajo, sobre = h["bajo"], h["sobre"]
     if _falta(bajo) or _falta(sobre):
-        return "no hay casos"
+        return "no hay casos con horquilla"
     if bajo == 0 and sobre == 0:
         return f"{dentro}; ninguna cola tiene casos"
-    if bajo == sobre:
+    # cual es la mayor, con las dos tal como se imprimen
+    if _a_la_vista(100.0 * bajo, 1) == _a_la_vista(100.0 * sobre, 1):
         return f"{dentro}; las dos colas pesan lo mismo ({porcentaje(bajo)} cada una)"
     if sobre > bajo:
         return (f"{dentro}; la cola mayor es la de más allá de la independencia "
@@ -4378,7 +5228,9 @@ def _eje(celda: dict) -> str:
 
 
 def _fuera_de_su_intervalo(celdas) -> tuple:
-    """(cuantas cifras con intervalo quedan fuera de el, cuantas hay)."""
+    """(cuantas cifras con intervalo quedan fuera de el, cuantas hay). Se
+    compara SIN redondear: casi ninguno de esos intervalos se imprime, y la
+    frase lo dice."""
     fuera = total = 0
     for celda in celdas:
         for ruta, par in (celda.get("intervalos") or {}).items():
@@ -4390,86 +5242,159 @@ def _fuera_de_su_intervalo(celdas) -> tuple:
     return fuera, total
 
 
+def _del_lado(celdas, clave: str, debajo: bool) -> tuple:
+    """Las celdas cuya pendiente de `clave` queda por debajo (o por encima) de
+    1, las que de ellas llevan intervalo, y las que lo tienen ENTERO de ese
+    lado."""
+    ruta = f"modelos.{clave}.pendiente"
+
+    def de_ese_lado(v) -> bool:
+        return _a_la_vista(v, 2) < 1 if debajo else _a_la_vista(v, 2) > 1
+
+    puntuales = [c for c in celdas if not _falta(c["modelos"][clave]["pendiente"])
+                 and de_ese_lado(c["modelos"][clave]["pendiente"])]
+    con_intervalo = [c for c in puntuales if _par(c, ruta) is not None]
+    enteras = [c for c in con_intervalo if de_ese_lado(_par(c, ruta)[1 if debajo else 0])]
+    return puntuales, con_intervalo, enteras
+
+
+def _lectura_de_la_pendiente(celdas, clave: str, debajo: bool, esperada: str,
+                             contraria: str, quiere_decir: dict) -> list:
+    """Las frases de la pendiente de un modelo: primero el lado esperado y
+    despues, si alguna celda cae en el, el contrario. La estimacion sola no
+    decide: lo que la pendiente `quiere_decir` (por debajo de 1, True; por
+    encima, False) se dice solo de las celdas con el intervalo ENTERO de ese
+    lado."""
+    ruta = f"modelos.{clave}.pendiente"
+    lineas = []
+    for lado, frase in ((debajo, esperada), (not debajo, contraria)):
+        puntuales, con_intervalo, enteras = _del_lado(celdas, clave, lado)
+        if lado != debajo and not puntuales:
+            continue
+        lineas.append(f"- {frase}: {len(puntuales)} de {len(celdas)}"
+                      + _con_su_cifra(puntuales, ruta, 2) + ".")
+        if con_intervalo:
+            lineas.append(
+                f"- De esas, con el intervalo entero por {'debajo' if lado else 'encima'} "
+                f"de 1 ({quiere_decir[lado]}): {len(enteras)} de {len(con_intervalo)}"
+                + (": " + _lista(c["nombre"] for c in enteras) if enteras else "") + ".")
+    return lineas
+
+
+def _lectura_de_las_pareadas(celdas) -> list:
+    """Por combinacion y por metrica: en cuantas celdas el intervalo de la
+    diferencia frente a la imagen sola queda entero del lado de la mejora,
+    entero del contrario, o cruza el 0."""
+    lineas = []
+    for clave, nombre in COMBINADOS:
+        for metrica, titulo, sube in (("auc", "ΔAUC", True), ("brier", "ΔBrier", False)):
+            ruta = f"pareadas.{clave}.{metrica}"
+            con_intervalo = [c for c in celdas if _par(c, ruta) is not None]
+            if not con_intervalo:
+                continue
+            encima = [c for c in con_intervalo if _a_la_vista(_par(c, ruta)[0], 3) > 0]
+            debajo = [c for c in con_intervalo if _a_la_vista(_par(c, ruta)[1], 3) < 0]
+            cruzan = [c for c in con_intervalo if c not in encima and c not in debajo]
+            mejoran, empeoran = (encima, debajo) if sube else (debajo, encima)
+            lineas.append(
+                f"- **Frente a la imagen sola: {titulo}, {nombre}.** Celdas destacadas con "
+                f"intervalo: {len(con_intervalo)}. Con el intervalo entero del lado de la "
+                f"mejora (por {'encima' if sube else 'debajo'} de 0): "
+                f"{_nombradas(mejoran)}. Con el intervalo entero del lado contrario: "
+                f"{_nombradas(empeoran)}. Con el 0 dentro del intervalo: "
+                f"{_nombradas(cruzan)}.")
+    return lineas
+
+
+def _lectura_de_la_hipotesis(r: dict) -> str:
+    """0A aparte. En las demas, las que llevan intervalo se leen por el; en
+    las que no, se dice que solo hay estimacion puntual."""
+    umbral = _umbral(r["parametros"]["hipotesis_contencion"])
+    resto = [c for c in r["celdas"] if c["nombre"] != "0A"]
+    clases = {clave: [] for clave in VEREDICTOS}
+    for c in resto:
+        clases[_veredicto(c)[0]].append(c)
+    con_intervalo = clases["se_sostiene"] + clases["no_se_sostiene"] + clases["no_se_puede_decir"]
+    sin_intervalo = clases["punto_si"] + clases["punto_no"]
+    frases = [f"- **La hipótesis de la horquilla** (contención ≥ {umbral} % de los "
+              f"concordantes)."]
+    if _cero(r) is not None:
+        frases.append("0A es la comprobación de la métrica y se cuenta aparte.")
+    frases.append(f"Celdas con dependencia: {entero(len(resto))}; con intervalo, "
+                  f"{entero(len(con_intervalo))}.")
+    if con_intervalo:
+        frases += [
+            "Donde hay intervalo decide el intervalo entero.",
+            f"Con intervalo, celdas en las que se sostiene: "
+            f"{_nombradas(clases['se_sostiene'])}.",
+            f"Con intervalo, celdas en las que no se sostiene: "
+            f"{_nombradas(clases['no_se_sostiene'])}.",
+            f"Con intervalo, celdas en las que no se puede decir, porque la estimación y su "
+            f"intervalo no quedan enteros a un lado del umbral: "
+            f"{_nombradas(clases['no_se_puede_decir'])}."]
+    if sin_intervalo:
+        frases.append(
+            f"Sin intervalo, {entero(len(sin_intervalo))}: solo hay estimación puntual. "
+            f"Sin intervalo, celdas en las que la estimación alcanza el umbral: "
+            f"{_nombradas(clases['punto_si'])}.")
+    if clases["sin_casos"]:
+        frases.append(f"Celdas sin casos concordantes con horquilla: "
+                      f"{_nombradas(clases['sin_casos'])}.")
+    return " ".join(frases)
+
+
 def _lectura(r: dict) -> list:
     lineas = [
         "## Lectura de los resultados",
         "",
         "Estas frases se componen contando sobre las cifras de las tablas: dicen lo que las "
-        "cifras dicen, y nada más. Todo se refiere a la simulación.",
+        "cifras dicen, y nada más. Todo se refiere a la simulación. Las comparaciones con "
+        "un umbral o con un valor de referencia se hacen con las cifras tal como se "
+        "imprimen: «por encima» y «por debajo» son estrictos, y un umbral «≥» se alcanza "
+        "también con la igualdad.",
         "",
     ]
     destacadas = _destacadas(r)
-    total = len(destacadas)
     cero = _cero(r)
     if cero is not None:
-        par = (cero.get("intervalos") or {}).get("modelos.independencia.pendiente")
         lineas.append(
             f"- **0A.** La pendiente de la combinación por independencia es "
-            f"{_cifra(cero, 'modelos.independencia.pendiente', 2)}"
-            + ("" if not par or _falta(par[0]) or _falta(par[1]) else
-               ("; su intervalo contiene el 1" if par[0] <= 1 <= par[1]
-                else "; su intervalo no contiene el 1"))
-            + f". En la horquilla, {_colas(cero['horquilla']['todos'])}.")
+            f"{_pendiente_de_0a(cero)}. Horquilla: "
+            f"{_colas(cero['horquilla']['todos'])}.")
     if not destacadas:
         lineas.append("- Esta corrida no tiene celdas destacadas.")
     else:
-        debajo = [c for c in destacadas
-                  if not _falta(c["modelos"]["independencia"]["pendiente"])
-                  and c["modelos"]["independencia"]["pendiente"] < 1]
-        lineas.append(
-            f"- **La independencia.** Celdas destacadas en las que la pendiente de la "
-            f"combinación por independencia es menor que 1: {len(debajo)} de {total}"
-            + (" (" + "; ".join(
-                f"{c['nombre']}: {_cifra(c, 'modelos.independencia.pendiente', 2)}"
-                for c in debajo) + ")" if debajo else "")
-            + ". Una pendiente menor que 1 es la forma cuantitativa de «exagera».")
-        con_intervalo = [c for c in debajo
-                         if (c.get("intervalos") or {}).get("modelos.independencia.pendiente")]
-        if con_intervalo:
-            enteros = [c for c in con_intervalo
-                       if c["intervalos"]["modelos.independencia.pendiente"][1] < 1]
-            lineas.append(
-                f"- De esas, con el intervalo entero por debajo de 1: {len(enteros)} de "
-                f"{len(con_intervalo)}"
-                + (f" ({_lista(c['nombre'] for c in enteros)})" if enteros else "") + ".")
-        encima = [c for c in destacadas
-                  if not _falta(c["modelos"]["conservador"]["pendiente"])
-                  and c["modelos"]["conservador"]["pendiente"] > 1]
-        lineas.append(
-            f"- **El extremo conservador.** Celdas destacadas en las que su pendiente es "
-            f"mayor que 1 (se queda corto): {len(encima)} de {total}"
-            + (" (" + "; ".join(
-                f"{c['nombre']}: {_cifra(c, 'modelos.conservador.pendiente', 2)}"
-                for c in encima) + ")" if encima else "") + ".")
-        mejoran = [c for c in destacadas
-                   if (c.get("intervalos") or {}).get("pareadas.independencia.auc")
-                   and c["intervalos"]["pareadas.independencia.auc"][0] > 0]
-        if any((c.get("intervalos") or {}).get("pareadas.independencia.auc")
-               for c in destacadas):
-            lineas.append(
-                f"- **Discriminación.** Celdas destacadas en las que el intervalo de la "
-                f"diferencia de AUC entre la independencia y la imagen sola queda entero por "
-                f"encima de 0: {len(mejoran)} de {total}"
-                + (f" ({_lista(c['nombre'] for c in mejoran)})" if mejoran else "") + ".")
-    sostienen = [c["nombre"] for c in r["celdas"] if c["hipotesis"]["se_sostiene"]]
-    rejilla = len(r["celdas"])
-    lineas.append(
-        "- **La hipótesis de la horquilla.** "
-        + (f"Se sostiene en {len(sostienen)} de las {rejilla} celdas de la rejilla: "
-           f"{_lista(sostienen)}." if sostienen else
-           f"No se sostiene en ninguna de las {rejilla} celdas de la rejilla."))
+        independencia = _lectura_de_la_pendiente(
+            destacadas, "independencia", True,
+            "**La independencia.** Celdas destacadas en las que la estimación de la "
+            "pendiente de la combinación por independencia es menor que 1",
+            "En sentido contrario, la estimación de la pendiente de la combinación por "
+            "independencia es mayor que 1",
+            {True: "exagera", False: "se queda corta"})
+        independencia[0] += " Una pendiente menor que 1 es la forma cuantitativa de «exagera»."
+        lineas += independencia
+        lineas += _lectura_de_la_pendiente(
+            destacadas, "conservador", False,
+            "**El extremo conservador.** Celdas destacadas en las que la estimación de su "
+            "pendiente es mayor que 1",
+            "En sentido contrario, la estimación de la pendiente del extremo conservador es "
+            "menor que 1",
+            {True: "también el extremo conservador exagera", False: "se queda corto"})
+        lineas += _lectura_de_las_pareadas(destacadas)
+    lineas.append(_lectura_de_la_hipotesis(r))
     fuera, cifras = _fuera_de_su_intervalo(r["celdas"])
     if cifras:
         lineas.append(
             f"- **Los intervalos.** La estimación puntual usa la clínica sorteada con la "
-            f"semilla {entero(r['parametros']['semilla_puntual'])} sobre todas las placas; "
+            f"semilla {_semilla(r['parametros']['semilla_puntual'])} sobre todas las placas; "
             f"cada réplica remuestrea las placas y sortea otra clínica. El intervalo son los "
             f"percentiles de las réplicas y no está centrado en la estimación puntual: en "
             f"esta corrida, de {entero(r['parametros']['replicas'])} réplicas, quedan fuera "
             f"de su intervalo {entero(fuera)} de las {entero(cifras)} cifras que lo "
-            f"llevan.")
+            f"llevan (comparadas sin redondear).")
     if destacadas:
-        lineas += ["", "Hacia qué lado cae el oráculo, por eje y por lado de la imagen:", ""]
+        lineas += ["", "Hacia qué lado cae el oráculo, por eje y por lado de la imagen "
+                       "(estimaciones puntuales):", ""]
         for eje in EJES:
             celdas = [c for c in destacadas if _eje(c) == eje]
             if not celdas:
@@ -4484,19 +5409,37 @@ def _lectura(r: dict) -> list:
 
 
 def _limites(r: dict) -> list:
+    cero = _cero(r)
+    if cero is None:
+        corrida = ("Esta corrida no incluye la celda 0A: de los dos primeros puntos no dice "
+                   "nada.")
+    else:
+        m = cero["modelos"]["independencia"]
+        estado = {"cumple": "se cumple", "no_cumple": "**no se cumple**",
+                  "sin_casos": "**no se puede comprobar**"}[_estado_de_0a(cero)]
+        corrida = (
+            f"En esta corrida, la fila 0A de la horquilla {estado}; la "
+            f"pendiente de la combinación por independencia en 0A es "
+            f"{_pendiente_de_0a(cero)}; y su ECE ({numero(m['ece'], 3)}) "
+            f"{_frente_al_suelo(m['ece'], m['suelo'])}.")
     return [
         "## Lo que esta simulación puede afirmar y lo que no",
         "",
-        "**Puede afirmar:**",
+        "**Puede decir:**",
         "",
-        "- que el sistema reproduce caso a caso la posterior del generador (0A);",
-        "- que, **si** la puntuación tiene la exactitud publicada y es condicionalmente "
+        f"- si el sistema reproduce caso a caso la posterior del generador (0A: lo "
+        f"comprueban las pruebas de `{PRUEBA_0A}`; la fila 0A de la horquilla lo acompaña, "
+        f"como control más débil y solo para los concordantes);",
+        "- si, **cuando** la puntuación tiene la exactitud publicada y es condicionalmente "
         "independiente de la imagen, la aritmética y la calibración de la imagen dan una "
         "posterior calibrada en el conjunto de prueba de RSNA;",
         "- cuánto se desvía la independencia de la posterior del generador **bajo cada "
         "supuesto de dependencia**, en qué dirección, y dónde cae el oráculo respecto a la "
         "horquilla;",
         "- cuánto desplaza la calibración un previo equivocado.",
+        "",
+        corrida + " Lo demás se lee en «Lectura de los resultados» y, lo del previo, en "
+                  "«Sensibilidad al previo».",
         "",
         "**No puede afirmar** exactitud clínica real ni cuánto aporta la clínica en "
         "pacientes: las viñetas no son pacientes, la exactitud es la publicada y la "
@@ -4529,7 +5472,7 @@ def _figuras(r: dict, figuras: dict) -> list:
     orden = [n for n in orden if n in figuras] + sorted(n for n in figuras if n not in orden)
     lineas += ["El guion las dibuja leyendo el mismo fichero de resultados que este "
                "documento. Con `--sin-figuras` no se redibujan: se enlazan las que ya "
-               "hubiera en la carpeta.", ""]
+               "hubiera en la carpeta, que pueden ser de una corrida anterior.", ""]
     for nombre in orden:
         lineas += [f"![{_titulo_de_figura(nombre, r)}]({figuras[nombre]})", ""]
     return lineas
@@ -4578,7 +5521,7 @@ def redactar(resultados: dict, figuras: dict | None = None) -> str:
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_informe.py`
 
-Esperado: `20 passed` (casi todo el tiempo es la fixture `resultados_minimos`, que calcula la rejilla mínima).
+Esperado: `38 passed` (casi todo el tiempo es la fixture `resultados_minimos`, que calcula la rejilla mínima).
 
 - [ ] **Paso 5: Escribir las pruebas del script, que fallan**
 
@@ -4734,7 +5677,7 @@ def test_solo_documento_escribe_el_documento_sin_recalcular(
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_validar_combinacion.py`
 
-Esperado: `3 failed, 22 passed`:
+Esperado: `3 failed, 23 passed`:
 
 ```
 E       AttributeError: module 'validar_combinacion' has no attribute 'escribir_analisis'
@@ -4743,7 +5686,7 @@ E       FileNotFoundError: [Errno 2] No such file or directory: '...\\test_solo_
 FAILED tests/test_validar_combinacion.py::test_escribir_analisis_enlaza_las_figuras_con_rutas_relativas
 FAILED tests/test_validar_combinacion.py::test_main_escribe_el_analisis_leyendo_el_json
 FAILED tests/test_validar_combinacion.py::test_solo_documento_escribe_el_documento_sin_recalcular
-3 failed, 22 passed
+3 failed, 23 passed
 ```
 
 `test_solo_documento_sin_json_sale_con_un_mensaje` y la prueba modificada en (b) PASAN ya en este
@@ -4834,7 +5777,7 @@ y sustitúyelo por:
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_validar_combinacion.py`
 
-Esperado: `25 passed`. Después comprueba que ninguna prueba ha escrito en el repo:
+Esperado: `26 passed`. Después comprueba que ninguna prueba ha escrito en el repo:
 
 Run: `git status --short docs/`
 
@@ -4854,7 +5797,7 @@ solo se ve leyéndolo. Corre el script con pocas réplicas y con TODO fuera del 
 Run: `C:/venv-copiloto/Scripts/python.exe -B scripts/validar_combinacion.py --replicas 20 --salida <CARPETA_TEMPORAL>/docs/validacion-semisintetica --analisis <CARPETA_TEMPORAL>/docs/validacion-semisintetica-sp5.md`
 
 Esperado (menos de un minuto): una línea `resultados: …`, diez líneas `figura: …` y, la última,
-`análisis: …validacion-semisintetica-sp5.md`. El documento tiene 560 líneas y este índice:
+`análisis: …validacion-semisintetica-sp5.md`. El documento tiene cerca de 570 líneas y este índice:
 
 ```
 # Validación de la combinación de clínica e imagen: simulación semisintética (SP5)
@@ -4883,16 +5826,23 @@ Léelo entero y comprueba:
 - la cabecera: el título con «simulación semisintética», la advertencia en negrita y la nota de que
   es un documento generado;
 - «Escenario 0A»: la fila de la horquilla da 0,0 %, 0,0 % y 100,0 %, y debajo dice «Se cumple: la
-  métrica de la horquilla mide lo que tiene que medir»;
+  métrica de la horquilla pasa su comprobación en el caso nulo»;
 - «Dependencia»: la tabla de correlaciones da 0,000 en 0A (no «−0,000») y ≈ 0,275 / 0,286 con ρ = 0,3;
 - «La horquilla»: la tabla del veredicto tiene 25 filas y solo llevan intervalo 0A y las seis
-  destacadas; con 20 réplicas se sostiene en 0A y en (0,15; 0,15);
+  destacadas; las 18 que no lo llevan acaban en «(estimación puntual, sin intervalo)», y entre
+  ellas se sostiene (0,15; 0,15);
 - «Lectura de los resultados»: cada frase se puede comprobar contra su tabla (p. ej. «menor que 1:
-  6 de 6» contra la columna de la pendiente); los ejes salen en el orden simétrica, solo con
-  neumonía, solo sin neumonía;
+  6 de 6» contra la columna de la pendiente, y cada «De esas, con el intervalo entero…» contra los
+  intervalos impresos en la frase anterior); la hipótesis cuenta 24 celdas con dependencia y 6 con
+  intervalo, con 0A aparte, cada cuenta dice si es de las celdas con intervalo o sin él, y
+  ninguna frase dice «en ninguna»; «exagera» y «se queda corto» se
+  dicen solo de los intervalos enteros; los ejes salen en el orden simétrica, solo con neumonía,
+  solo sin neumonía;
+- «Lo que esta simulación puede afirmar y lo que no»: dice el alcance («Puede decir: si…») y,
+  aparte, lo que dice esta corrida de 0A;
 - «Figuras»: diez enlaces, todos `validacion-semisintetica/<nombre>.png`, sin ninguna barra invertida
   ni ruta absoluta;
-- en todo el documento: ningún `nan`, `None`, llave ni punto decimal.
+- en todo el documento: ningún `nan`, `None`, llave, doble paréntesis ni punto decimal.
 
 Con 20 réplicas algunos intervalos no contienen su estimación puntual (la «Lectura» dice cuántos: 13
 de 357); no es un fallo del documento, que imprime lo que hay en el JSON.
@@ -4903,7 +5853,7 @@ No copies nada de `<CARPETA_TEMPORAL>` al repo.
 
 ```bash
 git add src/copiloto_triaje/validacion/informe.py scripts/validar_combinacion.py tests/test_informe.py tests/test_validar_combinacion.py
-git commit -m "feat(validacion): el documento de analisis, generado desde el JSON (SP5-B1 T6)" -m "informe.redactar compone el Markdown leyendo resultados_simulacion.json: ninguna cifra se teclea y las frases de la lectura se cuentan sobre las tablas. El script lo escribe con las figuras que haya, tambien con --solo-documento. Las pruebas de main() desvian el analisis a una carpeta temporal." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(validacion): el documento de analisis, generado desde el JSON (SP5-B1 T6)" -m "informe.redactar compone el Markdown leyendo resultados_simulacion.json: ninguna cifra se teclea, las frases de la lectura se cuentan sobre las tablas y deciden sobre el intervalo, con las cifras tal como se imprimen y la cuenta como predicado. El script lo escribe con las figuras que haya, tambien con --solo-documento. Las pruebas de main() desvian el analisis a una carpeta temporal." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
 ---
@@ -5118,6 +6068,10 @@ Esperado, exactamente:
 ['0A', '(0,15; 0,15)']
 ```
 
+La última línea sale del campo `se_sostiene` del JSON, que se calcula sobre la
+estimación puntual y sin redondear. El documento no lee ese campo: decide con
+el intervalo donde lo hay, con las cifras tal como se imprimen, y lo dice.
+
 Si alguna cifra difiere, **para**: no toques las cifras de este paso ni las
 pruebas. Informa con estado BLOCKED y la salida completa.
 
@@ -5130,7 +6084,10 @@ título cabe y acaba en «— simulación semisintética», que ningún texto se
 solapa y que las cifras van con coma decimal. Lee
 `docs/validacion-semisintetica-sp5.md` entero: no puede aparecer `nan`,
 `None` ni `{{`, las tablas tienen que leerse, y la sección «Lo que esta
-simulación puede afirmar y lo que no» tiene que estar.
+simulación puede afirmar y lo que no» tiene que estar. En la «Lectura de los
+resultados», la frase de la hipótesis tiene que decir: 24 celdas con
+dependencia, 6 con intervalo; con intervalo, no se sostiene en las 6; sin
+intervalo, la estimación alcanza el umbral en 1, que es (0,15; 0,15).
 
 - [ ] **Paso 6: Correr la prueba y ver el verde**
 
@@ -5205,7 +6162,7 @@ Comprueba con `git status --short` que en el índice están el JSON, los diez
 PNG, el análisis, el README y la prueba, y nada más. Entonces:
 
 ```bash
-git commit -m "feat(validacion): la simulación semisintética, publicada: resultados, figuras y análisis" -m "La rejilla de 25 celdas con 1 000 réplicas de bootstrap en 0A y en las seis destacadas. La fila 0A sale con colas 0 y contención 100 %; la hipótesis del 90 % solo se sostiene en 0A y en (0,15; 0,15). El análisis se genera desde el JSON, sin teclear ninguna cifra, y una prueba vigila que lo versionado corresponde a los insumos y al código." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(validacion): la simulación semisintética, publicada: resultados, figuras y análisis" -m "La rejilla de 25 celdas con 1 000 réplicas de bootstrap en 0A y en las seis destacadas. La fila 0A sale con colas 0 y contención 100 %. La hipótesis del 90 % no se sostiene en ninguna de las seis celdas destacadas, que son las que llevan intervalo; de las 18 sin intervalo, la estimación solo alcanza el umbral en (0,15; 0,15). El análisis se genera desde el JSON, sin teclear ninguna cifra, y una prueba vigila que lo versionado corresponde a los insumos y al código." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
 ---
@@ -5213,7 +6170,8 @@ git commit -m "feat(validacion): la simulación semisintética, publicada: resul
 ### Tarea 8: La latencia de extremo a extremo
 
 Spec de SP5 §6.3. La latencia NO es simulación: es una medición del sistema
-desplegado con casos de prueba. Esta tarea no habla con ningún sistema: deja
+desplegado con casos de prueba. Lo que se mide (`ms_extremo`) es una cota
+inferior de la latencia de extremo a extremo, y el JSON lo dice. Esta tarea no habla con ningún sistema: deja
 el instrumento (el arnés escribe `latencias.json`; un script lo resume en
 `latencia.json`) y lo prueba con filas fabricadas. La corrida real con bots
 la hace después una persona, con el túnel y los secretos.
@@ -5221,25 +6179,27 @@ la hace después una persona, con el túnel y los secretos.
 **Ficheros:**
 - Crear: `scripts/medir_latencia.py`
 - Crear: `tests/test_medir_latencia.py`
-- Modificar: `pruebas/reproducir_casos.py` (dos funciones nuevas entre `escribir_corpus` y el resumen; una llamada en `main()`)
+- Modificar: `pruebas/reproducir_casos.py` (dos funciones nuevas entre `escribir_corpus` y el resumen; una llamada en `main()`; y dos rótulos que llamaban «de extremo a extremo» a `ms_extremo`)
+- Modificar: `docs/superpowers/specs/2026-09-27-sp5-validacion-y-cierre-design.md` (las dos filas de la latencia, §6.2 y §6.3)
 - Modificar: `docs/sp5-sesion.md` (sección nueva «6. Medir la latencia» y el párrafo de lo que se versiona)
 - Modificar: `docs/validacion-semisintetica/README.md` (sección nueva `latencia.json`, al final)
-- Prueba: `tests/test_reproducir_casos.py` (tres pruebas nuevas, al final), `tests/test_medir_latencia.py`
+- Prueba: `tests/test_reproducir_casos.py` (cuatro pruebas nuevas, al final), `tests/test_medir_latencia.py` (17)
 
 **Interfaces:**
 - Consume: de `pruebas/reproducir_casos.py`, las filas `(caso, obs, redaccion)` que `main()` ya construye y pasa a `escribir_corpus(destino, filas)` y a `resumen(...)`:
-  `caso["patientId"]`, `caso["perfil"].carpeta`; `obs["con_bots"]`, `obs.get("fallo")`, `obs.get("ms_extremo")` (el de la tabla `consultas`; solo con bots), `obs.get("ms_arnes")`;
-  `redaccion["error"]`, `redaccion["resultado"]["milisegundos"]` (si hay resultado). `numpy` y `statistics` en el script. Nada de `src/`.
+  `caso["patientId"]`, `caso["perfil"].carpeta`; de LA CONSULTA de los bots, `obs["con_bots"]`, `obs.get("fallo")`, `obs.get("error")`, `obs.get("coincide")`, `obs.get("ms_extremo")` y `obs.get("resultado")` (los de la tabla `consultas`; solo con bots); `obs.get("ms_arnes")`;
+  de la llamada propia del arnés, `redaccion["error"]` y, sin bots, `redaccion["resultado"]["milisegundos"]`. `numpy` y `statistics` en el script. Nada de `src/`.
 - Produce, en `pruebas/reproducir_casos.py`:
-  - `LATENCIAS = "latencias.json"`
-  - `filas_de_latencia(filas) -> list[dict]`: una fila por caso, con las claves, en este orden, `patientId`, `perfil`, `con_bots`, `fallo`, `error`, `ms_extremo`, `ms_modelo`, `ms_arnes`.
+  - `LATENCIAS = "latencias.json"`, `RECHAZOS_PREVISTOS` (las carpetas de los perfiles 05 a 09)
+  - `filas_de_latencia(filas) -> list[dict]`: una fila por caso, con las claves, en este orden, `patientId`, `perfil`, `rechazo_previsto`, `con_bots`, `fallo`, `error_consulta`, `coincide`, `ms_extremo`, `ms_modelo`, `error_arnes`, `ms_arnes`. El error que decide si la medida cuenta es el de la consulta medida (`error_consulta`), no el de la llamada del arnés.
   - `escribir_latencias(destino, filas) -> pathlib.Path`: escribe `<destino>/latencias.json` (una lista JSON con esas filas) y devuelve la ruta.
   - `main()` llama a `escribir_latencias(destino, filas)` SIEMPRE, justo después de `escribir_corpus(destino, filas)`.
 - Produce, en `scripts/medir_latencia.py`:
-  - constantes `TITULO`, `TRAMO`, `MINIMO = 30`, `UMBRALES_S = {"minimo": 8, "objetivo": 3}`, `NO_MEDIDO = "no medido"`, `MOTIVOS = ("sin_bots", "fallo", "error", "sin_ms_extremo")`, `CARPETA`, `NOMBRE = "latencia.json"`.
+  - constantes `TITULO`, `TRAMO`, `MINIMO = 30`, `UMBRALES_S = {"minimo": 8, "objetivo": 3}`, `NO_MEDIDO = "no medido"`, `A_MANO_N = 5`, `MOTIVOS = ("sin_bots", "rechazo_previsto", "fallo", "error", "no_coincide", "sin_ms_extremo")`, `CLAVES` (las de una fila), `LECTURA`, `PERCENTIL`, `A_MANO`, `CARPETA`, `NOMBRE = "latencia.json"`.
   - `_es_una_medida(v) -> bool` (milisegundos: número finito y no negativo; ni cadena ni booleano).
-  - `resumir(filas, minimo=MINIMO, manual=None) -> dict` con las claves, en este orden, `titulo`, `tramo`, `n`, `p50_ms`, `p95_ms`, `minimo_ms`, `maximo_ms`, `modelo_p50_ms`, `umbrales_s`, `frente_a_umbrales` (`{"p50": {"cumple_minimo": bool, "cumple_objetivo": bool}, "p95": {...}}`), `tramo_manual` (`{"valores_s": [...], "n": int, "mediana_s": float}` o `"no medido"`), `descartadas` (`{"total", "sin_bots", "fallo", "error", "sin_ms_extremo"}`). Con menos de `minimo` consultas válidas, `SystemExit`.
-  - `leer_manual(texto) -> list[float] | None`: los segundos de `--manual`; `SystemExit` si no son números positivos separados por comas.
+  - `resumir(filas, minimo=MINIMO, manual=None) -> dict` con las claves, en este orden, `titulo`, `tramo`, `lectura`, `n`, `percentil`, `p50_ms`, `p95_ms`, `minimo_ms`, `maximo_ms`, `ms_extremo_ordenados`, `modelo_p50_ms`, `umbrales_s`, `frente_a_umbrales` (`{"p50": {"cumple_minimo": bool, "cumple_objetivo": bool}, "p95": {...}}`), `tramo_manual` (`{"valores_s": [...], "n": int, "mediana_s": float}` o `"no medido"`), `descartadas` (`{"total", "sin_bots", "fallo", "error", "sin_ms_extremo"}`). Con menos de `minimo` consultas válidas, `SystemExit`.
+  - `leer_manual(texto) -> list[float] | None`: los CINCO tiempos de `--manual`; `SystemExit` si no son cinco números positivos separados por comas (con decimales con coma saldrían diez).
+  - `leer_corrida(ruta) -> list`: las filas de un `latencias.json`, comprobadas; `SystemExit` si no existe, no es un JSON, no es una lista o una fila no lleva las claves `CLAVES`.
   - `main(argv=None) -> int` con `--corrida` (obligatoria), `--salida` (por defecto `docs/validacion-semisintetica/latencia.json`) y `--manual`.
 
 **Avisos para quien ejecuta:**
@@ -5261,44 +6221,78 @@ fichero.
 # latencias.json: lo que `scripts/medir_latencia.py` lee (SP5 §6.3). Filas
 # fabricadas: no hay sistema desplegado al que hablar desde una prueba.
 # --------------------------------------------------------------------------
-CLAVES_DE_LATENCIA = ["patientId", "perfil", "con_bots", "fallo", "error",
-                      "ms_extremo", "ms_modelo", "ms_arnes"]
+CLAVES_DE_LATENCIA = ["patientId", "perfil", "rechazo_previsto", "con_bots", "fallo",
+                      "error_consulta", "coincide", "ms_extremo", "ms_modelo",
+                      "error_arnes", "ms_arnes"]
 
 
 def test_filas_de_latencia_da_una_fila_por_caso_con_lo_que_se_midio():
-    from pruebas.reproducir_casos import filas_de_latencia
+    from pruebas.reproducir_casos import RECHAZOS_PREVISTOS, filas_de_latencia
     bien = {"texto": "x", "texto_paciente": "", "error": None,
             "resultado": UN_RESULTADO}
     rechazo = {"texto": "NO PROCEDE", "texto_paciente": "",
                "error": "fuera_de_alcance: eso", "resultado": None}
     filas = [
         (_caso(pid="p-1"),
-         {"con_bots": True, "ms_extremo": 1840, "ms_arnes": 61.5,
+         {"con_bots": True, "ms_extremo": 1840, "ms_arnes": 61.5, "coincide": "sí",
           "error": None, "resultado": dict(UN_RESULTADO, milisegundos=150.0)},
          bien),
         (_caso(perfil=PERFILES[4], pid="p-2"),
-         {"con_bots": True, "ms_extremo": 410, "ms_arnes": 12.0,
-          "error": "otro_codigo: lo que guardo el bot"}, rechazo),
+         {"con_bots": True, "ms_extremo": 410, "ms_arnes": 12.0, "coincide": "sí",
+          "error": "fuera_de_alcance: lo que guardo el bot", "resultado": None},
+         rechazo),
         (_caso(pid="p-3"),
          {"con_bots": True, "fallo": "no se pudo subir la placa",
           "ms_arnes": 60.0}, bien),
         (_caso(pid="p-4"), {"con_bots": False, "ms_arnes": 58.25}, bien),
+        # El flujo agoto su tiempo limite; la llamada propia del arnes,
+        # segundos despues, salio limpia.
+        (_caso(pid="p-5"),
+         {"con_bots": True, "ms_extremo": 30450, "ms_arnes": 61.0,
+          "coincide": "NO: uno dio resultado y el otro no",
+          "error": "copiloto_no_responde: tiempo agotado", "resultado": None},
+         bien),
     ]
     salida = filas_de_latencia(filas)
-    assert [list(f) for f in salida] == [CLAVES_DE_LATENCIA] * 4
+    assert [list(f) for f in salida] == [CLAVES_DE_LATENCIA] * 5
     assert salida[0] == {
         "patientId": "p-1", "perfil": "03-banda_contradictoria",
-        "con_bots": True, "fallo": None, "error": None,
-        "ms_extremo": 1840, "ms_modelo": 37.4, "ms_arnes": 61.5}
-    # El error es el de la REDACCION y no el que guardo el bot; y sin
-    # resultado no hay milisegundos del modelo.
+        "rechazo_previsto": False, "con_bots": True, "fallo": None,
+        "error_consulta": None, "coincide": "sí", "ms_extremo": 1840,
+        # lo que tardo el modelo EN LA CONSULTA MEDIDA, no en la llamada del
+        # arnes (que dijo 37,4)
+        "ms_modelo": 150.0, "error_arnes": None, "ms_arnes": 61.5}
+    # El error que decide es el de la consulta que se midio: el que guardo el
+    # bot. El de la redaccion del arnes va aparte.
     assert salida[1]["perfil"] == "05-menor_edad"
-    assert salida[1]["error"] == "fuera_de_alcance: eso"
+    assert salida[1]["rechazo_previsto"] is True
+    assert salida[1]["error_consulta"] == "fuera_de_alcance: lo que guardo el bot"
+    assert salida[1]["error_arnes"] == "fuera_de_alcance: eso"
     assert salida[1]["ms_modelo"] is None and salida[1]["ms_extremo"] == 410
     assert salida[2]["fallo"] == "no se pudo subir la placa"
-    assert salida[2]["ms_extremo"] is None
+    assert salida[2]["ms_extremo"] is None and salida[2]["coincide"] is None
+    assert salida[2]["error_consulta"] is None and salida[2]["ms_modelo"] is None
+    # Sin bots no hay consulta: ni su error ni su medida; el modelo, el del arnes.
     assert salida[3]["con_bots"] is False and salida[3]["ms_extremo"] is None
+    assert salida[3]["error_consulta"] is None and salida[3]["ms_modelo"] == 37.4
     assert salida[3]["ms_arnes"] == 58.25
+    assert salida[4]["error_consulta"] == "copiloto_no_responde: tiempo agotado"
+    assert salida[4]["error_arnes"] is None and salida[4]["ms_modelo"] is None
+    assert salida[4]["ms_extremo"] == 30450
+    assert salida[4]["coincide"] == "NO: uno dio resultado y el otro no"
+    assert RECHAZOS_PREVISTOS == tuple(p.carpeta for p in PERFILES[4:])
+    assert RECHAZOS_PREVISTOS[0] == "05-menor_edad" and len(RECHAZOS_PREVISTOS) == 5
+    # un `resultado` que no es un diccionario (una fila rara de `consultas`) no
+    # tiene milisegundos que dar, y no revienta
+    rara = filas_de_latencia([(_caso(pid="p-6"),
+                               {"con_bots": True, "resultado": "no es un diccionario"},
+                               bien)])[0]
+    assert rara["ms_modelo"] is None and rara["ms_extremo"] is None
+    # los casos de la sesion (`--casos`) no son de ningun perfil de rechazo
+    from pruebas.reproducir_casos import PERFIL_SESION
+    sesion = filas_de_latencia([(_caso(perfil=PERFIL_SESION, pid="p-7"),
+                                 {"con_bots": False}, bien)])[0]
+    assert sesion["perfil"] == "00-sesion" and sesion["rechazo_previsto"] is False
     # Tal cual a un fichero: ni perfiles ni tipos que JSON no sepa escribir.
     assert json.loads(json.dumps(salida)) == salida
     assert filas_de_latencia([]) == []
@@ -5342,8 +6336,11 @@ def test_main_escribe_latencias_json_tambien_sin_bots(tmp_path, monkeypatch, cap
     assert [f["patientId"] for f in filas] == ["p-1", "p-2"]
     assert [list(f) for f in filas] == [CLAVES_DE_LATENCIA] * 2
     assert all(f["con_bots"] is False and f["ms_extremo"] is None for f in filas)
+    assert all(f["error_consulta"] is None and f["coincide"] is None for f in filas)
     assert all(isinstance(f["ms_arnes"], float) for f in filas)
-    assert filas[0]["ms_modelo"] == 37.4 and filas[1]["error"].startswith("fuera_de_alcance")
+    assert filas[0]["ms_modelo"] == 37.4
+    assert filas[1]["error_arnes"].startswith("fuera_de_alcance")
+    assert [f["rechazo_previsto"] for f in filas] == [False, True]
     # El arnes sigue haciendo lo de siempre.
     assert (tmp_path / "RESUMEN.txt").is_file()
     assert (tmp_path / "03-banda_contradictoria" / "p-1.txt").is_file()
@@ -5395,6 +6392,9 @@ y sustituirlo por:
 # Las latencias, caso a caso, para `scripts/medir_latencia.py` (SP5 §6.3)
 # --------------------------------------------------------------------------
 LATENCIAS = "latencias.json"
+# Los perfiles cuyo desenlace ESPERADO es un rechazo (05 a 09): al medir la
+# latencia se cuentan aparte de los errores que nadie esperaba.
+RECHAZOS_PREVISTOS = tuple(p.carpeta for p in PERFILES if p.orden >= 5)
 
 
 def filas_de_latencia(filas):
@@ -5402,24 +6402,38 @@ def filas_de_latencia(filas):
 
     `ms_extremo` es el de `consultas` y solo existe con bots: lo escribe el
     flujo, desde que `Normalizar update` recibe el update con la placa hasta
-    que `Desenlace` compone la respuesta. `ms_modelo` es lo que el servidor
-    dice que tardo el modelo, y `ms_arnes` la ida y vuelta de este arnes con
-    el copiloto: ninguno de los dos es la latencia de extremo a extremo.
+    que `Desenlace` compone la respuesta. Todo lo que dice si esa medida
+    cuenta es de LA MISMA consulta: `error_consulta` es el error que el flujo
+    guardo en esa fila de `consultas` (un `copiloto_no_responde` o una
+    `descarga_fallida` solo nacen alli), `coincide` dice si esa consulta y la
+    lectura de este arnes cuentan lo mismo, y `ms_modelo` es lo que el
+    servidor dijo que tardo el modelo EN ESA consulta.
 
-    El `error` es el de la redaccion, el mismo que cuenta el resumen. Aqui no
-    se filtra ni se resume nada: que filas cuentan lo decide quien mide.
+    `error_arnes` y `ms_arnes` son de la otra llamada, la que este arnes hace
+    por su cuenta al copiloto para redactar: no pasa por Telegram ni por n8n
+    y no dice nada de la latencia de extremo a extremo. Sin bots no hay
+    consulta, y `ms_modelo` es entonces el de la llamada del arnes.
+
+    Aqui no se filtra ni se resume nada: que filas cuentan lo decide quien
+    mide.
     """
     salida = []
     for caso, obs, redaccion in filas:
-        resultado = redaccion.get("resultado") or {}
+        con_bots = bool(obs.get("con_bots"))
+        resultado = obs.get("resultado") if con_bots else redaccion.get("resultado")
+        if not isinstance(resultado, dict):
+            resultado = {}
         salida.append({
             "patientId": caso["patientId"],
             "perfil": caso["perfil"].carpeta,
-            "con_bots": bool(obs.get("con_bots")),
+            "rechazo_previsto": caso["perfil"].carpeta in RECHAZOS_PREVISTOS,
+            "con_bots": con_bots,
             "fallo": obs.get("fallo"),
-            "error": redaccion.get("error"),
+            "error_consulta": obs.get("error") if con_bots else None,
+            "coincide": obs.get("coincide"),
             "ms_extremo": obs.get("ms_extremo"),
             "ms_modelo": resultado.get("milisegundos"),
+            "error_arnes": redaccion.get("error"),
             "ms_arnes": obs.get("ms_arnes"),
         })
     return salida
@@ -5455,6 +6469,41 @@ y sustituirlo por:
     texto = resumen(filas, con_bots, destino, url_copiloto)
 ```
 
+Tercero, los dos rótulos que llamaban «de extremo a extremo» a `ms_extremo`: es
+el tramo que ve el flujo, y en el resumen entran además todas las filas,
+rechazos incluidos. Busca:
+
+```python
+            _punto("de extremo a extremo",
+                   f"{obs['ms_extremo']} ms" if obs.get("ms_extremo") is not None
+```
+
+y sustitúyelo por:
+
+```python
+            _punto("ms_extremo (de n8n a la respuesta)",
+                   f"{obs['ms_extremo']} ms" if obs.get("ms_extremo") is not None
+```
+
+Y busca:
+
+```python
+        lineas.append(_punto("  de extremo a extremo (mediana)",
+                             f"{extremo:.0f} ms" if extremo is not None
+                             else "(no se registró)"))
+```
+
+y sustitúyelo por:
+
+```python
+        # Todas las filas, rechazos incluidos, y solo el tramo que ve el
+        # flujo: NO es la latencia de extremo a extremo. La medida, con sus
+        # descartes, la da scripts/medir_latencia.py.
+        lineas.append(_punto("  ms_extremo, todas las filas (mediana)",
+                             f"{extremo:.0f} ms" if extremo is not None
+                             else "(no se registró)"))
+```
+
 - [ ] **Paso 4: Correr y ver el verde, con el fichero entero**
 
 ```bash
@@ -5476,24 +6525,96 @@ git commit -m "feat(arnes): latencias.json, una fila por caso con lo que midio l
 
 - [ ] **Paso 6: Escribir las pruebas del script, que fallan**
 
-`tests/test_medir_latencia.py` (fichero nuevo):
+Primero, la prueba que va de punta a punta (las filas del arnés, tal como las
+lee el script). En `tests/test_reproducir_casos.py`, busca:
+
+```python
+    assert json.loads(json.dumps(salida)) == salida
+    assert filas_de_latencia([]) == []
+
+
+def test_escribir_latencias_deja_el_json_en_la_carpeta_de_salida(tmp_path):
+```
+
+y sustitúyelo por:
+
+```python
+    assert json.loads(json.dumps(salida)) == salida
+    assert filas_de_latencia([]) == []
+
+
+def test_un_error_del_flujo_no_entra_en_la_medida_aunque_el_arnes_salga_limpio():
+    """De punta a punta: las filas del arnes, tal como las lee el script que
+    mide. Un `copiloto_no_responde` de 30 s no puede arrastrar el p95."""
+    import importlib.util
+    import pathlib
+
+    from pruebas.reproducir_casos import _coincide, filas_de_latencia
+    ruta = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "medir_latencia.py"
+    spec = importlib.util.spec_from_file_location("medir_latencia", ruta)
+    medir = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(medir)
+    bien = {"texto": "x", "texto_paciente": "", "error": None, "resultado": UN_RESULTADO}
+    rechazo = {"texto": "NO PROCEDE", "texto_paciente": "",
+               "error": "fuera_de_alcance: eso", "resultado": None}
+    sin_arnes = {"texto": "x", "texto_paciente": "",
+                 "error": "copiloto_no_responde: el arnes no pudo", "resultado": None}
+    filas = [(_caso(pid=f"p-{i}"),
+              {"con_bots": True, "ms_extremo": 1000 + 100 * i, "ms_arnes": 60.0,
+               "error": None, "resultado": UN_RESULTADO}, bien)
+             for i in range(30)]
+    filas.append((_caso(pid="p-lenta"),
+                  {"con_bots": True, "ms_extremo": 30450, "ms_arnes": 61.0,
+                   "error": "copiloto_no_responde: tiempo agotado", "resultado": None},
+                  bien))
+    filas.append((_caso(perfil=PERFILES[4], pid="p-menor"),
+                  {"con_bots": True, "ms_extremo": 410, "ms_arnes": 12.0,
+                   "error": "fuera_de_alcance: eso", "resultado": None}, rechazo))
+    # la consulta salio bien y lo que fallo fue la llamada del arnes: no hay
+    # con que confirmarla, y se descarta diciendo por que
+    filas.append((_caso(pid="p-sin-confirmar"),
+                  {"con_bots": True, "ms_extremo": 2000, "ms_arnes": 30000.0,
+                   "error": None, "resultado": UN_RESULTADO}, sin_arnes))
+    # `coincide` lo pone el arnes, como en `main()`: no se escribe a mano
+    for caso, obs, redaccion in filas:
+        obs["coincide"] = _coincide(obs, caso, redaccion)
+    assert [obs["coincide"] for _, obs, _ in filas[:30]] == ["sí"] * 30
+    assert [obs["coincide"] for _, obs, _ in filas[30:]] == [
+        "NO: uno dio resultado y el otro no", "sí", "NO: uno dio resultado y el otro no"]
+    medido = medir.resumir(json.loads(json.dumps(filas_de_latencia(filas))))
+    assert medido["n"] == 30 and medido["maximo_ms"] == 3900.0
+    assert medido["descartadas"]["error"] == 1
+    assert medido["descartadas"]["rechazo_previsto"] == 1
+    assert medido["descartadas"]["no_coincide"] == 1
+    assert medido["descartadas"]["total"] == 3
+
+
+def test_escribir_latencias_deja_el_json_en_la_carpeta_de_salida(tmp_path):
+```
+
+Después, `tests/test_medir_latencia.py` (fichero nuevo):
 
 ```python
 # -*- coding: utf-8 -*-
-"""La latencia de extremo a extremo (spec de SP5 §6.3), con filas fabricadas.
+"""La latencia del sistema desplegado (spec de SP5 §6.3), con filas fabricadas.
 
 No hay sistema desplegado al que hablar desde una prueba: las filas son las
 que `pruebas/reproducir_casos.py` deja en `latencias.json`, escritas a mano.
-Lo que se ata es que filas cuentan, que cifras salen de ellas y que con
-menos de 30 no se escribe nada: la latencia queda «no medida».
+Lo que se ata es que filas cuentan (y que lo decide LA CONSULTA MEDIDA, no la
+llamada propia del arnes), que cifras salen de ellas, que el JSON dice por si
+solo que mide y que no, y que con menos de 30 no se escribe nada.
 """
 import importlib.util
 import json
 import pathlib
 
+import numpy as np
 import pytest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
+DESCARTES = {"total": 0, "sin_bots": 0, "rechazo_previsto": 0, "fallo": 0,
+             "error": 0, "no_coincide": 0, "sin_ms_extremo": 0}
+CINCO = [5.2, 4.8, 6.1, 5.0, 5.5]
 
 
 @pytest.fixture(scope="module")
@@ -5507,9 +6628,10 @@ def medir():
 
 
 def _fila(ms_extremo=1000, ms_modelo=150.0, **cambios):
-    fila = {"patientId": "p", "perfil": "01-positiva_clara", "con_bots": True,
-            "fallo": None, "error": None, "ms_extremo": ms_extremo,
-            "ms_modelo": ms_modelo, "ms_arnes": 60.0}
+    fila = {"patientId": "p", "perfil": "01-positiva_clara",
+            "rechazo_previsto": False, "con_bots": True, "fallo": None,
+            "error_consulta": None, "coincide": "sí", "ms_extremo": ms_extremo,
+            "ms_modelo": ms_modelo, "error_arnes": None, "ms_arnes": 60.0}
     fila.update(cambios)
     return fila
 
@@ -5517,6 +6639,18 @@ def _fila(ms_extremo=1000, ms_modelo=150.0, **cambios):
 def _validas(n=40):
     """n consultas validas de 1000, 1100, 1200... ms."""
     return [_fila(ms_extremo=1000 + 100 * i, ms_modelo=140.0 + i) for i in range(n)]
+
+
+def _descartes(**cuentas):
+    return dict(DESCARTES, total=sum(cuentas.values()), **cuentas)
+
+
+def test_las_claves_de_una_fila_son_las_que_escribe_el_arnes(medir):
+    from pruebas.reproducir_casos import filas_de_latencia
+    caso = {"patientId": "p", "perfil": type("P", (), {"carpeta": "01-positiva_clara"})()}
+    fila = filas_de_latencia([(caso, {"con_bots": False}, {"error": None, "resultado": None})])[0]
+    assert tuple(fila) == medir.CLAVES
+    assert tuple(_fila()) == medir.CLAVES
 
 
 def test_resumir_da_p50_y_p95_de_las_consultas_validas(medir):
@@ -5530,39 +6664,110 @@ def test_resumir_da_p50_y_p95_de_las_consultas_validas(medir):
     assert r["frente_a_umbrales"] == {
         "p50": {"cumple_minimo": True, "cumple_objetivo": True},
         "p95": {"cumple_minimo": True, "cumple_objetivo": False}}
-    assert r["descartadas"] == {"total": 0, "sin_bots": 0, "fallo": 0,
-                                "error": 0, "sin_ms_extremo": 0}
-    assert r["tramo_manual"] == "no medido"
+    assert r["descartadas"] == DESCARTES
+    assert r["total_a_mano"] == "no medido"
 
 
-def test_el_titulo_dice_que_es_una_medicion_y_el_tramo_dice_que_excluye(medir):
-    r = medir.resumir(_validas(30))
-    assert r["titulo"] == ("Latencia de extremo a extremo: medición con el "
-                           "arnés sobre el sistema desplegado (no es una "
-                           "simulación)")
+def test_cualquiera_puede_recalcular_los_percentiles(medir):
+    """Se publican las medidas, ordenadas y sin identificadores, y el metodo."""
+    desordenadas = list(reversed(_validas(37)))
+    r = medir.resumir(desordenadas)
+    assert r["ms_extremo_ordenados"] == [1000.0 + 100 * i for i in range(37)]
+    assert len(r["ms_extremo_ordenados"]) == r["n"] == 37
+    p50, p95 = np.percentile(r["ms_extremo_ordenados"], [50, 95], method="linear")
+    assert (r["p50_ms"], r["p95_ms"]) == (round(float(p50), 1), round(float(p95), 1))
+    assert "tipo 7 de Hyndman y Fan" in r["percentil"]
+    assert "`ms_extremo_ordenados`" in r["percentil"]
+    # con 37 consultas el p95 cae entre la 35.ª y la 36.ª: el maximo no entra
+    assert r["ms_extremo_ordenados"][34] < r["p95_ms"] < r["ms_extremo_ordenados"][35]
+    assert all(set(f) == set(medir.CLAVES) for f in desordenadas), "no se tocan las filas"
+
+
+def test_el_json_dice_por_si_solo_que_mide_y_que_no(medir):
+    r = medir.resumir(_validas(30), manual=CINCO)
+    assert r["titulo"] == ("Latencia del sistema desplegado, medida con el arnés "
+                           "(no es una simulación): el tramo `ms_extremo`, cota "
+                           "inferior de la latencia de extremo a extremo")
+    assert "semisintética" not in json.dumps(r, ensure_ascii=False)
     for trozo in ("`Normalizar update`", "`Desenlace`", "la subida a Telegram",
                   "la entrega del webhook", "el envío de `Responder`"):
         assert trozo in r["tramo"], trozo
-    assert list(r) == ["titulo", "tramo", "n", "p50_ms", "p95_ms", "minimo_ms",
-                       "maximo_ms", "modelo_p50_ms", "umbrales_s",
-                       "frente_a_umbrales", "tramo_manual", "descartadas"]
+    for trozo in ("cota inferior", "tampoco lo cumple de extremo a extremo",
+                  "necesario pero no suficiente", "se acota, si se cronometró, en "
+                  "`total_a_mano`"):
+        assert trozo in r["lectura"], trozo
+    for trozo in ("tiempo TOTAL, no el tramo que falta", "no un percentil",
+                  "no se suma a `p50_ms`"):
+        assert trozo in r["total_a_mano"]["que_es"], trozo
+    assert list(r) == ["titulo", "tramo", "lectura", "n", "percentil", "p50_ms",
+                       "p95_ms", "minimo_ms", "maximo_ms", "ms_extremo_ordenados",
+                       "modelo_p50_ms", "umbrales_s", "frente_a_umbrales",
+                       "total_a_mano", "descartadas"]
+    assert list(r["descartadas"]) == ["total"] + list(medir.MOTIVOS)
 
 
-def test_solo_cuentan_las_consultas_con_bots_sin_fallo_ni_error(medir):
+def test_cuenta_la_consulta_medida_y_no_la_llamada_del_arnes(medir):
+    """`ms_extremo` es de la consulta de los bots: su error es el que decide.
+
+    Un `copiloto_no_responde` solo nace en el flujo (el tiempo limite del
+    nodo HTTP): la llamada propia del arnes, segundos despues, sale limpia.
+    Esa consulta NO es valida, y sus 30 s no entran en el p95."""
+    filas = _validas(30) + [
+        _fila(error_consulta="copiloto_no_responde: tiempo agotado",
+              error_arnes=None, ms_extremo=30450, ms_modelo=None,
+              coincide="NO: uno dio resultado y el otro no"),
+        _fila(error_consulta="descarga_fallida: x", error_arnes=None,
+              ms_extremo=9000, coincide="NO: uno dio resultado y el otro no"),
+    ]
+    r = medir.resumir(filas)
+    assert r["n"] == 30 and r["maximo_ms"] == 3900.0
+    assert r["descartadas"] == _descartes(error=2)
+    # y al reves: si lo que fallo fue la llamada del arnes, la medida es buena
+    # solo si las dos lecturas coinciden; si no, se descarta diciendo por que
+    filas = _validas(30) + [
+        _fila(error_arnes="copiloto_no_responde: x", coincide="sí", ms_extremo=5000),
+        _fila(error_arnes="copiloto_no_responde: x", ms_extremo=6000,
+              coincide="NO: uno dio resultado y el otro no"),
+        _fila(coincide=None, ms_extremo=7000),
+    ]
+    r = medir.resumir(filas)
+    assert r["n"] == 31 and r["maximo_ms"] == 5000.0
+    assert r["descartadas"] == _descartes(no_coincide=2)
+
+
+def test_cada_fila_se_descarta_por_un_solo_motivo_y_en_orden(medir):
     filas = _validas(30) + [
         _fila(con_bots=False, ms_extremo=None),
         _fila(con_bots=False, ms_extremo=None),
-        _fila(fallo="no se pudo subir la placa", ms_extremo=None),
-        _fila(error="fuera_de_alcance: eso", ms_extremo=90000, ms_modelo=None),
+        _fila(fallo="no se pudo subir la placa", ms_extremo=None, coincide=None),
+        # los rechazos que el corpus busca a proposito (perfiles 05 a 09)
+        _fila(perfil="05-menor_edad", rechazo_previsto=True,
+              error_consulta="fuera_de_alcance: eso", error_arnes="fuera_de_alcance: eso",
+              ms_extremo=410, ms_modelo=None),
+        _fila(perfil="08-fichero_corrupto_FABRICADO", rechazo_previsto=True,
+              error_consulta="dicom_invalido: x", ms_extremo=90000, ms_modelo=None),
+        # un rechazo previsto que NO rechazo tampoco es una consulta de la medida
+        _fila(perfil="05-menor_edad", rechazo_previsto=True, ms_extremo=1500),
+        # un error que nadie esperaba, en un perfil que tenia que dar resultado
+        _fila(error_consulta="copiloto_no_responde: x", ms_extremo=30001),
         _fila(ms_extremo=None),
-        # Cada fila se descarta por UN motivo, el primero que le toca.
-        _fila(con_bots=False, fallo="x", error="y", ms_extremo=None),
+        # el primero que le toca
+        _fila(con_bots=False, fallo="x", rechazo_previsto=True,
+              error_consulta="y", coincide="NO", ms_extremo=None),
+        # un rechazo previsto que no llego al final es un rechazo previsto:
+        # `fallo` cuenta solo las consultas que tenian que dar resultado
+        _fila(fallo="x", rechazo_previsto=True, error_consulta="y", ms_extremo=None),
+        _fila(perfil="09-fichero_enorme_FABRICADO", rechazo_previsto=True,
+              fallo="no se pudo subir la placa", ms_extremo=None, coincide=None),
     ]
     r = medir.resumir(filas)
     assert r["n"] == 30
-    assert r["maximo_ms"] == 3900.0, "el rechazo de 90 s no cuenta"
-    assert r["descartadas"] == {"total": 6, "sin_bots": 3, "fallo": 1,
-                                "error": 1, "sin_ms_extremo": 1}
+    assert r["maximo_ms"] == 3900.0, "ni el rechazo de 90 s ni el error de 30 s cuentan"
+    assert r["descartadas"] == _descartes(sin_bots=3, rechazo_previsto=5, fallo=1,
+                                          error=1, sin_ms_extremo=1)
+    assert list(r["descartadas"]) == ["total", "sin_bots", "rechazo_previsto", "fallo",
+                                      "error", "no_coincide", "sin_ms_extremo"]
+    assert r["n"] + r["descartadas"]["total"] == len(filas)
 
 
 def test_los_umbrales_se_comparan_en_segundos_y_el_limite_cumple(medir):
@@ -5590,38 +6795,68 @@ def test_un_ms_extremo_que_no_es_una_medida_se_descarta(medir):
              _fila(ms_extremo=float("nan")), _fila(ms_extremo=float("inf"))]
     r = medir.resumir(_validas(30) + malas)
     assert r["n"] == 30 and r["maximo_ms"] == 3900.0
-    assert r["descartadas"] == {"total": 5, "sin_bots": 0, "fallo": 0,
-                                "error": 0, "sin_ms_extremo": 5}
+    assert r["descartadas"] == _descartes(sin_ms_extremo=5)
     # y un ms_modelo que no es una medida no entra en la mediana del modelo
     r = medir.resumir([_fila(ms_modelo="x")] * 15 + [_fila(ms_modelo=150.0)] * 15)
     assert r["modelo_p50_ms"] == 150.0
+    assert medir.resumir([_fila(ms_modelo=None)] * 30)["modelo_p50_ms"] is None
 
 
-def test_con_menos_del_minimo_no_se_mide_y_dice_cuantas_hay(medir):
-    filas = _validas(29) + [_fila(error="fuera_de_alcance: eso")]
+def test_con_menos_del_minimo_no_se_mide_y_dice_cuantas_hay_y_que_hacer(medir):
+    filas = _validas(29) + [_fila(error_consulta="copiloto_no_responde: x")]
     with pytest.raises(SystemExit) as salida:
         medir.resumir(filas)
     mensaje = str(salida.value)
     assert "29 consultas" in mensaje and "30" in mensaje
     assert "no medida" in mensaje
+    assert "'error': 1" in mensaje
+    assert "--por-perfil mayor" in mensaje and "lleva esta causa al informe" in mensaje
+    assert "que no son un rechazo previsto" in mensaje
     with pytest.raises(SystemExit, match="0 consultas"):
         medir.resumir([])
     assert medir.resumir(filas, minimo=29)["n"] == 29
+    # con 31 validas hacen falta DOS fallos para quedarse sin medicion
+    assert medir.resumir(_validas(30) + [_fila(fallo="x")])["n"] == 30
+    with pytest.raises(SystemExit, match="29 consultas"):
+        medir.resumir(_validas(29) + [_fila(fallo="x"), _fila(fallo="y")])
 
 
-def test_el_tramo_manual_lleva_los_valores_y_su_mediana(medir):
-    r = medir.resumir(_validas(30), manual=[5.2, 4.8, 6.1, 5.0, 5.5])
-    assert r["tramo_manual"] == {"valores_s": [5.2, 4.8, 6.1, 5.0, 5.5],
-                                 "n": 5, "mediana_s": 5.2}
-    assert medir.resumir(_validas(30), manual=[])["tramo_manual"] == "no medido"
+def test_lo_medido_a_mano_lleva_los_valores_su_mediana_y_lo_que_es(medir):
+    r = medir.resumir(_validas(30), manual=CINCO)
+    assert r["total_a_mano"] == {
+        "que_es": medir.A_MANO, "valores_s": CINCO, "n": 5,
+        "mediana_s": 5.2, "minimo_s": 4.8, "maximo_s": 6.1}
+    assert medir.resumir(_validas(30), manual=[])["total_a_mano"] == "no medido"
+    assert medir.resumir(_validas(30), manual=None)["total_a_mano"] == "no medido"
 
 
 def test_leer_manual_acepta_segundos_con_punto_y_rechaza_lo_demas(medir):
-    assert medir.leer_manual("5.2,4.8, 6.1,5.0,5.5") == [5.2, 4.8, 6.1, 5.0, 5.5]
+    assert medir.leer_manual("5.2,4.8, 6.1,5.0,5.5") == CINCO
+    assert medir.leer_manual("5,4,6,5,5") == [5.0, 4.0, 6.0, 5.0, 5.0]
     assert medir.leer_manual(None) is None
-    for malo in ("5.2;4.8", "cinco", "5.2,,4.8", "5.2,-1", "5.2,0", ""):
-        with pytest.raises(SystemExit, match="--manual"):
+    assert medir.A_MANO_N == 5
+    # el marcador del runbook, copiado tal cual, NO escribe medidas inventadas
+    for malo in ("S1,S2,S3,S4,S5", "<s1>,<s2>", "5.2;4.8", "cinco", "5.2,,4.8,6.1,5.0",
+                 "5.2,4.8,6.1,5.0,-1", "5.2,4.8,6.1,5.0,0", "5.2,4.8,6.1,5.0,nan",
+                 "5.2,4.8,6.1,5.0,inf", "",
+                 # cuatro, seis, y los diez que salen de escribir los decimales con coma
+                 "5.2,4.8,6.1,5.0", "5.2,4.8,6.1,5.0,5.5,5.1", "5,2,4,8,6,1,5,0,5,5"):
+        with pytest.raises(SystemExit, match="--manual espera los 5 tiempos"):
             medir.leer_manual(malo)
+
+
+def test_ni_el_script_ni_el_runbook_traen_medidas_de_ejemplo(medir):
+    """Una orden lista para copiar con cinco tiempos inventados acabaria en un
+    JSON versionado: el ejemplo es un marcador que `leer_manual` rechaza."""
+    import re
+    for ruta in (REPO / "scripts" / "medir_latencia.py", REPO / "docs" / "sp5-sesion.md",
+                 REPO / "docs" / "validacion-semisintetica" / "README.md"):
+        texto = ruta.read_text(encoding="utf-8")
+        assert not re.search(r"--manual\s+\"?\d", texto), ruta.name
+    runbook = (REPO / "docs" / "sp5-sesion.md").read_text(encoding="utf-8")
+    marcador = re.search(r'--manual "([^"]+)"', runbook).group(1)
+    with pytest.raises(SystemExit, match="--manual"):
+        medir.leer_manual(marcador)
 
 
 def test_la_cli_escribe_el_json_y_no_lo_escribe_si_no_hay_minimo(medir, tmp_path, capsys):
@@ -5632,27 +6867,90 @@ def test_la_cli_escribe_el_json_y_no_lo_escribe_si_no_hay_minimo(medir, tmp_path
     assert medir.main(["--corrida", str(corrida), "--salida", str(salida),
                        "--manual", "5.2,4.8,6.1,5.0,5.5"]) == 0
     escrito = json.loads(salida.read_text(encoding="utf-8"))
-    assert escrito == medir.resumir(_validas(36), manual=[5.2, 4.8, 6.1, 5.0, 5.5])
-    assert "simulación)" in salida.read_text(encoding="utf-8"), "sin escapes \\u"
+    assert escrito == medir.resumir(_validas(36), manual=CINCO)
+    crudo = salida.read_bytes()
+    assert "simulación)".encode("utf-8") in crudo, "sin escapes \\u"
+    assert b"\r" not in crudo and crudo.endswith(b"}\n")
     dicho = capsys.readouterr().out
     assert "36 consultas" in dicho and "p50 2,75 s" in dicho and "p95 4,33 s" in dicho
+    assert "AVISO" not in dicho
 
     corta = tmp_path / "corta.json"
     corta.write_text(json.dumps(_validas(12)), encoding="utf-8")
+    with pytest.raises(SystemExit, match="12 consultas"):
+        medir.main(["--corrida", str(corta), "--salida", str(salida)])
+    assert json.loads(salida.read_text(encoding="utf-8")) == escrito, "no pisa el bueno"
     otra = tmp_path / "no-se-escribe.json"
     with pytest.raises(SystemExit, match="12 consultas"):
         medir.main(["--corrida", str(corta), "--salida", str(otra)])
     assert not otra.exists()
+    with pytest.raises(SystemExit, match="--manual"):
+        medir.main(["--corrida", str(corrida), "--salida", str(otra),
+                    "--manual", "S1,S2,S3,S4,S5"])
+    assert not otra.exists()
 
 
-def test_la_cli_rechaza_una_corrida_que_no_existe_o_no_es_una_lista(medir, tmp_path):
+def test_repetir_sin_manual_avisa_de_que_se_pierde_lo_medido_a_mano(medir, tmp_path, capsys):
+    corrida = tmp_path / "latencias.json"
+    corrida.write_text(json.dumps(_validas(30)), encoding="utf-8")
+    salida = tmp_path / "latencia.json"
+    orden = ["--corrida", str(corrida), "--salida", str(salida)]
+    assert medir.main(orden) == 0
+    assert "AVISO" not in capsys.readouterr().out          # no habia nada que perder
+    assert medir.main(orden) == 0
+    assert "AVISO" not in capsys.readouterr().out          # el anterior decia «no medido»
+    assert medir.main(orden + ["--manual", "5.2,4.8,6.1,5.0,5.5"]) == 0
+    assert "AVISO" not in capsys.readouterr().out
+    assert medir.main(orden) == 0
+    dicho = capsys.readouterr().out
+    # el aviso da los valores que se pierden, listos para repetir la orden
+    assert "AVISO" in dicho and '--manual "5.2,4.8,6.1,5.0,5.5"' in dicho
+    assert json.loads(salida.read_text(encoding="utf-8"))["total_a_mano"] == "no medido"
+    for roto in ("esto no es un JSON", "[1, 2]", '{"total_a_mano": {"n": 5}}',
+                 '{"total_a_mano": {"valores_s": []}}'):
+        salida.write_text(roto, encoding="utf-8")
+        assert medir.main(orden) == 0                      # un fichero raro no estorba
+        assert "AVISO" not in capsys.readouterr().out
+
+
+def test_si_no_se_puede_escribir_el_json_el_anterior_sigue_entero(
+        medir, tmp_path, monkeypatch):
+    corrida = tmp_path / "latencias.json"
+    corrida.write_text(json.dumps(_validas(30)), encoding="utf-8")
+    salida = tmp_path / "latencia.json"
+    orden = ["--corrida", str(corrida), "--salida", str(salida)]
+    assert medir.main(orden) == 0
+    bueno = salida.read_bytes()
+    monkeypatch.setattr(medir, "resumir",
+                        lambda filas, manual=None: {"p50_ms": float("nan")})
+    with pytest.raises(ValueError):
+        medir.main(orden)
+    assert salida.read_bytes() == bueno
+
+
+def test_la_cli_rechaza_una_corrida_que_no_es_de_este_arnes(medir, tmp_path):
+    destino = str(tmp_path / "s.json")
     with pytest.raises(SystemExit, match="no existe"):
-        medir.main(["--corrida", str(tmp_path / "nada.json"),
-                    "--salida", str(tmp_path / "s.json")])
-    rara = tmp_path / "rara.json"
-    rara.write_text(json.dumps({"filas": []}), encoding="utf-8")
-    with pytest.raises(SystemExit, match="no es una lista"):
-        medir.main(["--corrida", str(rara), "--salida", str(tmp_path / "s.json")])
+        medir.main(["--corrida", str(tmp_path / "nada.json"), "--salida", destino])
+    casos = {
+        "rara.json": (json.dumps({"filas": []}), "no es una lista"),
+        "vacia.json": ("", "no es un JSON"),
+        "rota.json": ('[{"patientId": ', "no es un JSON"),
+        "numeros.json": (json.dumps([1, 2, 3]), "la fila 1 de"),
+        # la fila de una version anterior del arnes: llevaba `error`, no
+        # `error_consulta`, y con ella se mediria la llamada equivocada
+        "vieja.json": (json.dumps(
+            [_fila()] + [{"patientId": "p", "perfil": "01-positiva_clara",
+                          "con_bots": True, "fallo": None, "error": None,
+                          "ms_extremo": 1000, "ms_modelo": 150.0, "ms_arnes": 60.0}]),
+            "la fila 2 de"),
+    }
+    for nombre, (contenido, mensaje) in casos.items():
+        ruta = tmp_path / nombre
+        ruta.write_text(contenido, encoding="utf-8")
+        with pytest.raises(SystemExit, match=mensaje):
+            medir.main(["--corrida", str(ruta), "--salida", destino])
+    assert not (tmp_path / "s.json").exists()
 ```
 
 - [ ] **Paso 7: Correrlas y ver el fallo**
@@ -5661,12 +6959,12 @@ def test_la_cli_rechaza_una_corrida_que_no_existe_o_no_es_una_lista(medir, tmp_p
 C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_medir_latencia.py
 ```
 
-Salida esperada: las once pruebas dan ERROR en la fixture `medir`, con
+Salida esperada: las diecisiete pruebas del script dan ERROR en la fixture `medir`, con
 `FileNotFoundError: [Errno 2] No such file or directory: '...scripts\\medir_latencia.py'`
-(el script no existe todavía):
+(el script no existe todavía), y la prueba de punta a punta del arnés falla por lo mismo:
 
 ```
-11 errors
+17 errors
 ```
 
 - [ ] **Paso 8: Escribir el script**
@@ -5675,11 +6973,11 @@ Salida esperada: las once pruebas dan ERROR en la fixture `medir`, con
 
 ```python
 # -*- coding: utf-8 -*-
-"""Mide la latencia de extremo a extremo: de latencias.json del arnes a latencia.json.
+"""Mide la latencia del sistema desplegado: de latencias.json del arnes a latencia.json.
 
 USO
     python scripts/medir_latencia.py --corrida pruebas/corpus/latencia/latencias.json
-    python scripts/medir_latencia.py --corrida pruebas/corpus/latencia/latencias.json --manual "5.2,4.8,6.1,5.0,5.5"
+    python scripts/medir_latencia.py --corrida pruebas/corpus/latencia/latencias.json --manual "S1,S2,S3,S4,S5"
 
 Lee el `latencias.json` que deja una corrida CON BOTS de
 `pruebas/reproducir_casos.py` contra el sistema desplegado y escribe
@@ -5687,12 +6985,21 @@ docs/validacion-semisintetica/latencia.json (spec de SP5 §6.3). Es una
 MEDICION, no una simulacion: lo dice el titulo del JSON.
 
 Cuenta solo las consultas que pasaron por los bots, llegaron al final, no
-dieron error y llevan `ms_extremo`. Con menos de 30 no escribe nada: la
-latencia queda «no medida», y el informe lo dice con la causa.
+son un rechazo previsto, no dieron error EN LA CONSULTA MEDIDA, coinciden
+con la lectura del arnes (que tambien tiene que haber salido bien) y llevan
+`ms_extremo`. Con menos de 30 no escribe
+nada: la latencia queda «no medida», y el informe lo dice con la causa.
 
-`--manual` son segundos medidos a mano en el cliente de Telegram (hora del
-envio de la placa frente a hora de la respuesta), en los 5 casos con que se
-acota el tramo que `ms_extremo` no ve.
+`ms_extremo` es una COTA INFERIOR de lo que espera el profesional: no ve la
+subida a Telegram, la entrega del webhook ni el envio de la respuesta. Por
+eso el JSON dice que cumplir un umbral aqui es necesario y no suficiente.
+
+`--manual` son los segundos, cronometrados a mano en el cliente de Telegram,
+desde que se envia la placa hasta que aparece la respuesta: el tiempo TOTAL,
+en 5 consultas. Acota lo que `ms_extremo` no ve; no es un percentil ni se
+suma al p50. S1..S5 son los cinco tiempos, con punto decimal (con coma
+saldrian diez valores, y se rechazan): sin medicion a mano, `--manual` se
+omite.
 """
 import argparse
 import json
@@ -5707,19 +7014,40 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 CARPETA = REPO / "docs" / "validacion-semisintetica"
 NOMBRE = "latencia.json"
 
-TITULO = ("Latencia de extremo a extremo: medición con el arnés sobre el "
-          "sistema desplegado (no es una simulación)")
+TITULO = ("Latencia del sistema desplegado, medida con el arnés (no es una "
+          "simulación): el tramo `ms_extremo`, cota inferior de la latencia "
+          "de extremo a extremo")
 TRAMO = ("`ms_extremo` de la tabla `consultas`: desde que `Normalizar update` "
          "recibe el update con la placa hasta que `Desenlace` compone la "
          "respuesta. Excluye la subida a Telegram, la entrega del webhook y "
          "el envío de `Responder`: no es el tiempo desde que el profesional "
          "sube la radiografía hasta que recibe el pre-informe.")
+LECTURA = ("`ms_extremo` es una cota inferior de lo que espera el "
+           "profesional. Si un percentil NO cumple un umbral aquí, tampoco "
+           "lo cumple de extremo a extremo; si lo cumple aquí, es necesario "
+           "pero no suficiente. Lo que `ms_extremo` no ve se acota, si se "
+           "cronometró, en `total_a_mano`.")
+PERCENTIL = ("interpolación lineal entre estadísticos de orden (el método "
+             "«linear» de numpy, tipo 7 de Hyndman y Fan) sobre "
+             "`ms_extremo_ordenados`")
+A_MANO = ("segundos desde que se envía la placa hasta que aparece la "
+          "respuesta, cronometrados a mano en el cliente de Telegram. Es el "
+          "tiempo TOTAL, no el tramo que falta: una acotación en pocas "
+          "consultas, no un percentil, y no se suma a `p50_ms`")
 MINIMO = 30
+A_MANO_N = 5                 # spec §6.3: se acota a mano en 5 consultas
 UMBRALES_S = {"minimo": 8, "objetivo": 3}
 NO_MEDIDO = "no medido"
 # Los motivos de descarte, en el orden en que se miran: cada fila cuenta en
-# uno solo, el primero que le toca.
-MOTIVOS = ("sin_bots", "fallo", "error", "sin_ms_extremo")
+# uno solo, el primero que le toca. Los rechazos previstos van antes que los
+# fallos: asi `fallo` cuenta solo las consultas que tenian que dar resultado.
+MOTIVOS = ("sin_bots", "rechazo_previsto", "fallo", "error", "no_coincide",
+           "sin_ms_extremo")
+# Las claves de una fila de latencias.json (las escribe
+# `pruebas/reproducir_casos.py::filas_de_latencia`).
+CLAVES = ("patientId", "perfil", "rechazo_previsto", "con_bots", "fallo",
+          "error_consulta", "coincide", "ms_extremo", "ms_modelo",
+          "error_arnes", "ms_arnes")
 
 
 def _es_una_medida(v) -> bool:
@@ -5730,13 +7058,25 @@ def _es_una_medida(v) -> bool:
 
 
 def _motivo(fila):
-    """Por que una fila no cuenta, o None si cuenta."""
+    """Por que una fila no cuenta, o None si cuenta.
+
+    El error que cuenta es el de LA CONSULTA MEDIDA, la que paso por los
+    bots y escribio `ms_extremo`: un `copiloto_no_responde` del flujo no
+    alcanza a la llamada propia del arnes, que es otra y no pasa por Telegram
+    ni por n8n. `error_arnes` no se mira, pero la llamada del arnes si pesa
+    por `coincide`: una consulta solo cuenta si la lectura del arnes la
+    confirma, y si esa llamada fallo no hay con que confirmarla. Eso tambien
+    es `no_coincide`."""
     if not fila.get("con_bots"):
         return "sin_bots"
+    if fila.get("rechazo_previsto"):
+        return "rechazo_previsto"
     if fila.get("fallo"):
         return "fallo"
-    if fila.get("error"):
+    if fila.get("error_consulta"):
         return "error"
+    if fila.get("coincide") != "sí":
+        return "no_coincide"
     if not _es_una_medida(fila.get("ms_extremo")):
         return "sin_ms_extremo"
     return None
@@ -5750,9 +7090,10 @@ def _frente_a(ms):
 def resumir(filas, minimo=MINIMO, manual=None) -> dict:
     """El contenido de latencia.json, desde las filas de latencias.json.
 
-    `manual` son los segundos del tramo que falta, medidos a mano; sin ellos,
-    `tramo_manual` dice «no medido». Con menos de `minimo` consultas validas
-    sale con `SystemExit`: no hay cifra que dar.
+    `manual` son los segundos de envio a respuesta cronometrados a mano (el
+    tiempo total, no el tramo que falta); sin ellos, `total_a_mano` dice «no
+    medido». Con menos de `minimo` consultas validas sale con `SystemExit`:
+    no hay cifra que dar.
     """
     descartadas = {"total": 0, **{m: 0 for m in MOTIVOS}}
     validas = []
@@ -5765,12 +7106,15 @@ def resumir(filas, minimo=MINIMO, manual=None) -> dict:
             descartadas["total"] += 1
     if len(validas) < minimo:
         raise SystemExit(
-            f"hay {len(validas)} consultas con bots, sin fallo ni error y con "
-            f"ms_extremo, y hacen falta {minimo}: la latencia de extremo a "
-            f"extremo queda «no medida» y no se escribe nada "
-            f"(descartadas: {descartadas})")
+            f"hay {len(validas)} consultas con bots, que no son un rechazo "
+            f"previsto, sin fallo ni error, que coinciden con el arnés y llevan "
+            f"ms_extremo, y hacen falta "
+            f"{minimo}: la latencia de extremo a extremo queda «no medida» y "
+            f"no se escribe nada (descartadas: {descartadas}). Vuelve a correr "
+            f"el arnés con un --por-perfil mayor o, si no se puede, lleva "
+            f"esta causa al informe")
 
-    ms = np.array([float(f["ms_extremo"]) for f in validas])
+    ms = np.sort(np.array([float(f["ms_extremo"]) for f in validas]))
     # Los umbrales se comparan con el percentil SIN redondear: 8 000,04 ms se
     # escribe «8000,0» y no cumple los 8 s. Se redondea solo lo que se escribe.
     p50, p95 = (float(v) for v in np.percentile(ms, [50, 95]))
@@ -5779,16 +7123,21 @@ def resumir(filas, minimo=MINIMO, manual=None) -> dict:
     return {
         "titulo": TITULO,
         "tramo": TRAMO,
+        "lectura": LECTURA,
         "n": len(validas),
+        "percentil": PERCENTIL,
         "p50_ms": round(p50, 1),
         "p95_ms": round(p95, 1),
         "minimo_ms": round(float(ms.min()), 1),
         "maximo_ms": round(float(ms.max()), 1),
+        "ms_extremo_ordenados": [round(float(v), 1) for v in ms],
+        # lo que el servidor dijo que tardo el modelo EN las consultas medidas
         "modelo_p50_ms": round(statistics.median(modelo), 1) if modelo else None,
         "umbrales_s": dict(UMBRALES_S),
         "frente_a_umbrales": {"p50": _frente_a(p50), "p95": _frente_a(p95)},
-        "tramo_manual": ({"valores_s": manual, "n": len(manual),
-                          "mediana_s": round(statistics.median(manual), 2)}
+        "total_a_mano": ({"que_es": A_MANO, "valores_s": manual, "n": len(manual),
+                          "mediana_s": round(statistics.median(manual), 2),
+                          "minimo_s": min(manual), "maximo_s": max(manual)}
                          if manual else NO_MEDIDO),
         "descartadas": descartadas,
     }
@@ -5802,11 +7151,45 @@ def leer_manual(texto):
         valores = [float(trozo) for trozo in texto.split(",")]
     except ValueError:
         valores = []
-    if not valores or any(not 0 < v < float("inf") for v in valores):
+    if len(valores) != A_MANO_N or any(not 0 < v < float("inf") for v in valores):
         raise SystemExit(
-            f"--manual espera segundos positivos separados por comas y con "
-            f"punto decimal, como \"5.2,4.8,6.1,5.0,5.5\"; llegó «{texto}»")
+            f"--manual espera los {A_MANO_N} tiempos cronometrados, en segundos "
+            f"positivos, con punto decimal (no coma) y separados por comas; "
+            f"llegó «{texto}». Sin medición a mano, omite --manual")
     return valores
+
+
+def leer_corrida(ruta) -> list:
+    """Las filas de un latencias.json, comprobadas: lo que no es de este
+    arnes no se mide."""
+    ruta = pathlib.Path(ruta)
+    if not ruta.is_file():
+        raise SystemExit(f"no existe {ruta}: lo escribe una corrida de "
+                         f"pruebas/reproducir_casos.py en su carpeta de salida")
+    try:
+        filas = json.loads(ruta.read_text(encoding="utf-8"))
+    except ValueError as error:
+        raise SystemExit(f"{ruta} no es un JSON ({error}): vuelve a correr "
+                         f"pruebas/reproducir_casos.py") from None
+    if not isinstance(filas, list):
+        raise SystemExit(f"{ruta} no es una lista de filas de latencia")
+    for n, fila in enumerate(filas, 1):
+        if not isinstance(fila, dict) or set(fila) != set(CLAVES):
+            raise SystemExit(
+                f"la fila {n} de {ruta} no lleva las claves de una fila de "
+                f"latencia ({', '.join(CLAVES)}): si es de una versión "
+                f"anterior del arnés, vuelve a correr pruebas/reproducir_casos.py")
+    return filas
+
+
+def _a_mano_anterior(salida):
+    """Los tiempos a mano del latencia.json que se va a pisar, o None si no
+    los llevaba (o no se puede leer)."""
+    try:
+        anterior = json.loads(pathlib.Path(salida).read_text(encoding="utf-8"))
+        return list(anterior["total_a_mano"]["valores_s"]) or None
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
 
 
 def _segundos(ms):
@@ -5819,24 +7202,25 @@ def main(argv=None) -> int:
                    help="el latencias.json de una corrida con bots del arnés")
     p.add_argument("--salida", default=str(CARPETA / NOMBRE))
     p.add_argument("--manual", metavar="SEGUNDOS",
-                   help="el tramo que falta, medido a mano en el cliente de "
-                        "Telegram: \"5.2,4.8,6.1,5.0,5.5\"")
+                   help="los segundos de envío a respuesta cronometrados a mano "
+                        "en el cliente de Telegram, con punto decimal y "
+                        "separados por comas; sin medición a mano se omite")
     args = p.parse_args(argv)
 
     manual = leer_manual(args.manual)
-    corrida = pathlib.Path(args.corrida)
-    if not corrida.is_file():
-        raise SystemExit(f"no existe {corrida}: lo escribe una corrida de "
-                         f"pruebas/reproducir_casos.py en su carpeta de salida")
-    filas = json.loads(corrida.read_text(encoding="utf-8"))
-    if not isinstance(filas, list):
-        raise SystemExit(f"{corrida} no es una lista de filas de latencia")
-    resultado = resumir(filas, manual=manual)
+    resultado = resumir(leer_corrida(args.corrida), manual=manual)
 
+    # Se serializa ANTES de abrir: si fallara, el fichero anterior sigue entero.
+    texto = json.dumps(resultado, ensure_ascii=False, indent=1, allow_nan=False) + "\n"
     salida = pathlib.Path(args.salida)
+    anteriores = _a_mano_anterior(salida)
+    if manual is None and anteriores:
+        print(f"AVISO: el {salida.name} anterior llevaba una medición a mano y "
+              f"este no. Para conservarla, repite la orden con "
+              f"--manual \"{','.join(str(v) for v in anteriores)}\"")
     salida.parent.mkdir(parents=True, exist_ok=True)
     with open(salida, "w", encoding="utf-8", newline="\n") as f:
-        f.write(json.dumps(resultado, ensure_ascii=False, indent=1) + "\n")
+        f.write(texto)
     print(f"{resultado['n']} consultas: p50 {_segundos(resultado['p50_ms'])}, "
           f"p95 {_segundos(resultado['p95_ms'])} "
           f"({resultado['descartadas']['total']} descartadas); {salida}")
@@ -5860,8 +7244,16 @@ C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/te
 Salida esperada:
 
 ```
-11 passed
+17 passed
 ```
+
+Y la prueba de punta a punta, que ya tiene su script:
+
+```bash
+C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_reproducir_casos.py -k latencia
+```
+
+Salida esperada: `3 passed` y, con `-k flujo`, `1 passed`.
 
 Y el script, a mano, sin corrida (sale con código 1 y este mensaje):
 
@@ -5876,8 +7268,8 @@ no existe nada.json: lo escribe una corrida de pruebas/reproducir_casos.py en su
 - [ ] **Paso 10: Commit**
 
 ```bash
-git add scripts/medir_latencia.py tests/test_medir_latencia.py
-git commit -m "feat(validacion): medir_latencia.py, p50 y p95 de ms_extremo frente a 8 s y 3 s (SP5-B1 T8)" -m "Lee el latencias.json de una corrida con bots y escribe docs/validacion-semisintetica/latencia.json: es una medicion, no una simulacion, y el titulo lo dice. Cuenta solo las consultas con bots, sin fallo ni error y con ms_extremo; con menos de 30 no escribe nada y la latencia queda «no medida». El tramo que ms_extremo no ve se acota a mano con --manual." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git add scripts/medir_latencia.py tests/test_medir_latencia.py tests/test_reproducir_casos.py
+git commit -m "feat(validacion): medir_latencia.py, p50 y p95 de ms_extremo frente a 8 s y 3 s (SP5-B1 T8)" -m "Lee el latencias.json de una corrida con bots y escribe docs/validacion-semisintetica/latencia.json: es una medicion, no una simulacion, y el titulo lo dice. Cuenta solo las consultas con bots, sin fallo, que no son un rechazo previsto, sin error en la consulta medida, que coinciden con el arnes y llevan ms_extremo; con menos de 30 no escribe nada y la latencia queda «no medida». ms_extremo es una cota inferior, y lo que no ve se acota cronometrando a mano el tiempo total con --manual." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
 - [ ] **Paso 11: Documentar cómo se mide**
@@ -5910,30 +7302,55 @@ corre sin bots y no mide nada.
 Solo cuentan las consultas que dan un resultado: los perfiles 01, 02 y 03
 (12 cada uno) y el 04 (siempre 1) suman 37, por encima de las 30 que pide el
 spec y con margen para alguna conversación que no llegue al final. Los otros
-cinco perfiles son rechazos (20 casos más) y se descartan. Con el
-`--por-perfil 10` por defecto serían 31: una sola conversación fallida
-dejaría la medición sin hacer. Son 57 casos y unos 20 minutos. El arnés
-imprime «N casos» al arrancar: si salen menos de 57, algún perfil no tiene 12
-placas en la caché y hay que subir `--por-perfil` hasta que las consultas
-válidas (`3 × por_perfil + 1`) pasen holgadamente de 30.
+cinco perfiles son rechazos previstos (20 casos más) y se cuentan aparte. Con
+el `--por-perfil 10` por defecto serían 31: bastarían dos conversaciones
+fallidas para dejar la medición sin hacer. Son 57 casos y, como poco, 20
+minutos. El arnés imprime «N casos» al arrancar: si salen menos de 57, a algún
+perfil le faltan placas en la caché; lo que importa es que las consultas de
+los perfiles 01 a 04 pasen holgadamente de 30, y `scripts/medir_latencia.py`
+dice cuántas contó y cuántas descartó, con el motivo.
 
 La corrida deja `pruebas/corpus/latencia/latencias.json` (una fila por caso;
 la carpeta está ignorada). Después:
 
-    C:/venv-copiloto/Scripts/python.exe scripts/medir_latencia.py --corrida pruebas/corpus/latencia/latencias.json --manual "5.2,4.8,6.1,5.0,5.5"
+    C:/venv-copiloto/Scripts/python.exe scripts/medir_latencia.py --corrida pruebas/corpus/latencia/latencias.json --manual "S1,S2,S3,S4,S5"
+
+`S1`…`S5` son los cinco tiempos cronometrados a mano (más abajo), en segundos
+y con punto decimal: la orden, copiada tal cual, se niega a correr. Sin
+medición a mano se omite `--manual`, y el JSON dice «no medido».
 
 Escribe `docs/validacion-semisintetica/latencia.json` con el p50 y el p95 de
-`ms_extremo` frente a los umbrales de 8 s y 3 s, y cuántas filas se
-descartaron y por qué. Con menos de 30 consultas válidas se detiene, lo dice
-y no escribe nada.
+`ms_extremo` frente a los umbrales de 8 s y 3 s, las medidas ordenadas (sin
+identificadores, para que cualquiera pueda recalcular) y cuántas filas se
+descartaron y por qué. Una consulta cuenta si pasó por los bots, llegó al
+final, no es un rechazo previsto, no dio error **en la propia consulta** y
+coincide con la lectura del arnés. Con menos de 30 consultas válidas se
+detiene, lo dice y no escribe nada.
 
 `ms_extremo` va desde que `Normalizar update` recibe el update con la placa
 hasta que `Desenlace` compone la respuesta: no ve la subida a Telegram, la
-entrega del webhook ni el envío de `Responder`. Ese tramo se acota **a mano
-en 5 casos**, con un chat real y el cliente de Telegram: la hora en que se
-envía la placa frente a la hora en que llega la respuesta, en segundos. Son
-los valores de `--manual` (con punto decimal y separados por comas); sin
-`--manual`, el JSON dice «no medido» en ese tramo.
+entrega del webhook ni el envío de `Responder`. Es, por tanto, una **cota
+inferior** de lo que espera el profesional: si no cumple un umbral, la
+latencia de extremo a extremo tampoco lo cumple; si lo cumple, es necesario
+pero no suficiente.
+
+Lo que `ms_extremo` no ve se acota **a mano, en 5 consultas** completas,
+hechas por una persona con los dos bots y un cronómetro, porque el cliente de
+Telegram solo enseña horas y minutos. Cada consulta necesita su propio
+código: primero el cuestionario en el bot del paciente y después, en el del
+profesional, el código y la placa. Hacen falta un chat dado de alta como
+profesional y cinco placas del conjunto de prueba. El bot del paciente admite
+5 cuestionarios por chat y día: las cinco consultas caben justas, y repetir
+una obliga a esperar al día siguiente o a usar otro chat. El cronómetro se
+pone en marcha al enviar la placa y se para cuando aparece el pre-informe: es
+el tiempo **total**, subida incluida, no el tramo que falta, y no se suma al
+p50. Son los cinco valores de `--manual`. Esas consultas quedan registradas
+con el chat de quien mide: son consultas de prueba del equipo, y el informe
+lo dice.
+
+Una consulta cuyo flujo acabó bien pero que el arnés no pudo confirmar con su
+propia llamada se descarta como `no_coincide`: no entra en la medida, y se ve
+en el recuento.
 
 Al terminar, las filas que el arnés dejó en `consultas` se borran con la
 orden que él mismo imprime.
@@ -5950,7 +7367,8 @@ y sustituirlo por:
 
 ```markdown
 Se versionan `sesion.json`, `acta-h7.md` (cifras, `patientId`, estratos y
-las dos huellas) y `latencia.json` (solo cifras agregadas). No se versionan
+las dos huellas) y `latencia.json` (cifras agregadas y las medidas
+ordenadas, sin identificadores). No se versionan
 las placas, los mensajes, los CSV del médico
 ```
 
@@ -5966,20 +7384,50 @@ Tampoco es simulación: es una **medición del sistema desplegado con casos de
 prueba** (spec de SP5, §6.3), y su título lo dice. Lo escribe
 `scripts/medir_latencia.py` desde el `latencias.json` de una corrida con
 bots de `pruebas/reproducir_casos.py`: el p50 y el p95 de `ms_extremo` sobre
-al menos 30 consultas sin error, frente a los umbrales de 8 s y 3 s. El tramo
-medido va desde que `Normalizar update` recibe el update con la placa hasta
-que `Desenlace` compone la respuesta; la subida a Telegram, la entrega del
-webhook y el envío de `Responder` quedan fuera y se acotan a mano en 5 casos
-(`tramo_manual`). Los casos son placas de RSNA con clínica inventada: no hay
-usuarios ni pacientes. Si el fichero no está, la latencia de extremo a
-extremo no se midió. Cómo se mide: `docs/sp5-sesion.md`, «Medir la latencia».
+al menos 30 consultas sin error, frente a los umbrales de 8 s y 3 s, con las
+medidas ordenadas y el método del percentil. El tramo medido va desde que
+`Normalizar update` recibe el update con la placa hasta que `Desenlace`
+compone la respuesta; la subida a Telegram, la entrega del webhook y el envío
+de `Responder` quedan fuera. Es, por tanto, una **cota inferior** de la
+latencia de extremo a extremo: cumplir un umbral aquí es necesario, no
+suficiente. Lo que queda fuera se acota cronometrando a mano 5 consultas
+completas (`total_a_mano`: el tiempo total, que no se suma al p50). Los casos
+son placas de RSNA con clínica inventada: no hay usuarios ni pacientes. Si el
+fichero no está, la latencia de extremo a extremo no se midió. Cómo se mide:
+`docs/sp5-sesion.md`, «Medir la latencia».
 ````
 
 Por qué `--por-perfil 12` y no 4: el arnés no da `por_perfil × 9` casos. El
 perfil 04 reusa UNA placa del 03, los tres fabricados llevan un caso cada uno
-y solo existen 5 edades imposibles; y los perfiles 05 a 09 son rechazos, que
-llevan `error` y no cuentan. Las consultas válidas son `3 × por_perfil + 1`:
+y solo existen 5 edades imposibles; y los perfiles 05 a 09 son rechazos
+previstos, que se cuentan aparte. Las consultas válidas son `3 × por_perfil + 1`:
 13 con `--por-perfil 4`, 31 con 10 (el valor por defecto), 37 con 12.
+
+Y el spec tiene que decir lo mismo que el instrumento. En
+`docs/superpowers/specs/2026-09-27-sp5-validacion-y-cierre-design.md`, dos
+sustituciones. Busca (es una fila de tabla, en una sola línea):
+
+```markdown
+§5.4. El tramo que falta se acota a mano en 5 casos (hora del envío en el cliente de Telegram frente a hora de la respuesta) y se dice. Sin corrida con bots antes del 16-oct, **no medido** con la causa |
+```
+
+y sustitúyelo por:
+
+```markdown
+§5.4. `ms_extremo` es, por tanto, una cota inferior: no cumplir un umbral con él es no cumplirlo de extremo a extremo; cumplirlo es necesario, no suficiente. Lo que no ve se acota a mano en 5 consultas, cronometrando el tiempo total desde que se envía la placa hasta que aparece la respuesta (el cliente de Telegram solo muestra horas y minutos), y se dice. Sin corrida con bots antes del 16-oct, **no medido** con la causa |
+```
+
+Busca (es una fila de tabla, en una sola línea):
+
+```markdown
+| Latencia de extremo a extremo (8 s / 3 s) | cumplido con cambio (provisional) | se mide `ms_extremo`, el tramo n8n → respuesta, no la subida a Telegram ni la entrega (§6.3); si no hay corrida con bots antes del 16-oct, «no medido» con la causa |
+```
+
+y sustitúyelo por:
+
+```markdown
+| Latencia de extremo a extremo (8 s / 3 s) | cumplido con cambio (provisional) | se mide `ms_extremo`, el tramo n8n → respuesta, no la subida a Telegram ni la entrega (§6.3): es una cota inferior, así que si no cumple el umbral la etiqueta es «no cumplido», y si lo cumple, «cumplido con cambio», diciendo el tramo que no ve y lo cronometrado a mano; si no hay corrida con bots antes del 16-oct, «no medido» con la causa |
+```
 
 - [ ] **Paso 12: Correr la suite afectada**
 
@@ -5998,17 +7446,238 @@ sin esta tarea.
 - [ ] **Paso 13: Commit**
 
 ```bash
-git add docs/sp5-sesion.md docs/validacion-semisintetica/README.md
-git commit -m "docs(sp5): como se mide la latencia de extremo a extremo y que es latencia.json (SP5-B1 T8)" -m "Runbook: corrida con bots del arnes con --por-perfil 12 (37 consultas validas), scripts/medir_latencia.py y el tramo manual en 5 casos. El README de la carpeta dice que latencia.json es una medicion del sistema desplegado con casos de prueba, no una simulacion." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git add docs/sp5-sesion.md docs/validacion-semisintetica/README.md docs/superpowers/specs/2026-09-27-sp5-validacion-y-cierre-design.md
+git commit -m "docs(sp5): como se mide la latencia de extremo a extremo y que es latencia.json (SP5-B1 T8)" -m "Runbook: corrida con bots del arnes con --por-perfil 12 (37 consultas validas), scripts/medir_latencia.py y cinco consultas cronometradas a mano, con lo que hace falta para hacerlas. El spec dice que ms_extremo es una cota inferior. El README de la carpeta dice que latencia.json es una medicion del sistema desplegado con casos de prueba, no una simulacion." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
+
+#### Lo que pidió la última revisión de la tarea
+
+- el runbook decía que cada consulta cronometrada necesita su propio código, y es
+  falso: el código no es de un solo uso y vale 7 días (spec de SP3 §5.2);
+- el procedimiento a mano dice los pasos del bot del profesional y cómo se da de
+  alta el chat;
+- el spec decide la etiqueta con el p95 frente al mínimo de 8 s, y lo cronometrado
+  a mano pesa en contra;
+- la ayuda de `--manual` dice que son cinco tiempos, y el script los repite en
+  pantalla;
+- una prueba fija los rótulos del arnés.
+
+- [ ] **Paso 14: Las pruebas, que fallan**
+
+Aplica las sustituciones de los dos ficheros de pruebas (abajo) y corre:
+
+```bash
+C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_medir_latencia.py tests/test_reproducir_casos.py
+```
+
+Esperado: `1 failed, 46 passed` (con las pruebas de la tarea 9 ya en el fichero del
+arnés). La prueba nueva del arnés pasa ya: fija los rótulos del paso 3.
+
+- [ ] **Paso 15: El script, el runbook y el spec**
+
+Aplica las demás sustituciones y corre la misma orden. Esperado: `47 passed`.
+
+- [ ] **Paso 16: Commit**
+
+```bash
+git add tests/test_medir_latencia.py tests/test_reproducir_casos.py scripts/medir_latencia.py docs/sp5-sesion.md docs/superpowers/specs/2026-09-27-sp5-validacion-y-cierre-design.md
+git commit -m "fix(validacion): el runbook de la latencia dice bien lo del codigo, y el spec con que se decide la etiqueta" -m "El codigo del cuestionario no es de un solo uso: basta uno para las cinco consultas cronometradas. El procedimiento a mano dice los pasos del bot del profesional. El spec decide la etiqueta con el p95 frente al minimo de 8 s, y lo cronometrado a mano pesa en contra. El script repite en pantalla los cinco tiempos." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+**Las sustituciones.** Cada sustitución da el texto exacto a buscar (aparece UNA vez) y el que lo
+sustituye. Primero las de las pruebas (y verlas fallar), después las demás.
+
+**Las pruebas del script: `tests/test_medir_latencia.py`**
+
+**1. Busca**
+
+````python
+    dicho = capsys.readouterr().out
+    assert "36 consultas" in dicho and "p50 2,75 s" in dicho and "p95 4,33 s" in dicho
+    assert "AVISO" not in dicho
+````
+
+y sustitúyelo por
+
+````python
+    dicho = capsys.readouterr().out
+    assert "36 consultas" in dicho and "p50 2,75 s" in dicho and "p95 4,33 s" in dicho
+    assert "AVISO" not in dicho
+    # lo cronometrado se repite en pantalla: un decimal con coma se ve aqui
+    assert "cronometrado a mano: 5,20 s; 4,80 s; 6,10 s; 5,00 s; 5,50 s" in dicho
+    assert "cinco tiempos" in medir.leer_manual.__doc__.lower()
+````
+
+**2. Busca**
+
+````python
+    assert medir.main(orden) == 0
+    assert "AVISO" not in capsys.readouterr().out          # no habia nada que perder
+````
+
+y sustitúyelo por
+
+````python
+    assert medir.main(orden) == 0
+    dicho = capsys.readouterr().out
+    assert "AVISO" not in dicho                            # no habia nada que perder
+    assert "cronometrado a mano" not in dicho              # ni nada cronometrado
+````
+
+**Las pruebas del arnés: `tests/test_reproducir_casos.py`**
+
+**1. Busca**
+
+````python
+def test_escribir_latencias_deja_el_json_en_la_carpeta_de_salida(tmp_path):
+````
+
+y sustitúyelo por
+
+````python
+def test_el_arnes_no_llama_de_extremo_a_extremo_a_ms_extremo(tmp_path):
+    """`ms_extremo` es el tramo que ve el flujo, y en el resumen entran todas
+    las filas: ninguno de los dos es la latencia de extremo a extremo."""
+    from pruebas.reproducir_casos import resumen
+    bien = {"texto": "CRIBADO — opacidad probable", "texto_paciente": "", "error": None,
+            "resultado": UN_RESULTADO}
+    obs = {"con_bots": True, "entrega": "intentada", "codigo": "K7QM",
+           "ms_extremo": 1840, "ms_arnes": 61.5, "coincide": "sí",
+           "error": None, "resultado": UN_RESULTADO}
+    caso = texto_del_caso(_caso(), obs, bien)
+    assert "ms_extremo (de n8n a la respuesta)" in caso and "1840 ms" in caso
+    assert "de extremo a extremo" not in caso
+    dicho = resumen([(_caso(), obs, bien)], True, tmp_path)
+    assert "ms_extremo, todas las filas (mediana)" in dicho and "1840 ms" in dicho
+    assert "de extremo a extremo (mediana)" not in dicho
+
+
+def test_escribir_latencias_deja_el_json_en_la_carpeta_de_salida(tmp_path):
+````
+
+**El script: `scripts/medir_latencia.py`**
+
+**1. Busca**
+
+````python
+def leer_manual(texto):
+    """Los segundos de `--manual`: separados por comas y con punto decimal."""
+````
+
+y sustitúyelo por
+
+````python
+def leer_manual(texto):
+    """Los CINCO tiempos de `--manual` (`A_MANO_N`), en segundos: separados
+    por comas y con punto decimal. Con coma decimal saldrian diez valores y se
+    rechazan; una mezcla de comas y puntos que de justo cinco no se puede
+    distinguir de cinco tiempos, y por eso la orden imprime lo que escribio."""
+````
+
+**2. Busca**
+
+````python
+                   help="los segundos de envío a respuesta cronometrados a mano "
+                        "en el cliente de Telegram, con punto decimal y "
+                        "separados por comas; sin medición a mano se omite")
+````
+
+y sustitúyelo por
+
+````python
+                   help="los cinco tiempos, en segundos, de envío a respuesta "
+                        "cronometrados a mano en el cliente de Telegram, con "
+                        "punto decimal y separados por comas; sin medición a "
+                        "mano se omite")
+````
+
+**3. Busca**
+
+````python
+    print(f"{resultado['n']} consultas: p50 {_segundos(resultado['p50_ms'])}, "
+          f"p95 {_segundos(resultado['p95_ms'])} "
+          f"({resultado['descartadas']['total']} descartadas); {salida}")
+    return 0
+````
+
+y sustitúyelo por
+
+````python
+    print(f"{resultado['n']} consultas: p50 {_segundos(resultado['p50_ms'])}, "
+          f"p95 {_segundos(resultado['p95_ms'])} "
+          f"({resultado['descartadas']['total']} descartadas); {salida}")
+    if manual is not None:
+        # para que un decimal escrito con coma se vea antes de versionar nada
+        print("cronometrado a mano: " + "; ".join(_segundos(1000 * v) for v in manual))
+    return 0
+````
+
+**El runbook: `docs/sp5-sesion.md`**
+
+**1. Busca**
+
+````markdown
+Lo que `ms_extremo` no ve se acota **a mano, en 5 consultas** completas,
+hechas por una persona con los dos bots y un cronómetro, porque el cliente de
+Telegram solo enseña horas y minutos. Cada consulta necesita su propio
+código: primero el cuestionario en el bot del paciente y después, en el del
+profesional, el código y la placa. Hacen falta un chat dado de alta como
+profesional y cinco placas del conjunto de prueba. El bot del paciente admite
+5 cuestionarios por chat y día: las cinco consultas caben justas, y repetir
+una obliga a esperar al día siguiente o a usar otro chat. El cronómetro se
+pone en marcha al enviar la placa y se para cuando aparece el pre-informe: es
+el tiempo **total**, subida incluida, no el tramo que falta, y no se suma al
+p50. Son los cinco valores de `--manual`. Esas consultas quedan registradas
+con el chat de quien mide: son consultas de prueba del equipo, y el informe
+lo dice.
+````
+
+y sustitúyelo por
+
+````markdown
+Lo que `ms_extremo` no ve se acota **a mano, en 5 consultas** completas,
+hechas por una persona con los dos bots y un cronómetro, porque el cliente de
+Telegram solo enseña horas y minutos. Hace falta:
+
+- un chat dado de alta como profesional (`pruebas/profesionales.py --alta`);
+- un código de cuestionario, del bot del paciente. Basta uno para las cinco
+  consultas: el código no es de un solo uso y vale 7 días (spec de SP3 §5.2),
+  y cada uso queda en `consultas`. Un cuestionario nuevo cuenta contra el
+  límite de 5 por chat y día (spec de SP3 §4.2);
+- cinco placas del conjunto de prueba, en DICOM.
+
+En el bot del profesional cada consulta es: el código, los cuatro signos
+(temperatura, frecuencia cardiaca, crepitantes y murmullo) y la placa, enviada
+como **documento** (como foto, Telegram la recomprime a JPEG y deja de ser un
+DICOM). El cronómetro se pone en marcha al enviar la placa y se para cuando
+aparece el pre-informe: es el tiempo **total**, subida incluida, no el tramo
+que falta, y no se suma al p50. Son los cinco valores de `--manual`. Esas
+consultas quedan registradas con el chat de quien mide: son consultas de
+prueba del equipo, y el informe lo dice.
+````
+
+**El spec: `docs/superpowers/specs/2026-09-27-sp5-validacion-y-cierre-design.md`**
+
+**1. Busca**
+
+````markdown
+(§6.3): es una cota inferior, así que si no cumple el umbral la etiqueta es «no cumplido», y si lo cumple, «cumplido con cambio», diciendo el tramo que no ve y lo cronometrado a mano; si no hay corrida con bots antes del 16-oct, «no medido» con la causa |
+````
+
+y sustitúyelo por
+
+````markdown
+(§6.3): es una cota inferior. La etiqueta se decide con el p95 frente al mínimo de 8 s (el p50 y el objetivo de 3 s se reportan al lado): si no lo cumple, «no cumplido»; si lo cumple, «cumplido con cambio», diciendo el tramo que no ve y lo cronometrado a mano. Lo cronometrado a mano pesa en contra: si su mediana supera los 8 s, «no cumplido». Si no hay corrida con bots antes del 16-oct, «no medido» con la causa |
+````
 
 ---
 
 ### Tarea 9: Residuos de SP5-A
 
-Ocho arreglos pequeños sobre código de SP5-A que ya está fusionado y probado.
-Cada letra cambia solo lo que dice; van en cuatro commits: el acta (a, b, d),
-la preparación (c, e), el generador y los datos (f, g) y el spec (h).
+Nueve arreglos pequeños: ocho sobre código de SP5-A que ya está fusionado y
+probado y uno del spec que sacó a la luz la revisión de la tarea 6. Cada letra
+cambia solo lo que dice; van en cuatro commits: el acta (a, b, d), la
+preparación (c, e), el generador y los datos (f, g) y el spec (h, i).
 
 **Ficheros:**
 - Modificar: `src/copiloto_triaje/validacion/concordancia.py` (a, b, d)
@@ -6017,7 +7686,7 @@ la preparación (c, e), el generador y los datos (f, g) y el spec (h).
 - Modificar: `pruebas/reproducir_casos.py` (e)
 - Modificar: `docs/sp5-sesion.md` (c: el párrafo del runbook que describe `--fase mensajes`)
 - Modificar: `src/copiloto_triaje/validacion/generador.py` (f)
-- Modificar: `docs/superpowers/specs/2026-09-27-sp5-validacion-y-cierre-design.md` (h)
+- Modificar: `docs/superpowers/specs/2026-09-27-sp5-validacion-y-cierre-design.md` (h, i)
 - Prueba: `tests/test_concordancia.py` (a, b, d)
 - Prueba: `tests/test_sesion.py` (c)
 - Prueba: `tests/test_reproducir_casos.py` (e)
@@ -6778,7 +8447,7 @@ git add src/copiloto_triaje/validacion/generador.py tests/test_generador.py test
 git commit -m "fix(validacion): sortear_caso valida el asma, y sha256_de tiene su prueba (SP5-B1 T9)" -m "Un asma forzada que no es si, no, no_se ni None es ValueError en vez de viajar a la viñeta. sha256_de se prueba con un vector conocido, con CRLF sin normalizar y con un fichero de mas de un bloque." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
-#### Grupo 4 — El spec (letra h)
+#### Grupo 4 — El spec (letras h, i)
 
 - [ ] **Paso 16: Añadir al §5.3 del spec la vía de dos puntuaciones**
 
@@ -6825,6 +8494,35 @@ efectivo es ≈ 3,26 %. De ahí el «≈ 3,3 %», y por eso la prueba lo fija co
 prevalencias que se usan, 0,1466 y 0,2215, quedan muy por encima.
 ```
 
+- [ ] **Paso 16 bis: Corregir en el §4.4 dónde la derivación es menos extrema (letra i)**
+
+El §4.4 dice que la RV de la derivación es menos extrema que la de validación
+solo en k = 4. En k = 1 también lo es: 0,20 queda más cerca de 1 que 0,19 (la
+diferencia de logaritmos es +0,05, y las dos RV son menores que 1). El
+documento de análisis lo calcula y dice «k = 1 y 4»; el spec tiene que decir
+lo mismo. En el mismo fichero, busca:
+
+```markdown
+derivación es más extrema que la validación en k = 0, 2, 3 y 5 y menos en
+k = 4: el «optimismo» no es uniforme. Se reporta la tabla completa y
+```
+
+y sustitúyelo por:
+
+```markdown
+derivación es más extrema que la validación en k = 0, 2, 3 y 5 y menos en
+k = 1 y 4: el «optimismo» no es uniforme. Se reporta la tabla completa y
+```
+
+Se comprueba con esta cuenta (más extrema: más lejos de 1, o sea, mayor
+valor absoluto del logaritmo):
+
+```bash
+C:/venv-copiloto/Scripts/python.exe -c "import math; d=[0.12,0.20,0.70,1.64,7.18,17.5]; v=[0.19,0.19,1.04,1.04,8.33,8.33]; print([k for k in range(6) if abs(math.log(d[k])) < abs(math.log(v[k]))])"
+```
+
+Esperado: `[1, 4]`.
+
 - [ ] **Paso 17: Comprobar las cifras del párrafo**
 
 Las tres prevalencias del párrafo (3,36 %, 3,26 % y 1,4 %) salen de esta cuenta:
@@ -6857,8 +8555,519 @@ Esperado: ningún fallo de pytest (un aviso de pydicom, que ya estaba), y la
 
 ```bash
 git add docs/superpowers/specs/2026-09-27-sp5-validacion-y-cierre-design.md
-git commit -m "docs(sp5): el umbral de 3,3 % del §5.3 sale de la via de dos puntuaciones (SP5-B1 T9)" -m "Con una sola puntuacion el cruce doble de 20 y 70 % exigiria una prevalencia bajo 1,4 %; el 3,3 % es el del asma no_se con puntuacion [4, 5]." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "docs(sp5): el umbral de 3,3 % del §5.3 sale de la via de dos puntuaciones (SP5-B1 T9)" -m "Con una sola puntuacion el cruce doble de 20 y 70 % exigiria una prevalencia bajo 1,4 %; el 3,3 % es el del asma no_se con puntuacion [4, 5]. Y en el 4.4 la derivacion es menos extrema que la validacion en k = 1 y 4, no solo en k = 4." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
+
+#### Grupo 5 — Lo que pidió la revisión de la tarea
+
+La revisión de la tarea encontró que dos de las reglas de arriba dejaban abierto
+el caso que su letra quería cerrar, y el acta se envía al médico:
+
+- **letra (a):** cada extremo de la horquilla se corregía hacia un solo lado. Con
+  los DOS extremos bajo 0,01 el bot imprime un solo «< 1 %» y el acta admitía el 1
+  del médico. Los dos extremos pasan ahora por una sola regla, la de Desenlace
+  (`_entero_como_el_bot`), y `_pct_como_el_bot` la usa también;
+- **letra (b):** con 24 casos un kappa puede valer EXACTAMENTE 0,4 o 0,6, y la coma
+  flotante lo deja un ulp por debajo: el acta escribía «(0,400000) no alcanza el
+  mínimo de 0,4». Se compara a seis decimales (`_a_seis`), que es lo más que se
+  imprime: lo que a seis decimales es el umbral, es el umbral.
+
+Y cinco menores: una prueba de la fecha que cambia la zona (la de arriba no
+detecta nada en una máquina que ya está en UTC−5); una sola explicación del 3,3 %
+en el spec; «todos por esta vía», afirmado por una prueba; el docstring de
+`sha256_de`; y las ramas que seguían sin prueba.
+
+- [ ] **Paso 20: Las pruebas, que fallan**
+
+Aplica las sustituciones de los cuatro ficheros de pruebas (abajo) y corre:
+
+```bash
+C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_concordancia.py tests/test_sesion.py tests/test_generador.py tests/test_categoria.py
+```
+
+Esperado: `9 failed, 102 passed`, las nueve en `tests/test_concordancia.py`. Las
+pruebas nuevas de la fecha, del rechazo sin bots, del generador y de la categoría
+pasan ya: fijan lo que el código ya hacía.
+
+- [ ] **Paso 21: El código, `datos.py` y el spec**
+
+Aplica las demás sustituciones y corre la misma orden. Esperado: `111 passed`.
+Después, la suite afectada entera (la orden del paso 18, más
+`tests/test_categoria.py`): `145 passed`, y `node tests/formulario.mjs` en `16 OK`.
+
+- [ ] **Paso 22: Commit**
+
+```bash
+git add tests/test_concordancia.py tests/test_sesion.py tests/test_generador.py tests/test_categoria.py src/copiloto_triaje/validacion/concordancia.py src/copiloto_triaje/validacion/datos.py docs/superpowers/specs/2026-09-27-sp5-validacion-y-cierre-design.md
+git commit -m "fix(validacion): el acta lee la horquilla como la imprime el bot, y un kappa que es el umbral lo alcanza" -m "Los dos extremos de la horquilla pasan por la misma regla que Desenlace: con los dos bajo el 1 % el bot imprime un solo valor y el acta ya no admite el 1. El kappa se compara con 0,4 y 0,6 a seis decimales: con 24 casos puede valer exactamente el umbral y la coma flotante lo dejaba un ulp por debajo. El spec da una sola explicacion del 3,3 %." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+**Las sustituciones.** Cada sustitución da el texto exacto a buscar (aparece UNA vez) y el que lo
+sustituye. Primero las de las pruebas (y verlas fallar), después las demás.
+
+**Las pruebas del acta: `tests/test_concordancia.py`**
+
+**1. Busca**
+
+````python
+    (0.0060, 0.3000, 0, True),      # 0,0060 se imprime «< 1 %»: el límite inferior es 0
+    (0.0100, 0.3000, 0, False),     # 0,01 exacto se imprime «1 %»
+])
+def test_dentro_de_la_horquilla_compara_enteros_como_los_imprime_el_bot(minima, maxima, pct, dentro):
+    r = cc.acuerdo_continuo([pct, 50], [0.5, 0.5], minima=[minima, 0.4], maxima=[maxima, 0.6])
+    assert r["fraccion_dentro_de_la_horquilla"] == pytest.approx(0.5 + 0.5 * dentro)
+    assert r["horquillas_de_anchura_cero"] == int(cc.porcentaje_entero(minima) == cc.porcentaje_entero(maxima))
+````
+
+y sustitúyelo por
+
+````python
+    (0.0060, 0.3000, 0, True),      # 0,0060 se imprime «< 1 %»: el límite inferior es 0
+    (0.0100, 0.3000, 0, False),     # 0,01 exacto se imprime «1 %»
+    # los DOS extremos bajo 0,01: el bot imprime un solo «< 1 %», que no admite el 1
+    (0.0030, 0.0080, 0, True),
+    (0.0030, 0.0080, 1, False),
+    (0.0070, 0.0070, 0, True),      # un discordante: «< 1 %», y es de un solo valor
+    (0.0070, 0.0070, 1, False),
+    # y los dos sobre 0,99: un solo «> 99 %», que no admite el 99
+    (0.9920, 0.9980, 100, True),
+    (0.9920, 0.9980, 99, False),
+])
+def test_dentro_de_la_horquilla_compara_enteros_como_los_imprime_el_bot(minima, maxima, pct, dentro):
+    r = cc.acuerdo_continuo([pct, 50], [0.5, 0.5], minima=[minima, 0.4], maxima=[maxima, 0.6])
+    assert r["fraccion_dentro_de_la_horquilla"] == pytest.approx(0.5 + 0.5 * dentro)
+    # «de un solo valor» es lo que el bot imprime como un solo valor
+    un_solo_valor = cc._pct_como_el_bot(minima) == cc._pct_como_el_bot(maxima)
+    assert r["horquillas_de_anchura_cero"] == int(un_solo_valor)
+    assert cc._horquilla_como_el_bot(minima, maxima).count("%") == (1 if un_solo_valor else 2)
+
+
+def test_un_extremo_de_la_horquilla_es_un_entero_con_la_regla_del_bot():
+    casos = [(0.0, 0, "< 1 %"), (0.0099, 0, "< 1 %"), (0.01, 1, "1 %"), (0.0149, 1, "1 %"),
+             (0.4406, 44, "44 %"), (0.984, 98, "98 %"), (0.985, 99, "99 %"), (0.99, 99, "99 %"),
+             (0.9901, 100, "> 99 %"), (0.995, 100, "> 99 %"), (1.0, 100, "> 99 %")]
+    for x, entero, impreso in casos:
+        assert cc._entero_como_el_bot(x) == entero, x
+        assert cc._pct_como_el_bot(x) == impreso, x
+    # de 0,01 a 0,99 el entero nunca es 0 ni 100: las cotas no se confunden
+    for x in np.linspace(0.01, 0.99, 981):
+        assert 1 <= cc._entero_como_el_bot(float(x)) <= 99
+
+
+def test_un_kappa_que_es_exactamente_un_umbral_lo_alcanza(tmp_path):
+    """Con 24 casos el kappa es un racional. Esta tabla da 0,4 exacto
+    (1 − 24·7/280), y la coma flotante lo deja un ulp por debajo."""
+    tabla = {("baja", "baja"): 13, ("baja", "intermedia"): 3, ("intermedia", "baja"): 2,
+             ("intermedia", "intermedia"): 5, ("alta", "baja"): 1}
+    a = [fila for (fila, _), n in tabla.items() for _ in range(n)]
+    b = [columna for (_, columna), n in tabla.items() for _ in range(n)]
+    assert len(a) == 24
+    k = cc.kappa_con_intervalos(a, b, tipo="lineal")
+    assert k["kappa"] == pytest.approx(0.4, abs=1e-12)
+    assert k["kappa"] != 0.4, "si algun dia sale 0,4 exacto, esta prueba no prueba nada"
+    k["frente_a_umbrales"] = cc.frente_a_umbrales(k)
+    assert k["frente_a_umbrales"]["puntual_ge_0_4"] is True
+    assert k["frente_a_umbrales"]["puntual_ge_0_6"] is False
+    frase = cc._criterio("El kappa ponderado", k)
+    assert frase.startswith("El kappa ponderado (0,40) alcanza el mínimo de 0,4 de la Semana 1 "
+                            "y no el objetivo de 0,6;")
+    assert "0,400000" not in frase and "0,399" not in frase
+
+    def con(kappa, li_a=0.1, li_b=0.1):
+        r = {"kappa": kappa, "ic95": [li_a, 1.0], "ic95_bca": [li_b, 1.0]}
+        r["frente_a_umbrales"] = cc.frente_a_umbrales(r)
+        return r
+    un_ulp = 0.3999999999999999
+    assert con(un_ulp)["frente_a_umbrales"]["puntual_ge_0_4"] is True
+    assert con(0.5999999999999999)["frente_a_umbrales"]["puntual_ge_0_6"] is True
+    assert cc._criterio("K", con(0.5999999999999999)).startswith(
+        "K (0,60) alcanza el mínimo de 0,4 de la Semana 1 y el objetivo de 0,6;")
+    # lo mismo en los limites inferiores: un limite que es el umbral no queda por debajo
+    u = con(0.7, li_a=un_ulp, li_b=0.39)["frente_a_umbrales"]
+    assert (u["li_analitico_lt_0_4"], u["li_bca_lt_0_4"]) == (False, True)
+    assert "con el BCa (0,39) y no con el método analítico (0,40)" in cc._criterio(
+        "K", con(0.7, li_a=un_ulp, li_b=0.39))
+    # y lo que a seis decimales NO es el umbral sigue sin alcanzarlo, y se ve
+    assert con(0.399999)["frente_a_umbrales"]["puntual_ge_0_4"] is False
+    assert cc._criterio("K", con(0.399999)).startswith("K (0,399999) no alcanza el mínimo")
+````
+
+**2. Busca**
+
+````python
+    assert cc._f_frente_a_umbral(-0.12) == "-0,12"
+    assert cc._f_frente_a_umbral(float("nan")) == "—"
+````
+
+y sustitúyelo por
+
+````python
+    assert cc._f_frente_a_umbral(-0.12) == "-0,12"
+    assert cc._f_frente_a_umbral(float("nan")) == "—"
+    assert cc._f_frente_a_umbral(None) == "—"
+    # hasta seis decimales, los que hagan falta para que no se lea el umbral
+    assert cc._f_frente_a_umbral(0.39996) == "0,39996"
+    assert cc._f_frente_a_umbral(0.399996) == "0,399996"
+    assert cc._f_frente_a_umbral(0.600004) == "0,600004"
+    # y lo que a seis decimales es el umbral, se imprime como el umbral
+    assert cc._f_frente_a_umbral(0.3999999999999999) == "0,40"
+    assert cc._f_frente_a_umbral(0.4000000004) == "0,40"
+    assert cc._f_frente_a_umbral(0.6000000000000001) == "0,60"
+````
+
+**3. Busca**
+
+````python
+    assert cc._fecha(ms(2026, 10, 7, 4, 59, 59)) == "2026-10-06"     # las 23:59:59 del 6 en UTC−5
+    assert cc._fecha(ms(2026, 10, 7, 5, 0, 0)) == "2026-10-07"       # las 00:00:00 del 7
+    assert cc._fecha(None) == "—" and cc._fecha(0) == "—"
+````
+
+y sustitúyelo por
+
+````python
+    assert cc._fecha(ms(2026, 10, 7, 4, 59, 59)) == "2026-10-06"     # las 23:59:59 del 6 en UTC−5
+    assert cc._fecha(ms(2026, 10, 7, 5, 0, 0)) == "2026-10-07"       # las 00:00:00 del 7
+    assert cc._fecha(None) == "—" and cc._fecha(0) == "—"
+
+
+def test_la_fecha_sale_de_la_zona_de_la_sesion_y_de_ninguna_otra(monkeypatch):
+    """En una maquina que ya esta en UTC−5 la prueba de arriba pasaria tambien
+    con la hora local: aqui se cambia la zona y el dia tiene que cambiar."""
+    import datetime
+    instante = int(datetime.datetime(2026, 10, 7, 4, 59, 59,
+                                     tzinfo=datetime.timezone.utc).timestamp() * 1000)
+    assert cc._fecha(instante) == "2026-10-06"
+    monkeypatch.setattr(cc, "ZONA_DE_LA_SESION",
+                        datetime.timezone(datetime.timedelta(hours=9)))
+    assert cc._fecha(instante) == "2026-10-07"
+    monkeypatch.setattr(cc, "ZONA_DE_LA_SESION",
+                        datetime.timezone(datetime.timedelta(hours=-12)))
+    assert cc._fecha(instante) == "2026-10-06"
+    assert cc._fecha(instante + 8 * 3600 * 1000) == "2026-10-07"
+````
+
+**Las pruebas de la preparación: `tests/test_sesion.py`**
+
+**1. Busca**
+
+````python
+    with pytest.raises(SystemExit, match="--imagen-digest"):
+        preparar.fase_mensajes(salida, imagen_tag="h7-sesion")
+    assert not (salida / "formulario" / "datos_lectura2.js").exists()
+````
+
+y sustitúyelo por
+
+````python
+    with pytest.raises(SystemExit, match="--imagen-digest") as rechazo:
+        preparar.fase_mensajes(salida, imagen_tag="h7-sesion")
+    assert "los mensajes no se generaron con bots" in str(rechazo.value)
+    assert not (salida / "formulario" / "datos_lectura2.js").exists()
+````
+
+**Las pruebas del generador: `tests/test_generador.py`**
+
+**1. Busca**
+
+````python
+    with pytest.raises(ValueError, match="asma"):
+        generador.sortear_caso(m, 0, np.random.default_rng(1), asma=asma)
+````
+
+y sustitúyelo por
+
+````python
+    rng = np.random.default_rng(1)
+    antes = rng.bit_generator.state
+    with pytest.raises(ValueError, match="asma"):
+        generador.sortear_caso(m, 0, rng, asma=asma)
+    # se rechaza ANTES de sortear nada: si consumiera el generador, los casos
+    # siguientes de la sesion serian otros
+    assert rng.bit_generator.state == antes
+````
+
+**Las pruebas de la categoría: `tests/test_categoria.py`**
+
+**1. Busca**
+
+````python
+def _cruces_dobles(prevalencia):
+    cruces = 0
+    for rv in np.geomspace(0.016, 77.3, 400):
+        for h in _hallazgos():
+            b = combinacion(prevalencia, h, float(rv))
+            if (categoria.porcentaje_entero(b["minima"]) < 20
+                    and categoria.porcentaje_entero(b["maxima"]) > 70):
+                cruces += 1
+    return cruces
+````
+
+y sustitúyelo por
+
+````python
+def _los_cruces_dobles(prevalencia):
+    """(hallazgos, bloque) de cada horquilla que cruza el 20 y el 70 % a la vez."""
+    cruces = []
+    for rv in np.geomspace(0.016, 77.3, 400):
+        for h in _hallazgos():
+            b = combinacion(prevalencia, h, float(rv))
+            if (categoria.porcentaje_entero(b["minima"]) < 20
+                    and categoria.porcentaje_entero(b["maxima"]) > 70):
+                cruces.append((h, b))
+    return cruces
+
+
+def _cruces_dobles(prevalencia):
+    return len(_los_cruces_dobles(prevalencia))
+````
+
+**2. Busca**
+
+````python
+    """Con 0,032 cruza por la vía del asma `no_se` con puntuación [4, 5]."""
+    assert _cruces_dobles(prevalencia) > 0
+````
+
+y sustitúyelo por
+
+````python
+    """Con 0,032 cruza por la vía del asma `no_se` con puntuación [4, 5]."""
+    assert _cruces_dobles(prevalencia) > 0
+
+
+def test_con_0_032_todos_los_cruces_dobles_son_de_la_via_de_dos_puntuaciones():
+    """Spec §5.3: entre ≈ 1,4 % y ≈ 3,3 % solo cruza el asma `no_se` con los
+    otros cuatro hallazgos presentes, que da las dos puntuaciones [4, 5]."""
+    cruces = _los_cruces_dobles(0.032)
+    assert cruces
+    for hallazgos, bloque in cruces:
+        assert hallazgos["asma"] == "no_se"
+        assert list(bloque["puntuacion"]) == [4, 5]
+    # y por debajo del 1,4 % tambien cruza una sola puntuacion, la de 5 puntos
+    una = [b for _, b in _los_cruces_dobles(0.012) if len(b["puntuacion"]) == 1]
+    assert una and all(list(b["puntuacion"]) == [5] for b in una)
+    assert not [b for _, b in _los_cruces_dobles(0.016) if len(b["puntuacion"]) == 1]
+````
+
+**El acta: `src/copiloto_triaje/validacion/concordancia.py`**
+
+**1. Busca**
+
+````python
+def acuerdo_continuo(pct_medico, p_sistema, minima=None, maxima=None) -> dict:
+    """Spearman entre el porcentaje del medico y el punto medio del sistema;
+    Bland-Altman en log-odds con 0 y 100 acotados a 0,5 y 99,5; y la fraccion
+    de porcentajes que caen dentro de la horquilla.
+
+    «Dentro» compara el porcentaje entero del medico, SIN acotar, con la
+    horquilla tal como la imprime el bot: `porcentaje_entero` de la minima y
+    de la maxima (Math.round en Desenlace), salvo en las cotas: una minima
+    por debajo de 0,01 se imprime «< 1 %» y su limite es 0, y una maxima por
+    encima de 0,99 se imprime «> 99 %» y su limite es 100. Una horquilla de
+    un solo valor (los discordantes con el asma conocida) solo admite ese
+    entero, y se cuentan aparte para que el acta lo diga."""
+````
+
+y sustitúyelo por
+
+````python
+def _entero_como_el_bot(x: float) -> int:
+    """Un extremo de la horquilla como el ENTERO que el medico puede contestar,
+    con la convencion de Desenlace: por debajo de 0,01 el bot imprime «< 1 %»
+    y el entero es 0; por encima de 0,99 imprime «> 99 %» y es 100; si no,
+    `porcentaje_entero` (Math.round), que da de 1 a 99."""
+    if x < 0.01:
+        return 0
+    if x > 0.99:
+        return 100
+    return porcentaje_entero(x)
+
+
+def acuerdo_continuo(pct_medico, p_sistema, minima=None, maxima=None) -> dict:
+    """Spearman entre el porcentaje del medico y el punto medio del sistema;
+    Bland-Altman en log-odds con 0 y 100 acotados a 0,5 y 99,5; y la fraccion
+    de porcentajes que caen dentro de la horquilla.
+
+    «Dentro» compara el porcentaje entero del medico, SIN acotar, con la
+    horquilla tal como la imprime el bot: los DOS extremos pasan por
+    `_entero_como_el_bot`. Un extremo por debajo de 0,01 se imprime «< 1 %» y
+    vale 0; uno por encima de 0,99 se imprime «> 99 %» y vale 100. Si los dos
+    extremos dan el mismo entero el bot imprime un solo valor (los
+    discordantes con el asma conocida, y cualquier horquilla entera bajo el
+    1 % o sobre el 99 %): solo admite ese entero, y se cuentan aparte para
+    que el acta lo diga."""
+````
+
+**2. Busca**
+
+````python
+        lo = np.array([0 if x < 0.01 else porcentaje_entero(x) for x in minima], dtype=int)
+        hi = np.array([100 if x > 0.99 else porcentaje_entero(x) for x in maxima], dtype=int)
+````
+
+y sustitúyelo por
+
+````python
+        lo = np.array([_entero_como_el_bot(x) for x in minima], dtype=int)
+        hi = np.array([_entero_como_el_bot(x) for x in maxima], dtype=int)
+````
+
+**3. Busca**
+
+````python
+    """Un extremo de la horquilla como lo imprime Desenlace: entero con
+    Math.round (`porcentaje_entero`), y nunca 0 % ni 100 %."""
+    if x < 0.01:
+        return "< 1 %"
+    if x > 0.99:
+        return "> 99 %"
+    return f"{porcentaje_entero(x)} %"
+````
+
+y sustitúyelo por
+
+````python
+    """Un extremo de la horquilla como lo imprime Desenlace: entero con
+    Math.round (`porcentaje_entero`), y nunca 0 % ni 100 %. Las cotas son las
+    de `_entero_como_el_bot`: estan escritas una sola vez."""
+    entero = _entero_como_el_bot(x)
+    return {0: "< 1 %", 100: "> 99 %"}.get(entero, f"{entero} %")
+````
+
+**4. Busca**
+
+````python
+    """El kappa frente al 0,4 de la Semana 1 y el 0,6 (spec §5.5, §11.4):
+    la estimacion puntual y el limite inferior de cada intervalo. None si el
+    kappa no es calculable."""
+    if k["kappa"] is None or math.isnan(k["kappa"]):
+        return None
+    return {"puntual_ge_0_4": bool(k["kappa"] >= 0.4), "puntual_ge_0_6": bool(k["kappa"] >= 0.6),
+            "li_analitico_lt_0_4": bool(k["ic95"][0] < 0.4),
+            "li_bca_lt_0_4": bool(k["ic95_bca"][0] < 0.4)}
+````
+
+y sustitúyelo por
+
+````python
+    """El kappa frente al 0,4 de la Semana 1 y el 0,6 (spec §5.5, §11.4):
+    la estimacion puntual y el limite inferior de cada intervalo. None si el
+    kappa no es calculable.
+
+    Se compara a seis decimales (`_a_seis`): con 24 casos un kappa es un
+    racional que puede valer EXACTAMENTE 0,4 o 0,6, y la coma flotante lo
+    deja en 0,3999999999999999. Eso alcanza el umbral."""
+    if k["kappa"] is None or math.isnan(k["kappa"]):
+        return None
+    return {"puntual_ge_0_4": bool(_a_seis(k["kappa"]) >= 0.4),
+            "puntual_ge_0_6": bool(_a_seis(k["kappa"]) >= 0.6),
+            "li_analitico_lt_0_4": bool(_a_seis(k["ic95"][0]) < 0.4),
+            "li_bca_lt_0_4": bool(_a_seis(k["ic95_bca"][0]) < 0.4)}
+````
+
+**5. Busca**
+
+````python
+UMBRALES_KAPPA = (0.4, 0.6)
+_DECIMALES_MAXIMOS = 6
+
+
+def _f_frente_a_umbral(x) -> str:
+    """Un kappa, o un limite de su intervalo, para la frase que lo compara
+    con 0,4 y 0,6. La comparacion es sin redondear: si los dos decimales de
+    siempre dieran justo un umbral sin que el valor lo sea (0,3996 → «0,40»),
+    la frase se contradiria; entonces se imprime con tres decimales, y con
+    los que hagan falta (hasta seis) si tres aun dan el umbral."""
+    if x is None or (isinstance(x, float) and math.isnan(x)):
+        return _f(x)
+    for umbral in UMBRALES_KAPPA:
+        if x != umbral and round(x, 2) == umbral:
+````
+
+y sustitúyelo por
+
+````python
+UMBRALES_KAPPA = (0.4, 0.6)
+_DECIMALES_MAXIMOS = 6
+
+
+def _a_seis(x: float) -> float:
+    """Un kappa a seis decimales, que es con lo que se compara con los
+    umbrales y lo mas que se imprime: lo que a seis decimales es el umbral, es
+    el umbral."""
+    return round(x, _DECIMALES_MAXIMOS)
+
+
+def _f_frente_a_umbral(x) -> str:
+    """Un kappa, o un limite de su intervalo, para la frase que lo compara
+    con 0,4 y 0,6. Si los dos decimales de siempre dieran justo un umbral sin
+    que el valor lo sea (0,3996 → «0,40»), la frase se contradiria; entonces
+    se imprime con tres decimales, y con los que hagan falta (hasta seis) si
+    tres aun dan el umbral. Un valor que a seis decimales ES el umbral se
+    imprime como el umbral, y `frente_a_umbrales` lo trata igual."""
+    if x is None or (isinstance(x, float) and math.isnan(x)):
+        return _f(x)
+    for umbral in UMBRALES_KAPPA:
+        if _a_seis(x) != umbral and round(x, 2) == umbral:
+````
+
+**Los datos: `src/copiloto_triaje/validacion/datos.py`**
+
+**1. Busca**
+
+````python
+def sha256_de(ruta) -> str:
+    h = hashlib.sha256()
+````
+
+y sustitúyelo por
+
+````python
+def sha256_de(ruta) -> str:
+    """El sha256 de los BYTES de un fichero, tal como estan: sin normalizar
+    finales de linea. Es el de los ficheros que NO se versionan y que el acta
+    cita (`mensajes.json`, `clave.json`): quien los guarda comprueba esos
+    bytes. Para un insumo versionado, `huella_de_texto`."""
+    h = hashlib.sha256()
+````
+
+**El spec: `docs/superpowers/specs/2026-09-27-sp5-validacion-y-cierre-design.md`**
+
+**1. Busca**
+
+````markdown
+dos previos, 27-sep); tiene explicación analítica —el cociente de odds de los
+dos extremos vale `min(RV_clínica, RV_imagen) ≤ 17,5`, y cruzar 20 y 70 % a
+la vez exige además `odds_previas × max(RV_clínica, RV_imagen) < 0,25`, lo que
+solo ocurre con prevalencia declarada por debajo de ≈ 3,3 %— y una prueba lo
+afirma con los dos previos y con el umbral analítico (§8). Como
+````
+
+y sustitúyelo por
+
+````markdown
+dos previos, 27-sep); tiene explicación analítica —solo ocurre con una
+prevalencia declarada por debajo de ≈ 3,3 %; la cuenta está al final de este
+apartado— y una prueba lo afirma con los dos previos y con el umbral
+analítico (§8). Como
+````
+
+**2. Busca**
+
+````markdown
+extremos mayor que ≈ 9,33. Con una sola puntuación ese cociente es
+`min(RV_clínica, RV_imagen)`, la única RV clínica que pasa de 9,33 es la de 5
+````
+
+y sustitúyelo por
+
+````markdown
+extremos mayor que ≈ 9,33. Con una sola puntuación y las dos RV a favor ese
+cociente es `min(RV_clínica, RV_imagen)` (con las dos en contra no pasa de
+8,33, y en los casos discordantes la horquilla es un punto); la única RV
+clínica que pasa de 9,33 es la de 5
+````
 
 ---
 
