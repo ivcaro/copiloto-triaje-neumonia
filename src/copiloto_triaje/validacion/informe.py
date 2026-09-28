@@ -111,6 +111,23 @@ def _intervalo(celda: dict, ruta: str, formato) -> str:
     return f" (IC 95 %: {formato(par[0])} a {formato(par[1])})"
 
 
+def _par(celda: dict, ruta: str):
+    """El intervalo de esa ruta, o None si la celda no lo lleva o no son dos
+    cifras."""
+    par = (celda.get("intervalos") or {}).get(ruta)
+    if not par or _falta(par[0]) or _falta(par[1]):
+        return None
+    return par
+
+
+def _a_la_vista(x, decimales: int) -> float:
+    """La cifra con los decimales con que se imprime. Las comparaciones de la
+    prosa se hacen asi: el documento no afirma de una cifra lo que su forma
+    impresa no deja ver (un extremo 1,004 se imprime «1,00» y no queda por
+    encima de 1)."""
+    return float(f"{float(x):.{decimales}f}")
+
+
 def _cifra(celda: dict, ruta: str, decimales: int, signo: bool = False) -> str:
     return (numero(_valor(celda, ruta), decimales, signo)
             + _intervalo(celda, ruta, lambda v: numero(v, decimales, signo)))
@@ -130,10 +147,11 @@ def _cuartiles(d: dict, decimales: int = 2) -> str:
             f"({numero(d['q1'], decimales)} a {numero(d['q3'], decimales)})")
 
 
-def _tabla(cabeceras, filas, izquierdas: int = 1) -> list:
-    """Una tabla de Markdown: las primeras columnas a la izquierda, las
-    cifras a la derecha."""
-    guia = [":---" if i < izquierdas else "---:" for i in range(len(cabeceras))]
+def _tabla(cabeceras, filas, izquierdas: int = 1, texto=()) -> list:
+    """Una tabla de Markdown: las primeras columnas y las de `texto` (por su
+    cabecera) a la izquierda, las cifras a la derecha."""
+    guia = [":---" if i < izquierdas or cabecera in texto else "---:"
+            for i, cabecera in enumerate(cabeceras)]
     lineas = ["| " + " | ".join(cabeceras) + " |", "| " + " | ".join(guia) + " |"]
     lineas += ["| " + " | ".join(str(c) for c in fila) + " |" for fila in filas]
     return lineas + [""]
@@ -145,6 +163,26 @@ def _lista(nombres) -> str:
     if len(nombres) <= 1:
         return "".join(nombres)
     return ", ".join(nombres[:-1]) + " y " + nombres[-1]
+
+
+def _nombradas(celdas) -> str:
+    """Cuantas celdas y cuales: «ninguna», «1, que es a», «3, que son a, b y c»."""
+    nombres = [c["nombre"] for c in celdas]
+    if not nombres:
+        return "ninguna"
+    return f"{len(nombres)}, que {'es' if len(nombres) == 1 else 'son'} {_lista(nombres)}"
+
+
+def _con_su_cifra(celdas, ruta: str, decimales: int) -> str:
+    """«: a, 0,87 (IC 95 %: 0,81 a 0,92); b, ...», o nada si no hay celdas."""
+    if not celdas:
+        return ""
+    return ": " + "; ".join(f"{c['nombre']}, {_cifra(c, ruta, decimales)}" for c in celdas)
+
+
+def _semilla(x) -> str:
+    """Una semilla se copia y se pega: sin separador de millares."""
+    return SIN_CIFRA if _falta(x) else str(int(x))
 
 
 def _transiciones(bandas: dict) -> str:
@@ -188,6 +226,54 @@ def _completas(resultados: dict) -> list:
     return [c for c in resultados["celdas"] if c["nombre"] == "0A" or c["destacada"]]
 
 
+def _la_fila_0a_se_cumple(cero: dict) -> bool:
+    """Colas exactamente 0 y contencion 100 %: la comprobacion de la metrica."""
+    h = cero["horquilla"]["todos"]
+    return h["bajo"] == 0 and h["sobre"] == 0 and h["contencion"] == 1
+
+
+def _pendiente_de_0a(cero: dict) -> str:
+    """La pendiente de la independencia en 0A, con lo que dice su intervalo."""
+    par = _par(cero, "modelos.independencia.pendiente")
+    return (_cifra(cero, "modelos.independencia.pendiente", 2)
+            + ("" if par is None else
+               "; su intervalo contiene el 1"
+               if _a_la_vista(par[0], 2) <= 1 <= _a_la_vista(par[1], 2)
+               else "; su intervalo no contiene el 1"))
+
+
+VEREDICTOS = {
+    "se_sostiene": "se sostiene",
+    "no_se_sostiene": "no se sostiene",
+    "no_se_puede_decir": "no se puede decir: la estimación y su intervalo no quedan "
+                         "enteros a un lado del umbral",
+    "punto_si": "se sostiene (estimación puntual, sin intervalo)",
+    "punto_no": "no se sostiene (estimación puntual, sin intervalo)",
+    "sin_casos": "no se puede decir: no hay casos concordantes",
+}
+
+
+def _veredicto(celda: dict) -> tuple:
+    """(clave, texto) del veredicto de la hipotesis en una celda. Con
+    intervalo decide el intervalo ENTERO, y tiene que quedar del mismo lado
+    del umbral que la estimacion; sin el, solo esta la estimacion puntual, y
+    el texto lo dice."""
+    h = celda["hipotesis"]
+    if _falta(celda["horquilla"]["todos"]["contencion"]) or _falta(h["umbral"]):
+        clave = "sin_casos"
+    else:
+        par = _par(celda, "horquilla.todos.contencion")
+        if par is None:
+            clave = "punto_si" if h["se_sostiene"] else "punto_no"
+        elif h["se_sostiene"] and _a_la_vista(par[0], 3) >= h["umbral"]:
+            clave = "se_sostiene"
+        elif not h["se_sostiene"] and _a_la_vista(par[1], 3) < h["umbral"]:
+            clave = "no_se_sostiene"
+        else:
+            clave = "no_se_puede_decir"
+    return clave, VEREDICTOS[clave]
+
+
 # ---------------------------------------------------------------------------
 # Las secciones
 # ---------------------------------------------------------------------------
@@ -222,7 +308,8 @@ def _insumos(r: dict) -> list:
         "",
         f"- **Placas y verdad:** las {entero(i['placas'])} placas del conjunto de prueba de "
         f"RSNA (una por paciente; {entero(i['positivas'])} positivas, prevalencia "
-        f"{numero(i['prevalencia'], 4)}), nunca usadas para entrenar ni calibrar, con su "
+        f"{numero(i['positivas'] / i['placas'] if i['placas'] else None, 4)}), nunca "
+        f"usadas para entrenar ni calibrar, con su "
         f"etiqueta real de opacidad. Es un desenlace análogo al de Heckerling (infiltrado "
         f"radiográfico) en una población distinta: RSNA no es una cohorte con sospecha de "
         f"neumonía.",
@@ -249,16 +336,16 @@ def _insumos(r: dict) -> list:
         + (f"celdas destacadas: {_lista(destacadas)}." if destacadas
            else "esta corrida no tiene celdas destacadas."),
         f"- Bootstrap: {replicas}.",
-        f"- Semillas: clínica de la estimación puntual, {entero(p['semilla_puntual'])}; "
-        f"clínica de la réplica b, {entero(p['semilla_clinica'])} + b; placas de la réplica "
-        f"b, {entero(p['semilla_indices'])} + b.",
+        f"- Semillas: clínica de la estimación puntual, {_semilla(p['semilla_puntual'])}; "
+        f"clínica de la réplica b, {_semilla(p['semilla_clinica'])} + b; placas de la "
+        f"réplica b, {_semilla(p['semilla_indices'])} + b.",
         f"- Tolerancia de las colas de la horquilla: ε = {numero(p['epsilon'], 3)} log-odds, "
-        f"el redondeo máximo de las RV publicadas (la misma tolerancia de la comprobación "
-        f"0A).",
+        f"que cubre el redondeo de las RV publicadas (la misma tolerancia de la "
+        f"comprobación 0A).",
         f"- ECE: {entero(p['bins'])} tramos de igual masa, con los empates rotos por el orden "
         f"del identificador de la placa. Su suelo de ruido: "
         f"{entero(p['repeticiones_suelo'])} juegos de etiquetas simuladas con las "
-        f"probabilidades del propio modelo (semilla {entero(p['semilla_suelo'])}); se "
+        f"probabilidades del propio modelo (semilla {_semilla(p['semilla_suelo'])}); se "
         f"publican la media y el percentil 95.",
         f"- Hipótesis de la horquilla: contención ≥ "
         f"{numero(100.0 * p['hipotesis_contencion'], 0)} % de los concordantes.",
@@ -310,8 +397,8 @@ def _escenario_0a(r: dict) -> list:
         f"de ε = {numero(r['parametros']['epsilon'], 3)} log-odds en todos los casos. Son "
         "pruebas, no estadísticas: una RV o un corte mutados las hacen fallar.",
         "",
-        "Lo que 0A demuestra es que el sistema calcula lo que dice calcular; no que la "
-        "posterior sea exacta en pacientes.",
+        "Lo que 0A puede demostrar es que el sistema calcula lo que dice calcular; no que "
+        "la posterior sea exacta en pacientes.",
         "",
     ]
     cero = _cero(r)
@@ -319,7 +406,7 @@ def _escenario_0a(r: dict) -> list:
         return lineas + ["Esta corrida no incluye la celda 0A.", ""]
     n = cero["recuentos"]
     h = cero["horquilla"]["todos"]
-    limpia = h["bajo"] == 0 and h["sobre"] == 0 and h["contencion"] == 1
+    limpia = _la_fila_0a_se_cumple(cero)
     lineas += [
         f"Los cuatro modelos puntuales en 0A, sobre los {entero(n['asma_conocida'])} casos "
         f"con el asma conocida:",
@@ -428,9 +515,9 @@ def _horquilla(r: dict) -> list:
         "",
         f"**Hipótesis declarada de antemano, a refutar celda a celda:** «el oráculo queda "
         f"dentro de la horquilla en ≥ {umbral} % de los concordantes». La expectativa, "
-        f"escrita antes de correr nada, era que solo se sostuviera en 0A y en las celdas más "
-        f"suaves. Una contención baja es un resultado igual de publicable, y obliga a "
-        f"repensar la cota, no a ocultarla.",
+        f"medida sobre el conjunto durante el diseño y no declarada a ciegas, era que solo "
+        f"se sostuviera en 0A y en las celdas más suaves. Una contención baja es un "
+        f"resultado igual de publicable, y obliga a repensar la cota, no a ocultarla.",
         "",
     ]
     filas = []
@@ -447,13 +534,15 @@ def _horquilla(r: dict) -> list:
     sin_horquilla = sum(c["horquilla"]["todos"]["sin_horquilla"] for c in celdas)
     lineas += [f"Casos concordantes sin horquilla (RV de imagen exactamente 1) en estas "
                f"celdas: {entero(sin_horquilla)}.", "",
-               "El veredicto, celda a celda, sobre todos los concordantes:", ""]
+               "El veredicto, celda a celda, sobre todos los concordantes. Donde hay "
+               "intervalo decide el intervalo entero: si la estimación y su intervalo no "
+               "quedan enteros a un lado del umbral, no se puede decir. Donde no lo hay "
+               "solo está la estimación puntual, y el veredicto lo dice:", ""]
     lineas += _tabla(
         ["celda", "contención", "umbral", "veredicto"],
         [[c["nombre"], _fraccion(c, "horquilla.todos.contencion"),
-          f"≥ {numero(100.0 * c['hipotesis']['umbral'], 0)} %",
-          "se sostiene" if c["hipotesis"]["se_sostiene"] else "no se sostiene"]
-         for c in r["celdas"]])
+          f"≥ {numero(100.0 * c['hipotesis']['umbral'], 0)} %", _veredicto(c)[1]]
+         for c in r["celdas"]], texto=("veredicto",))
     lineas += ["**Casos discordantes** (clínica e imagen en lados opuestos): el sistema da un "
                "solo número, el de la independencia. Error frente al oráculo, en log-odds; "
                "el sesgo es sistema menos oráculo:", ""]
@@ -498,10 +587,15 @@ def _escala_legible(r: dict) -> list:
     ]
     cero = _cero(r)
     if cero is not None:
+        fracciones = [cero["escala_legible"][lado]["fraccion_mediana_extremas"]
+                      for lado, _ in LADOS_DE_LA_IMAGEN]
+        entera = all(numero(f, 2) == numero(1.0, 2) for f in fracciones)
         lineas += ["En 0A la fracción mediana de las puntuaciones extremas (k ≤ 1 y k ≥ 4) es "
-                   + _lista([f"{numero(cero['escala_legible'][lado]['fraccion_mediana_extremas'], 2)} "
-                             f"{nombre}" for lado, nombre in LADOS_DE_LA_IMAGEN])
-                   + ": sin dependencia la puntuación conserva toda su evidencia.", ""]
+                   + _lista([f"{numero(f, 2)} {nombre}"
+                             for f, (_, nombre) in zip(fracciones, LADOS_DE_LA_IMAGEN)])
+                   + (": sin dependencia la puntuación conserva toda su evidencia." if entera
+                      else f": **sin dependencia tendría que ser {numero(1.0, 2)} en los dos "
+                           f"lados, y no lo es.**"), ""]
     destacadas = _destacadas(r)
     if not destacadas:
         return lineas + ["Esta corrida no tiene celdas destacadas.", ""]
@@ -520,7 +614,7 @@ def _escala_legible(r: dict) -> list:
                   numero(f["casos_esperados"], 1), _cuartiles(f["log_rv"]),
                   _cuartiles(f["fraccion"]), porcentaje(f["signo_invertido"]),
                   "poco informativa" if f["poco_informativa"] else ""]
-                 for f in e["por_puntuacion"]])
+                 for f in e["por_puntuacion"]], texto=("rótulo",))
     return lineas
 
 
@@ -588,7 +682,7 @@ def _sensibilidad(r: dict) -> list:
     lineas += _tabla(["celda", "modelo", "Brier", "Brier principal", "ECE",
                       "suelo de la ECE (media; p95)", "ECE principal", "intercepto",
                       "intercepto principal", "diferencia", "cambian de banda",
-                      "en qué sentido"], filas, izquierdas=2)
+                      "en qué sentido"], filas, izquierdas=2, texto=("en qué sentido",))
     lineas += ["La categoría que el sistema imprime (todos los casos, también los del asma "
                "desconocida):", ""]
     lineas += _tabla(
@@ -597,7 +691,7 @@ def _sensibilidad(r: dict) -> list:
           f"{entero(c['sensibilidad_al_previo']['categoria_del_sistema']['cambian'])} de "
           f"{entero(c['sensibilidad_al_previo']['categoria_del_sistema']['casos'])}",
           _transiciones(c["sensibilidad_al_previo"]["categoria_del_sistema"])]
-         for c in celdas])
+         for c in celdas], texto=("en qué sentido",))
     return lineas
 
 
@@ -607,15 +701,19 @@ def _optimismo(r: dict) -> list:
     if cero is None or "optimismo_de_la_derivacion" not in cero:
         return lineas + ["Esta corrida no calculó 0C.", ""]
     o = cero["optimismo_de_la_derivacion"]
-    mas, menos = [], []
+    mas, menos, iguales = [], [], []
     for f in o["por_puntuacion"]:
-        extrema = abs(math.log(f["rv_derivacion"])) > abs(math.log(f["rv_validacion"]))
-        (mas if extrema else menos).append(str(f["k"]))
+        derivacion = abs(math.log(f["rv_derivacion"]))
+        validacion = abs(math.log(f["rv_validacion"]))
+        (mas if derivacion > validacion else menos if derivacion < validacion
+         else iguales).append(str(f["k"]))
     reparto = []
     if mas:
         reparto.append(f"más extrema que la de validación en k = {_lista(mas)}")
     if menos:
         reparto.append(f"menos extrema en k = {_lista(menos)}")
+    if iguales:
+        reparto.append(f"igual de extrema en k = {_lista(iguales)}")
     lineas += [
         "El sistema usa las RV de la cohorte de derivación, por puntuación; la validación "
         "externa solo las publica por bandas de puntuación. **Esto es un cálculo, no un "
@@ -627,7 +725,8 @@ def _optimismo(r: dict) -> list:
                 [[str(f["k"]), numero(f["rv_derivacion"], 2), numero(f["rv_validacion"], 2),
                   numero(f["diferencia_log"], 2, signo=True)] for f in o["por_puntuacion"]]),
         f"La RV de la derivación es {_lista(reparto)} (más extrema: más lejos de 1)."
-        + (" El «optimismo» de la derivación no es uniforme." if mas and menos else ""),
+        + (" El «optimismo» de la derivación no es uniforme."
+           if mas and (menos or iguales) else ""),
         "",
         f"Si el sistema usara las RV de la validación, cambiarían de banda "
         f"{entero(o['bandas']['cambian'])} de los {entero(o['bandas']['casos'])} casos con el "
@@ -683,79 +782,141 @@ def _fuera_de_su_intervalo(celdas) -> tuple:
     return fuera, total
 
 
+def _del_lado(celdas, clave: str, debajo: bool) -> tuple:
+    """Las celdas cuya pendiente de `clave` queda por debajo (o por encima) de
+    1, las que de ellas llevan intervalo, y las que lo tienen ENTERO de ese
+    lado."""
+    ruta = f"modelos.{clave}.pendiente"
+
+    def de_ese_lado(v) -> bool:
+        return _a_la_vista(v, 2) < 1 if debajo else _a_la_vista(v, 2) > 1
+
+    puntuales = [c for c in celdas if not _falta(c["modelos"][clave]["pendiente"])
+                 and de_ese_lado(c["modelos"][clave]["pendiente"])]
+    con_intervalo = [c for c in puntuales if _par(c, ruta) is not None]
+    enteras = [c for c in con_intervalo if de_ese_lado(_par(c, ruta)[1 if debajo else 0])]
+    return puntuales, con_intervalo, enteras
+
+
+def _lectura_de_la_pendiente(celdas, clave: str, debajo: bool, esperada: str,
+                             contraria: str) -> list:
+    """Las frases de la pendiente de un modelo: primero el lado esperado y
+    despues, si alguna celda cae en el, el contrario. En los dos se dice en
+    cuantas el intervalo queda ENTERO de ese lado: la estimacion sola no
+    decide."""
+    ruta = f"modelos.{clave}.pendiente"
+    lineas = []
+    for lado, frase in ((debajo, esperada), (not debajo, contraria)):
+        puntuales, con_intervalo, enteras = _del_lado(celdas, clave, lado)
+        if lado != debajo and not puntuales:
+            continue
+        lineas.append(f"- {frase}: {len(puntuales)} de {len(celdas)}"
+                      + _con_su_cifra(puntuales, ruta, 2) + ".")
+        if con_intervalo:
+            lineas.append(
+                f"- De esas, con el intervalo entero por {'debajo' if lado else 'encima'} "
+                f"de 1: {len(enteras)} de {len(con_intervalo)}"
+                + (": " + _lista(c["nombre"] for c in enteras) if enteras else "") + ".")
+    return lineas
+
+
+def _lectura_de_las_pareadas(celdas) -> list:
+    """Por combinacion y por metrica: en cuantas celdas el intervalo de la
+    diferencia frente a la imagen sola queda entero del lado de la mejora,
+    entero del contrario, o cruza el 0."""
+    lineas = []
+    for clave, nombre in COMBINADOS:
+        for metrica, titulo, sube in (("auc", "ΔAUC", True), ("brier", "ΔBrier", False)):
+            ruta = f"pareadas.{clave}.{metrica}"
+            con_intervalo = [c for c in celdas if _par(c, ruta) is not None]
+            if not con_intervalo:
+                continue
+            encima = [c for c in con_intervalo if _a_la_vista(_par(c, ruta)[0], 3) > 0]
+            debajo = [c for c in con_intervalo if _a_la_vista(_par(c, ruta)[1], 3) < 0]
+            cruzan = [c for c in con_intervalo if c not in encima and c not in debajo]
+            mejoran, empeoran = (encima, debajo) if sube else (debajo, encima)
+            lineas.append(
+                f"- **Frente a la imagen sola: {titulo}, {nombre}.** Celdas destacadas con "
+                f"intervalo: {len(con_intervalo)}. El intervalo queda entero del lado de la "
+                f"mejora (por {'encima' if sube else 'debajo'} de 0) en "
+                f"{_nombradas(mejoran)}. Entero del lado contrario, en "
+                f"{_nombradas(empeoran)}. Cruza el 0 en {_nombradas(cruzan)}.")
+    return lineas
+
+
+def _lectura_de_la_hipotesis(r: dict) -> str:
+    """0A aparte. En las demas, las que llevan intervalo se leen por el; en
+    las que no, se dice que solo hay estimacion puntual."""
+    umbral = numero(100.0 * r["parametros"]["hipotesis_contencion"], 0)
+    resto = [c for c in r["celdas"] if c["nombre"] != "0A"]
+    clases = {clave: [] for clave in VEREDICTOS}
+    for c in resto:
+        clases[_veredicto(c)[0]].append(c)
+    con_intervalo = clases["se_sostiene"] + clases["no_se_sostiene"] + clases["no_se_puede_decir"]
+    sin_intervalo = clases["punto_si"] + clases["punto_no"]
+    frases = [f"- **La hipótesis de la horquilla** (contención ≥ {umbral} % de los "
+              f"concordantes)."]
+    if _cero(r) is not None:
+        frases.append("0A es la comprobación de la métrica y se cuenta aparte.")
+    frases.append(f"Celdas con dependencia: {entero(len(resto))}; con intervalo, "
+                  f"{entero(len(con_intervalo))}.")
+    if con_intervalo:
+        frases += [
+            "Donde hay intervalo decide el intervalo entero.",
+            f"Se sostiene en {_nombradas(clases['se_sostiene'])}.",
+            f"No se sostiene en {_nombradas(clases['no_se_sostiene'])}.",
+            f"No se puede decir, porque la estimación y su intervalo no quedan enteros a un "
+            f"lado del umbral, en {_nombradas(clases['no_se_puede_decir'])}."]
+    if sin_intervalo:
+        frases.append(
+            f"Sin intervalo, {entero(len(sin_intervalo))}: solo hay estimación puntual, que "
+            f"alcanza el umbral en {_nombradas(clases['punto_si'])}.")
+    if clases["sin_casos"]:
+        frases.append(f"Sin casos concordantes, {_nombradas(clases['sin_casos'])}.")
+    return " ".join(frases)
+
+
 def _lectura(r: dict) -> list:
     lineas = [
         "## Lectura de los resultados",
         "",
         "Estas frases se componen contando sobre las cifras de las tablas: dicen lo que las "
-        "cifras dicen, y nada más. Todo se refiere a la simulación.",
+        "cifras dicen, y nada más. Todo se refiere a la simulación. Las comparaciones se "
+        "hacen con las cifras tal como se imprimen: un extremo que redondea al umbral no "
+        "queda a ningún lado de él.",
         "",
     ]
     destacadas = _destacadas(r)
-    total = len(destacadas)
     cero = _cero(r)
     if cero is not None:
-        par = (cero.get("intervalos") or {}).get("modelos.independencia.pendiente")
         lineas.append(
             f"- **0A.** La pendiente de la combinación por independencia es "
-            f"{_cifra(cero, 'modelos.independencia.pendiente', 2)}"
-            + ("" if not par or _falta(par[0]) or _falta(par[1]) else
-               ("; su intervalo contiene el 1" if par[0] <= 1 <= par[1]
-                else "; su intervalo no contiene el 1"))
-            + f". En la horquilla, {_colas(cero['horquilla']['todos'])}.")
+            f"{_pendiente_de_0a(cero)}. En la horquilla, "
+            f"{_colas(cero['horquilla']['todos'])}.")
     if not destacadas:
         lineas.append("- Esta corrida no tiene celdas destacadas.")
     else:
-        debajo = [c for c in destacadas
-                  if not _falta(c["modelos"]["independencia"]["pendiente"])
-                  and c["modelos"]["independencia"]["pendiente"] < 1]
-        lineas.append(
-            f"- **La independencia.** Celdas destacadas en las que la pendiente de la "
-            f"combinación por independencia es menor que 1: {len(debajo)} de {total}"
-            + (" (" + "; ".join(
-                f"{c['nombre']}: {_cifra(c, 'modelos.independencia.pendiente', 2)}"
-                for c in debajo) + ")" if debajo else "")
-            + ". Una pendiente menor que 1 es la forma cuantitativa de «exagera».")
-        con_intervalo = [c for c in debajo
-                         if (c.get("intervalos") or {}).get("modelos.independencia.pendiente")]
-        if con_intervalo:
-            enteros = [c for c in con_intervalo
-                       if c["intervalos"]["modelos.independencia.pendiente"][1] < 1]
-            lineas.append(
-                f"- De esas, con el intervalo entero por debajo de 1: {len(enteros)} de "
-                f"{len(con_intervalo)}"
-                + (f" ({_lista(c['nombre'] for c in enteros)})" if enteros else "") + ".")
-        encima = [c for c in destacadas
-                  if not _falta(c["modelos"]["conservador"]["pendiente"])
-                  and c["modelos"]["conservador"]["pendiente"] > 1]
-        lineas.append(
-            f"- **El extremo conservador.** Celdas destacadas en las que su pendiente es "
-            f"mayor que 1 (se queda corto): {len(encima)} de {total}"
-            + (" (" + "; ".join(
-                f"{c['nombre']}: {_cifra(c, 'modelos.conservador.pendiente', 2)}"
-                for c in encima) + ")" if encima else "") + ".")
-        mejoran = [c for c in destacadas
-                   if (c.get("intervalos") or {}).get("pareadas.independencia.auc")
-                   and c["intervalos"]["pareadas.independencia.auc"][0] > 0]
-        if any((c.get("intervalos") or {}).get("pareadas.independencia.auc")
-               for c in destacadas):
-            lineas.append(
-                f"- **Discriminación.** Celdas destacadas en las que el intervalo de la "
-                f"diferencia de AUC entre la independencia y la imagen sola queda entero por "
-                f"encima de 0: {len(mejoran)} de {total}"
-                + (f" ({_lista(c['nombre'] for c in mejoran)})" if mejoran else "") + ".")
-    sostienen = [c["nombre"] for c in r["celdas"] if c["hipotesis"]["se_sostiene"]]
-    rejilla = len(r["celdas"])
-    lineas.append(
-        "- **La hipótesis de la horquilla.** "
-        + (f"Se sostiene en {len(sostienen)} de las {rejilla} celdas de la rejilla: "
-           f"{_lista(sostienen)}." if sostienen else
-           f"No se sostiene en ninguna de las {rejilla} celdas de la rejilla."))
+        independencia = _lectura_de_la_pendiente(
+            destacadas, "independencia", True,
+            "**La independencia.** Celdas destacadas en las que la pendiente de la "
+            "combinación por independencia es menor que 1",
+            "En sentido contrario, la pendiente de la combinación por independencia es "
+            "mayor que 1 (se queda corta)")
+        independencia[0] += " Una pendiente menor que 1 es la forma cuantitativa de «exagera»."
+        lineas += independencia
+        lineas += _lectura_de_la_pendiente(
+            destacadas, "conservador", False,
+            "**El extremo conservador.** Celdas destacadas en las que su pendiente es mayor "
+            "que 1 (se queda corto)",
+            "En sentido contrario, la pendiente del extremo conservador es menor que 1 "
+            "(también el extremo conservador exagera)")
+        lineas += _lectura_de_las_pareadas(destacadas)
+    lineas.append(_lectura_de_la_hipotesis(r))
     fuera, cifras = _fuera_de_su_intervalo(r["celdas"])
     if cifras:
         lineas.append(
             f"- **Los intervalos.** La estimación puntual usa la clínica sorteada con la "
-            f"semilla {entero(r['parametros']['semilla_puntual'])} sobre todas las placas; "
+            f"semilla {_semilla(r['parametros']['semilla_puntual'])} sobre todas las placas; "
             f"cada réplica remuestrea las placas y sortea otra clínica. El intervalo son los "
             f"percentiles de las réplicas y no está centrado en la estimación puntual: en "
             f"esta corrida, de {entero(r['parametros']['replicas'])} réplicas, quedan fuera "
@@ -777,19 +938,33 @@ def _lectura(r: dict) -> list:
 
 
 def _limites(r: dict) -> list:
+    cero = _cero(r)
+    if cero is None:
+        corrida = ("Esta corrida no incluye la celda 0A: los dos primeros puntos quedan sin "
+                   "respuesta.")
+    else:
+        m = cero["modelos"]["independencia"]
+        corrida = (
+            f"En esta corrida, la fila 0A de la horquilla "
+            f"{'se cumple' if _la_fila_0a_se_cumple(cero) else '**no se cumple**'}; la "
+            f"pendiente de la combinación por independencia en 0A es "
+            f"{_pendiente_de_0a(cero)}; y su ECE ({numero(m['ece'], 3)}) "
+            f"{_frente_al_suelo(m['ece'], m['suelo'])}.")
     return [
         "## Lo que esta simulación puede afirmar y lo que no",
         "",
-        "**Puede afirmar:**",
+        "**Puede decir:**",
         "",
-        "- que el sistema reproduce caso a caso la posterior del generador (0A);",
-        "- que, **si** la puntuación tiene la exactitud publicada y es condicionalmente "
+        "- si el sistema reproduce caso a caso la posterior del generador (0A);",
+        "- si, **cuando** la puntuación tiene la exactitud publicada y es condicionalmente "
         "independiente de la imagen, la aritmética y la calibración de la imagen dan una "
         "posterior calibrada en el conjunto de prueba de RSNA;",
         "- cuánto se desvía la independencia de la posterior del generador **bajo cada "
         "supuesto de dependencia**, en qué dirección, y dónde cae el oráculo respecto a la "
         "horquilla;",
         "- cuánto desplaza la calibración un previo equivocado.",
+        "",
+        corrida + " Lo demás se lee en «Lectura de los resultados».",
         "",
         "**No puede afirmar** exactitud clínica real ni cuánto aporta la clínica en "
         "pacientes: las viñetas no son pacientes, la exactitud es la publicada y la "
@@ -822,7 +997,7 @@ def _figuras(r: dict, figuras: dict) -> list:
     orden = [n for n in orden if n in figuras] + sorted(n for n in figuras if n not in orden)
     lineas += ["El guion las dibuja leyendo el mismo fichero de resultados que este "
                "documento. Con `--sin-figuras` no se redibujan: se enlazan las que ya "
-               "hubiera en la carpeta.", ""]
+               "hubiera en la carpeta, que pueden ser de una corrida anterior.", ""]
     for nombre in orden:
         lineas += [f"![{_titulo_de_figura(nombre, r)}]({figuras[nombre]})", ""]
     return lineas
