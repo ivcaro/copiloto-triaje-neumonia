@@ -1,4 +1,5 @@
 """scripts/validar_combinacion.py: la rejilla, el JSON y sus huellas."""
+import copy
 import json
 
 import pytest
@@ -195,17 +196,37 @@ def test_cada_figura_se_puede_dibujar_por_separado(validar, resultados_minimos, 
     assert not (tmp_path / "cinco.png").exists()
 
 
+def _contraste(una: float, otra: float) -> float:
+    """La razon de contraste de WCAG 2 entre dos luminancias."""
+    clara, oscura = max(una, otra), min(una, otra)
+    return (clara + 0.05) / (oscura + 0.05)
+
+
 def test_la_tinta_es_la_que_mas_contrasta_con_el_color_pintado(validar):
     pytest.importorskip("matplotlib")
-    for claro in ("#e34948", "#2a78d6", "#3987e5", "#c9c8c3", "#f0efec", "white"):
+    # la luminancia relativa de WCAG 2: sus tres coeficientes y su gamma
+    assert validar._luminancia("#ff0000") == pytest.approx(0.2126)
+    assert validar._luminancia("#00ff00") == pytest.approx(0.7152)
+    assert validar._luminancia("#0000ff") == pytest.approx(0.0722)
+    assert validar._luminancia("white") == pytest.approx(1.0)
+    assert validar._luminancia("black") == 0.0
+    assert validar._luminancia("#808080") == pytest.approx(0.2159, abs=1e-4)
+    for claro in ("#e34948", "#f0a09f", "#c9c8c3", "#f0efec", "#cde2fb", "white"):
         assert validar._tinta_sobre(claro) == validar.TINTA, claro
     for oscuro in ("#1c5cab", "#0d366b", validar.TINTA, "black"):
         assert validar._tinta_sobre(oscuro) == "white", oscuro
     # tal como lo da un mapa de color: una tupla RGBA
     assert validar._tinta_sobre((0.05, 0.21, 0.42, 1.0)) == "white"
     assert validar._tinta_sobre((0.91, 0.55, 0.54, 1.0)) == validar.TINTA
-    assert validar._luminancia("white") == pytest.approx(1.0)
-    assert validar._luminancia("black") == 0.0
+    # y en cualquier color, tambien donde las dos casi empatan, la elegida
+    # contrasta al menos tanto como la otra
+    tinta = validar._luminancia(validar.TINTA)
+    for color in validar.RAMPA_AZUL + validar.RAMPA_DIVERGENTE + tuple(
+            c for _, _, c in validar.TRAMOS):
+        fondo = validar._luminancia(color)
+        elegida, otra = ((1.0, tinta) if validar._tinta_sobre(color) == "white"
+                         else (tinta, 1.0))
+        assert _contraste(fondo, elegida) >= _contraste(fondo, otra), color
 
 
 def test_las_casillas_y_las_barras_se_escriben_con_la_tinta_que_contrasta(
@@ -220,28 +241,30 @@ def test_las_casillas_y_las_barras_se_escriben_con_la_tinta_que_contrasta(
         return escribir(self, x, y, texto, **kwargs)
 
     monkeypatch.setattr(Axes, "text", escribir_espia)
-    validar.figura_rejilla(resultados_minimos, tmp_path / "pendiente.png", "pendiente")
-    pendientes = {c["nombre"]: c["modelos"]["independencia"]["pendiente"]
-                  for c in resultados_minimos["celdas"]}
-    # todas las pendientes de la rejilla minima caen en la mitad roja o en el
-    # gris del centro: ninguna casilla es bastante oscura para el blanco
-    assert all(0.6 < p < 1.1 for p in pendientes.values())
-    assert len(escritos) == 4
+    # cifras puestas a mano, lejos del punto en que la tinta cambia (la
+    # contencion cambia hacia el 59 %): la prueba es del dibujo, no de la
+    # simulacion. Con la regla vieja (por posicion en la escala) el 55 % y las
+    # pendientes 0,65 y 0,79 irian en blanco.
+    trucados = copy.deepcopy(resultados_minimos)
+    for celda, contencion, pendiente in zip(
+            trucados["celdas"], (1.0, 0.20, 0.55, 0.70), (1.0, 0.65, 0.79, 1.30)):
+        celda["horquilla"]["todos"]["contencion"] = contencion
+        celda["modelos"]["independencia"]["pendiente"] = pendiente
+    validar.figura_rejilla(trucados, tmp_path / "pendiente.png", "pendiente")
+    assert escritos == [("1,00", validar.TINTA), ("0,65", validar.TINTA),
+                        ("0,79", validar.TINTA), ("1,30", validar.TINTA)]
+
+    escritos.clear()
+    validar.figura_rejilla(trucados, tmp_path / "contencion.png", "contencion")
+    assert escritos == [("100,0 %", "white"), ("20,0 %", validar.TINTA),
+                        ("55,0 %", validar.TINTA), ("70,0 %", "white")]
+
+    escritos.clear()
+    for lado in ("a_favor", "en_contra"):
+        trucados["celdas"][3]["horquilla"][lado].update(bajo=0.25, contencion=0.5, sobre=0.25)
+    validar.figura_horquilla(trucados, tmp_path / "horquilla.png")
+    assert ("25 %", validar.TINTA) in escritos and ("50 %", validar.TINTA) in escritos
     assert all(color == validar.TINTA for _, color in escritos)
-
-    escritos.clear()
-    validar.figura_rejilla(resultados_minimos, tmp_path / "contencion.png", "contencion")
-    por_texto = dict(escritos)
-    assert por_texto["100,0 %"] == "white"                  # 0A: el azul mas oscuro
-    contenciones = [100 * c["horquilla"]["todos"]["contencion"]
-                    for c in resultados_minimos["celdas"]]
-    for valor in contenciones:
-        texto = f"{valor:.1f}".replace(".", ",") + " %"
-        assert por_texto[texto] == ("white" if valor > 60 else validar.TINTA), texto
-
-    escritos.clear()
-    validar.figura_horquilla(resultados_minimos, tmp_path / "horquilla.png")
-    assert escritos and all(color == validar.TINTA for _, color in escritos)
 
 
 def test_la_leyenda_de_fiabilidad_da_la_ece_con_la_media_y_el_p95_de_su_suelo(
@@ -281,16 +304,48 @@ def test_el_rojo_es_exagerar_en_la_horquilla_y_en_la_pendiente(validar):
 def test_sin_matplotlib_se_calcula_y_dibujar_lo_dice(
         validar, resultados_minimos, tmp_path, monkeypatch):
     import sys
+    calculos = []
+
+    def calcular_falso(replicas, procesos):
+        calculos.append(replicas)
+        return resultados_minimos
+
     monkeypatch.setitem(sys.modules, "matplotlib", None)      # como si no estuviera instalado
-    monkeypatch.setattr(validar, "calcular", lambda replicas, procesos: resultados_minimos)
+    monkeypatch.setattr(validar, "calcular", calcular_falso)
     orden = ["--replicas", "2", "--procesos", "1", "--salida", str(tmp_path)]
     assert validar.main(orden + ["--sin-figuras"]) == 0
     assert [p.name for p in tmp_path.iterdir()] == ["resultados_simulacion.json"]
+    assert calculos == [2]
+    # con figuras de una corrida anterior: pedir dibujar sale ANTES de calcular
+    # y ANTES de borrarlas
+    previa = tmp_path / "fiabilidad_0a.png"
+    previa.write_bytes(b"de la corrida anterior")
     with pytest.raises(SystemExit, match="--sin-figuras"):
         validar.main(orden)
-    assert list(tmp_path.glob("*.png")) == []
+    assert calculos == [2]
+    assert previa.read_bytes() == b"de la corrida anterior"
+    with pytest.raises(SystemExit, match="extra `figuras`"):
+        validar.figuras(resultados_minimos, tmp_path)
+    assert previa.read_bytes() == b"de la corrida anterior"
+    with pytest.raises(SystemExit, match="--sin-figuras"):
+        validar.main(orden + ["--solo-documento"])
+    assert [p.name for p in tmp_path.glob("*.png")] == ["fiabilidad_0a.png"]
     with pytest.raises(ValueError, match="contencion"):      # se rechaza antes de importar nada
         validar.figura_rejilla(resultados_minimos, tmp_path / "x.png", "auc")
+
+
+def test_si_falta_otra_cosa_no_se_dice_que_falta_matplotlib(validar, monkeypatch):
+    import builtins
+    importar = builtins.__import__
+
+    def sin_numpy(nombre, *args, **kwargs):
+        if nombre == "matplotlib":
+            raise ModuleNotFoundError("No module named 'numpy'", name="numpy")
+        return importar(nombre, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", sin_numpy)
+    with pytest.raises(ModuleNotFoundError, match="numpy"):
+        validar._pyplot()
 
 
 def test_las_figuras_borran_las_propias_rancias_y_respetan_las_ajenas(

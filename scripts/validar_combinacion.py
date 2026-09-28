@@ -184,9 +184,12 @@ REJILLAS = ("contencion", "pendiente")
 def _pyplot():
     try:
         import matplotlib
-    except ImportError:
-        raise SystemExit("para dibujar hace falta matplotlib, que es el extra `figuras` "
-                         "(pip install -e .[figuras]); sin él, corre con --sin-figuras") from None
+    except ModuleNotFoundError as error:
+        if error.name != "matplotlib":          # falta otra cosa: que se vea cual
+            raise
+        raise SystemExit('para dibujar hace falta matplotlib, que es el extra `figuras` '
+                         '(pip install -e ".[figuras]"); sin él, corre con --sin-figuras'
+                         ) from None
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     return plt
@@ -390,7 +393,8 @@ def figuras(resultados: dict, carpeta) -> list[Path]:
 
     Borra antes las propias que hubiera: si cambian las celdas destacadas, una
     `fiabilidad_*.png` de la corrida anterior quedaria en la carpeta con cifras
-    que ya no son las del JSON."""
+    que ya no son las del JSON. Sin matplotlib sale ANTES de borrar nada."""
+    _pyplot()
     carpeta = Path(carpeta)
     carpeta.mkdir(parents=True, exist_ok=True)
     for rancia in figuras_presentes(carpeta):
@@ -448,6 +452,8 @@ def main(argv=None) -> int:
         raise SystemExit("--replicas no puede ser negativo y --procesos debe ser al menos 1")
     salida = Path(args.salida)
     ruta = salida / NOMBRE_RESULTADOS
+    if not args.sin_figuras:
+        _pyplot()                 # sin matplotlib se sale ANTES de calcular nada
     if not args.solo_documento:
         escribir_resultados(calcular(args.replicas, args.procesos), ruta)
         print(f"resultados: {ruta}")
