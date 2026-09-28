@@ -1,12 +1,13 @@
 # Validación semisintética de la combinación (SP5)
 
-**Todo lo que hay en esta carpeta, salvo `crudas_prueba.csv` y
-`latencia.json`, es resultado de una simulación semisintética** (spec de
-SP5, §4): las placas y sus etiquetas son reales (conjunto de prueba de
-RSNA), la clínica se sortea con la distribución publicada de la puntuación
-de Heckerling, y la dependencia entre clínica e imagen es un supuesto
-declarado. Nada de aquí mide exactitud clínica en pacientes. Cada tabla,
-figura y JSON de resultados lleva ese rótulo en su título.
+**Todo lo que hay en esta carpeta, salvo `crudas_prueba.csv`,
+`crudas_prueba.sha256` y `latencia.json`, es resultado de una simulación
+semisintética** (spec de SP5, §4): las placas y sus etiquetas son reales
+(conjunto de prueba de RSNA), la clínica se sortea con la distribución
+publicada de la puntuación de Heckerling, y la dependencia entre clínica e
+imagen es un supuesto declarado. Nada de aquí mide exactitud clínica en
+pacientes. Cada tabla, figura y JSON de resultados lleva ese rótulo en su
+título.
 
 ## `resultados_simulacion.json`
 
@@ -39,8 +40,22 @@ cifra se teclea y el documento no se edita a mano.
 
 Sin los pesos, sin red y sin contenedores; de 3 a 5 minutos. Con
 `--solo-documento` se regeneran las figuras y el análisis sin recalcular.
-`tests/test_resultados_publicados.py` falla si lo versionado deja de
-corresponder a los insumos o al código.
+
+`tests/test_resultados_publicados.py` vuelve a calcular todo lo que no es
+bootstrap (las 25 celdas, la imagen sola, los insumos y los parámetros) y
+falla si lo versionado deja de corresponder a los insumos o al código;
+también regenera el análisis desde el JSON y lo compara con el versionado.
+**No** repite el bootstrap ni compara el contenido de las figuras: de los
+intervalos solo comprueba la forma, y de las figuras, el nombre, la
+resolución y el título. Si se toca algo que cambie el bootstrap o el dibujo,
+hay que volver a correr el guion, porque ninguna prueba lo va a pedir.
+
+## `acta-h7-plantilla.md`
+
+No es un resultado: es la **plantilla** del acta de la sesión con el médico
+(spec de SP5, §5). La rellena `scripts/analizar_sesion.py` con las cifras de
+`sesion.json`; hasta que la sesión se haga, ni `sesion.json` ni `acta-h7.md`
+están en esta carpeta. El procedimiento está en `docs/sp5-sesion.md`.
 
 ## `crudas_prueba.csv` y `crudas_prueba.sha256`
 
