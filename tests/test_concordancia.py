@@ -1,0 +1,217 @@
+"""Kappas, intervalos, acuerdo continuo, tiempos y el análisis de la sesión
+(spec de SP5 §5.4-§5.5, §8, §11.4; plan SP5-A D9).
+
+Los kappas se comprueban contra un ejemplo calculado a mano de 8 casos:
+  a = baja baja alta alta inter inter baja alta
+  b = baja inter alta alta inter baja baja alta
+  acuerdo bruto 6/8; marginales 3/2/3 en los dos; Cohen = 0,6190;
+  ponderado lineal: (b,inter) e (inter,b) pesan 0,5 → po 0,875, pe 0,53125 → 0,7333.
+"""
+import csv
+import json
+import pathlib
+
+import numpy as np
+import pytest
+
+from copiloto_triaje.validacion import concordancia as cc
+
+A = ["baja", "baja", "alta", "alta", "intermedia", "intermedia", "baja", "alta"]
+B = ["baja", "intermedia", "alta", "alta", "intermedia", "baja", "baja", "alta"]
+
+
+def test_kappa_de_cohen_y_ponderado_lineal_del_ejemplo_a_mano():
+    ia, ib = cc.indices(A), cc.indices(B)
+    cohen = cc.kappa(ia, ib, 3, "ninguno")
+    lineal = cc.kappa(ia, ib, 3, "lineal")
+    assert cohen["kappa"] == pytest.approx(0.6190, abs=1e-4)
+    assert cohen["po"] == pytest.approx(0.75) and cohen["pe"] == pytest.approx(0.34375)
+    assert lineal["kappa"] == pytest.approx(0.7333, abs=1e-4)
+    assert lineal["po"] == pytest.approx(0.875) and lineal["pe"] == pytest.approx(0.53125)
+    assert cohen["ee"] > 0 and lineal["ee"] > 0
+    assert cohen["ic95"][0] < cohen["kappa"] < cohen["ic95"][1]
+    assert cc.kappa(ib, ia, 3, "lineal")["kappa"] == pytest.approx(lineal["kappa"])
+
+
+def test_el_acuerdo_perfecto_da_kappa_1_con_error_tipico_0():
+    ia = cc.indices(A)
+    r = cc.kappa(ia, ia, 3, "lineal")
+    assert r["kappa"] == pytest.approx(1.0) and r["ee"] == pytest.approx(0.0)
+
+
+def test_kappa_binario_en_alta():
+    r = cc.kappa_binario(A, B)
+    assert r["kappa"] == pytest.approx(1.0)          # coinciden en todas las «alta»
+    assert cc.kappa_binario(A, ["baja"] * 8)["kappa"] == pytest.approx(0.0)
+
+
+def test_los_intervalos_bca_contienen_la_estimacion_y_son_reproducibles():
+    r = cc.kappa_con_intervalos(A * 3, B * 3, "lineal")
+    assert r["ic95_bca"][0] <= r["kappa"] <= r["ic95_bca"][1]
+    assert r["ic95_bca"] == cc.kappa_con_intervalos(A * 3, B * 3, "lineal")["ic95_bca"]
+    assert r["n"] == 24
+    binario = cc.kappa_con_intervalos(A * 3, B * 3, "binario_alta")
+    assert binario["kappa"] == pytest.approx(1.0)
+
+
+def test_bca_sobre_una_media_conocida():
+    datos = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
+    lo, hi = cc.bca(datos, lambda d: float(np.mean(d)), B=500, semilla=1)
+    assert lo < 4.5 < hi and 2.0 < lo and hi < 7.0
+    assert cc.bca(np.ones(10), lambda d: float(np.mean(d))) == [1.0, 1.0]
+
+
+def test_acuerdo_continuo_acota_0_y_100_y_mide_spearman():
+    pct = [0, 10, 40, 70, 100]
+    p = [0.02, 0.15, 0.45, 0.7, 0.95]
+    r = cc.acuerdo_continuo(pct, p, minima=[0.0, 0.1, 0.3, 0.6, 0.9], maxima=[0.05, 0.2, 0.5, 0.8, 1.0])
+    assert r["spearman"] == pytest.approx(1.0)
+    assert r["acotados_0_o_100"] == 2
+    assert np.isfinite(r["diferencia_media_log_odds"]) and r["n"] == 5
+    assert r["fraccion_dentro_de_la_horquilla"] == pytest.approx(1.0)
+
+
+def test_razon_de_tiempos_pareada():
+    r = cc.razon_de_tiempos([60, 80, 100, 120], [30, 40, 50, 60])
+    assert r["razon_medias_geometricas"] == pytest.approx(0.5)
+    assert r["reduccion_pct"] == pytest.approx(50.0)
+    assert r["n"] == 4 and r["ic95_bca"][0] <= 0.5 <= r["ic95_bca"][1]
+    with pytest.raises(ValueError):
+        cc.razon_de_tiempos([1, 2], [1])
+
+
+# --------------------------------------------------------------------------
+# El análisis entero sobre una sesión fabricada con valores conocidos.
+# --------------------------------------------------------------------------
+BANDAS_SISTEMA = (["baja"] * 8 + ["alta"] * 8 + ["intermedia"] * 4 + ["intermedia"] * 4)
+ESTRATOS = (["positiva_clara"] * 8 + ["negativa_clara"] * 8
+            + ["banda_contradictoria"] * 4 + ["asma_no_se"] * 4)
+PUNTO_MEDIO = {"baja": 0.08, "intermedia": 0.45, "alta": 0.9}
+
+
+def _clave():
+    casos = []
+    for i in range(24):
+        banda = BANDAS_SISTEMA[i]
+        pm = PUNTO_MEDIO[banda]
+        casos.append({"patientId": f"c-{i:02d}", "estrato": ESTRATOS[i], "concordante": i % 2 == 0,
+                      "bloque": {"minima": pm - 0.05, "maxima": pm + 0.05},
+                      "categoria": {"primaria": banda, "punto_medio": pm, "independencia": banda,
+                                    "conservador": banda, "cruza": banda, "cruza_limite": False}})
+    return {"rotulo": "simulación semisintética — sesión H7", "casos": casos,
+            "ordenes": {"lectura1": [c["patientId"] for c in casos],
+                        "lectura2": [c["patientId"] for c in casos][::-1],
+                        "controles": ["c-00", "c-01", "c-08", "c-09"]}}
+
+
+def _csv(ruta, filas):
+    with open(ruta, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=cc.COLUMNAS_CSV)
+        w.writeheader()
+        w.writerows(filas)
+
+
+def _fila(lectura, orden, caso, banda, pct, segundos, control=False, notas=None, banda_con="", pct_con="", seg_con=""):
+    n = notas or {}
+    return {"lectura": lectura, "orden": orden, "id": caso["patientId"], "practica": "false",
+            "control": "true" if control else "false", "banda": banda, "porcentaje": pct,
+            "abierto_en": 1760000000000 + orden * 100000, "enviado_en": 1760000000000 + orden * 100000 + int(segundos * 1000),
+            "segundos": segundos, "banda_con": banda_con, "porcentaje_con": pct_con, "segundos_con": seg_con,
+            "correccion": n.get("correccion", ""), "utilidad": n.get("utilidad", ""), "lenguaje": n.get("lenguaje", ""),
+            "comentario": "dudoso" if banda != caso["categoria"]["primaria"] else ""}
+
+
+def test_analizar_una_sesion_fabricada(tmp_path):
+    clave = _clave()
+    casos = {c["patientId"]: c for c in clave["casos"]}
+    # Lectura 1: el médico coincide en 20 y discrepa en 4 (dos de ellas a la banda vecina).
+    discrepa = {"c-02": "intermedia", "c-10": "intermedia", "c-17": "baja", "c-21": "alta"}
+    l1 = [_fila(1, i + 1, casos[pid], discrepa.get(pid, casos[pid]["categoria"]["primaria"]),
+                int(casos[pid]["categoria"]["punto_medio"] * 100), 60.0)
+          for i, pid in enumerate(clave["ordenes"]["lectura1"])]
+    # Lectura 2: con mensaje en 20 (mitad de tiempo, notas 5/4/3) y 4 controles (mismo tiempo).
+    controles = set(clave["ordenes"]["controles"])
+    l2 = []
+    for i, pid in enumerate(clave["ordenes"]["lectura2"]):
+        c = casos[pid]
+        if pid in controles:
+            l2.append(_fila(2, i + 1, c, c["categoria"]["primaria"], 50, 60.0, control=True))
+        else:
+            l2.append(_fila(2, i + 1, c, c["categoria"]["primaria"], 50, 30.0,
+                            notas={"correccion": 5, "utilidad": 4, "lenguaje": 3}))
+    _csv(tmp_path / "lectura1.csv", l1)
+    _csv(tmp_path / "lectura2.csv", l2)
+    s = cc.analizar(clave, cc.leer_csv(tmp_path / "lectura1.csv"), cc.leer_csv(tmp_path / "lectura2.csv"))
+
+    assert s["n"] == 24 and s["categoria_de"] == "mensaje"
+    assert s["kappa"]["ponderado_lineal"]["n"] == 24
+    assert 0.6 < s["kappa"]["ponderado_lineal"]["kappa"] < 1.0
+    assert s["kappa"]["cohen"]["kappa"] < s["kappa"]["ponderado_lineal"]["kappa"]
+    for nombre in ("ponderado_lineal", "cohen", "binario_alta"):
+        k = s["kappa"][nombre]
+        assert k["ic95"][0] <= k["kappa"] <= k["ic95"][1]
+        assert k["ic95_bca"][0] <= k["kappa"] <= k["ic95_bca"][1]
+    assert set(s["sensibilidad_categoria"]) == {"independencia", "conservador", "cruza"}
+    assert len(s["desacuerdos"]) == 4
+    assert {d["id"] for d in s["desacuerdos"]} == set(discrepa)
+    assert all(d["comentario"] == "dudoso" for d in s["desacuerdos"])
+    assert s["acuerdo_continuo"]["n"] == 24 and s["acuerdo_continuo"]["spearman"] > 0.9
+    l2s = s["lectura2"]
+    assert l2s["n_con_mensaje"] == 20 and l2s["n_controles"] == 4
+    assert l2s["kappa_con_mensaje"]["kappa"] == pytest.approx(1.0)
+    assert l2s["cambios_de_banda"] == 4          # los 4 discrepantes de la lectura 1 vuelven a la del sistema
+    assert l2s["utilidad"]["correccion"]["media"] == pytest.approx(5.0)
+    assert l2s["utilidad"]["lenguaje"]["media"] == pytest.approx(3.0)
+    assert l2s["tiempo"]["medido"] is True
+    assert l2s["tiempo"]["razon_medias_geometricas"] == pytest.approx(0.5)
+    assert l2s["tiempo"]["controles"]["media_geometrica"] == pytest.approx(1.0)
+    assert l2s["tiempo"]["razon_corregida_por_releer"] == pytest.approx(0.5)
+    assert s["plan_b"] is None
+    assert s["texto_fijado"] == cc.TEXTO_FIJADO
+
+
+def test_analizar_el_plan_b(tmp_path):
+    clave = _clave()
+    casos = {c["patientId"]: c for c in clave["casos"]}
+    filas = [_fila(1, i + 1, casos[pid], casos[pid]["categoria"]["primaria"],
+                   int(casos[pid]["categoria"]["punto_medio"] * 100), 40.0,
+                   notas={"correccion": 4, "utilidad": 4, "lenguaje": 4},
+                   banda_con="alta" if i < 3 else casos[pid]["categoria"]["primaria"], pct_con=80, seg_con=20.0)
+             for i, pid in enumerate(clave["ordenes"]["lectura1"])]
+    _csv(tmp_path / "planb.csv", filas)
+    s = cc.analizar(clave, cc.leer_csv(tmp_path / "planb.csv"), planb=cc.leer_csv(tmp_path / "planb.csv"))
+    assert s["kappa"]["ponderado_lineal"]["kappa"] == pytest.approx(1.0)
+    assert s["lectura2"] is None
+    pb = s["plan_b"]
+    assert pb["tiempo_medido"] is False
+    assert pb["segundos_adicionales_leer_mensaje"]["mediana"] == pytest.approx(20.0)
+    assert pb["cambios_de_banda"] == 3          # las tres primeras filas llevan «alta» y su sistema es «baja»
+    assert pb["kappa_con_mensaje"]["n"] == 24
+
+
+def test_leer_csv_convierte_los_tipos_del_formulario(tmp_path):
+    clave = _clave()
+    _csv(tmp_path / "l.csv", [_fila(1, 1, clave["casos"][0], "baja", 7, 12.5, notas={"correccion": 5, "utilidad": 4, "lenguaje": 3})])
+    fila = cc.leer_csv(tmp_path / "l.csv")[0]
+    assert fila["practica"] is False and fila["control"] is False
+    assert fila["porcentaje"] == 7 and fila["segundos"] == 12.5 and fila["orden"] == 1
+    assert fila["correccion"] == 5 and fila["porcentaje_con"] is None and fila["segundos_con"] is None
+
+
+def test_el_acta_se_rellena_desde_sesion_json_y_no_deja_huecos(tmp_path):
+    clave = _clave()
+    casos = {c["patientId"]: c for c in clave["casos"]}
+    l1 = [_fila(1, i + 1, casos[pid], casos[pid]["categoria"]["primaria"], 50, 60.0)
+          for i, pid in enumerate(clave["ordenes"]["lectura1"])]
+    _csv(tmp_path / "l1.csv", l1)
+    s = cc.analizar(clave, cc.leer_csv(tmp_path / "l1.csv"))
+    plantilla = (pathlib.Path(__file__).resolve().parents[1] / "docs" / "validacion-semisintetica"
+                 / "acta-h7-plantilla.md").read_text(encoding="utf-8")
+    acta = cc.rellenar_acta(plantilla, cc.valores_para_acta(s, clave))
+    assert "{{" not in acta
+    assert "simulación semisintética" in acta
+    assert cc.TEXTO_FIJADO in acta
+    assert "c-00" in acta and "positiva_clara" in acta
+    assert "no medido" in acta       # sin lectura 2 ni plan B, el tiempo no se midió
+    with pytest.raises(KeyError):
+        cc.rellenar_acta("{{no_existe}}", {})
