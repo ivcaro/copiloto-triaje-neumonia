@@ -12,10 +12,16 @@ Proyecto Integrador (UEES, Maestría en IA). Sub-proyectos:
   es un riesgo declarado, no una omisión (§5.5 del diseño de SP3). Ver
   `docs/sp2-despliegue.md`.
 - **SP5 — validación semisintética y sesión con el médico (en curso).** El
-  generador por puntuación de Heckerling, su oráculo y la comprobación caso a
-  caso viven en `src/copiloto_triaje/validacion/`; los insumos y resultados,
-  rotulados como simulación semisintética, en `docs/validacion-semisintetica/`;
-  el procedimiento de la sesión, en `docs/sp5-sesion.md`.
+  generador por puntuación de Heckerling, su oráculo, las métricas y la
+  simulación por celda viven en `src/copiloto_triaje/validacion/`; los insumos
+  y resultados, rotulados como simulación semisintética, en
+  `docs/validacion-semisintetica/`, y su análisis en
+  `docs/validacion-semisintetica-sp5.md`: lo genera
+  `scripts/validar_combinacion.py` sin teclear ninguna cifra, y se reproduce
+  sin los pesos. La simulación **no mide exactitud clínica**: mide si el
+  sistema calcula lo que dice calcular y cuánto se desvía bajo cada supuesto
+  de dependencia entre clínica e imagen. El procedimiento de la sesión con el
+  médico, en `docs/sp5-sesion.md`.
 
 La arquitectura se fijó **midiendo**, no a priori: las tres candidatas empatan
 en AUC 0,874-0,889, un margen del orden de la varianza entre dos ejecuciones de
