@@ -1,6 +1,6 @@
 # Copiloto de triaje para neumonía en adultos
 
-Proyecto Integrador (UEES, Maestría en IA). Dos sub-proyectos entregados:
+Proyecto Integrador (UEES, Maestría en IA). Sub-proyectos:
 
 - **SP1 — núcleo de imagen.** Entrena una CNN de clasificación binaria sobre
   radiografías de tórax de adultos del dataset RSNA, con partición por paciente
@@ -11,6 +11,11 @@ Proyecto Integrador (UEES, Maestría en IA). Dos sub-proyectos entregados:
   llegar ahí el DICOM viaja **por Telegram**, que no es infraestructura nuestra;
   es un riesgo declarado, no una omisión (§5.5 del diseño de SP3). Ver
   `docs/sp2-despliegue.md`.
+- **SP5 — validación semisintética y sesión con el médico (en curso).** El
+  generador por puntuación de Heckerling, su oráculo y la comprobación caso a
+  caso viven en `src/copiloto_triaje/validacion/`; los insumos y resultados,
+  rotulados como simulación semisintética, en `docs/validacion-semisintetica/`;
+  el procedimiento de la sesión, en `docs/sp5-sesion.md`.
 
 La arquitectura se fijó **midiendo**, no a priori: las tres candidatas empatan
 en AUC 0,874-0,889, un margen del orden de la varianza entre dos ejecuciones de

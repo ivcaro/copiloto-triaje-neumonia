@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sesión H7 — formulario (simulación semisintética)</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 16px; max-width: 1200px; }
+  .fila { display: flex; gap: 24px; flex-wrap: wrap; }
+  img { max-width: 640px; width: 100%; border: 1px solid #999; background: #000; }
+  pre { white-space: pre-wrap; background: #f4f4f4; padding: 12px; border-radius: 6px; }
+  fieldset { margin: 12px 0; }
+  label { margin-right: 12px; }
+  .aviso { color: #a00; min-height: 1.2em; }
+  button { font-size: 1rem; padding: 8px 16px; }
+</style>
+</head>
+<body>
+<h1>Sesión H7 — simulación semisintética</h1>
+<p id="cabecera"></p>
+<div id="caso" hidden>
+  <div class="fila">
+    <div><img id="placa" alt="radiografía de tórax"></div>
+    <div style="flex: 1; min-width: 320px">
+      <h2 id="rotulo"></h2>
+      <pre id="vineta"></pre>
+      <div id="bloque-mensaje" hidden>
+        <h3>Mensaje del copiloto</h3>
+        <pre id="mensaje"></pre>
+      </div>
+      <form id="formulario">
+        <fieldset>
+          <legend>Probabilidad de que la placa muestre una opacidad o infiltrado compatible con neumonía</legend>
+          <label><input type="radio" name="banda" value="baja"> baja (&lt; 20 %)</label>
+          <label><input type="radio" name="banda" value="intermedia"> intermedia (20-70 %)</label>
+          <label><input type="radio" name="banda" value="alta"> alta (&gt; 70 %)</label>
+          <br>
+          <label>Porcentaje (entero de 0 a 100): <input type="number" name="porcentaje" min="0" max="100" step="1" required></label>
+        </fieldset>
+        <fieldset id="notas" hidden>
+          <legend>El pre-informe, de 1 (peor) a 5 (mejor)</legend>
+          <label>Corrección <select name="correccion"><option value="" selected>—</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
+          <label>Utilidad <select name="utilidad"><option value="" selected>—</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
+          <label>Lenguaje <select name="lenguaje"><option value="" selected>—</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
+        </fieldset>
+        <label>Comentario (opcional)<br><textarea name="comentario" rows="3" cols="60"></textarea></label>
+        <p id="error" class="aviso"></p>
+        <button type="submit">Enviar</button>
+      </form>
+    </div>
+  </div>
+</div>
+<div id="fin" hidden>
+  <h2>Lectura terminada</h2>
+  <p>Gracias. Descargue el CSV y envíelo al equipo.</p>
+  <button id="descargar">Descargar CSV</button>
+</div>
+<script src="formulario.js"></script>
+<script>
+(function () {
+  // ?lectura=1 | 2 | planb -> datos_lectura1.js | datos_lectura2.js | datos_planb.js
+  // ?nuevo=1 descarta el estado guardado de esta lectura y esta preparación.
+  var params = new URLSearchParams(location.search);
+  var lectura = params.get("lectura") || "1";
+  var fichero = lectura === "planb" ? "datos_planb.js" : "datos_lectura" + lectura + ".js";
+  var clave = null;        // "sesion-h7-" + lectura + "-" + preparación, en arrancar()
+  var estado = null;
+  var retomadas = 0;       // respuestas que traía el estado retomado
+
+  function guardar() { try { localStorage.setItem(clave, JSON.stringify(estado)); } catch (e) {} }
+  function recuperar() { try { var t = localStorage.getItem(clave); return t ? JSON.parse(t) : null; } catch (e) { return null; } }
+
+  function arrancar() {
+    // La clave de localStorage lleva la preparación (la marca que
+    // preparar_sesion pone a cada elección): el ensayo y una elección
+    // anterior no se retoman en la sesión real.
+    clave = "sesion-h7-" + lectura + "-" + window.DATOS.preparacion;
+    if (params.get("nuevo") === "1") {
+      try { localStorage.removeItem(clave); } catch (e) {}
+      // Sin ?nuevo=1 en la dirección: recargar a mitad de lectura no la borra.
+      try { params.delete("nuevo"); history.replaceState(null, "", "?" + params.toString()); } catch (e) {}
+    }
+    // Formulario.retomar decide si el estado guardado sirve (misma lectura,
+    // misma preparación y mismos casos) y, si sirve, cómo retomarlo: el caso a
+    // medias reinicia su reloj, la respuesta pendiente de un plan B revelado se
+    // conserva, y una lectura terminada se deja intacta para que vuelva a
+    // verse la pantalla final.
+    estado = Formulario.retomar(recuperar(), window.DATOS, Date.now());
+    retomadas = estado.respuestas.length;
+    pintar();
+  }
+
+  function pintar() {
+    var c = Formulario.casoActual(estado);
+    document.getElementById("cabecera").textContent =
+      "Lectura " + estado.lectura + (estado.modo === "secuencial" ? " (plan B)" : "") +
+      ". Un caso por pantalla; no se puede volver atrás. La clínica de cada caso es simulada." +
+      " Los síntomas referidos son iguales en todos los casos." +
+      (retomadas ? " Se retoma: " + retomadas + (retomadas === 1 ? " respuesta guardada." : " respuestas guardadas.") : "");
+    if (!c) {
+      document.getElementById("caso").hidden = true;
+      document.getElementById("fin").hidden = false;
+      return;
+    }
+    var total = c.practica ? estado.practica.length : estado.casos.length;
+    document.getElementById("caso").hidden = false;
+    document.getElementById("rotulo").textContent = (c.practica ? "Práctica " : "Caso ") + (estado.indice + 1) + " de " + total;
+    document.getElementById("placa").src = c.placa;
+    document.getElementById("vineta").textContent = c.vineta;
+    var conMensaje = !!c.mensaje && (estado.modo === "simple" || !!estado.pendiente);
+    document.getElementById("bloque-mensaje").hidden = !conMensaje;
+    document.getElementById("mensaje").textContent = c.mensaje || "";
+    document.getElementById("notas").hidden = !conMensaje;
+    document.getElementById("formulario").reset();
+    document.getElementById("error").textContent = "";
+    Formulario.abrir(estado, Date.now());
+  }
+
+  document.getElementById("formulario").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var f = new FormData(ev.target);
+    var r = { banda: f.get("banda"), porcentaje: f.get("porcentaje"), comentario: f.get("comentario") || "",
+              correccion: f.get("correccion"), utilidad: f.get("utilidad"), lenguaje: f.get("lenguaje") };
+    try {
+      var res = estado.pendiente
+        ? Formulario.enviarConAyuda(estado, r, Date.now())
+        : Formulario.enviar(estado, r, Date.now());
+      guardar();
+      retomadas = 0;       // el aviso de retomado solo se ve hasta el primer envío
+      pintar();
+      if (res.revelar) { window.scrollTo(0, 0); }
+    } catch (e) {
+      document.getElementById("error").textContent = e.message;
+    }
+  });
+
+  document.getElementById("descargar").addEventListener("click", function () {
+    var blob = new Blob([Formulario.aCSV(estado)], { type: "text/csv;charset=utf-8" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = (lectura === "planb" ? "planb" : "lectura" + lectura) + ".csv";
+    a.click();
+  });
+
+  var s = document.createElement("script");
+  s.src = fichero;
+  s.onload = arrancar;
+  s.onerror = function () { document.getElementById("cabecera").textContent = "No se encuentra " + fichero + " junto a este fichero."; };
+  document.head.appendChild(s);
+})();
+</script>
+</body>
+</html>
