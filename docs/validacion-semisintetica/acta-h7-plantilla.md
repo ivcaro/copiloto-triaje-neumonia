@@ -7,7 +7,8 @@ exactitud clínica.
 **Participante:** médico general colaborador, de forma voluntaria; sin datos
 personales en ningún fichero del proyecto.
 
-**Fechas:** {{fechas}}.
+**Fechas:** {{fechas}}. Cada fecha es el día en la hora de Ecuador continental
+(UTC−5).
 
 **Casos:** {{n}}, elegidos con semilla por estratos (tabla al final). Los
 mensajes del sistema se generaron {{origen_mensajes}}, con la prevalencia

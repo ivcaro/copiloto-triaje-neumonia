@@ -94,8 +94,11 @@ def test_acuerdo_continuo_acota_0_y_100_y_mide_spearman():
     (0.4406, 0.4406, 45, False),
     (0.0003, 0.0028, 0, True),      # el bot imprime «< 1 %»; el 0 no se acota a 0,5 aquí
     (0.0003, 0.0028, 1, False),
-    (0.8000, 0.9940, 99, True),     # 0,9940 → 99
-    (0.8000, 0.9940, 100, False),
+    (0.8000, 0.9940, 99, True),
+    (0.8000, 0.9940, 100, True),    # 0,9940 se imprime «> 99 %»: el límite superior es 100
+    (0.8000, 0.9900, 100, False),   # 0,99 exacto se imprime «99 %»
+    (0.0060, 0.3000, 0, True),      # 0,0060 se imprime «< 1 %»: el límite inferior es 0
+    (0.0100, 0.3000, 0, False),     # 0,01 exacto se imprime «1 %»
 ])
 def test_dentro_de_la_horquilla_compara_enteros_como_los_imprime_el_bot(minima, maxima, pct, dentro):
     r = cc.acuerdo_continuo([pct, 50], [0.5, 0.5], minima=[minima, 0.4], maxima=[maxima, 0.6])
@@ -381,10 +384,48 @@ def test_la_frase_del_criterio_cubre_cada_combinacion():
     assert "no alcanza el mínimo de 0,4" in cc._criterio("El kappa de Cohen", k(0.3, 0.1, 0.05))
     assert "con el método analítico (0,38) y no con el BCa (0,41)" in cc._criterio("K", k(0.7, 0.38, 0.41))
     assert "con el BCa (0,35) y no con el método analítico (0,42)" in cc._criterio("K", k(0.7, 0.42, 0.35))
+    # pegado a un umbral, los dos decimales contradirían la frase: se imprimen los que hagan falta
+    frase = cc._criterio("K", k(0.3996, 0.397, 0.4))
+    assert frase.startswith("K (0,3996) no alcanza el mínimo de 0,4 de la Semana 1;")
+    assert "con el método analítico (0,397) y no con el BCa (0,40)" in frase
+    assert cc._criterio("K", k(0.5996, 0.1, 0.1)).startswith("K (0,5996) alcanza el mínimo de 0,4 de la Semana 1 y no el objetivo")
+    assert cc._criterio("K", k(0.6, 0.4049, 0.1)).startswith("K (0,60) alcanza el mínimo de 0,4 de la Semana 1 y el objetivo")
+    assert "con el BCa (0,10) y no con el método analítico (0,405)" in cc._criterio("K", k(0.6, 0.4049, 0.1))
     nan = float("nan")
     assert cc.frente_a_umbrales({"kappa": nan, "ic95": [nan, nan], "ic95_bca": [nan, nan]}) is None
     assert cc._criterio("El kappa binario en «alta»", {"kappa": nan, "frente_a_umbrales": None}) == \
         "El kappa binario en «alta» no es calculable con estas lecturas."
+
+
+def test_pegado_a_un_umbral_imprime_los_decimales_que_lo_distinguen():
+    assert cc._f_frente_a_umbral(0.3996) == "0,3996"
+    assert cc._f_frente_a_umbral(0.397) == "0,397"
+    assert cc._f_frente_a_umbral(0.4049) == "0,405"
+    assert cc._f_frente_a_umbral(0.6041) == "0,604"
+    assert cc._f_frente_a_umbral(0.4) == "0,40" and cc._f_frente_a_umbral(0.6) == "0,60"
+    assert cc._f_frente_a_umbral(0.41) == "0,41" and cc._f_frente_a_umbral(0.5) == "0,50"
+    assert cc._f_frente_a_umbral(-0.12) == "-0,12"
+    assert cc._f_frente_a_umbral(float("nan")) == "—"
+
+
+def test_la_fecha_es_la_de_ecuador_continental_y_no_la_de_la_maquina():
+    import datetime
+    assert cc.ZONA_DE_LA_SESION == datetime.timezone(datetime.timedelta(hours=-5))
+
+    def ms(*cuando):
+        return int(datetime.datetime(*cuando, tzinfo=datetime.timezone.utc).timestamp() * 1000)
+    assert cc._fecha(ms(2026, 10, 7, 4, 59, 59)) == "2026-10-06"     # las 23:59:59 del 6 en UTC−5
+    assert cc._fecha(ms(2026, 10, 7, 5, 0, 0)) == "2026-10-07"       # las 00:00:00 del 7
+    assert cc._fecha(None) == "—" and cc._fecha(0) == "—"
+
+
+def test_el_acta_dice_la_zona_horaria_de_las_fechas(tmp_path):
+    clave = _clave()
+    l1, _ = _lecturas(clave)
+    s = cc.analizar(clave, _leidas(tmp_path, "l1.csv", l1))
+    plano = _plano(cc.rellenar_acta(_plantilla(), cc.valores_para_acta(s, clave)))
+    assert (f"**Fechas:** lectura el {cc._fecha(INICIO + 100000)}. Cada fecha es el día en la hora "
+            f"de Ecuador continental (UTC−5).") in plano
 
 
 def test_la_tabla_de_desacuerdos_imprime_la_horquilla_como_el_bot(tmp_path):

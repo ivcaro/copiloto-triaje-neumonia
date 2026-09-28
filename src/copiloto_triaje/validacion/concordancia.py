@@ -11,6 +11,7 @@ dice esta fijado aqui, antes de la sesion.
 from __future__ import annotations
 
 import csv
+import datetime
 import math
 import pathlib
 import statistics
@@ -35,6 +36,9 @@ TEXTO_FIJADO = (
     "casos, que aquí es deliberado. El criterio ≥ 0,4 de la Semana 1 se evalúa "
     "sobre la estimación puntual y se publica siempre con su intervalo; si el "
     "límite inferior queda por debajo de 0,4, se dice.")
+# Las fechas del acta son el dia en la hora de Ecuador continental (UTC−5, sin
+# horario de verano), no en la zona de la maquina que analiza.
+ZONA_DE_LA_SESION = datetime.timezone(datetime.timedelta(hours=-5))
 
 
 # --------------------------------------------------------------------------
@@ -146,9 +150,11 @@ def acuerdo_continuo(pct_medico, p_sistema, minima=None, maxima=None) -> dict:
 
     «Dentro» compara el porcentaje entero del medico, SIN acotar, con la
     horquilla tal como la imprime el bot: `porcentaje_entero` de la minima y
-    de la maxima (Math.round en Desenlace). Una horquilla de un solo valor
-    (los discordantes con el asma conocida) solo admite ese entero, y se
-    cuentan aparte para que el acta lo diga."""
+    de la maxima (Math.round en Desenlace), salvo en las cotas: una minima
+    por debajo de 0,01 se imprime «< 1 %» y su limite es 0, y una maxima por
+    encima de 0,99 se imprime «> 99 %» y su limite es 100. Una horquilla de
+    un solo valor (los discordantes con el asma conocida) solo admite ese
+    entero, y se cuentan aparte para que el acta lo diga."""
     pct = np.asarray(pct_medico, dtype=float)
     p = np.asarray(p_sistema, dtype=float)
     acotados = int(np.sum((pct <= 0) | (pct >= 100)))
@@ -165,8 +171,8 @@ def acuerdo_continuo(pct_medico, p_sistema, minima=None, maxima=None) -> dict:
               "limites_95": [float(d.mean() - 1.96 * de), float(d.mean() + 1.96 * de)],
               "acotados_0_o_100": acotados}
     if minima is not None and maxima is not None:
-        lo = np.array([porcentaje_entero(x) for x in minima], dtype=int)
-        hi = np.array([porcentaje_entero(x) for x in maxima], dtype=int)
+        lo = np.array([0 if x < 0.01 else porcentaje_entero(x) for x in minima], dtype=int)
+        hi = np.array([100 if x > 0.99 else porcentaje_entero(x) for x in maxima], dtype=int)
         dentro = (pct >= lo) & (pct <= hi)
         salida["fraccion_dentro_de_la_horquilla"] = float(dentro.mean())
         salida["horquillas_de_anchura_cero"] = int(np.sum(lo == hi))
@@ -246,9 +252,11 @@ def leer_csv(ruta) -> list:
 
 
 def _fecha(ms) -> str:
-    """El dia (YYYY-MM-DD, hora local) de un instante del formulario en ms."""
-    import datetime
-    return datetime.datetime.fromtimestamp(ms / 1000).strftime("%Y-%m-%d") if ms else "—"
+    """El dia (YYYY-MM-DD, en `ZONA_DE_LA_SESION`) de un instante del
+    formulario en ms."""
+    if not ms:
+        return "—"
+    return datetime.datetime.fromtimestamp(ms / 1000, tz=ZONA_DE_LA_SESION).strftime("%Y-%m-%d")
 
 
 def _sin_practica(filas):
@@ -457,13 +465,35 @@ def _horquilla_como_el_bot(minima: float, maxima: float) -> str:
     return f"entre {palabras.get(lo, lo)} y {palabras.get(hi, hi)}"
 
 
+UMBRALES_KAPPA = (0.4, 0.6)
+_DECIMALES_MAXIMOS = 6
+
+
+def _f_frente_a_umbral(x) -> str:
+    """Un kappa, o un limite de su intervalo, para la frase que lo compara
+    con 0,4 y 0,6. La comparacion es sin redondear: si los dos decimales de
+    siempre dieran justo un umbral sin que el valor lo sea (0,3996 → «0,40»),
+    la frase se contradiria; entonces se imprime con tres decimales, y con
+    los que hagan falta (hasta seis) si tres aun dan el umbral."""
+    if x is None or (isinstance(x, float) and math.isnan(x)):
+        return _f(x)
+    for umbral in UMBRALES_KAPPA:
+        if x != umbral and round(x, 2) == umbral:
+            for decimales in range(3, _DECIMALES_MAXIMOS + 1):
+                if round(x, decimales) != umbral:
+                    break
+            return _f(x, decimales)
+    return _f(x)
+
+
 NOMBRES_KAPPA = {"ponderado_lineal": "El kappa ponderado", "cohen": "El kappa de Cohen",
                  "binario_alta": "El kappa binario en «alta»"}
 
 
 def _criterio(nombre: str, k: dict) -> str:
     """Una frase: el kappa frente a 0,4 y 0,6, y su limite inferior frente a
-    0,4 con los dos intervalos (spec §5.5, §11.4), desde `frente_a_umbrales`."""
+    0,4 con los dos intervalos (spec §5.5, §11.4), desde `frente_a_umbrales`.
+    Las cifras van con `_f_frente_a_umbral`, para que no contradigan la frase."""
     u = k.get("frente_a_umbrales")
     if u is None:
         return f"{nombre} no es calculable con estas lecturas."
@@ -473,7 +503,7 @@ def _criterio(nombre: str, k: dict) -> str:
         alcance = "alcanza el mínimo de 0,4 de la Semana 1 y no el objetivo de 0,6"
     else:
         alcance = "alcanza el mínimo de 0,4 de la Semana 1 y el objetivo de 0,6"
-    la, lb = _f(k["ic95"][0]), _f(k["ic95_bca"][0])
+    la, lb = _f_frente_a_umbral(k["ic95"][0]), _f_frente_a_umbral(k["ic95_bca"][0])
     if u["li_analitico_lt_0_4"] and u["li_bca_lt_0_4"]:
         limite = f"queda por debajo de 0,4 con los dos métodos (analítico {la}; BCa {lb})"
     elif u["li_analitico_lt_0_4"]:
@@ -482,7 +512,8 @@ def _criterio(nombre: str, k: dict) -> str:
         limite = f"queda por debajo de 0,4 con el BCa ({lb}) y no con el método analítico ({la})"
     else:
         limite = f"queda por encima de 0,4 con los dos métodos (analítico {la}; BCa {lb})"
-    return f"{nombre} ({_f(k['kappa'])}) {alcance}; el límite inferior del intervalo {limite}."
+    return (f"{nombre} ({_f_frente_a_umbral(k['kappa'])}) {alcance}; "
+            f"el límite inferior del intervalo {limite}.")
 
 
 ESTRATOS_LEGIBLES = {"positiva_clara": "positiva clara", "negativa_clara": "negativa clara",
