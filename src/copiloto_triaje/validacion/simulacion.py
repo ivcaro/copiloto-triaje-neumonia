@@ -20,14 +20,22 @@ import numpy as np
 import pandas as pd
 
 from copiloto_triaje.servicio.heckerling import (
-    RV_POR_PUNTUACION, combinacion, combinar, mas_informativa,
+    PREVALENCIA_COHORTE, RV_POR_PUNTUACION, combinacion, combinar, mas_informativa,
 )
 from . import datos, generador, metricas, oraculo
-from .categoria import categoria_del_sistema
+from .categoria import BANDAS, banda, categoria_del_sistema, porcentaje_entero
 
 SEMILLA_PUNTUAL = 1          # la misma clinica que comprueba 0A
+SEMILLA_CLINICA = 10_000     # replica b: generar(modelo, SEMILLA_CLINICA + b)
+SEMILLA_INDICES = 20_000     # replica b: default_rng(SEMILLA_INDICES + b)
+B_REPLICAS = 1000
+HIPOTESIS_CONTENCION = 0.90  # «el oraculo queda dentro en ≥ 90 % de los concordantes»
 MODELOS = ("imagen", "clinica", "independencia", "conservador")
 COMBINADOS = ("independencia", "conservador")
+# Las bandas de la validacion externa de Heckerling (SP4 §4.1), para 0C.
+RV_VALIDACION = {0: 0.19, 1: 0.19, 2: 1.04, 3: 1.04, 4: 8.33, 5: 8.33}
+POCO_INFORMATIVA = 0.5       # |ln RV_recuentos(k)| por debajo: k = 2 y k = 3
+EXTREMAS = (0, 1, 4, 5)
 
 
 @dataclass(frozen=True, eq=False)
@@ -166,3 +174,168 @@ def aplanar(d: dict, prefijo: str = "") -> dict:
         elif isinstance(valor, float):
             plano[ruta] = valor
     return plano
+
+
+def replica(conjunto: Conjunto, modelo: oraculo.Modelo, b: int) -> dict:
+    clinica = generador.generar(modelo, SEMILLA_CLINICA + b)
+    salidas = salidas_del_sistema(conjunto.prevalencia, clinica, conjunto.rv)
+    l_or = oraculo_de_los_casos(modelo, conjunto.q, clinica)
+    n = conjunto.y.size
+    filas = np.random.default_rng(SEMILLA_INDICES + b).integers(0, n, n)
+    return aplanar(medir(conjunto, salidas, l_or, filas))
+
+
+def bootstrap(conjunto: Conjunto, modelo: oraculo.Modelo, replicas: int = B_REPLICAS) -> dict:
+    """{ruta: [li, ls]} al 95 % por percentiles, pareado: cada replica mide
+    todos los modelos sobre las mismas placas y la misma clinica."""
+    corridas = [replica(conjunto, modelo, b) for b in range(replicas)]
+    rutas = sorted(set().union(*corridas)) if corridas else []
+    return {r: metricas.percentiles([c.get(r, float("nan")) for c in corridas])
+            for r in rutas}
+
+
+def escala_legible(modelo: oraculo.Modelo, conjunto: Conjunto) -> dict:
+    """Por lado de la imagen y por puntuacion: la RV de la puntuacion una vez
+    vista la imagen, en log-odds, y que fraccion de su log-RV conserva. En
+    forma cerrada: cada placa pesa P(k | q_i, y_i), la probabilidad con que
+    el generador le da esa puntuacion."""
+    lrv = oraculo.log_rv_condicional(modelo)
+    p1, p0 = modelo.probabilidades()
+    pesos = np.where((conjunto.y == 1)[:, None], p1, p0)
+    salida = {}
+    for lado, m in (("a_favor", conjunto.rv >= 1.0), ("en_contra", conjunto.rv < 1.0)):
+        por_k, fr_ext, w_ext = [], [], []
+        for k in range(6):
+            ln_rv = math.log(oraculo.rv_recuentos(k))
+            v, w = lrv[m, k], pesos[m, k]
+            fr = v / ln_rv
+            q = metricas.cuantiles_ponderados(v, w)
+            qf = metricas.cuantiles_ponderados(fr, w)
+            por_k.append({
+                "k": k, "ln_rv_recuentos": ln_rv, "casos_esperados": float(w.sum()),
+                "log_rv": {"q1": float(q[0]), "mediana": float(q[1]), "q3": float(q[2])},
+                "fraccion": {"q1": float(qf[0]), "mediana": float(qf[1]), "q3": float(qf[2])},
+                "signo_invertido": float(w[fr < 0].sum() / w.sum()),
+                "poco_informativa": abs(ln_rv) < POCO_INFORMATIVA,
+            })
+            if k in EXTREMAS:
+                fr_ext.append(fr)
+                w_ext.append(w)
+        salida[lado] = {
+            "placas": int(m.sum()), "por_puntuacion": por_k,
+            "fraccion_mediana_extremas": float(metricas.cuantiles_ponderados(
+                np.concatenate(fr_ext), np.concatenate(w_ext), (0.5,))[0]),
+        }
+    return salida
+
+
+def _bandas(p) -> np.ndarray:
+    return np.array([banda(porcentaje_entero(float(x))) for x in p], dtype=object)
+
+
+def cambios_de_banda(antes, despues) -> dict:
+    """Cuantos casos cambian de banda y en que sentido («antes→despues»)."""
+    antes, despues = np.asarray(antes, dtype=object), np.asarray(despues, dtype=object)
+    transiciones = {}
+    for a in BANDAS:
+        for d in BANDAS:
+            n = int(np.sum((antes == a) & (despues == d)))
+            if a != d and n:
+                transiciones[f"{a}→{d}"] = n
+    return {"casos": int(antes.size), "cambian": int(np.sum(antes != despues)),
+            "transiciones": transiciones}
+
+
+def sensibilidad_al_previo(conjunto: Conjunto, clinica: pd.DataFrame, salidas: dict,
+                           previo: float = PREVALENCIA_COHORTE) -> dict:
+    """Lo que cuesta declarar `previo` en una poblacion cuya prevalencia es la
+    del conjunto (spec §4.3): Brier, ECE e intercepto de los dos modelos
+    combinados, y cuantos casos cambian de banda. El AUC no cambia."""
+    otras = salidas_del_sistema(previo, clinica, conjunto.rv)
+    s = salidas["conocida"]
+    y, orden = conjunto.y[s], conjunto.orden[s]
+    modelos = {}
+    for c in COMBINADOS:
+        antes, despues = salidas[c][s], otras[c][s]
+        modelos[c] = {
+            "brier": metricas.brier(y, despues), "brier_principal": metricas.brier(y, antes),
+            "ece": metricas.ece(y, despues, orden), "ece_principal": metricas.ece(y, antes, orden),
+            "suelo": metricas.suelo_de_ece(despues, orden),
+            "intercepto": metricas.intercepto_de_calibracion(y, despues),
+            "intercepto_principal": metricas.intercepto_de_calibracion(y, antes),
+            "bandas": cambios_de_banda(_bandas(antes), _bandas(despues)),
+        }
+    desplazamiento = (math.log(previo / (1 - previo))
+                      - math.log(conjunto.prevalencia / (1 - conjunto.prevalencia)))
+    return {"previo": float(previo), "previo_principal": conjunto.prevalencia,
+            "desplazamiento_log_odds": desplazamiento, "modelos": modelos,
+            "categoria_del_sistema": cambios_de_banda(salidas["primaria"], otras["primaria"])}
+
+
+def optimismo_de_la_derivacion(conjunto: Conjunto, clinica: pd.DataFrame, salidas: dict) -> dict:
+    """0C, un CALCULO y no un experimento: cuanto difieren las RV de la
+    derivacion (las del sistema) de las bandas de la validacion externa, y
+    cuantos casos con el asma conocida cambiarian de banda con las segundas."""
+    s = salidas["conocida"]
+    k = salidas["puntuacion"][s]
+    con_validacion = np.array([combinar(conjunto.prevalencia, RV_VALIDACION[int(kk)], float(r))
+                               for kk, r in zip(k, conjunto.rv[s])])
+    return {
+        "por_puntuacion": [{"k": kk, "rv_derivacion": RV_POR_PUNTUACION[kk],
+                            "rv_validacion": RV_VALIDACION[kk],
+                            "diferencia_log": math.log(RV_POR_PUNTUACION[kk] / RV_VALIDACION[kk])}
+                           for kk in range(6)],
+        "bandas": cambios_de_banda(_bandas(salidas["independencia"][s]), _bandas(con_validacion)),
+    }
+
+
+def evaluar_celda(conjunto: Conjunto, rho1: float, rho0: float, replicas: int = 0,
+                  con_sensibilidad: bool = False) -> dict:
+    """La celda (ρ1, ρ0): estimacion puntual, suelo de la ECE y fiabilidad
+    por modelo, escala legible, y si se piden, intervalos y sensibilidad."""
+    modelo = oraculo.ajustar(conjunto.q, conjunto.y, rho1, rho0)
+    clinica = generador.generar(modelo, SEMILLA_PUNTUAL)
+    salidas = salidas_del_sistema(conjunto.prevalencia, clinica, conjunto.rv)
+    l_or = oraculo_de_los_casos(modelo, conjunto.q, clinica)
+    celda = {"rho1": float(rho1), "rho0": float(rho0),
+             "nombre": nombre_de_celda(rho1, rho0),
+             "correlacion_teorica": {"con_neumonia": oraculo.correlacion_teorica(modelo, 1),
+                                     "sin_neumonia": oraculo.correlacion_teorica(modelo, 0)}}
+    celda.update(medir(conjunto, salidas, l_or))
+    s = salidas["conocida"]
+    p = {"imagen": conjunto.p_cal, "clinica": salidas["clinica"],
+         "independencia": salidas["independencia"], "conservador": salidas["conservador"]}
+    for m in MODELOS:
+        celda["modelos"][m]["suelo"] = metricas.suelo_de_ece(p[m][s], conjunto.orden[s])
+        celda["modelos"][m]["fiabilidad"] = metricas.fiabilidad(
+            conjunto.y[s], p[m][s], conjunto.orden[s])
+    contencion = celda["horquilla"]["todos"]["contencion"]
+    celda["hipotesis"] = {"umbral": HIPOTESIS_CONTENCION, "contencion": contencion,
+                          "se_sostiene": bool(contencion >= HIPOTESIS_CONTENCION)}
+    celda["escala_legible"] = escala_legible(modelo, conjunto)
+    if replicas:
+        celda["replicas"] = int(replicas)
+        celda["intervalos"] = bootstrap(conjunto, modelo, replicas)
+    if con_sensibilidad:
+        celda["sensibilidad_al_previo"] = sensibilidad_al_previo(conjunto, clinica, salidas)
+        if rho1 == 0.0 and rho0 == 0.0:
+            celda["optimismo_de_la_derivacion"] = optimismo_de_la_derivacion(
+                conjunto, clinica, salidas)
+    return celda
+
+
+def evaluar_tarea(tarea) -> dict:
+    """Una celda desde cero, para correrla en su propio proceso: `tarea` es
+    (ρ1, ρ0, replicas, con_sensibilidad). Carga el conjunto congelado."""
+    rho1, rho0, replicas, con_sensibilidad = tarea
+    return evaluar_celda(cargar_conjunto(), rho1, rho0, int(replicas), bool(con_sensibilidad))
+
+
+def imagen_sola(conjunto: Conjunto) -> dict:
+    """La calibracion de la imagen sobre las 3 811 placas: el suelo de todo
+    lo demas (spec §4.4)."""
+    r = metricas.resumen_de_modelo(conjunto.y, conjunto.p_cal, conjunto.orden)
+    r["suelo"] = metricas.suelo_de_ece(conjunto.p_cal, conjunto.orden)
+    r["fiabilidad"] = metricas.fiabilidad(conjunto.y, conjunto.p_cal, conjunto.orden)
+    r["casos"] = int(conjunto.y.size)
+    return r
