@@ -63,3 +63,8 @@ pruebas/crudas_prueba.sha256
 # reales tiene el mismo nombre y la misma forma, y la unica salvaguarda seria que
 # alguien se acordara. Se regenera en un minuto con --sin-bots.
 pruebas/corpus/
+
+# La sesion con el medico (SP5 §5, D2 del plan SP5-A): placas de RSNA,
+# mensajes reales, la clave del evaluador y los CSV del medico. Nada de esto
+# se versiona; al acta van solo los patientId, los estratos y las cifras.
+pruebas/sesion/
