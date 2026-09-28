@@ -1,0 +1,201 @@
+# -*- coding: utf-8 -*-
+"""Las métricas de la simulación semisintética (spec de SP5 §4.6).
+
+Funciones puras sobre vectores: ni leen ficheros ni dibujan. Todo lo que se
+compara con el oráculo se compara en LOG-ODDS, que es la escala en la que el
+sistema suma evidencia.
+
+- Por modelo: AUC, Brier, pendiente e intercepto de calibracion, ECE con su
+  suelo de ruido y la curva de fiabilidad.
+- La horquilla frente al oraculo: posicion λ, las dos colas y la contencion,
+  con la tolerancia ε = 0,015 (el redondeo maximo de las RV publicadas, la
+  misma de 0A.3).
+- Ayudantes del bootstrap: percentiles y cuantiles ponderados.
+"""
+from __future__ import annotations
+
+import numpy as np
+from scipy.optimize import brentq
+from scipy.special import expit
+from sklearn.metrics import roc_auc_score
+
+EPSILON = 0.015              # log-odds; la tolerancia de 0A.3
+BINS = 10                    # ECE y fiabilidad: deciles de igual masa
+REPETICIONES_SUELO = 200     # etiquetas simuladas para el suelo de la ECE
+SEMILLA_SUELO = 20261009
+MARGEN = 1e-6                # una p redondeada a 4 decimales no llega a 0 ni a 1
+CUARTILES = (0.25, 0.5, 0.75)
+
+
+def logit(p) -> np.ndarray:
+    """ln(p / (1 − p)), con p acotada a [MARGEN, 1 − MARGEN]."""
+    p = np.clip(np.asarray(p, dtype=float), MARGEN, 1.0 - MARGEN)
+    return np.log(p / (1.0 - p))
+
+
+def _vectores(y, p):
+    y = np.asarray(y, dtype=int)
+    p = np.asarray(p, dtype=float)
+    if y.ndim != 1 or y.shape != p.shape or y.size == 0:
+        raise ValueError(f"y y p deben ser vectores no vacíos de la misma forma, "
+                         f"y son {y.shape} y {p.shape}")
+    return y, p
+
+
+def auc(y, p) -> float:
+    y, p = _vectores(y, p)
+    return float(roc_auc_score(y, p))
+
+
+def brier(y, p) -> float:
+    y, p = _vectores(y, p)
+    return float(np.mean((p - y) ** 2))
+
+
+def pendiente_de_calibracion(y, p, pasos: int = 50) -> float:
+    """La pendiente de la regresion logistica SIN penalizar de Y sobre
+    logit p (con intercepto libre), por Newton. Menor que 1: el modelo
+    exagera; mayor que 1: se queda corto."""
+    y, p = _vectores(y, p)
+    x = logit(p)
+    a, b = 0.0, 1.0
+    for _ in range(pasos):
+        mu = expit(a + b * x)
+        w = mu * (1.0 - mu)
+        g = np.array([np.sum(y - mu), np.sum((y - mu) * x)])
+        h = np.array([[np.sum(w), np.sum(w * x)],
+                      [np.sum(w * x), np.sum(w * x * x)]])
+        paso = np.linalg.solve(h, g)
+        a, b = a + paso[0], b + paso[1]
+        if float(np.max(np.abs(paso))) < 1e-10:
+            break
+    return float(b)
+
+
+def intercepto_de_calibracion(y, p) -> float:
+    """El intercepto con la pendiente FIJADA en 1 (calibracion global): la
+    `a` que iguala la media de expit(a + logit p) a la frecuencia observada.
+    Positivo: el modelo predice de menos."""
+    y, p = _vectores(y, p)
+    x = logit(p)
+    objetivo = float(np.mean(y))
+    return float(brentq(lambda a: float(np.mean(expit(a + x))) - objetivo, -20.0, 20.0,
+                        xtol=1e-12))
+
+
+def _deciles(p, orden, bins: int):
+    """Los indices de cada bin de igual masa: se ordena por p y los empates
+    se rompen con `orden` (el rango de patientId, declarado en el spec)."""
+    return np.array_split(np.lexsort((np.asarray(orden), np.asarray(p, dtype=float))), bins)
+
+
+def ece(y, p, orden, bins: int = BINS) -> float:
+    y, p = _vectores(y, p)
+    return float(sum(len(b) / y.size * abs(float(y[b].mean()) - float(p[b].mean()))
+                     for b in _deciles(p, orden, bins) if len(b)))
+
+
+def fiabilidad(y, p, orden, bins: int = BINS) -> list:
+    """La curva de fiabilidad: por bin, cuantos casos, la p media y la
+    frecuencia observada."""
+    y, p = _vectores(y, p)
+    return [{"n": int(len(b)), "p_media": float(p[b].mean()), "observada": float(y[b].mean())}
+            for b in _deciles(p, orden, bins) if len(b)]
+
+
+def suelo_de_ece(p, orden, repeticiones: int = REPETICIONES_SUELO,
+                 semilla: int = SEMILLA_SUELO, bins: int = BINS) -> dict:
+    """La ECE que daria un modelo PERFECTAMENTE calibrado con estas mismas p:
+    etiquetas simuladas Bernoulli(p), `repeticiones` veces. Una ECE solo se
+    lee al lado de este suelo, nunca contra un umbral absoluto."""
+    p = np.asarray(p, dtype=float)
+    rng = np.random.default_rng(semilla)
+    valores = np.array([ece((rng.random(p.size) < p).astype(int), p, orden, bins)
+                        for _ in range(repeticiones)])
+    return {"media": float(valores.mean()), "p95": float(np.percentile(valores, 95))}
+
+
+def resumen_de_modelo(y, p, orden) -> dict:
+    """Las cinco cifras de un modelo puntual (sin el suelo, que es caro)."""
+    return {"auc": auc(y, p), "brier": brier(y, p),
+            "pendiente": pendiente_de_calibracion(y, p),
+            "intercepto": intercepto_de_calibracion(y, p),
+            "ece": ece(y, p, orden)}
+
+
+def _cuartiles(x) -> dict:
+    if x.size == 0:
+        return {"q1": None, "mediana": None, "q3": None}
+    q1, mediana, q3 = np.percentile(x, [25, 50, 75])
+    return {"q1": float(q1), "mediana": float(mediana), "q3": float(q3)}
+
+
+def horquilla(l_oraculo, l_dependencia, l_independencia, epsilon: float = EPSILON) -> dict:
+    """Donde cae el oraculo respecto a [dependencia, independencia], en
+    log-odds. λ = 0 es el extremo conservador y λ = 1 la independencia,
+    apunte la evidencia hacia donde apunte. Las colas cuentan los casos en
+    que el oraculo queda MAS ALLA de un extremo en mas de ε log-odds."""
+    o = np.asarray(l_oraculo, dtype=float)
+    d = np.asarray(l_dependencia, dtype=float)
+    i = np.asarray(l_independencia, dtype=float)
+    if not (o.shape == d.shape == i.shape) or o.ndim != 1:
+        raise ValueError("los tres vectores deben tener la misma forma")
+    delta = i - d
+    con = delta != 0.0
+    n = int(con.sum())
+    if n == 0:
+        return {"n": 0, "sin_horquilla": int((~con).sum()), "lambda": _cuartiles(o[con]),
+                "bajo": None, "sobre": None, "contencion": None}
+    sentido = np.sign(delta[con])
+    bajo = (o[con] - d[con]) * sentido < -epsilon
+    sobre = (o[con] - i[con]) * sentido > epsilon
+    return {"n": n, "sin_horquilla": int((~con).sum()),
+            "lambda": _cuartiles((o[con] - d[con]) / delta[con]),
+            "bajo": float(bajo.mean()), "sobre": float(sobre.mean()),
+            "contencion": float(1.0 - bajo.mean() - sobre.mean())}
+
+
+def error_puntual(l_sistema, l_oraculo) -> dict:
+    """Un solo numero del sistema frente al oraculo: |Δ logit| mediano y el
+    sesgo (mediana de sistema − oraculo; positivo: el sistema da de mas)."""
+    e = np.asarray(l_sistema, dtype=float) - np.asarray(l_oraculo, dtype=float)
+    if e.size == 0:
+        return {"n": 0, "error_abs_mediano": None, "sesgo_mediano": None}
+    return {"n": int(e.size), "error_abs_mediano": float(np.median(np.abs(e))),
+            "sesgo_mediano": float(np.median(e))}
+
+
+def contencion_en_rango(l_oraculo, l_minima, l_maxima, epsilon: float = EPSILON) -> dict:
+    """Fraccion de casos con el oraculo dentro de [minima − ε, maxima + ε]."""
+    o = np.asarray(l_oraculo, dtype=float)
+    lo = np.asarray(l_minima, dtype=float)
+    hi = np.asarray(l_maxima, dtype=float)
+    if o.size == 0:
+        return {"n": 0, "bajo": None, "sobre": None, "contencion": None}
+    bajo, sobre = o < lo - epsilon, o > hi + epsilon
+    return {"n": int(o.size), "bajo": float(bajo.mean()), "sobre": float(sobre.mean()),
+            "contencion": float(1.0 - bajo.mean() - sobre.mean())}
+
+
+def percentiles(valores, alfa: float = 0.05) -> list:
+    """El intervalo por percentiles de las replicas, ignorando las que no
+    se pudieron calcular (nan)."""
+    v = np.asarray(valores, dtype=float)
+    v = v[np.isfinite(v)]
+    if v.size == 0:
+        return [None, None]
+    lo, hi = np.percentile(v, [100 * alfa / 2, 100 * (1 - alfa / 2)])
+    return [float(lo), float(hi)]
+
+
+def cuantiles_ponderados(valores, pesos, cuantiles=CUARTILES) -> np.ndarray:
+    """Cuantiles de `valores` con pesos: el menor valor cuya masa acumulada
+    alcanza el cuantil."""
+    v = np.asarray(valores, dtype=float)
+    w = np.asarray(pesos, dtype=float)
+    if v.shape != w.shape or v.ndim != 1 or v.size == 0 or float(w.sum()) <= 0:
+        raise ValueError("valores y pesos deben ser vectores no vacíos con masa positiva")
+    orden = np.argsort(v, kind="stable")
+    acumulada = np.cumsum(w[orden]) / float(w.sum())
+    return np.array([v[orden][min(int(np.searchsorted(acumulada, c, side="left")), v.size - 1)]
+                     for c in cuantiles])
