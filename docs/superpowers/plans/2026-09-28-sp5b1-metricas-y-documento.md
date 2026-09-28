@@ -178,7 +178,14 @@ Lo que el spec dejaba abierto, fijado aquí con su razón.
   único caro del script). Por eso `suelo` no lleva intervalo.
 - **D12. Los intervalos van en un diccionario plano** `"ruta.con.puntos" →
   [li, ls]` por celda (`"horquilla.todos.contencion"`), con una entrada por
-  cada cifra `float` medida. Los recuentos no llevan intervalo.
+  cada cifra `float` que mide `medir`: los cuatro modelos, las diferencias
+  pareadas, la horquilla, los discordantes y los `no_se`. **Van sin
+  intervalo:** los recuentos; el suelo de la ECE y la fiabilidad (D11); la
+  escala legible, que es una forma cerrada y no tiene sorteo que remuestrear
+  (D7); y la sensibilidad al previo y 0C, que son tablas de contraste sobre la
+  estimación puntual. Si una cifra falta en alguna réplica (su grupo de casos
+  quedó vacío al remuestrear), el bootstrap se detiene: un intervalo no se
+  calcula sobre menos réplicas de las que el resultado dice que hubo.
 - **D13. El punto medio de los `no_se`** es la media de los logits de las dos
   posteriores de independencia (spec §4.6: «el punto medio en log-odds»).
 
@@ -1687,6 +1694,53 @@ def test_el_bootstrap_es_pareado_reproducible_y_por_percentiles(conjunto):
                                                        [2.5, 97.5])))
 
 
+def test_cada_replica_remuestrea_placas_y_vuelve_a_sortear_la_clinica(conjunto, monkeypatch):
+    """Las dos mitades del bootstrap, fijadas: si una réplica dejara de
+    remuestrear las placas, o midiera siempre la clínica de la estimación
+    puntual, los intervalos se estrecharían sin que nada más lo notara."""
+    modelo = oraculo.ajustar(conjunto.q, conjunto.y, 0.3, 0.3)
+    semillas, filas = [], []
+    generar, medir = generador.generar, simulacion.medir
+
+    def generar_espia(m, semilla):
+        semillas.append(semilla)
+        return generar(m, semilla)
+
+    def medir_espia(c, salidas, l_oraculo, f=None):
+        filas.append(f)
+        return medir(c, salidas, l_oraculo, f)
+
+    monkeypatch.setattr(generador, "generar", generar_espia)
+    monkeypatch.setattr(simulacion, "medir", medir_espia)
+    corridas = [simulacion.replica(conjunto, modelo, b) for b in (0, 1, 2)]
+    assert semillas == [simulacion.SEMILLA_CLINICA + b for b in (0, 1, 2)]
+    assert simulacion.SEMILLA_PUNTUAL not in semillas
+    n = conjunto.y.size
+    for b, f in enumerate(filas):
+        assert f is not None and f.shape == (n,)
+        assert 0 <= f.min() and f.max() < n
+        assert np.unique(f).size < n                    # con reemplazo: hay repetidas
+        assert np.array_equal(f, np.random.default_rng(
+            simulacion.SEMILLA_INDICES + b).integers(0, n, n))
+    assert not np.array_equal(filas[0], filas[1])
+    # pareado: la diferencia entre modelos es la de ESA réplica
+    for c in corridas:
+        for combinado in simulacion.COMBINADOS:
+            for cifra in ("auc", "brier", "pendiente"):
+                assert c[f"pareadas.{combinado}.{cifra}"] == pytest.approx(
+                    c[f"modelos.{combinado}.{cifra}"] - c[f"modelos.imagen.{cifra}"], abs=1e-15)
+
+
+def test_un_intervalo_no_se_calcula_sobre_menos_replicas_de_las_que_dice(conjunto, monkeypatch):
+    modelo = oraculo.ajustar(conjunto.q, conjunto.y, 0.3, 0.3)
+    monkeypatch.setattr(simulacion, "replica", lambda c, m, b: (
+        {"a.auc": 0.9, "a.ece": 0.01} if b != 2 else {"a.auc": 0.9}))
+    assert simulacion.bootstrap(conjunto, modelo, replicas=2) == {
+        "a.auc": [0.9, 0.9], "a.ece": [0.01, 0.01]}
+    with pytest.raises(ArithmeticError, match="a.ece"):
+        simulacion.bootstrap(conjunto, modelo, replicas=3)
+
+
 def test_las_replicas_no_reajustan_el_generador(conjunto, monkeypatch):
     """z_y, los umbrales y el calibrador quedan fijos: una réplica no vuelve
     a llamar a `oraculo.ajustar` (spec §4.6)."""
@@ -1703,7 +1757,7 @@ def test_las_replicas_no_reajustan_el_generador(conjunto, monkeypatch):
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_simulacion.py -q`
 
-Esperado: `2 failed, 15 passed`, con
+Esperado: `4 failed, 15 passed`, con
 `AttributeError: module 'copiloto_triaje.validacion.simulacion' has no attribute 'bootstrap'`.
 
 - [ ] **Paso 3: Ampliar los imports y las constantes, y escribir la réplica y el bootstrap**
@@ -1770,15 +1824,22 @@ def bootstrap(conjunto: Conjunto, modelo: oraculo.Modelo, replicas: int = B_REPL
     todos los modelos sobre las mismas placas y la misma clinica."""
     corridas = [replica(conjunto, modelo, b) for b in range(replicas)]
     rutas = sorted(set().union(*corridas)) if corridas else []
-    return {r: metricas.percentiles([c.get(r, float("nan")) for c in corridas])
-            for r in rutas}
+    incompletas = [r for r in rutas if any(r not in c for c in corridas)]
+    if incompletas:
+        # Una cifra falta en una replica cuando su grupo de casos quedo vacio
+        # al remuestrear. No se calcula un intervalo sobre menos replicas de
+        # las que el resultado dice que hubo.
+        raise ArithmeticError(f"{len(incompletas)} cifras faltan en alguna réplica (la "
+                              f"primera, {incompletas[0]}): algún grupo de casos quedó "
+                              "vacío al remuestrear")
+    return {r: metricas.percentiles([c[r] for c in corridas]) for r in rutas}
 ```
 
 - [ ] **Paso 4: Correrlas y ver el verde**
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_simulacion.py -q`
 
-Esperado: `17 passed`.
+Esperado: `19 passed`.
 
 - [ ] **Paso 5: Escribir las pruebas de la celda completa**
 
@@ -1899,6 +1960,8 @@ def test_0c_es_un_calculo_sobre_las_rv_publicadas(celda_0a, celda_simetrica):
         -0.46, 0.05, -0.40, 0.46, -0.15, 0.74]
     assert [f["rv_validacion"] for f in c["por_puntuacion"]] == [
         0.19, 0.19, 1.04, 1.04, 8.33, 8.33]
+    assert [f["rv_derivacion"] for f in c["por_puntuacion"]] == [
+        0.12, 0.20, 0.70, 1.64, 7.18, 17.5]
     assert c["bandas"] == {"casos": 3460, "cambian": 225,
                            "transiciones": {"baja→intermedia": 73, "intermedia→baja": 90,
                                             "intermedia→alta": 23, "alta→intermedia": 39}}
@@ -1919,7 +1982,7 @@ def test_la_imagen_sola_es_el_suelo_de_calibracion(conjunto):
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_simulacion.py -q`
 
-Esperado: `17 passed` y las 10 nuevas en
+Esperado: `19 passed` y las 10 nuevas en
 rojo (fallos y errores de fixture), con
 `AttributeError: … has no attribute 'evaluar_celda'` (y `'cambios_de_banda'`,
 `'evaluar_tarea'`, `'imagen_sola'`).
@@ -2014,8 +2077,11 @@ def optimismo_de_la_derivacion(conjunto: Conjunto, clinica: pd.DataFrame, salida
     cuantos casos con el asma conocida cambiarian de banda con las segundas."""
     s = salidas["conocida"]
     k = salidas["puntuacion"][s]
-    con_validacion = np.array([combinar(conjunto.prevalencia, RV_VALIDACION[int(kk)], float(r))
-                               for kk, r in zip(k, conjunto.rv[s])])
+    # A 4 decimales, como lo entregaria el sistema con esas RV: los dos lados
+    # de la comparacion son lo mismo salvo la tabla.
+    con_validacion = np.array([
+        round(combinar(conjunto.prevalencia, RV_VALIDACION[int(kk)], float(r)), 4)
+        for kk, r in zip(k, conjunto.rv[s])])
     return {
         "por_puntuacion": [{"k": kk, "rv_derivacion": RV_POR_PUNTUACION[kk],
                             "rv_validacion": RV_VALIDACION[kk],
@@ -2082,7 +2148,7 @@ def imagen_sola(conjunto: Conjunto) -> dict:
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_simulacion.py tests/test_metricas.py tests/test_validacion_0a.py tests/test_oraculo.py tests/test_generador.py -q`
 
 Esperado: todo en verde; `tests/test_simulacion.py` aporta
-`27` pruebas.
+`29` pruebas.
 
 - [ ] **Paso 9: Commit**
 
@@ -2111,7 +2177,9 @@ git commit -m "feat(validacion): bootstrap pareado, escala legible, sensibilidad
   - `datos.huella_de_texto(ruta) -> str`
   - En el script: `REPO`, `CARPETA`, `NOMBRE_RESULTADOS = "resultados_simulacion.json"`,
     `ANALISIS`, `ROTULO = "simulación semisintética"`, `TITULO`, `ADVERTENCIA`;
-    `tareas_de_la_rejilla(replicas, rejilla=oraculo.RHO_REJILLA, destacadas=oraculo.CELDAS_DESTACADAS) -> list[tuple]`;
+    `tareas_de_la_rejilla(replicas, rejilla=oraculo.RHO_REJILLA, destacadas=oraculo.CELDAS_DESTACADAS) -> list[tuple]`
+    (`ValueError` si una destacada no está en la rejilla o es el origen);
+    `huella_de_los_pesos() -> str` (`SystemExit` si el `.sha256` no lleva una huella);
     `calcular(replicas=simulacion.B_REPLICAS, procesos=1, rejilla=…, destacadas=…) -> dict`;
     `escribir_resultados(resultados, ruta) -> Path`; `leer_resultados(ruta) -> dict`;
     `main(argv=None) -> int` con `--replicas`, `--procesos` y `--salida`.
@@ -2242,6 +2310,9 @@ def test_los_resultados_llevan_rotulo_insumos_y_parametros(resultados_minimos):
     assert "exactitud clínica" in r["advertencia"]
     i = r["insumos"]
     assert (i["placas"], i["positivas"], i["prevalencia"]) == (3811, 844, 0.2215)
+    # rutas relativas a la raiz del repo: ni la carpeta ni el usuario de nadie
+    assert i["crudas"] == "docs/validacion-semisintetica/crudas_prueba.csv"
+    assert i["calibrador"] == "servidor/calibrador.json"
     assert i["crudas_sha256"] == datos.huella_de_texto(datos.CRUDAS_CONGELADAS)
     assert i["calibrador_sha256"] == datos.huella_de_texto(datos.CALIBRADOR)
     assert i["pesos_sha256"] == datos.HASH_CONGELADO.read_text(encoding="utf-8").split()[0]
@@ -2290,6 +2361,38 @@ def test_en_paralelo_sale_lo_mismo_que_en_serie(validar, resultados_minimos):
                          destacadas=((0.3, 0.3),))
     assert json.loads(json.dumps(r, ensure_ascii=False)) == resultados_minimos
 
+    # y no solo los mismos datos: el mismo FICHERO, con las claves en su orden
+    def como_fichero(d):
+        return json.dumps(d, ensure_ascii=False, indent=1, allow_nan=False)
+    assert como_fichero(r) == como_fichero(resultados_minimos)
+
+
+def test_una_destacada_que_no_esta_en_la_rejilla_se_rechaza(validar):
+    # como listas, que es como las guarda el propio JSON, valen
+    tareas = validar.tareas_de_la_rejilla(5, rejilla=[0, 0.3], destacadas=[[0.3, 0.3]])
+    assert tareas == [(0.0, 0.0, 5, True), (0.0, 0.3, 0, False),
+                      (0.3, 0.0, 0, False), (0.3, 0.3, 5, True)]
+    with pytest.raises(ValueError, match="rejilla"):
+        validar.tareas_de_la_rejilla(5, rejilla=(0.0, 0.3), destacadas=((0.3, 0.45),))
+    with pytest.raises(ValueError, match="0A"):
+        validar.tareas_de_la_rejilla(5, rejilla=(0.0, 0.3), destacadas=((0.0, 0.0),))
+
+
+def test_la_huella_de_los_pesos_tiene_que_ser_un_sha256(validar, tmp_path, monkeypatch):
+    assert validar.huella_de_los_pesos() == datos.HASH_CONGELADO.read_text(
+        encoding="utf-8").strip()
+    for contenido in ("", "no-es-una-huella", "ab" * 32 + " " + "cd" * 32, "AB" * 32):
+        malo = tmp_path / "pesos.sha256"
+        malo.write_text(contenido, encoding="utf-8")
+        monkeypatch.setattr(datos, "HASH_CONGELADO", malo)
+        with pytest.raises(SystemExit, match="no lleva un sha256"):
+            validar.huella_de_los_pesos()
+
+
+def test_un_nan_no_llega_al_json(validar, tmp_path):
+    with pytest.raises(ValueError):
+        validar.escribir_resultados({"cifra": float("nan")}, tmp_path / "r.json")
+
 
 def test_main_escribe_los_resultados_donde_se_le_dice(validar, tmp_path, monkeypatch, capsys):
     llamadas = []
@@ -2311,7 +2414,7 @@ def test_main_escribe_los_resultados_donde_se_le_dice(validar, tmp_path, monkeyp
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_validar_combinacion.py -q`
 
-Esperado: `1 passed, 6 errors`: pasa la de la huella y las otras seis dan
+Esperado: `1 passed, 9 errors`: pasa la de la huella y las otras nueve dan
 error de fixture, `FileNotFoundError` sobre `scripts/validar_combinacion.py`.
 
 - [ ] **Paso 7: Escribir el script**
@@ -2342,6 +2445,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -2367,12 +2471,21 @@ ADVERTENCIA = (
 def tareas_de_la_rejilla(replicas: int, rejilla=oraculo.RHO_REJILLA,
                          destacadas=oraculo.CELDAS_DESTACADAS) -> list:
     """(ρ1, ρ0, replicas, con_sensibilidad) por celda, en el orden de la
-    rejilla. Solo 0A y las destacadas llevan bootstrap y sensibilidad."""
+    rejilla. Solo 0A y las destacadas llevan bootstrap y sensibilidad. Una
+    destacada que no esta en la rejilla se rechaza: si no, el resultado la
+    anunciaria en sus parametros sin haberla calculado."""
+    rejilla = [float(r) for r in rejilla]
+    destacadas = {(float(a), float(b)) for a, b in destacadas}
+    fuera = sorted(d for d in destacadas
+                   if d[0] not in rejilla or d[1] not in rejilla or d == (0.0, 0.0))
+    if fuera:
+        raise ValueError(f"las celdas destacadas {fuera} no valen: tienen que estar en la "
+                         f"rejilla {rejilla}, y el origen es 0A, que se cuenta aparte")
     tareas = []
     for rho1 in rejilla:
         for rho0 in rejilla:
-            completa = (rho1 == 0.0 and rho0 == 0.0) or (rho1, rho0) in tuple(destacadas)
-            tareas.append((float(rho1), float(rho0), replicas if completa else 0, completa))
+            completa = (rho1 == 0.0 and rho0 == 0.0) or (rho1, rho0) in destacadas
+            tareas.append((rho1, rho0, replicas if completa else 0, completa))
     return tareas
 
 
@@ -2383,8 +2496,20 @@ def _relativa(ruta: Path) -> str:
         return Path(ruta).name
 
 
+def huella_de_los_pesos() -> str:
+    """El sha256 de los pesos con que se generaron las crudas congeladas. Aqui
+    no se puede recalcular (los pesos no viajan con el repositorio): se
+    comprueba que el fichero lleva UNA huella, y se escribe en los resultados."""
+    partes = datos.HASH_CONGELADO.read_text(encoding="utf-8").split()
+    if len(partes) != 1 or not re.fullmatch(r"[0-9a-f]{64}", partes[0]):
+        raise SystemExit(f"{_relativa(datos.HASH_CONGELADO)} no lleva un sha256: no se sabe "
+                         "con qué pesos se generaron las crudas congeladas")
+    return partes[0]
+
+
 def calcular(replicas: int = simulacion.B_REPLICAS, procesos: int = 1,
              rejilla=oraculo.RHO_REJILLA, destacadas=oraculo.CELDAS_DESTACADAS) -> dict:
+    pesos = huella_de_los_pesos()
     conjunto = simulacion.cargar_conjunto()
     tareas = tareas_de_la_rejilla(replicas, rejilla, destacadas)
     if procesos > 1:
@@ -2401,7 +2526,7 @@ def calcular(replicas: int = simulacion.B_REPLICAS, procesos: int = 1,
         "insumos": {
             "crudas": _relativa(datos.CRUDAS_CONGELADAS),
             "crudas_sha256": datos.huella_de_texto(datos.CRUDAS_CONGELADAS),
-            "pesos_sha256": datos.HASH_CONGELADO.read_text(encoding="utf-8").split()[0],
+            "pesos_sha256": pesos,
             "calibrador": _relativa(datos.CALIBRADOR),
             "calibrador_sha256": datos.huella_de_texto(datos.CALIBRADOR),
             "placas": int(conjunto.y.size),
@@ -2431,7 +2556,8 @@ def escribir_resultados(resultados: dict, ruta) -> Path:
     ruta = Path(ruta)
     ruta.parent.mkdir(parents=True, exist_ok=True)
     with ruta.open("w", encoding="utf-8", newline="\n") as f:
-        f.write(json.dumps(resultados, ensure_ascii=False, indent=1) + "\n")
+        # allow_nan=False: «NaN» no es JSON, y un tercero no podria leerlo.
+        f.write(json.dumps(resultados, ensure_ascii=False, indent=1, allow_nan=False) + "\n")
     return ruta
 
 
@@ -2442,7 +2568,8 @@ def leer_resultados(ruta) -> dict:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--replicas", type=int, default=simulacion.B_REPLICAS,
-                   help="réplicas del bootstrap en 0A y las seis celdas destacadas")
+                   help="réplicas del bootstrap en 0A y las seis celdas destacadas "
+                        "(0: sin bootstrap ni intervalos, para ensayos)")
     p.add_argument("--procesos", type=int, default=min(7, os.cpu_count() or 1),
                    help="celdas en paralelo (1: en serie)")
     p.add_argument("--salida", default=str(CARPETA),
@@ -2472,7 +2599,7 @@ if __name__ == "__main__":
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_validar_combinacion.py -q`
 
-Esperado: `7 passed` (unos 10 s: la fixture calcula cuatro celdas y la prueba
+Esperado: `10 passed` (unos 10 s: la fixture calcula cuatro celdas y la prueba
 del paralelo las vuelve a calcular en dos procesos).
 
 - [ ] **Paso 9: Un ensayo de verdad, sin escribir en el repo**
@@ -2679,7 +2806,7 @@ def test_main_sin_figuras_no_dibuja_nada(validar, tmp_path, capsys):
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_validar_combinacion.py`
 
-Esperado: `5 failed, 8 passed`. Fallan las cinco que dibujan o usan lo nuevo:
+Esperado: `5 failed, 11 passed`. Fallan las cinco que dibujan o usan lo nuevo:
 
 ```
 E       AttributeError: module 'validar_combinacion' has no attribute 'slug_de_celda'
@@ -2692,7 +2819,7 @@ FAILED tests/test_validar_combinacion.py::test_las_figuras_salen_con_su_nombre_a
 FAILED tests/test_validar_combinacion.py::test_cada_figura_se_puede_dibujar_por_separado
 FAILED tests/test_validar_combinacion.py::test_las_figuras_borran_las_propias_rancias_y_respetan_las_ajenas
 FAILED tests/test_validar_combinacion.py::test_main_dibuja_las_figuras_leyendo_el_json
-5 failed, 8 passed
+5 failed, 11 passed
 ```
 
 `test_main_sin_figuras_no_dibuja_nada` y la prueba modificada en (a) PASAN ya en este paso: el
@@ -2996,7 +3123,7 @@ y sustitúyelo por:
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_validar_combinacion.py`
 
-Esperado: `13 passed`, sin avisos (tarda cerca de medio minuto). Si aparece un `PendingDeprecationWarning` de
+Esperado: `16 passed`, sin avisos (tarda cerca de medio minuto). Si aparece un `PendingDeprecationWarning` de
 `set_bad`, el bloque no se copió bien: el código usa `mapa.with_extremes(bad=...)`.
 
 - [ ] **Paso 7: Correr los vecinos**
@@ -4472,7 +4599,7 @@ def test_solo_documento_escribe_el_documento_sin_recalcular(
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_validar_combinacion.py`
 
-Esperado: `3 failed, 14 passed`:
+Esperado: `3 failed, 17 passed`:
 
 ```
 E       AttributeError: module 'validar_combinacion' has no attribute 'escribir_analisis'
@@ -4481,7 +4608,7 @@ E       FileNotFoundError: [Errno 2] No such file or directory: '...\\test_solo_
 FAILED tests/test_validar_combinacion.py::test_escribir_analisis_enlaza_las_figuras_con_rutas_relativas
 FAILED tests/test_validar_combinacion.py::test_main_escribe_el_analisis_leyendo_el_json
 FAILED tests/test_validar_combinacion.py::test_solo_documento_escribe_el_documento_sin_recalcular
-3 failed, 14 passed
+3 failed, 17 passed
 ```
 
 `test_solo_documento_sin_json_sale_con_un_mensaje` y la prueba modificada en (b) PASAN ya en este
@@ -4572,7 +4699,7 @@ y sustitúyelo por:
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_validar_combinacion.py`
 
-Esperado: `17 passed`. Después comprueba que ninguna prueba ha escrito en el repo:
+Esperado: `20 passed`. Después comprueba que ninguna prueba ha escrito en el repo:
 
 Run: `git status --short docs/`
 
