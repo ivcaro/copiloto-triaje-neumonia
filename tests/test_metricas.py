@@ -65,16 +65,44 @@ def test_la_pendiente_sale_aunque_el_modelo_este_muy_lejos_de_calibrado():
     assert -0.6 < pendiente < -0.4
 
 
-def test_sin_pendiente_finita_se_dice_y_no_se_devuelve_la_ultima_iteracion():
-    """Clases separadas del todo: la verosimilitud no tiene máximo finito."""
-    with pytest.raises(ArithmeticError, match="no converge"):
-        metricas.pendiente_de_calibracion([0, 0, 1, 1], [0.1, 0.2, 0.8, 0.9])
-    # todas las p iguales: la pendiente no está identificada
-    with pytest.raises(ArithmeticError, match="no converge"):
-        metricas.pendiente_de_calibracion([0, 1, 0, 1], [0.5, 0.5, 0.5, 0.5])
-    # y con una sola clase tampoco hay intercepto
-    with pytest.raises(ArithmeticError, match="una sola clase"):
-        metricas.intercepto_de_calibracion([1, 1, 1], [0.2, 0.5, 0.8])
+def test_con_dos_valores_de_p_y_el_orden_invertido_la_pendiente_es_la_exacta():
+    """Con dos grupos la regresión reproduce las dos frecuencias, así que la
+    pendiente tiene forma cerrada. Desde (0, 1) el primer paso de Newton cae
+    donde la hessiana ya no distingue nada: lo resuelve el respaldo."""
+    y, p = _grupos((0.0283, 1088, 1065), (0.336, 1589, 695))
+    exacta = ((_logit(695 / 1589) - _logit(1065 / 1088))
+              / (_logit(0.336) - _logit(0.0283)))
+    assert exacta == pytest.approx(-1.431, abs=1e-3)
+    assert metricas.pendiente_de_calibracion(y, p) == pytest.approx(exacta, abs=1e-8)
+
+
+def test_sin_pendiente_finita_se_dice_antes_de_iterar():
+    # clases separadas del todo, en los dos sentidos, y casi del todo (un empate)
+    for y, p in (([0, 0, 1, 1], [0.1, 0.2, 0.8, 0.9]),
+                 ([1, 1, 0, 0], [0.1, 0.2, 0.8, 0.9]),
+                 ([0, 0, 1, 1], [0.1, 0.5, 0.5, 0.9])):
+        with pytest.raises(ArithmeticError, match="separan del todo"):
+            metricas.pendiente_de_calibracion(y, p)
+    # todas las p iguales: la pendiente no está identificada, valgan lo que valgan
+    for constante in (0.3, 0.5, 0.7, 0.9):
+        with pytest.raises(ArithmeticError, match="todas las p iguales"):
+            metricas.pendiente_de_calibracion(np.tile([0, 1], 2000), np.full(4000, constante))
+    # y con una sola clase no hay ni pendiente, ni intercepto, ni AUC
+    for medida in (metricas.pendiente_de_calibracion, metricas.intercepto_de_calibracion,
+                   metricas.auc):
+        with pytest.raises(ArithmeticError, match="una sola clase"):
+            medida([1, 1, 1], [0.2, 0.5, 0.8])
+
+
+def test_el_intercepto_sale_aunque_una_clase_sea_rarisima():
+    y = np.zeros(4000, dtype=int)
+    y[0] = 1
+    p = np.full(4000, 0.5)
+    assert metricas.intercepto_de_calibracion(1 - y, p) == pytest.approx(
+        _logit(3999 / 4000), abs=1e-9)
+    # y con las p acotadas en el extremo: hace falta un intercepto de más de 20
+    assert metricas.intercepto_de_calibracion(1 - y, np.zeros(4000)) == pytest.approx(
+        _logit(3999 / 4000) - _logit(metricas.MARGEN), abs=1e-6)
 
 
 def test_el_intercepto_es_el_desplazamiento_en_log_odds():
@@ -160,6 +188,7 @@ def test_lo_que_no_es_una_etiqueta_o_una_probabilidad_se_rechaza():
         metricas.pendiente_de_calibracion([0, 1], [0.2, float("nan")])
     # los booleanos y los enteros de numpy son etiquetas
     assert metricas.brier(np.array([False, True]), [0.2, 0.7]) == pytest.approx(0.065)
+    assert metricas.brier(np.array([0, 1], dtype=np.int8), [0.2, 0.7]) == pytest.approx(0.065)
 
 
 # La horquilla: los casos de borde del spec §8. Dependencia en 0, independencia

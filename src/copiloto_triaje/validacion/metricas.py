@@ -18,7 +18,7 @@ sistema suma evidencia.
 from __future__ import annotations
 
 import numpy as np
-from scipy.optimize import brentq
+from scipy.optimize import brentq, minimize
 from scipy.special import expit
 from sklearn.metrics import roc_auc_score
 
@@ -51,8 +51,14 @@ def _vectores(y, p):
     return y.astype(int), p
 
 
+def _dos_clases(y, que: str) -> None:
+    if float(np.ptp(y)) == 0.0:
+        raise ArithmeticError(f"con una sola clase no hay {que} que estimar")
+
+
 def auc(y, p) -> float:
     y, p = _vectores(y, p)
+    _dos_clases(y, "AUC")
     return float(roc_auc_score(y, p))
 
 
@@ -66,44 +72,75 @@ def _verosimilitud(y, x, a: float, b: float) -> float:
     return float(np.sum(y * eta - np.logaddexp(0.0, eta)))
 
 
+def _gradiente_y_hessiana(y, x, a: float, b: float):
+    mu = expit(a + b * x)
+    w = mu * (1.0 - mu)
+    g = np.array([np.sum(y - mu), np.sum((y - mu) * x)])
+    h = np.array([[np.sum(w), np.sum(w * x)],
+                  [np.sum(w * x), np.sum(w * x * x)]])
+    return g, h
+
+
+def _newton(y, x, a: float, b: float, pasos: int):
+    """Newton con retroceso desde (a, b): (a, b) al converger, o None si se
+    queda sin paso que dar. La verosimilitud es concava, asi que un paso que
+    la empeora se acorta a la mitad; el margen de la comparacion es el ruido
+    de redondeo de la propia verosimilitud (cerca del maximo un paso bueno la
+    cambia menos que eso)."""
+    for _ in range(pasos):
+        g, h = _gradiente_y_hessiana(y, x, a, b)
+        try:
+            paso = np.linalg.solve(h, g)
+        except np.linalg.LinAlgError:
+            return None
+        if not np.all(np.isfinite(paso)):
+            return None
+        if float(np.max(np.abs(paso))) < 1e-8:
+            return a + paso[0], b + paso[1]
+        actual, t = _verosimilitud(y, x, a, b), 1.0
+        margen = 1e-10 * (1.0 + abs(actual))
+        while _verosimilitud(y, x, a + t * paso[0], b + t * paso[1]) < actual - margen:
+            t *= 0.5
+            if t < 1e-10:
+                return None
+        a, b = a + t * paso[0], b + t * paso[1]
+    return None
+
+
 def pendiente_de_calibracion(y, p, pasos: int = 100) -> float:
     """La pendiente de la regresion logistica SIN penalizar de Y sobre
     logit p (con intercepto libre). Menor que 1: el modelo exagera; mayor
     que 1: se queda corto.
 
-    Newton con retroceso: la verosimilitud es concava, asi que un paso que la
-    empeora se acorta a la mitad hasta que no la empeore. Sin el retroceso,
-    Newton se dispara desde (0, 1) cuando el modelo esta muy lejos de
-    calibrado, aunque la pendiente exista. El margen de la comparacion es el
-    ruido de redondeo de la propia verosimilitud: cerca del maximo, un paso
-    bueno la cambia menos que eso."""
+    Antes de iterar se dice cuando NO existe: con una sola clase, con todas
+    las p iguales, o con las clases separadas por las p (la pendiente seria
+    infinita). Si existe, es unica: la busca Newton con retroceso y, si se
+    queda sin paso (con muy pocos valores distintos de p y el orden invertido,
+    el primer paso puede caer donde la hessiana ya no distingue nada), una
+    region de confianza con la hessiana exacta, que Newton pule despues."""
     y, p = _vectores(y, p)
+    _dos_clases(y, "pendiente de calibración")
     x = logit(p)
-    a, b = 0.0, 1.0
-    for _ in range(pasos):
-        mu = expit(a + b * x)
-        w = mu * (1.0 - mu)
-        g = np.array([np.sum(y - mu), np.sum((y - mu) * x)])
-        h = np.array([[np.sum(w), np.sum(w * x)],
-                      [np.sum(w * x), np.sum(w * x * x)]])
-        try:
-            paso = np.linalg.solve(h, g)
-        except np.linalg.LinAlgError:
-            break
-        if not np.all(np.isfinite(paso)):
-            break
-        if float(np.max(np.abs(paso))) < 1e-8:
-            return float(b + paso[1])
-        actual, t = _verosimilitud(y, x, a, b), 1.0
-        margen = 1e-10 * (1.0 + abs(actual))
-        while t > 1e-10 and (_verosimilitud(y, x, a + t * paso[0], b + t * paso[1])
-                             < actual - margen):
-            t *= 0.5
-        a, b = a + t * paso[0], b + t * paso[1]
-    # Con las clases separadas del todo, o con una sola p, no hay pendiente
-    # finita que estimar: se dice, en vez de devolver la ultima iteracion.
-    raise ArithmeticError(f"la regresión de calibración no converge en {pasos} pasos: "
-                          "¿las p separan del todo las clases, o son todas iguales?")
+    if float(np.ptp(x)) == 0.0:
+        raise ArithmeticError("con todas las p iguales no hay pendiente de calibración "
+                              "que estimar")
+    unos, ceros = x[y == 1], x[y == 0]
+    if unos.min() >= ceros.max() or ceros.min() >= unos.max():
+        raise ArithmeticError("las p separan del todo las clases: la pendiente de "
+                              "calibración no es finita")
+    solucion = _newton(y, x, 0.0, 1.0, pasos)
+    if solucion is None:
+        n = float(y.size)
+        respaldo = minimize(
+            lambda t: -_verosimilitud(y, x, t[0], t[1]) / n, np.array([0.0, 1.0]),
+            jac=lambda t: -_gradiente_y_hessiana(y, x, t[0], t[1])[0] / n,
+            hess=lambda t: _gradiente_y_hessiana(y, x, t[0], t[1])[1] / n,
+            method="trust-exact", options={"gtol": 1e-8, "maxiter": 1000})
+        solucion = _newton(y, x, float(respaldo.x[0]), float(respaldo.x[1]), pasos)
+    if solucion is None:
+        raise ArithmeticError("la regresión de calibración no converge, aunque la "
+                              "pendiente existe: revisa las p")
+    return float(solucion[1])
 
 
 def intercepto_de_calibracion(y, p) -> float:
@@ -111,12 +148,12 @@ def intercepto_de_calibracion(y, p) -> float:
     `a` que iguala la media de expit(a + logit p) a la frecuencia observada.
     Positivo: el modelo predice de menos."""
     y, p = _vectores(y, p)
+    _dos_clases(y, "intercepto de calibración")
     x = logit(p)
     objetivo = float(np.mean(y))
-    if objetivo in (0.0, 1.0):
-        raise ArithmeticError("con una sola clase no hay intercepto de calibración "
-                              "que estimar")
-    return float(brentq(lambda a: float(np.mean(expit(a + x))) - objetivo, -20.0, 20.0,
+    # logit() acota x a ±13,8: con a = ±50 la media predicha pasa de la
+    # observada por los dos lados, por desequilibradas que esten las clases.
+    return float(brentq(lambda a: float(np.mean(expit(a + x))) - objetivo, -50.0, 50.0,
                         xtol=1e-12))
 
 
