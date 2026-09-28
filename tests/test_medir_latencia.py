@@ -277,6 +277,9 @@ def test_la_cli_escribe_el_json_y_no_lo_escribe_si_no_hay_minimo(medir, tmp_path
     dicho = capsys.readouterr().out
     assert "36 consultas" in dicho and "p50 2,75 s" in dicho and "p95 4,33 s" in dicho
     assert "AVISO" not in dicho
+    # lo cronometrado se repite en pantalla: un decimal con coma se ve aqui
+    assert "cronometrado a mano: 5,20 s; 4,80 s; 6,10 s; 5,00 s; 5,50 s" in dicho
+    assert "cinco tiempos" in medir.leer_manual.__doc__.lower()
 
     corta = tmp_path / "corta.json"
     corta.write_text(json.dumps(_validas(12)), encoding="utf-8")
@@ -299,7 +302,9 @@ def test_repetir_sin_manual_avisa_de_que_se_pierde_lo_medido_a_mano(medir, tmp_p
     salida = tmp_path / "latencia.json"
     orden = ["--corrida", str(corrida), "--salida", str(salida)]
     assert medir.main(orden) == 0
-    assert "AVISO" not in capsys.readouterr().out          # no habia nada que perder
+    dicho = capsys.readouterr().out
+    assert "AVISO" not in dicho                            # no habia nada que perder
+    assert "cronometrado a mano" not in dicho              # ni nada cronometrado
     assert medir.main(orden) == 0
     assert "AVISO" not in capsys.readouterr().out          # el anterior decia «no medido»
     assert medir.main(orden + ["--manual", "5.2,4.8,6.1,5.0,5.5"]) == 0

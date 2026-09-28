@@ -705,6 +705,23 @@ def test_un_error_del_flujo_no_entra_en_la_medida_aunque_el_arnes_salga_limpio()
     assert medido["descartadas"]["total"] == 3
 
 
+def test_el_arnes_no_llama_de_extremo_a_extremo_a_ms_extremo(tmp_path):
+    """`ms_extremo` es el tramo que ve el flujo, y en el resumen entran todas
+    las filas: ninguno de los dos es la latencia de extremo a extremo."""
+    from pruebas.reproducir_casos import resumen
+    bien = {"texto": "CRIBADO — opacidad probable", "texto_paciente": "", "error": None,
+            "resultado": UN_RESULTADO}
+    obs = {"con_bots": True, "entrega": "intentada", "codigo": "K7QM",
+           "ms_extremo": 1840, "ms_arnes": 61.5, "coincide": "sí",
+           "error": None, "resultado": UN_RESULTADO}
+    caso = texto_del_caso(_caso(), obs, bien)
+    assert "ms_extremo (de n8n a la respuesta)" in caso and "1840 ms" in caso
+    assert "de extremo a extremo" not in caso
+    dicho = resumen([(_caso(), obs, bien)], True, tmp_path)
+    assert "ms_extremo, todas las filas (mediana)" in dicho and "1840 ms" in dicho
+    assert "de extremo a extremo (mediana)" not in dicho
+
+
 def test_escribir_latencias_deja_el_json_en_la_carpeta_de_salida(tmp_path):
     from pruebas.reproducir_casos import escribir_latencias, filas_de_latencia
     red = {"texto": "x", "texto_paciente": "", "error": None,

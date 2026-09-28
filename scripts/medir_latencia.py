@@ -170,7 +170,10 @@ def resumir(filas, minimo=MINIMO, manual=None) -> dict:
 
 
 def leer_manual(texto):
-    """Los segundos de `--manual`: separados por comas y con punto decimal."""
+    """Los CINCO tiempos de `--manual` (`A_MANO_N`), en segundos: separados
+    por comas y con punto decimal. Con coma decimal saldrian diez valores y se
+    rechazan; una mezcla de comas y puntos que de justo cinco no se puede
+    distinguir de cinco tiempos, y por eso la orden imprime lo que escribio."""
     if texto is None:
         return None
     try:
@@ -228,9 +231,10 @@ def main(argv=None) -> int:
                    help="el latencias.json de una corrida con bots del arnés")
     p.add_argument("--salida", default=str(CARPETA / NOMBRE))
     p.add_argument("--manual", metavar="SEGUNDOS",
-                   help="los segundos de envío a respuesta cronometrados a mano "
-                        "en el cliente de Telegram, con punto decimal y "
-                        "separados por comas; sin medición a mano se omite")
+                   help="los cinco tiempos, en segundos, de envío a respuesta "
+                        "cronometrados a mano en el cliente de Telegram, con "
+                        "punto decimal y separados por comas; sin medición a "
+                        "mano se omite")
     args = p.parse_args(argv)
 
     manual = leer_manual(args.manual)
@@ -250,6 +254,9 @@ def main(argv=None) -> int:
     print(f"{resultado['n']} consultas: p50 {_segundos(resultado['p50_ms'])}, "
           f"p95 {_segundos(resultado['p95_ms'])} "
           f"({resultado['descartadas']['total']} descartadas); {salida}")
+    if manual is not None:
+        # para que un decimal escrito con coma se vea antes de versionar nada
+        print("cronometrado a mano: " + "; ".join(_segundos(1000 * v) for v in manual))
     return 0
 
 

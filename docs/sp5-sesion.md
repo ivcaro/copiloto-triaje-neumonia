@@ -204,17 +204,23 @@ pero no suficiente.
 
 Lo que `ms_extremo` no ve se acota **a mano, en 5 consultas** completas,
 hechas por una persona con los dos bots y un cronómetro, porque el cliente de
-Telegram solo enseña horas y minutos. Cada consulta necesita su propio
-código: primero el cuestionario en el bot del paciente y después, en el del
-profesional, el código y la placa. Hacen falta un chat dado de alta como
-profesional y cinco placas del conjunto de prueba. El bot del paciente admite
-5 cuestionarios por chat y día: las cinco consultas caben justas, y repetir
-una obliga a esperar al día siguiente o a usar otro chat. El cronómetro se
-pone en marcha al enviar la placa y se para cuando aparece el pre-informe: es
-el tiempo **total**, subida incluida, no el tramo que falta, y no se suma al
-p50. Son los cinco valores de `--manual`. Esas consultas quedan registradas
-con el chat de quien mide: son consultas de prueba del equipo, y el informe
-lo dice.
+Telegram solo enseña horas y minutos. Hace falta:
+
+- un chat dado de alta como profesional (`pruebas/profesionales.py --alta`);
+- un código de cuestionario, del bot del paciente. Basta uno para las cinco
+  consultas: el código no es de un solo uso y vale 7 días (spec de SP3 §5.2),
+  y cada uso queda en `consultas`. Un cuestionario nuevo cuenta contra el
+  límite de 5 por chat y día (spec de SP3 §4.2);
+- cinco placas del conjunto de prueba, en DICOM.
+
+En el bot del profesional cada consulta es: el código, los cuatro signos
+(temperatura, frecuencia cardiaca, crepitantes y murmullo) y la placa, enviada
+como **documento** (como foto, Telegram la recomprime a JPEG y deja de ser un
+DICOM). El cronómetro se pone en marcha al enviar la placa y se para cuando
+aparece el pre-informe: es el tiempo **total**, subida incluida, no el tramo
+que falta, y no se suma al p50. Son los cinco valores de `--manual`. Esas
+consultas quedan registradas con el chat de quien mide: son consultas de
+prueba del equipo, y el informe lo dice.
 
 Una consulta cuyo flujo acabó bien pero que el arnés no pudo confirmar con su
 propia llamada se descarta como `no_coincide`: no entra en la medida, y se ve
