@@ -3,6 +3,7 @@
 Ninguno es simulación: son las puntuaciones reales del modelo desplegado
 sobre las placas reales de prueba, y el calibrador que sirve el contenedor.
 """
+import hashlib
 import re
 
 import numpy as np
@@ -27,6 +28,23 @@ def test_el_hash_congelado_es_un_sha256_y_coincide_con_la_cache_si_existe():
     cache = datos.REPO / "pruebas" / "crudas_prueba.sha256"
     if cache.is_file():
         assert cache.read_text(encoding="utf-8").strip() == texto
+
+
+def test_sha256_de_es_el_sha256_de_los_bytes_del_fichero(tmp_path):
+    ruta = tmp_path / "abc.txt"
+    con_crlf = bytes([0x61, 0x0D, 0x0A, 0x62, 0x0A])          # «a», CR, LF, «b», LF
+    solo_lf = bytes([0x61, 0x0A, 0x62, 0x0A])
+    ruta.write_bytes(con_crlf)
+    assert datos.sha256_de(ruta) == hashlib.sha256(con_crlf).hexdigest()
+    assert datos.sha256_de(ruta) != hashlib.sha256(solo_lf).hexdigest()
+    # más de un bloque de lectura (1 MiB): el fichero se lee entero
+    grande = tmp_path / "grande.bin"
+    contenido = bytes(range(256)) * 5000                      # 1 280 000 bytes
+    grande.write_bytes(contenido)
+    assert datos.sha256_de(grande) == hashlib.sha256(contenido).hexdigest()
+    vacio = tmp_path / "vacio.bin"
+    vacio.write_bytes(b"")
+    assert datos.sha256_de(vacio) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 
 def test_la_evidencia_de_imagen_usa_la_prevalencia_del_calibrador():

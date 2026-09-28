@@ -121,6 +121,21 @@ def test_sortear_caso_fuerza_el_asma_declarada(prueba):
     assert libre["asma"] == libre["asma_real"]
 
 
+@pytest.mark.parametrize("asma", ["nose", "NO_SE", "", True, 1])
+def test_sortear_caso_rechaza_un_asma_que_no_es_un_estado(prueba, asma):
+    q, y = prueba
+    m = oraculo.ajustar(q, y, 0.3, 0.3)
+    with pytest.raises(ValueError, match="asma"):
+        generador.sortear_caso(m, 0, np.random.default_rng(1), asma=asma)
+
+
+@pytest.mark.parametrize("asma", ["si", "no", "no_se"])
+def test_sortear_caso_acepta_los_tres_estados_del_asma(prueba, asma):
+    q, y = prueba
+    m = oraculo.ajustar(q, y, 0.3, 0.3)
+    assert generador.sortear_caso(m, 0, np.random.default_rng(1), asma=asma)["asma"] == asma
+
+
 def test_hallazgos_lleva_tipos_de_python(prueba):
     """`heckerling.validar_hallazgos` rechaza `numpy.bool_`: los tipos son de Python."""
     q, y = prueba
