@@ -1006,6 +1006,49 @@ def escribir_corpus(destino, filas):
 
 
 # --------------------------------------------------------------------------
+# Las latencias, caso a caso, para `scripts/medir_latencia.py` (SP5 §6.3)
+# --------------------------------------------------------------------------
+LATENCIAS = "latencias.json"
+
+
+def filas_de_latencia(filas):
+    """Una fila por caso con lo que esta corrida midio, lista para JSON.
+
+    `ms_extremo` es el de `consultas` y solo existe con bots: lo escribe el
+    flujo, desde que `Normalizar update` recibe el update con la placa hasta
+    que `Desenlace` compone la respuesta. `ms_modelo` es lo que el servidor
+    dice que tardo el modelo, y `ms_arnes` la ida y vuelta de este arnes con
+    el copiloto: ninguno de los dos es la latencia de extremo a extremo.
+
+    El `error` es el de la redaccion, el mismo que cuenta el resumen. Aqui no
+    se filtra ni se resume nada: que filas cuentan lo decide quien mide.
+    """
+    salida = []
+    for caso, obs, redaccion in filas:
+        resultado = redaccion.get("resultado") or {}
+        salida.append({
+            "patientId": caso["patientId"],
+            "perfil": caso["perfil"].carpeta,
+            "con_bots": bool(obs.get("con_bots")),
+            "fallo": obs.get("fallo"),
+            "error": redaccion.get("error"),
+            "ms_extremo": obs.get("ms_extremo"),
+            "ms_modelo": resultado.get("milisegundos"),
+            "ms_arnes": obs.get("ms_arnes"),
+        })
+    return salida
+
+
+def escribir_latencias(destino, filas):
+    """Escribe `<destino>/latencias.json`, pisando el de la corrida anterior."""
+    destino.mkdir(parents=True, exist_ok=True)
+    ruta = destino / LATENCIAS
+    ruta.write_text(json.dumps(filas_de_latencia(filas), ensure_ascii=False,
+                               indent=1), encoding="utf-8")
+    return ruta
+
+
+# --------------------------------------------------------------------------
 # El resumen: tiene que decir algo que no supieramos
 # --------------------------------------------------------------------------
 def _mediana(valores):
@@ -1441,6 +1484,9 @@ def main() -> int:
 
     filas = [(c, o, r) for c, o, r in filas if r is not None]
     escribir_corpus(destino, filas)
+    # Siempre, tambien sin bots: `scripts/medir_latencia.py` decide que filas
+    # cuentan, y una corrida sin bots tiene que poder decir que no midio nada.
+    escribir_latencias(destino, filas)
     texto = resumen(filas, con_bots, destino, url_copiloto)
     (destino / "RESUMEN.txt").write_text(texto + "\n", encoding="utf-8")
     print()

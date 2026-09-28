@@ -562,3 +562,95 @@ def test_mensajes_json_lleva_el_veredicto_coincide_del_bot():
     claves = {k.value: v for k, v in zip(por_caso[0].keys, por_caso[0].values)}
     assert {"texto", "resultado", "con_bots", "fallo", "coincide"} <= set(claves)
     assert ast.unparse(claves["coincide"]) == "obs.get('coincide')"
+
+
+# --------------------------------------------------------------------------
+# latencias.json: lo que `scripts/medir_latencia.py` lee (SP5 §6.3). Filas
+# fabricadas: no hay sistema desplegado al que hablar desde una prueba.
+# --------------------------------------------------------------------------
+CLAVES_DE_LATENCIA = ["patientId", "perfil", "con_bots", "fallo", "error",
+                      "ms_extremo", "ms_modelo", "ms_arnes"]
+
+
+def test_filas_de_latencia_da_una_fila_por_caso_con_lo_que_se_midio():
+    from pruebas.reproducir_casos import filas_de_latencia
+    bien = {"texto": "x", "texto_paciente": "", "error": None,
+            "resultado": UN_RESULTADO}
+    rechazo = {"texto": "NO PROCEDE", "texto_paciente": "",
+               "error": "fuera_de_alcance: eso", "resultado": None}
+    filas = [
+        (_caso(pid="p-1"),
+         {"con_bots": True, "ms_extremo": 1840, "ms_arnes": 61.5,
+          "error": None, "resultado": dict(UN_RESULTADO, milisegundos=150.0)},
+         bien),
+        (_caso(perfil=PERFILES[4], pid="p-2"),
+         {"con_bots": True, "ms_extremo": 410, "ms_arnes": 12.0,
+          "error": "otro_codigo: lo que guardo el bot"}, rechazo),
+        (_caso(pid="p-3"),
+         {"con_bots": True, "fallo": "no se pudo subir la placa",
+          "ms_arnes": 60.0}, bien),
+        (_caso(pid="p-4"), {"con_bots": False, "ms_arnes": 58.25}, bien),
+    ]
+    salida = filas_de_latencia(filas)
+    assert [list(f) for f in salida] == [CLAVES_DE_LATENCIA] * 4
+    assert salida[0] == {
+        "patientId": "p-1", "perfil": "03-banda_contradictoria",
+        "con_bots": True, "fallo": None, "error": None,
+        "ms_extremo": 1840, "ms_modelo": 37.4, "ms_arnes": 61.5}
+    # El error es el de la REDACCION y no el que guardo el bot; y sin
+    # resultado no hay milisegundos del modelo.
+    assert salida[1]["perfil"] == "05-menor_edad"
+    assert salida[1]["error"] == "fuera_de_alcance: eso"
+    assert salida[1]["ms_modelo"] is None and salida[1]["ms_extremo"] == 410
+    assert salida[2]["fallo"] == "no se pudo subir la placa"
+    assert salida[2]["ms_extremo"] is None
+    assert salida[3]["con_bots"] is False and salida[3]["ms_extremo"] is None
+    assert salida[3]["ms_arnes"] == 58.25
+    # Tal cual a un fichero: ni perfiles ni tipos que JSON no sepa escribir.
+    assert json.loads(json.dumps(salida)) == salida
+    assert filas_de_latencia([]) == []
+
+
+def test_escribir_latencias_deja_el_json_en_la_carpeta_de_salida(tmp_path):
+    from pruebas.reproducir_casos import escribir_latencias, filas_de_latencia
+    red = {"texto": "x", "texto_paciente": "", "error": None,
+           "resultado": UN_RESULTADO}
+    filas = [(_caso(pid="p-1"),
+              {"con_bots": True, "ms_extremo": 1840, "ms_arnes": 61.5}, red)]
+    destino = tmp_path / "no" / "existe"
+    ruta = escribir_latencias(destino, filas)
+    assert ruta == destino / "latencias.json"
+    assert json.loads(ruta.read_text(encoding="utf-8")) == filas_de_latencia(filas)
+    # Una corrida posterior lo pisa entero: no se acumulan las de otro dia.
+    escribir_latencias(destino, [])
+    assert json.loads(ruta.read_text(encoding="utf-8")) == []
+
+
+def test_main_escribe_latencias_json_tambien_sin_bots(tmp_path, monkeypatch, capsys):
+    """`main` escribe SIEMPRE latencias.json, despues del corpus. Aqui sin
+    bots y con el copiloto y el redactor suplantados: lo que se ata es que el
+    fichero sale, con una fila por caso, y que el corpus sigue saliendo."""
+    from pruebas import reproducir_casos as rc
+    casos = [_caso(pid="p-1"), _caso(perfil=PERFILES[4], pid="p-2")]
+    redacciones = [
+        {"texto": "CRIBADO — opacidad probable\nEl cribado marca esta placa",
+         "texto_paciente": "", "error": None, "resultado": UN_RESULTADO},
+        {"texto": "NO PROCEDE", "texto_paciente": "",
+         "error": "fuera_de_alcance: eso", "resultado": None}]
+    monkeypatch.setattr(rc, "comprobar_el_copiloto", lambda url: None)
+    monkeypatch.setattr(rc, "construir_casos", lambda por_perfil, solo, destino: casos)
+    monkeypatch.setattr(rc, "llamar_al_copiloto", lambda *a, **k: (200, ""))
+    monkeypatch.setattr(rc, "redactar", lambda lote: redacciones[:len(lote)])
+    monkeypatch.setattr(sys, "argv", ["reproducir_casos.py", "--sin-bots",
+                                      "--salida", str(tmp_path)])
+    assert rc.main() == 0
+    capsys.readouterr()
+    filas = json.loads((tmp_path / "latencias.json").read_text(encoding="utf-8"))
+    assert [f["patientId"] for f in filas] == ["p-1", "p-2"]
+    assert [list(f) for f in filas] == [CLAVES_DE_LATENCIA] * 2
+    assert all(f["con_bots"] is False and f["ms_extremo"] is None for f in filas)
+    assert all(isinstance(f["ms_arnes"], float) for f in filas)
+    assert filas[0]["ms_modelo"] == 37.4 and filas[1]["error"].startswith("fuera_de_alcance")
+    # El arnes sigue haciendo lo de siempre.
+    assert (tmp_path / "RESUMEN.txt").is_file()
+    assert (tmp_path / "03-banda_contradictoria" / "p-1.txt").is_file()
