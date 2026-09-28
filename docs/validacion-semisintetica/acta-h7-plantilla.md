@@ -10,9 +10,9 @@ personales en ningún fichero del proyecto.
 **Fechas:** {{fechas}}.
 
 **Casos:** {{n}}, elegidos con semilla por estratos (tabla al final). Los
-mensajes del sistema se generaron con la prevalencia desplegada
-({{prevalencia_sesion}}); la categoría del sistema sale del bloque
-`combinacion` del {{categoria_de}}.
+mensajes del sistema se generaron {{origen_mensajes}}, con la prevalencia
+desplegada ({{prevalencia_sesion}}); la categoría del sistema sale del bloque
+`combinacion` del mensaje.
 
 ## Método
 
@@ -20,7 +20,9 @@ mensajes del sistema se generaron con la prevalencia desplegada
 opacidad o infiltrado compatible con neumonía, en tres bandas (< 20 %,
 20-70 %, > 70 %; convención del equipo) y como porcentaje entero. Instrumento:
 el formulario local, un caso por pantalla, sin volver atrás; el tiempo va de
-abrir el caso a enviar la banda.
+abrir el caso a enviar la banda. Los síntomas referidos son un fondo constante
+en todos los casos (salvo el asma y la fiebre, que siguen a la clínica
+generada) y así se le dijo al médico.
 
 ## Resultados
 
@@ -38,7 +40,8 @@ abrir el caso a enviar la banda.
   {{acotados}}.
 - **Influencia del sistema (no es concordancia independiente):** {{influencia}}.
 - **Utilidad del pre-informe (1-5):** {{utilidad}}.
-- **Tiempo de triaje:** {{tiempo}}.
+- **Tiempo de triaje:** {{tiempo}}. Razones individuales de los controles
+  (lectura 2 / lectura 1): {{razones_controles}}.
 
 {{texto_fijado}}
 
@@ -47,6 +50,13 @@ abrir el caso a enviar la banda.
 | Caso | Estrato | Sistema | Médico | Horquilla del sistema | Comentario |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 {{tabla_desacuerdos}}
+
+## Pregunta sobre el PACS
+
+¿En su práctica, la radiografía en DICOM se obtiene del PACS? Es la pregunta
+que el diseño de SP3 (§18) dejó para antes de H7.
+
+(Respuesta del médico en la reunión de preparación; se anota a mano.)
 
 ## Observaciones del médico
 
@@ -62,3 +72,5 @@ no la envió.
 | Caso | Estrato | Clínica frente a imagen |
 | :--- | :--- | :--- |
 {{tabla_casos}}
+
+**Congelado verificable:** {{huellas}}.

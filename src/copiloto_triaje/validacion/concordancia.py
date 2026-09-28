@@ -245,6 +245,12 @@ def leer_csv(ruta) -> list:
     return salida
 
 
+def _fecha(ms) -> str:
+    """El dia (YYYY-MM-DD, hora local) de un instante del formulario en ms."""
+    import datetime
+    return datetime.datetime.fromtimestamp(ms / 1000).strftime("%Y-%m-%d") if ms else "—"
+
+
 def _sin_practica(filas):
     return [f for f in filas if not f["practica"]]
 
@@ -275,18 +281,70 @@ def _con_umbrales(k: dict) -> dict:
     return k
 
 
+def _problemas_de_las_lecturas(clave: dict, casos: dict, lectura1: list,
+                               lectura2: list | None, planb: list | None) -> list:
+    """Lo que impide analizar: la columna `lectura` que no toca (ficheros
+    cambiados, el mismo CSV dos veces), casos que faltan o se repiten, y
+    controles que no son los de la clave (restriccion 8: el kappa sale solo
+    de la lectura 1). Todas las filas de practica quedan fuera."""
+    problemas = []
+    l1 = _sin_practica(lectura1)
+    otras = sorted({str(f["lectura"]) for f in l1} - {"1"})
+    if otras:
+        problemas.append(f"la lectura 1 lleva filas de la lectura {', '.join(otras)} "
+                         f"(¿ficheros cambiados?)")
+    ids = [f["id"] for f in l1]
+    if len(ids) != len(casos) or set(ids) != set(casos):
+        problemas.append(f"la lectura 1 tiene {len(ids)} filas para {len(casos)} casos, "
+                         f"o ids que no son los de la clave")
+    if lectura2 is not None:
+        l2 = _sin_practica(lectura2)
+        otras = sorted({str(f["lectura"]) for f in l2} - {"2"})
+        if otras:
+            problemas.append(f"la lectura 2 lleva filas de la lectura {', '.join(otras)} "
+                             f"(¿ficheros cambiados, o el mismo CSV dos veces?)")
+        ids2 = [f["id"] for f in l2]
+        repetidos = sorted({i for i in ids2 if ids2.count(i) > 1})
+        if repetidos:
+            problemas.append(f"la lectura 2 repite {', '.join(repetidos)}")
+        if set(ids2) != set(casos):
+            problemas.append(f"la lectura 2 no tiene los casos de la clave: faltan "
+                             f"{len(set(casos) - set(ids2))} y sobran {len(set(ids2) - set(casos))}")
+        controles = {f["id"] for f in l2 if f["control"]}
+        if controles != set(clave["ordenes"]["controles"]):
+            problemas.append(f"los controles de la lectura 2 ({', '.join(sorted(controles)) or 'ninguno'}) "
+                             f"no son los de la clave")
+    if planb is not None:
+        pb = _sin_practica(planb)
+        if any(str(f["lectura"]) != "1" for f in pb):
+            problemas.append("el plan B lleva filas que no son de la lectura 1")
+        sin_respuesta = [f["id"] for f in pb if not f["banda_con"]]
+        if sin_respuesta:
+            problemas.append(f"el plan B no tiene la respuesta con el mensaje en "
+                             f"{len(sin_respuesta)} filas")
+    return problemas
+
+
 def analizar(clave: dict, lectura1: list, lectura2: list | None = None,
-             planb: list | None = None) -> dict:
-    """De los CSV y la clave a la estructura de `sesion.json`."""
+             planb: list | None = None, huellas: dict | None = None) -> dict:
+    """De los CSV y la clave DEFINITIVA (la de `--fase mensajes`) a la
+    estructura de `sesion.json`. `huellas`, si se pasa, son los sha256 de
+    `corpus/mensajes.json` y `clave.json` que el acta cita."""
     casos = {c["patientId"]: c for c in clave["casos"]}
-    categoria_de = "mensaje" if all("categoria" in c for c in casos.values()) else "prevista"
-    clave_cat = "categoria" if categoria_de == "mensaje" else "categoria_prevista"
-    clave_bloque = "bloque" if categoria_de == "mensaje" else "bloque_previsto"
+    if any("categoria" not in c or "bloque" not in c for c in casos.values()):
+        raise ValueError("la clave no es la definitiva: corre --fase mensajes antes de analizar")
+    faltan = [k for k in ("origen_mensajes", "prevalencia_sesion") if k not in clave]
+    if faltan:
+        raise ValueError(f"la clave no lleva {' ni '.join(faltan)}: corre --fase mensajes "
+                         f"antes de analizar")
+    problemas = _problemas_de_las_lecturas(clave, casos, lectura1, lectura2, planb)
+    if problemas:
+        raise ValueError("las lecturas no sirven para analizar:\n  " + "\n  ".join(problemas))
+    # La categoria y la horquilla son las del bloque DEL MENSAJE (D3).
+    clave_cat, clave_bloque = "categoria", "bloque"
 
     l1 = _sin_practica(lectura1)
     ids = [f["id"] for f in l1]
-    if set(ids) != set(casos) or len(ids) != len(casos):
-        raise ValueError(f"la lectura 1 tiene {len(ids)} filas para {len(casos)} casos, o ids que no cuadran")
     sistema = [casos[i][clave_cat]["primaria"] for i in ids]
     medico = [f["banda"] for f in l1]
     pct = [f["porcentaje"] for f in l1]
@@ -307,9 +365,20 @@ def analizar(clave: dict, lectura1: list, lectura2: list | None = None,
                    for f, s in zip(l1, sistema) if f["banda"] != s]
     medico1 = {f["id"]: f["banda"] for f in l1}
     t1 = {f["id"]: f["segundos"] for f in l1}
+    # El dia de cada lectura: el de la primera fila (la primera practica).
+    if planb is not None:
+        fechas = {"sesion_unica": _fecha(lectura1[0]["abierto_en"])}
+    elif lectura2 is not None:
+        fechas = {"lectura1": _fecha(lectura1[0]["abierto_en"]),
+                  "lectura2": _fecha(lectura2[0]["abierto_en"])}
+    else:
+        fechas = {"lectura1": _fecha(lectura1[0]["abierto_en"])}
 
     salida = {"rotulo": clave.get("rotulo", "simulación semisintética — sesión H7"),
-              "n": len(ids), "categoria_de": categoria_de, "kappa": kappas,
+              "n": len(ids), "fechas": fechas,
+              "prevalencia_sesion": clave["prevalencia_sesion"],
+              "origen_mensajes": clave["origen_mensajes"], "huellas": huellas,
+              "kappa": kappas,
               "sensibilidad_categoria": sensibilidad, "n_cruzan_un_limite": n_cruzan,
               "acuerdo_continuo": acuerdo,
               "desacuerdos": desacuerdos, "lectura2": None, "plan_b": None,
@@ -368,11 +437,6 @@ def _kappa_texto(k: dict) -> str:
             f"BCa {_f(k['ic95_bca'][0])} a {_f(k['ic95_bca'][1])}; n = {k['n']})")
 
 
-def _fecha(ms):
-    import datetime
-    return datetime.datetime.fromtimestamp(ms / 1000).strftime("%Y-%m-%d") if ms else "—"
-
-
 def _pct_como_el_bot(x: float) -> str:
     """Un extremo de la horquilla como lo imprime Desenlace: entero con
     Math.round (`porcentaje_entero`), y nunca 0 % ni 100 %."""
@@ -421,44 +485,89 @@ def _criterio(nombre: str, k: dict) -> str:
     return f"{nombre} ({_f(k['kappa'])}) {alcance}; el límite inferior del intervalo {limite}."
 
 
-def valores_para_acta(sesion: dict, clave: dict, lectura1: list | None = None,
-                      lectura2: list | None = None) -> dict:
+ESTRATOS_LEGIBLES = {"positiva_clara": "positiva clara", "negativa_clara": "negativa clara",
+                     "banda_contradictoria": "banda contradictoria", "asma_no_se": "asma «no sé»"}
+NOTAS_LEGIBLES = {"correccion": "corrección", "utilidad": "utilidad", "lenguaje": "lenguaje"}
+SENSIBILIDAD_LEGIBLE = {"independencia": "extremo de independencia",
+                        "conservador": "extremo conservador",
+                        "cruza": "«si cruza un límite, intermedia»"}
+
+
+def _plural(n: int, singular: str, plural: str) -> str:
+    return f"{n} {singular if n == 1 else plural}"
+
+
+def _celda(x) -> str:
+    """Una celda de tabla Markdown: `|` escapada y los saltos de linea como « / »."""
+    texto = str(x).replace("|", "\\|")
+    return " / ".join(t.strip() for t in texto.replace("\r\n", "\n").replace("\r", "\n").split("\n"))
+
+
+def _origen(o: dict) -> str:
+    if o.get("con_bots"):
+        return "con bots contra el sistema desplegado"
+    return f"con la imagen local del tag {o.get('imagen_tag')}, digest {o.get('imagen_digest')}"
+
+
+def _huellas(h: dict | None) -> str:
+    if not h:
+        return "no calculadas (el análisis no recibió los ficheros de la sesión)"
+    return f"sha256 de mensajes.json `{h['mensajes_json']}` y de clave.json `{h['clave_json']}`"
+
+
+def valores_para_acta(sesion: dict, clave: dict) -> dict:
     """Los valores que rellenan la plantilla. Ninguno se teclea: salen de
-    `sesion.json` y de la clave."""
+    `sesion.json` (cifras, fechas, prevalencia, origen de los mensajes y
+    huellas) y de la clave (la tabla de casos)."""
     k = sesion["kappa"]
-    casos = "\n".join(f"| {c['patientId']} | {c['estrato']} | {'concordante' if c['concordante'] else 'discordante'} |"
+    casos = "\n".join(f"| {c['patientId']} | {ESTRATOS_LEGIBLES.get(c['estrato'], c['estrato'])} | "
+                      f"{'concordante' if c['concordante'] else 'discordante'} |"
                       for c in clave["casos"])
     desacuerdos = "\n".join(
-        f"| {d['id']} | {d['estrato']} | {d['sistema']} | {d['medico']} ({d['porcentaje']} %) | "
-        f"{_horquilla_como_el_bot(*d['horquilla'])} | {d['comentario']} |"
+        "| " + " | ".join(_celda(x) for x in (
+            d["id"], ESTRATOS_LEGIBLES.get(d["estrato"], d["estrato"]), d["sistema"],
+            f"{d['medico']} ({d['porcentaje']} %)", _horquilla_como_el_bot(*d["horquilla"]),
+            d["comentario"])) + " |"
         for d in sesion["desacuerdos"]) or "| (ninguno) | | | | | |"
-    fecha1 = _fecha(lectura1[0]["abierto_en"]) if lectura1 else "—"
-    fecha2 = _fecha(lectura2[0]["abierto_en"]) if lectura2 else "—"
+    dias = sesion["fechas"]
+    fecha1 = dias.get("lectura1") or dias.get("sesion_unica") or "—"
+    fecha2 = dias.get("lectura2") or "—"
     l2 = sesion.get("lectura2")
     pb = sesion.get("plan_b")
     if l2:
         t = l2["tiempo"]
+        r = t["razon_medias_geometricas"]
+        cambio = (f"aumento del {_f((r - 1.0) * 100.0, 0)} %" if r > 1.0
+                  else f"reducción del {_f(t['reduccion_pct'], 0)} %")
         ic_corregida = t.get("ic95_razon_corregida")
         corregida = (f"{_f(t['razon_corregida_por_releer'])} (IC 95 % {_f(ic_corregida[0])} a {_f(ic_corregida[1])})"
                      if ic_corregida else _f(t["razon_corregida_por_releer"]))
-        tiempo = (f"razón de medias geométricas con/sin {_f(t['razon_medias_geometricas'])} "
+        tiempo = (f"razón de medias geométricas con/sin {_f(r)} "
                   f"(IC 95 % BCa {_f(t['ic95_bca'][0])} a {_f(t['ic95_bca'][1])}; n = {t['n']}), "
-                  f"reducción {_f(t['reduccion_pct'], 0)} %; controles releídos sin copiloto: "
+                  f"{cambio}; controles releídos sin copiloto: "
                   f"media geométrica {_f(t['controles']['media_geometrica'])} (n = {t['controles']['n']}); "
-                  f"razón corregida por releer {corregida}. La reducción mezcla "
-                  f"el efecto del copiloto con el de releer; los controles lo estiman de forma descriptiva.")
+                  f"razón corregida por releer {corregida}. El cambio medido mezcla "
+                  f"el efecto del copiloto con el de releer; los controles estiman el de releer "
+                  f"de forma descriptiva")
+        razones_controles = ("; ".join(_f(x) for x in t["controles"]["razones"])
+                             or "no hubo controles en la lectura 2")
         influencia = (f"kappa con el mensaje delante {_kappa_texto(l2['kappa_con_mensaje'])}; "
-                      f"cambió de banda en {l2['cambios_de_banda']} de {l2['n_con_mensaje']} casos")
+                      f"cambió de banda en {l2['cambios_de_banda']} de "
+                      f"{_plural(l2['n_con_mensaje'], 'caso', 'casos')}")
         u = l2["utilidad"]
         fechas = f"lectura 1 el {fecha1}; lectura 2 el {fecha2}"
-        metodo = (f"Dos lecturas del mismo conjunto: la primera sin copiloto el {fecha1}; la segunda, "
-                  f"con el mensaje real del sistema en {l2['n_con_mensaje']} casos y {l2['n_controles']} "
-                  f"controles sin mensaje, el {fecha2}. El kappa sale solo de la primera.")
+        metodo = (f"Dos lecturas del mismo conjunto: la primera sin copiloto (placa y viñeta; banda y "
+                  f"porcentaje) el {fecha1}; la segunda, con el mensaje real del sistema en "
+                  f"{_plural(l2['n_con_mensaje'], 'caso', 'casos')} y "
+                  f"{_plural(l2['n_controles'], 'control', 'controles')} sin mensaje, el {fecha2}. "
+                  f"El kappa sale solo de la primera.")
     elif pb:
         tiempo = (f"no medido (plan B, una sola sesión); leer el mensaje añadió una mediana de "
                   f"{_f(pb['segundos_adicionales_leer_mensaje']['mediana'], 0)} s por caso")
+        razones_controles = "no hay controles en el plan B"
         influencia = (f"kappa tras revelar el mensaje {_kappa_texto(pb['kappa_con_mensaje'])}; "
-                      f"cambió de banda en {pb['cambios_de_banda']} de {pb['kappa_con_mensaje']['n']} casos")
+                      f"cambió de banda en {pb['cambios_de_banda']} de "
+                      f"{_plural(pb['kappa_con_mensaje']['n'], 'caso', 'casos')}")
         u = pb["utilidad"]
         fechas = f"sesión única el {fecha1}"
         metodo = (f"Una sola sesión el {fecha1}, en lectura secuencial caso a caso: primero banda, "
@@ -467,23 +576,28 @@ def valores_para_acta(sesion: dict, clave: dict, lectura1: list | None = None,
                   f"respuesta; la reducción del tiempo no se midió.")
     else:
         tiempo = "no medido"
+        razones_controles = "no hay controles (solo la lectura sin copiloto)"
         influencia = "no medida"
         u = None
         fechas = f"lectura el {fecha1}"
         metodo = f"Solo la lectura sin copiloto, el {fecha1}."
-    utilidad = ("; ".join(f"{n} {_f(u[n]['media'], 1)} (n = {u[n]['n']})" for n in NOTAS) if u else "no medida")
+    utilidad = ("; ".join(f"{NOTAS_LEGIBLES[n]} {_f(u[n]['media'], 1)} (n = {u[n]['n']})" for n in NOTAS)
+                if u else "no medida")
     a = sesion["acuerdo_continuo"]
     return {
         "rotulo": sesion["rotulo"], "n": str(sesion["n"]),
         "fechas": fechas, "metodo": metodo,
-        "prevalencia_sesion": _f(clave.get("prevalencia_sesion"), 4),
-        "categoria_de": sesion["categoria_de"],
+        "prevalencia_sesion": _f(sesion["prevalencia_sesion"], 4),
+        "origen_mensajes": _origen(sesion["origen_mensajes"]),
         "kappa_ponderado": _kappa_texto(k["ponderado_lineal"]),
         "kappa_cohen": _kappa_texto(k["cohen"]),
         "kappa_binario": _kappa_texto(k["binario_alta"]),
         "criterio_kappa": " ".join(_criterio(NOMBRES_KAPPA[v], k[v]) for v in NOMBRES_KAPPA),
-        "sensibilidad": "; ".join(f"{v} {_f(x)}" for v, x in sesion["sensibilidad_categoria"].items()),
+        "sensibilidad": "; ".join(f"{SENSIBILIDAD_LEGIBLE.get(v, v)} {_f(x)}"
+                                  for v, x in sesion["sensibilidad_categoria"].items()),
         "n_cruzan_un_limite": str(sesion["n_cruzan_un_limite"]),
+        "razones_controles": razones_controles,
+        "huellas": _huellas(sesion.get("huellas")),
         "spearman": _f(a["spearman"]), "bland_altman": f"{_f(a['diferencia_media_log_odds'])} (DE {_f(a['de'])})",
         "dentro_horquilla": _f(a.get("fraccion_dentro_de_la_horquilla", float("nan")) * 100, 0),
         "horquillas_anchura_cero": str(a.get("horquillas_de_anchura_cero", "—")),
