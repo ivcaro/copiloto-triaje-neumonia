@@ -165,10 +165,13 @@ NOMBRE_MODELO = {"imagen": "imagen sola", "clinica": "clínica sola",
                  "independencia": "combinación por independencia",
                  "conservador": "combinación conservadora"}
 # Las tres fracciones de la horquilla, en el orden del eje de λ: por debajo de
-# 0 (mas alla del extremo conservador), dentro, y por encima de 1.
-TRAMOS = (("bajo", "por el lado conservador (λ < 0)", "#2a78d6"),
+# 0 (mas alla del extremo conservador), dentro, y por encima de 1. Los colores
+# dicen lo mismo que en el mapa de la pendiente: rojo donde el sistema exagera
+# (λ < 0: el oraculo queda mas cerca del previo que las dos combinaciones) y
+# azul donde se queda corto (λ > 1).
+TRAMOS = (("bajo", "por el lado conservador (λ < 0)", "#e34948"),
           ("contencion", "dentro de la horquilla", "#c9c8c3"),
-          ("sobre", "más allá de la independencia (λ > 1)", "#e34948"))
+          ("sobre", "más allá de la independencia (λ > 1)", "#2a78d6"))
 LADOS = (("a_favor", "imagen a favor (RV ≥ 1)"),
          ("en_contra", "imagen en contra (RV < 1)"))
 RAMPA_AZUL = ("#cde2fb", "#86b6ef", "#3987e5", "#1c5cab", "#0d366b")
@@ -179,10 +182,31 @@ REJILLAS = ("contencion", "pendiente")
 
 
 def _pyplot():
-    import matplotlib
+    try:
+        import matplotlib
+    except ImportError:
+        raise SystemExit("para dibujar hace falta matplotlib, que es el extra `figuras` "
+                         "(pip install -e .[figuras]); sin él, corre con --sin-figuras") from None
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     return plt
+
+
+def _luminancia(color) -> float:
+    """La luminancia relativa de un color (WCAG 2), de 0 (negro) a 1 (blanco)."""
+    from matplotlib.colors import to_rgb
+    lineal = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+              for c in to_rgb(color)]
+    return 0.2126 * lineal[0] + 0.7152 * lineal[1] + 0.0722 * lineal[2]
+
+
+def _tinta_sobre(color) -> str:
+    """Blanco o tinta: la que mas contrasta (razon de contraste de WCAG) con el
+    color que de verdad se pinta debajo, no con su posicion en la escala."""
+    fondo = _luminancia(color) + 0.05
+    con_blanco = 1.05 / fondo
+    con_tinta = fondo / (_luminancia(TINTA) + 0.05)
+    return "white" if con_blanco > con_tinta else TINTA
 
 
 def _ejes(ax, titulo, x, y):
@@ -229,7 +253,9 @@ def celdas_con_figura(resultados: dict) -> list:
 def figura_fiabilidad(celda: dict, destino) -> Path:
     """La curva de fiabilidad por deciles de los cuatro modelos de una celda.
 
-    La ECE va en la leyenda AL LADO de su suelo: sola no dice nada."""
+    La ECE va en la leyenda AL LADO de su suelo (media y percentil 95): sola
+    no dice nada, y contra la media sola parece fuera del ruido la que no lo
+    esta."""
     plt = _pyplot()
     from matplotlib.ticker import FuncFormatter
     fig, ax = plt.subplots(figsize=(9, 5.5))
@@ -242,8 +268,8 @@ def figura_fiabilidad(celda: dict, destino) -> Path:
         ax.plot([b["p_media"] for b in curva], [b["observada"] for b in curva],
                 "-" + MARCA_MODELO[modelo], color=COLOR_MODELO[modelo], linewidth=1.6,
                 markersize=5, markeredgecolor="white", markeredgewidth=0.6,
-                label=f"{NOMBRE_MODELO[modelo]} — ECE {_coma(m['ece'], 3)}"
-                      f" (suelo {_coma(m['suelo']['media'], 3)})")
+                label=f"{NOMBRE_MODELO[modelo]} — ECE {_coma(m['ece'], 3)} (suelo "
+                      f"{_coma(m['suelo']['media'], 3)}; p95 {_coma(m['suelo']['p95'], 3)})")
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(-0.02, 1.02)
     for eje in (ax.xaxis, ax.yaxis):
@@ -274,8 +300,7 @@ def figura_horquilla(resultados: dict, destino) -> Path:
             for y, (x0, ancho) in enumerate(zip(izquierda, anchos)):
                 if ancho >= 12.0:
                     ax.text(x0 + ancho / 2, y, f"{_coma(ancho, 0)} %", ha="center",
-                            va="center", fontsize=8,
-                            color=TINTA if clave == "contencion" else "white")
+                            va="center", fontsize=8, color=_tinta_sobre(color))
             izquierda = [a + b for a, b in zip(izquierda, anchos)]
         _ejes(ax, rotulo, "% de los casos concordantes", "")
         ax.set_title(rotulo, fontsize=10)
@@ -316,7 +341,7 @@ def figura_rejilla(resultados: dict, destino, que: str) -> Path:
     if que == "contencion":
         mapa = LinearSegmentedColormap.from_list("azul", RAMPA_AZUL)
         norma = Normalize(vmin=0.0, vmax=100.0)
-        decimales, unidad, centro, corte = 1, " %", 0.0, 0.5
+        decimales, unidad = 1, " %"
         titulo = f"Contención del oráculo en la horquilla, por celda — {ROTULO}"
         barra = "contención (% de los casos concordantes)"
     else:
@@ -324,7 +349,7 @@ def figura_rejilla(resultados: dict, destino, que: str) -> Path:
         desvio = max([abs(v - 1.0) for v in presentes] + [0.05])
         mapa = LinearSegmentedColormap.from_list("divergente", RAMPA_DIVERGENTE)
         norma = TwoSlopeNorm(vcenter=1.0, vmin=1.0 - desvio, vmax=1.0 + desvio)
-        decimales, unidad, centro, corte = 2, "", 0.5, 0.3
+        decimales, unidad = 2, ""
         titulo = f"Pendiente de la independencia, por celda — {ROTULO}"
         barra = "pendiente de calibración (< 1 exagera; > 1 se queda corta)"
     mapa = mapa.with_extremes(bad="#f0efec")
@@ -332,10 +357,9 @@ def figura_rejilla(resultados: dict, destino, que: str) -> Path:
     imagen = ax.imshow(numeros, cmap=mapa, norm=norma, origin="lower", aspect="auto")
     for i, fila in enumerate(numeros):
         for j, v in enumerate(fila):
-            oscuro = v == v and abs(float(norma(v)) - centro) > corte
             ax.text(j, i, _coma(v, decimales) + (unidad if v == v else ""),
                     ha="center", va="center", fontsize=10 if len(rejilla) <= 5 else 8,
-                    color="white" if oscuro else TINTA)
+                    color=_tinta_sobre(mapa(norma(v))) if v == v else TINTA)
     _ejes(ax, titulo, "ρ0 (dependencia entre los casos sin neumonía)",
           "ρ1 (dependencia entre los casos con neumonía)")
     ax.grid(False)

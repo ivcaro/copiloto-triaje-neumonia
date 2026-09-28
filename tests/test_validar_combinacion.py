@@ -195,6 +195,104 @@ def test_cada_figura_se_puede_dibujar_por_separado(validar, resultados_minimos, 
     assert not (tmp_path / "cinco.png").exists()
 
 
+def test_la_tinta_es_la_que_mas_contrasta_con_el_color_pintado(validar):
+    pytest.importorskip("matplotlib")
+    for claro in ("#e34948", "#2a78d6", "#3987e5", "#c9c8c3", "#f0efec", "white"):
+        assert validar._tinta_sobre(claro) == validar.TINTA, claro
+    for oscuro in ("#1c5cab", "#0d366b", validar.TINTA, "black"):
+        assert validar._tinta_sobre(oscuro) == "white", oscuro
+    # tal como lo da un mapa de color: una tupla RGBA
+    assert validar._tinta_sobre((0.05, 0.21, 0.42, 1.0)) == "white"
+    assert validar._tinta_sobre((0.91, 0.55, 0.54, 1.0)) == validar.TINTA
+    assert validar._luminancia("white") == pytest.approx(1.0)
+    assert validar._luminancia("black") == 0.0
+
+
+def test_las_casillas_y_las_barras_se_escriben_con_la_tinta_que_contrasta(
+        validar, resultados_minimos, tmp_path, monkeypatch):
+    pytest.importorskip("matplotlib")
+    from matplotlib.axes import Axes
+    escritos = []
+    escribir = Axes.text
+
+    def escribir_espia(self, x, y, texto, **kwargs):
+        escritos.append((texto, kwargs.get("color")))
+        return escribir(self, x, y, texto, **kwargs)
+
+    monkeypatch.setattr(Axes, "text", escribir_espia)
+    validar.figura_rejilla(resultados_minimos, tmp_path / "pendiente.png", "pendiente")
+    pendientes = {c["nombre"]: c["modelos"]["independencia"]["pendiente"]
+                  for c in resultados_minimos["celdas"]}
+    # todas las pendientes de la rejilla minima caen en la mitad roja o en el
+    # gris del centro: ninguna casilla es bastante oscura para el blanco
+    assert all(0.6 < p < 1.1 for p in pendientes.values())
+    assert len(escritos) == 4
+    assert all(color == validar.TINTA for _, color in escritos)
+
+    escritos.clear()
+    validar.figura_rejilla(resultados_minimos, tmp_path / "contencion.png", "contencion")
+    por_texto = dict(escritos)
+    assert por_texto["100,0 %"] == "white"                  # 0A: el azul mas oscuro
+    contenciones = [100 * c["horquilla"]["todos"]["contencion"]
+                    for c in resultados_minimos["celdas"]]
+    for valor in contenciones:
+        texto = f"{valor:.1f}".replace(".", ",") + " %"
+        assert por_texto[texto] == ("white" if valor > 60 else validar.TINTA), texto
+
+    escritos.clear()
+    validar.figura_horquilla(resultados_minimos, tmp_path / "horquilla.png")
+    assert escritos and all(color == validar.TINTA for _, color in escritos)
+
+
+def test_la_leyenda_de_fiabilidad_da_la_ece_con_la_media_y_el_p95_de_su_suelo(
+        validar, resultados_minimos, tmp_path, monkeypatch):
+    pytest.importorskip("matplotlib")
+    from matplotlib.axes import Axes
+    rotulos = []
+    trazar = Axes.plot
+
+    def trazar_espia(self, *args, **kwargs):
+        rotulos.append(kwargs.get("label", ""))
+        return trazar(self, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "plot", trazar_espia)
+    celda = resultados_minimos["celdas"][3]
+    validar.figura_fiabilidad(celda, tmp_path / "fiabilidad.png")
+
+    def coma(x):
+        return f"{x:.3f}".replace(".", ",")
+
+    assert rotulos[0] == "calibración perfecta"
+    assert rotulos[1:] == [
+        f"{validar.NOMBRE_MODELO[m]} — ECE {coma(celda['modelos'][m]['ece'])} (suelo "
+        f"{coma(celda['modelos'][m]['suelo']['media'])}; "
+        f"p95 {coma(celda['modelos'][m]['suelo']['p95'])})"
+        for m in simulacion.MODELOS]
+
+
+def test_el_rojo_es_exagerar_en_la_horquilla_y_en_la_pendiente(validar):
+    colores = {clave: color for clave, _, color in validar.TRAMOS}
+    # λ < 0: el oraculo queda mas cerca del previo que las dos combinaciones
+    assert colores["bajo"] == validar.RAMPA_DIVERGENTE[0]          # pendiente < 1
+    assert colores["sobre"] == validar.RAMPA_DIVERGENTE[-1]        # pendiente > 1
+    assert [clave for clave, _, _ in validar.TRAMOS] == ["bajo", "contencion", "sobre"]
+
+
+def test_sin_matplotlib_se_calcula_y_dibujar_lo_dice(
+        validar, resultados_minimos, tmp_path, monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "matplotlib", None)      # como si no estuviera instalado
+    monkeypatch.setattr(validar, "calcular", lambda replicas, procesos: resultados_minimos)
+    orden = ["--replicas", "2", "--procesos", "1", "--salida", str(tmp_path)]
+    assert validar.main(orden + ["--sin-figuras"]) == 0
+    assert [p.name for p in tmp_path.iterdir()] == ["resultados_simulacion.json"]
+    with pytest.raises(SystemExit, match="--sin-figuras"):
+        validar.main(orden)
+    assert list(tmp_path.glob("*.png")) == []
+    with pytest.raises(ValueError, match="contencion"):      # se rechaza antes de importar nada
+        validar.figura_rejilla(resultados_minimos, tmp_path / "x.png", "auc")
+
+
 def test_las_figuras_borran_las_propias_rancias_y_respetan_las_ajenas(
         validar, resultados_minimos, tmp_path):
     pytest.importorskip("matplotlib")
@@ -223,16 +321,22 @@ def test_main_dibuja_las_figuras_leyendo_el_json(
 
     def leer_espia(ruta):
         leidos.append(ruta)
-        return leer(ruta)
+        leido = leer(ruta)
+        # lo leido NO es lo calculado: si main dibujara con lo que tiene en
+        # memoria, la figura de (0,3; 0,3) seguiria saliendo
+        leido["celdas"][3]["destacada"] = False
+        return leido
 
     monkeypatch.setattr(validar, "calcular", lambda replicas, procesos: resultados_minimos)
     monkeypatch.setattr(validar, "leer_resultados", leer_espia)
+    assert resultados_minimos["celdas"][3]["destacada"] is True
     assert validar.main(["--replicas", "2", "--procesos", "1", "--salida", str(tmp_path)]) == 0
     assert leidos == [tmp_path / "resultados_simulacion.json"]
-    assert sorted(p.name for p in tmp_path.glob("*.png")) == sorted(NOMBRES_MINIMOS)
+    dibujadas = [n for n in NOMBRES_MINIMOS if n != "fiabilidad_r1-030_r0-030.png"]
+    assert sorted(p.name for p in tmp_path.glob("*.png")) == sorted(dibujadas)
     salida = capsys.readouterr().out
     assert [linea[len("figura: "):] for linea in salida.splitlines()
-            if linea.startswith("figura: ")] == [str(tmp_path / n) for n in NOMBRES_MINIMOS]
+            if linea.startswith("figura: ")] == [str(tmp_path / n) for n in dibujadas]
 
 
 def test_main_sin_figuras_no_dibuja_nada(validar, tmp_path, capsys):
