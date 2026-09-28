@@ -30,7 +30,9 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
 from copiloto_triaje.servicio.heckerling import PREVALENCIA_COHORTE  # noqa: E402
-from copiloto_triaje.validacion import datos, metricas, oraculo, simulacion  # noqa: E402
+from copiloto_triaje.validacion import (  # noqa: E402
+    datos, informe, metricas, oraculo, simulacion,
+)
 
 CARPETA = datos.CARPETA
 NOMBRE_RESULTADOS = "resultados_simulacion.json"
@@ -377,6 +379,32 @@ def figuras(resultados: dict, carpeta) -> list[Path]:
     return rutas
 
 
+# ---------------------------------------------------------------------------
+# EL DOCUMENTO
+# ---------------------------------------------------------------------------
+def _enlace(figura: Path, desde: Path) -> str:
+    """El enlace relativo desde la carpeta del documento, con barras `/`. Si
+    no hay camino relativo (otra unidad de disco), el nombre del fichero: una
+    ruta absoluta llevaria al documento el nombre de la maquina."""
+    try:
+        return os.path.relpath(figura.resolve(), desde.resolve()).replace(os.sep, "/")
+    except ValueError:
+        return figura.name
+
+
+def escribir_analisis(resultados: dict, figuras: list, ruta) -> Path:
+    """Escribe el documento de analisis en `ruta`, en UTF-8 y con LF.
+
+    `figuras` son las rutas de los PNG que se enlazan; el texto lo redacta
+    `informe.redactar` LEYENDO `resultados`."""
+    ruta = Path(ruta)
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    enlaces = {Path(f).stem: _enlace(Path(f), ruta.parent) for f in figuras}
+    with ruta.open("w", encoding="utf-8", newline="\n") as f:
+        f.write(informe.redactar(resultados, enlaces))
+    return ruta
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--replicas", type=int, default=simulacion.B_REPLICAS,
@@ -405,6 +433,8 @@ def main(argv=None) -> int:
     if not args.sin_figuras:
         for figura in figuras(resultados, salida):
             print(f"figura: {figura}")
+    analisis = escribir_analisis(resultados, figuras_presentes(salida), args.analisis)
+    print(f"análisis: {analisis}")
     return 0
 
 

@@ -7,6 +7,15 @@ from copiloto_triaje.servicio.heckerling import PREVALENCIA_COHORTE
 from copiloto_triaje.validacion import datos, oraculo, simulacion
 
 
+@pytest.fixture(autouse=True)
+def analisis_fuera_del_repo(validar, tmp_path_factory, monkeypatch):
+    """Ninguna prueba escribe el analisis del repo: `main()` sin `--analisis`
+    lo deja en una carpeta temporal."""
+    ruta = tmp_path_factory.mktemp("analisis") / "validacion-semisintetica-sp5.md"
+    monkeypatch.setattr(validar, "ANALISIS", ruta)
+    return ruta
+
+
 def test_las_tareas_de_la_rejilla(validar):
     tareas = validar.tareas_de_la_rejilla(1000)
     assert len(tareas) == 25
@@ -109,18 +118,19 @@ def test_un_nan_no_llega_al_json(validar, tmp_path):
         validar.escribir_resultados({"cifra": float("nan")}, tmp_path / "r.json")
 
 
-def test_main_escribe_los_resultados_donde_se_le_dice(validar, tmp_path, monkeypatch, capsys):
+def test_main_escribe_los_resultados_donde_se_le_dice(
+        validar, resultados_minimos, tmp_path, monkeypatch, capsys):
     llamadas = []
 
     def calcular_falso(replicas, procesos):
         llamadas.append((replicas, procesos))
-        return {"rotulo": validar.ROTULO, "celdas": []}
+        return resultados_minimos
 
     monkeypatch.setattr(validar, "calcular", calcular_falso)
     assert validar.main(["--replicas", "3", "--procesos", "1", "--salida", str(tmp_path),
                          "--sin-figuras"]) == 0
     assert llamadas == [(3, 1)]
-    assert validar.leer_resultados(tmp_path / "resultados_simulacion.json")["celdas"] == []
+    assert validar.leer_resultados(tmp_path / "resultados_simulacion.json") == resultados_minimos
     assert "resultados_simulacion.json" in capsys.readouterr().out
     with pytest.raises(SystemExit):
         validar.main(["--procesos", "0", "--salida", str(tmp_path)])
@@ -232,3 +242,84 @@ def test_main_sin_figuras_no_dibuja_nada(validar, tmp_path, capsys):
     assert [p.name for p in tmp_path.iterdir()] == ["resultados_simulacion.json"]
     assert len(validar.leer_resultados(tmp_path / "resultados_simulacion.json")["celdas"]) == 25
     assert "figura:" not in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# El documento de analisis (tarea 6)
+# --------------------------------------------------------------------------
+def test_escribir_analisis_enlaza_las_figuras_con_rutas_relativas(
+        validar, resultados_minimos, tmp_path):
+    carpeta = tmp_path / "docs" / "validacion-semisintetica"
+    figuras = [carpeta / "fiabilidad_0a.png", carpeta / "contencion_rejilla.png"]
+    destino = tmp_path / "docs" / "sub" / "analisis.md"
+    assert validar.escribir_analisis(resultados_minimos, figuras, destino) == destino
+    crudo = destino.read_bytes()
+    assert b"\r" not in crudo and crudo.endswith(b"\n")
+    texto = crudo.decode("utf-8")
+    assert texto.startswith("# Validación de la combinación de clínica e imagen: "
+                            "simulación semisintética (SP5)\n")
+    assert "](../validacion-semisintetica/fiabilidad_0a.png)" in texto
+    assert "](../validacion-semisintetica/contencion_rejilla.png)" in texto
+    assert texto.count(".png") == 2
+    assert "\\" not in texto and str(tmp_path) not in texto
+    sin = validar.escribir_analisis(resultados_minimos, [], tmp_path / "sin.md")
+    assert ".png" not in sin.read_text(encoding="utf-8")
+
+
+def test_main_escribe_el_analisis_leyendo_el_json(
+        validar, resultados_minimos, tmp_path, monkeypatch, capsys, analisis_fuera_del_repo):
+    pytest.importorskip("matplotlib")
+    monkeypatch.setattr(validar, "calcular", lambda replicas, procesos: resultados_minimos)
+    salida = tmp_path / "docs" / "validacion-semisintetica"
+    analisis = tmp_path / "docs" / "analisis.md"
+    assert validar.main(["--replicas", "2", "--procesos", "1", "--salida", str(salida),
+                         "--analisis", str(analisis)]) == 0
+    texto = analisis.read_text(encoding="utf-8")
+    assert [linea for linea in texto.splitlines() if linea.startswith("![")] == [
+        f"![{titulo} (simulación semisintética)](validacion-semisintetica/{nombre})"
+        for titulo, nombre in (
+            ("Fiabilidad por deciles, celda 0A", "fiabilidad_0a.png"),
+            ("Fiabilidad por deciles, celda (0,3; 0,3)", "fiabilidad_r1-030_r0-030.png"),
+            ("El oráculo frente a la horquilla, por celda y lado", "horquilla_por_celda.png"),
+            ("Contención del oráculo en la horquilla, por celda", "contencion_rejilla.png"),
+            ("Pendiente de la independencia, por celda", "pendiente_rejilla.png"))]
+    assert capsys.readouterr().out.splitlines()[-1] == f"análisis: {analisis}"
+    assert not analisis_fuera_del_repo.exists()
+    # sin --analisis va al de por defecto (aqui, desviado a una carpeta temporal)
+    assert validar.main(["--replicas", "2", "--procesos", "1", "--salida", str(salida),
+                         "--sin-figuras"]) == 0
+    assert analisis_fuera_del_repo.is_file()
+
+
+def test_solo_documento_sin_json_sale_con_un_mensaje(validar, tmp_path, monkeypatch):
+    monkeypatch.setattr(validar, "calcular", lambda *a, **k: pytest.fail("ha recalculado"))
+    analisis = tmp_path / "analisis.md"
+    with pytest.raises(SystemExit) as salida:
+        validar.main(["--solo-documento", "--salida", str(tmp_path),
+                      "--analisis", str(analisis)])
+    assert "resultados_simulacion.json" in str(salida.value)
+    assert "sin --solo-documento" in str(salida.value)
+    assert not analisis.exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_solo_documento_escribe_el_documento_sin_recalcular(
+        validar, resultados_minimos, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(validar, "calcular", lambda *a, **k: pytest.fail("ha recalculado"))
+    otro = json.loads(json.dumps(resultados_minimos))
+    otro["insumos"]["placas"] = 9876
+    ruta = validar.escribir_resultados(otro, tmp_path / "resultados_simulacion.json")
+    antes = ruta.read_bytes()
+    ajena = tmp_path / "fiabilidad_0a.png"
+    ajena.write_bytes(b"de una corrida anterior")
+    analisis = tmp_path / "analisis.md"
+    assert validar.main(["--solo-documento", "--sin-figuras", "--salida", str(tmp_path),
+                         "--analisis", str(analisis)]) == 0
+    assert ruta.read_bytes() == antes
+    texto = analisis.read_text(encoding="utf-8")
+    assert "9 876" in texto                                   # leido del JSON
+    assert "](fiabilidad_0a.png)" in texto                    # las figuras que hubiera
+    assert ajena.read_bytes() == b"de una corrida anterior"
+    salida = capsys.readouterr().out
+    assert "resultados:" not in salida and "figura:" not in salida
+    assert salida.splitlines() == [f"análisis: {analisis}"]
