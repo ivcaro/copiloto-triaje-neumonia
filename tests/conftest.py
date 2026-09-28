@@ -90,3 +90,33 @@ def bd_sp3():
     psycopg = pytest.importorskip("psycopg")
     with psycopg.connect(dsn, autocommit=True, connect_timeout=10) as conexion:
         yield conexion
+
+
+# --------------------------------------------------------------------------
+# La simulacion semisintetica (SP5 §4.6): el script y una rejilla minima
+# --------------------------------------------------------------------------
+def _cargar_validar_combinacion():
+    import importlib.util
+    import pathlib
+    ruta = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "validar_combinacion.py"
+    spec = importlib.util.spec_from_file_location("validar_combinacion", ruta)
+    modulo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modulo)
+    return modulo
+
+
+@pytest.fixture(scope="session")
+def validar():
+    """`scripts/validar_combinacion.py` cargado como modulo."""
+    return _cargar_validar_combinacion()
+
+
+@pytest.fixture(scope="session")
+def resultados_minimos(validar):
+    """Una rejilla de 2 x 2 con 2 replicas, tal como quedaria en el JSON: las
+    celdas 0A, (0; 0,3), (0,3; 0) y (0,3; 0,3); con intervalos y sensibilidad
+    en 0A y en (0,3; 0,3)."""
+    import json
+    r = validar.calcular(replicas=2, procesos=1, rejilla=(0.0, 0.3),
+                         destacadas=((0.3, 0.3),))
+    return json.loads(json.dumps(r, ensure_ascii=False))

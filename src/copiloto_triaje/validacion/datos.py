@@ -38,6 +38,14 @@ def sha256_de(ruta) -> str:
     return h.hexdigest()
 
 
+def huella_de_texto(ruta) -> str:
+    """El sha256 de un fichero de TEXTO con los finales de linea normalizados
+    a LF: con `core.autocrlf` el mismo fichero versionado tiene CRLF en un
+    clon de Windows y LF en uno de Linux, y la huella tiene que ser la misma."""
+    crudo = pathlib.Path(ruta).read_bytes().replace(b"\r\n", b"\n")
+    return hashlib.sha256(crudo).hexdigest()
+
+
 def cargar_crudas(ruta=CRUDAS_CONGELADAS) -> pd.DataFrame:
     """Las crudas congeladas, comprobadas: las seis columnas, una placa por
     paciente y etiquetas 0/1. Un fichero a medias se rechaza, no se lee."""
