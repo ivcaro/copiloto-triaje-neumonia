@@ -938,7 +938,7 @@ def texto_del_caso(caso, obs, redaccion):
         lineas += [
             _punto("por los dos bots de Telegram", "sí"),
             _punto("código del cuestionario", obs.get("codigo") or "(ninguno)"),
-            _punto("de extremo a extremo",
+            _punto("ms_extremo (de n8n a la respuesta)",
                    f"{obs['ms_extremo']} ms" if obs.get("ms_extremo") is not None
                    else "(no se registró)"),
             _punto("el bot y esta lectura coinciden",
@@ -1258,7 +1258,10 @@ def resumen(filas, con_bots, destino, url_copiloto=None):
     lineas += ["", " LATENCIA"]
     if con_bots:
         extremo = _mediana([obs.get("ms_extremo") for _, obs, _ in filas])
-        lineas.append(_punto("  de extremo a extremo (mediana)",
+        # Todas las filas, rechazos incluidos, y solo el tramo que ve el
+        # flujo: NO es la latencia de extremo a extremo. La medida, con sus
+        # descartes, la da scripts/medir_latencia.py.
+        lineas.append(_punto("  ms_extremo, todas las filas (mediana)",
                              f"{extremo:.0f} ms" if extremo is not None
                              else "(no se registró)"))
         lineas.append(_punto("  solo el modelo (mediana)",

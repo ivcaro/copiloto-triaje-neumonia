@@ -15,8 +15,9 @@ import numpy as np
 import pytest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-DESCARTES = {"total": 0, "sin_bots": 0, "fallo": 0, "rechazo_previsto": 0,
+DESCARTES = {"total": 0, "sin_bots": 0, "rechazo_previsto": 0, "fallo": 0,
              "error": 0, "no_coincide": 0, "sin_ms_extremo": 0}
+CINCO = [5.2, 4.8, 6.1, 5.0, 5.5]
 
 
 @pytest.fixture(scope="module")
@@ -86,7 +87,7 @@ def test_cualquiera_puede_recalcular_los_percentiles(medir):
 
 
 def test_el_json_dice_por_si_solo_que_mide_y_que_no(medir):
-    r = medir.resumir(_validas(30), manual=[5.2, 4.8])
+    r = medir.resumir(_validas(30), manual=CINCO)
     assert r["titulo"] == ("Latencia del sistema desplegado, medida con el arnés "
                            "(no es una simulación): el tramo `ms_extremo`, cota "
                            "inferior de la latencia de extremo a extremo")
@@ -95,7 +96,8 @@ def test_el_json_dice_por_si_solo_que_mide_y_que_no(medir):
                   "la entrega del webhook", "el envío de `Responder`"):
         assert trozo in r["tramo"], trozo
     for trozo in ("cota inferior", "tampoco lo cumple de extremo a extremo",
-                  "necesario pero no suficiente", "`total_a_mano`"):
+                  "necesario pero no suficiente", "se acota, si se cronometró, en "
+                  "`total_a_mano`"):
         assert trozo in r["lectura"], trozo
     for trozo in ("tiempo TOTAL, no el tramo que falta", "no un percentil",
                   "no se suma a `p50_ms`"):
@@ -155,13 +157,20 @@ def test_cada_fila_se_descarta_por_un_solo_motivo_y_en_orden(medir):
         # el primero que le toca
         _fila(con_bots=False, fallo="x", rechazo_previsto=True,
               error_consulta="y", coincide="NO", ms_extremo=None),
+        # un rechazo previsto que no llego al final es un rechazo previsto:
+        # `fallo` cuenta solo las consultas que tenian que dar resultado
         _fila(fallo="x", rechazo_previsto=True, error_consulta="y", ms_extremo=None),
+        _fila(perfil="09-fichero_enorme_FABRICADO", rechazo_previsto=True,
+              fallo="no se pudo subir la placa", ms_extremo=None, coincide=None),
     ]
     r = medir.resumir(filas)
     assert r["n"] == 30
     assert r["maximo_ms"] == 3900.0, "ni el rechazo de 90 s ni el error de 30 s cuentan"
-    assert r["descartadas"] == _descartes(sin_bots=3, fallo=2, rechazo_previsto=3,
+    assert r["descartadas"] == _descartes(sin_bots=3, rechazo_previsto=5, fallo=1,
                                           error=1, sin_ms_extremo=1)
+    assert list(r["descartadas"]) == ["total", "sin_bots", "rechazo_previsto", "fallo",
+                                      "error", "no_coincide", "sin_ms_extremo"]
+    assert r["n"] + r["descartadas"]["total"] == len(filas)
 
 
 def test_los_umbrales_se_comparan_en_segundos_y_el_limite_cumple(medir):
@@ -205,6 +214,7 @@ def test_con_menos_del_minimo_no_se_mide_y_dice_cuantas_hay_y_que_hacer(medir):
     assert "no medida" in mensaje
     assert "'error': 1" in mensaje
     assert "--por-perfil mayor" in mensaje and "lleva esta causa al informe" in mensaje
+    assert "que no son un rechazo previsto" in mensaje
     with pytest.raises(SystemExit, match="0 consultas"):
         medir.resumir([])
     assert medir.resumir(filas, minimo=29)["n"] == 29
@@ -215,21 +225,26 @@ def test_con_menos_del_minimo_no_se_mide_y_dice_cuantas_hay_y_que_hacer(medir):
 
 
 def test_lo_medido_a_mano_lleva_los_valores_su_mediana_y_lo_que_es(medir):
-    r = medir.resumir(_validas(30), manual=[5.2, 4.8, 6.1, 5.0, 5.5])
+    r = medir.resumir(_validas(30), manual=CINCO)
     assert r["total_a_mano"] == {
-        "que_es": medir.A_MANO, "valores_s": [5.2, 4.8, 6.1, 5.0, 5.5], "n": 5,
+        "que_es": medir.A_MANO, "valores_s": CINCO, "n": 5,
         "mediana_s": 5.2, "minimo_s": 4.8, "maximo_s": 6.1}
     assert medir.resumir(_validas(30), manual=[])["total_a_mano"] == "no medido"
     assert medir.resumir(_validas(30), manual=None)["total_a_mano"] == "no medido"
 
 
 def test_leer_manual_acepta_segundos_con_punto_y_rechaza_lo_demas(medir):
-    assert medir.leer_manual("5.2,4.8, 6.1,5.0,5.5") == [5.2, 4.8, 6.1, 5.0, 5.5]
+    assert medir.leer_manual("5.2,4.8, 6.1,5.0,5.5") == CINCO
+    assert medir.leer_manual("5,4,6,5,5") == [5.0, 4.0, 6.0, 5.0, 5.0]
     assert medir.leer_manual(None) is None
+    assert medir.A_MANO_N == 5
     # el marcador del runbook, copiado tal cual, NO escribe medidas inventadas
-    for malo in ("S1,S2,S3,S4,S5", "<s1>,<s2>", "5.2;4.8", "cinco", "5.2,,4.8",
-                 "5.2,-1", "5.2,0", "5.2,nan", "5.2,inf", ""):
-        with pytest.raises(SystemExit, match="--manual"):
+    for malo in ("S1,S2,S3,S4,S5", "<s1>,<s2>", "5.2;4.8", "cinco", "5.2,,4.8,6.1,5.0",
+                 "5.2,4.8,6.1,5.0,-1", "5.2,4.8,6.1,5.0,0", "5.2,4.8,6.1,5.0,nan",
+                 "5.2,4.8,6.1,5.0,inf", "",
+                 # cuatro, seis, y los diez que salen de escribir los decimales con coma
+                 "5.2,4.8,6.1,5.0", "5.2,4.8,6.1,5.0,5.5,5.1", "5,2,4,8,6,1,5,0,5,5"):
+        with pytest.raises(SystemExit, match="--manual espera los 5 tiempos"):
             medir.leer_manual(malo)
 
 
@@ -255,7 +270,7 @@ def test_la_cli_escribe_el_json_y_no_lo_escribe_si_no_hay_minimo(medir, tmp_path
     assert medir.main(["--corrida", str(corrida), "--salida", str(salida),
                        "--manual", "5.2,4.8,6.1,5.0,5.5"]) == 0
     escrito = json.loads(salida.read_text(encoding="utf-8"))
-    assert escrito == medir.resumir(_validas(36), manual=[5.2, 4.8, 6.1, 5.0, 5.5])
+    assert escrito == medir.resumir(_validas(36), manual=CINCO)
     crudo = salida.read_bytes()
     assert "simulación)".encode("utf-8") in crudo, "sin escapes \\u"
     assert b"\r" not in crudo and crudo.endswith(b"}\n")
@@ -285,15 +300,35 @@ def test_repetir_sin_manual_avisa_de_que_se_pierde_lo_medido_a_mano(medir, tmp_p
     orden = ["--corrida", str(corrida), "--salida", str(salida)]
     assert medir.main(orden) == 0
     assert "AVISO" not in capsys.readouterr().out          # no habia nada que perder
-    assert medir.main(orden + ["--manual", "5.2,4.8"]) == 0
+    assert medir.main(orden) == 0
+    assert "AVISO" not in capsys.readouterr().out          # el anterior decia «no medido»
+    assert medir.main(orden + ["--manual", "5.2,4.8,6.1,5.0,5.5"]) == 0
     assert "AVISO" not in capsys.readouterr().out
     assert medir.main(orden) == 0
     dicho = capsys.readouterr().out
-    assert "AVISO" in dicho and "--manual" in dicho
+    # el aviso da los valores que se pierden, listos para repetir la orden
+    assert "AVISO" in dicho and '--manual "5.2,4.8,6.1,5.0,5.5"' in dicho
     assert json.loads(salida.read_text(encoding="utf-8"))["total_a_mano"] == "no medido"
-    salida.write_text("esto no es un JSON", encoding="utf-8")
-    assert medir.main(orden) == 0                          # un fichero roto no estorba
-    assert "AVISO" not in capsys.readouterr().out
+    for roto in ("esto no es un JSON", "[1, 2]", '{"total_a_mano": {"n": 5}}',
+                 '{"total_a_mano": {"valores_s": []}}'):
+        salida.write_text(roto, encoding="utf-8")
+        assert medir.main(orden) == 0                      # un fichero raro no estorba
+        assert "AVISO" not in capsys.readouterr().out
+
+
+def test_si_no_se_puede_escribir_el_json_el_anterior_sigue_entero(
+        medir, tmp_path, monkeypatch):
+    corrida = tmp_path / "latencias.json"
+    corrida.write_text(json.dumps(_validas(30)), encoding="utf-8")
+    salida = tmp_path / "latencia.json"
+    orden = ["--corrida", str(corrida), "--salida", str(salida)]
+    assert medir.main(orden) == 0
+    bueno = salida.read_bytes()
+    monkeypatch.setattr(medir, "resumir",
+                        lambda filas, manual=None: {"p50_ms": float("nan")})
+    with pytest.raises(ValueError):
+        medir.main(orden)
+    assert salida.read_bytes() == bueno
 
 
 def test_la_cli_rechaza_una_corrida_que_no_es_de_este_arnes(medir, tmp_path):

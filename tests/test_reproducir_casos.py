@@ -643,6 +643,17 @@ def test_filas_de_latencia_da_una_fila_por_caso_con_lo_que_se_midio():
     assert salida[4]["coincide"] == "NO: uno dio resultado y el otro no"
     assert RECHAZOS_PREVISTOS == tuple(p.carpeta for p in PERFILES[4:])
     assert RECHAZOS_PREVISTOS[0] == "05-menor_edad" and len(RECHAZOS_PREVISTOS) == 5
+    # un `resultado` que no es un diccionario (una fila rara de `consultas`) no
+    # tiene milisegundos que dar, y no revienta
+    rara = filas_de_latencia([(_caso(pid="p-6"),
+                               {"con_bots": True, "resultado": "no es un diccionario"},
+                               bien)])[0]
+    assert rara["ms_modelo"] is None and rara["ms_extremo"] is None
+    # los casos de la sesion (`--casos`) no son de ningun perfil de rechazo
+    from pruebas.reproducir_casos import PERFIL_SESION
+    sesion = filas_de_latencia([(_caso(perfil=PERFIL_SESION, pid="p-7"),
+                                 {"con_bots": False}, bien)])[0]
+    assert sesion["perfil"] == "00-sesion" and sesion["rechazo_previsto"] is False
     # Tal cual a un fichero: ni perfiles ni tipos que JSON no sepa escribir.
     assert json.loads(json.dumps(salida)) == salida
     assert filas_de_latencia([]) == []
@@ -654,31 +665,44 @@ def test_un_error_del_flujo_no_entra_en_la_medida_aunque_el_arnes_salga_limpio()
     import importlib.util
     import pathlib
 
-    from pruebas.reproducir_casos import filas_de_latencia
+    from pruebas.reproducir_casos import _coincide, filas_de_latencia
     ruta = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "medir_latencia.py"
     spec = importlib.util.spec_from_file_location("medir_latencia", ruta)
     medir = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(medir)
     bien = {"texto": "x", "texto_paciente": "", "error": None, "resultado": UN_RESULTADO}
+    rechazo = {"texto": "NO PROCEDE", "texto_paciente": "",
+               "error": "fuera_de_alcance: eso", "resultado": None}
+    sin_arnes = {"texto": "x", "texto_paciente": "",
+                 "error": "copiloto_no_responde: el arnes no pudo", "resultado": None}
     filas = [(_caso(pid=f"p-{i}"),
               {"con_bots": True, "ms_extremo": 1000 + 100 * i, "ms_arnes": 60.0,
-               "coincide": "sí", "error": None, "resultado": UN_RESULTADO}, bien)
+               "error": None, "resultado": UN_RESULTADO}, bien)
              for i in range(30)]
     filas.append((_caso(pid="p-lenta"),
                   {"con_bots": True, "ms_extremo": 30450, "ms_arnes": 61.0,
-                   "coincide": "NO: uno dio resultado y el otro no",
                    "error": "copiloto_no_responde: tiempo agotado", "resultado": None},
                   bien))
     filas.append((_caso(perfil=PERFILES[4], pid="p-menor"),
-                  {"con_bots": True, "ms_extremo": 410, "ms_arnes": 12.0, "coincide": "sí",
-                   "error": "fuera_de_alcance: eso", "resultado": None},
-                  {"texto": "NO PROCEDE", "texto_paciente": "",
-                   "error": "fuera_de_alcance: eso", "resultado": None}))
+                  {"con_bots": True, "ms_extremo": 410, "ms_arnes": 12.0,
+                   "error": "fuera_de_alcance: eso", "resultado": None}, rechazo))
+    # la consulta salio bien y lo que fallo fue la llamada del arnes: no hay
+    # con que confirmarla, y se descarta diciendo por que
+    filas.append((_caso(pid="p-sin-confirmar"),
+                  {"con_bots": True, "ms_extremo": 2000, "ms_arnes": 30000.0,
+                   "error": None, "resultado": UN_RESULTADO}, sin_arnes))
+    # `coincide` lo pone el arnes, como en `main()`: no se escribe a mano
+    for caso, obs, redaccion in filas:
+        obs["coincide"] = _coincide(obs, caso, redaccion)
+    assert [obs["coincide"] for _, obs, _ in filas[:30]] == ["sí"] * 30
+    assert [obs["coincide"] for _, obs, _ in filas[30:]] == [
+        "NO: uno dio resultado y el otro no", "sí", "NO: uno dio resultado y el otro no"]
     medido = medir.resumir(json.loads(json.dumps(filas_de_latencia(filas))))
     assert medido["n"] == 30 and medido["maximo_ms"] == 3900.0
     assert medido["descartadas"]["error"] == 1
     assert medido["descartadas"]["rechazo_previsto"] == 1
-    assert medido["descartadas"]["total"] == 2
+    assert medido["descartadas"]["no_coincide"] == 1
+    assert medido["descartadas"]["total"] == 3
 
 
 def test_escribir_latencias_deja_el_json_en_la_carpeta_de_salida(tmp_path):

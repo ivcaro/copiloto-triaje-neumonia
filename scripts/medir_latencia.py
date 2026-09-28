@@ -12,7 +12,8 @@ MEDICION, no una simulacion: lo dice el titulo del JSON.
 
 Cuenta solo las consultas que pasaron por los bots, llegaron al final, no
 son un rechazo previsto, no dieron error EN LA CONSULTA MEDIDA, coinciden
-con la lectura del arnes y llevan `ms_extremo`. Con menos de 30 no escribe
+con la lectura del arnes (que tambien tiene que haber salido bien) y llevan
+`ms_extremo`. Con menos de 30 no escribe
 nada: la latencia queda «no medida», y el informe lo dice con la causa.
 
 `ms_extremo` es una COTA INFERIOR de lo que espera el profesional: no ve la
@@ -22,8 +23,9 @@ eso el JSON dice que cumplir un umbral aqui es necesario y no suficiente.
 `--manual` son los segundos, cronometrados a mano en el cliente de Telegram,
 desde que se envia la placa hasta que aparece la respuesta: el tiempo TOTAL,
 en 5 consultas. Acota lo que `ms_extremo` no ve; no es un percentil ni se
-suma al p50. S1..S5 son los cinco tiempos, con punto decimal: sin medicion a
-mano, `--manual` se omite.
+suma al p50. S1..S5 son los cinco tiempos, con punto decimal (con coma
+saldrian diez valores, y se rechazan): sin medicion a mano, `--manual` se
+omite.
 """
 import argparse
 import json
@@ -49,8 +51,8 @@ TRAMO = ("`ms_extremo` de la tabla `consultas`: desde que `Normalizar update` "
 LECTURA = ("`ms_extremo` es una cota inferior de lo que espera el "
            "profesional. Si un percentil NO cumple un umbral aquí, tampoco "
            "lo cumple de extremo a extremo; si lo cumple aquí, es necesario "
-           "pero no suficiente. Lo que `ms_extremo` no ve se acota en "
-           "`total_a_mano`.")
+           "pero no suficiente. Lo que `ms_extremo` no ve se acota, si se "
+           "cronometró, en `total_a_mano`.")
 PERCENTIL = ("interpolación lineal entre estadísticos de orden (el método "
              "«linear» de numpy, tipo 7 de Hyndman y Fan) sobre "
              "`ms_extremo_ordenados`")
@@ -59,11 +61,13 @@ A_MANO = ("segundos desde que se envía la placa hasta que aparece la "
           "tiempo TOTAL, no el tramo que falta: una acotación en pocas "
           "consultas, no un percentil, y no se suma a `p50_ms`")
 MINIMO = 30
+A_MANO_N = 5                 # spec §6.3: se acota a mano en 5 consultas
 UMBRALES_S = {"minimo": 8, "objetivo": 3}
 NO_MEDIDO = "no medido"
 # Los motivos de descarte, en el orden en que se miran: cada fila cuenta en
-# uno solo, el primero que le toca.
-MOTIVOS = ("sin_bots", "fallo", "rechazo_previsto", "error", "no_coincide",
+# uno solo, el primero que le toca. Los rechazos previstos van antes que los
+# fallos: asi `fallo` cuenta solo las consultas que tenian que dar resultado.
+MOTIVOS = ("sin_bots", "rechazo_previsto", "fallo", "error", "no_coincide",
            "sin_ms_extremo")
 # Las claves de una fila de latencias.json (las escribe
 # `pruebas/reproducir_casos.py::filas_de_latencia`).
@@ -82,16 +86,19 @@ def _es_una_medida(v) -> bool:
 def _motivo(fila):
     """Por que una fila no cuenta, o None si cuenta.
 
-    Todo se decide con lo que dice LA CONSULTA MEDIDA, la que paso por los
-    bots y escribio `ms_extremo`. El error de la llamada propia del arnes
-    (`error_arnes`) no entra: es otra llamada, que no pasa por Telegram ni
-    por n8n, y un `copiloto_no_responde` del flujo no la alcanza."""
+    El error que cuenta es el de LA CONSULTA MEDIDA, la que paso por los
+    bots y escribio `ms_extremo`: un `copiloto_no_responde` del flujo no
+    alcanza a la llamada propia del arnes, que es otra y no pasa por Telegram
+    ni por n8n. `error_arnes` no se mira, pero la llamada del arnes si pesa
+    por `coincide`: una consulta solo cuenta si la lectura del arnes la
+    confirma, y si esa llamada fallo no hay con que confirmarla. Eso tambien
+    es `no_coincide`."""
     if not fila.get("con_bots"):
         return "sin_bots"
-    if fila.get("fallo"):
-        return "fallo"
     if fila.get("rechazo_previsto"):
         return "rechazo_previsto"
+    if fila.get("fallo"):
+        return "fallo"
     if fila.get("error_consulta"):
         return "error"
     if fila.get("coincide") != "sí":
@@ -125,8 +132,9 @@ def resumir(filas, minimo=MINIMO, manual=None) -> dict:
             descartadas["total"] += 1
     if len(validas) < minimo:
         raise SystemExit(
-            f"hay {len(validas)} consultas con bots, sin fallo ni error, que "
-            f"coinciden con el arnés y llevan ms_extremo, y hacen falta "
+            f"hay {len(validas)} consultas con bots, que no son un rechazo "
+            f"previsto, sin fallo ni error, que coinciden con el arnés y llevan "
+            f"ms_extremo, y hacen falta "
             f"{minimo}: la latencia de extremo a extremo queda «no medida» y "
             f"no se escribe nada (descartadas: {descartadas}). Vuelve a correr "
             f"el arnés con un --por-perfil mayor o, si no se puede, lleva "
@@ -169,11 +177,11 @@ def leer_manual(texto):
         valores = [float(trozo) for trozo in texto.split(",")]
     except ValueError:
         valores = []
-    if not valores or any(not 0 < v < float("inf") for v in valores):
+    if len(valores) != A_MANO_N or any(not 0 < v < float("inf") for v in valores):
         raise SystemExit(
-            f"--manual espera los segundos cronometrados, positivos, con punto "
-            f"decimal y separados por comas; llegó «{texto}». Sin medición a "
-            f"mano, omite --manual")
+            f"--manual espera los {A_MANO_N} tiempos cronometrados, en segundos "
+            f"positivos, con punto decimal (no coma) y separados por comas; "
+            f"llegó «{texto}». Sin medición a mano, omite --manual")
     return valores
 
 
@@ -200,13 +208,14 @@ def leer_corrida(ruta) -> list:
     return filas
 
 
-def _a_mano_anterior(salida) -> bool:
-    """Si el latencia.json que se va a pisar llevaba una medicion a mano."""
+def _a_mano_anterior(salida):
+    """Los tiempos a mano del latencia.json que se va a pisar, o None si no
+    los llevaba (o no se puede leer)."""
     try:
         anterior = json.loads(pathlib.Path(salida).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    return isinstance(anterior, dict) and isinstance(anterior.get("total_a_mano"), dict)
+        return list(anterior["total_a_mano"]["valores_s"]) or None
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
 
 
 def _segundos(ms):
@@ -227,13 +236,17 @@ def main(argv=None) -> int:
     manual = leer_manual(args.manual)
     resultado = resumir(leer_corrida(args.corrida), manual=manual)
 
+    # Se serializa ANTES de abrir: si fallara, el fichero anterior sigue entero.
+    texto = json.dumps(resultado, ensure_ascii=False, indent=1, allow_nan=False) + "\n"
     salida = pathlib.Path(args.salida)
-    if manual is None and _a_mano_anterior(salida):
+    anteriores = _a_mano_anterior(salida)
+    if manual is None and anteriores:
         print(f"AVISO: el {salida.name} anterior llevaba una medición a mano y "
-              f"este no: repite la orden con --manual para conservarla")
+              f"este no. Para conservarla, repite la orden con "
+              f"--manual \"{','.join(str(v) for v in anteriores)}\"")
     salida.parent.mkdir(parents=True, exist_ok=True)
     with open(salida, "w", encoding="utf-8", newline="\n") as f:
-        f.write(json.dumps(resultado, ensure_ascii=False, indent=1, allow_nan=False) + "\n")
+        f.write(texto)
     print(f"{resultado['n']} consultas: p50 {_segundos(resultado['p50_ms'])}, "
           f"p95 {_segundos(resultado['p95_ms'])} "
           f"({resultado['descartadas']['total']} descartadas); {salida}")

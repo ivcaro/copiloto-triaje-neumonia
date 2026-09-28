@@ -202,12 +202,23 @@ inferior** de lo que espera el profesional: si no cumple un umbral, la
 latencia de extremo a extremo tampoco lo cumple; si lo cumple, es necesario
 pero no suficiente.
 
-Lo que `ms_extremo` no ve se acota **a mano, en 5 consultas**, con un chat
-real de profesional, cinco placas de las que usó la corrida (perfiles 01 a
-03) y un cronómetro, porque el cliente de Telegram solo enseña horas y
-minutos. El cronómetro se pone en marcha al enviar la placa y se para cuando
-aparece el pre-informe: es el tiempo **total**, subida incluida, no el tramo
-que falta, y no se suma al p50. Son los valores de `--manual`.
+Lo que `ms_extremo` no ve se acota **a mano, en 5 consultas** completas,
+hechas por una persona con los dos bots y un cronómetro, porque el cliente de
+Telegram solo enseña horas y minutos. Cada consulta necesita su propio
+código: primero el cuestionario en el bot del paciente y después, en el del
+profesional, el código y la placa. Hacen falta un chat dado de alta como
+profesional y cinco placas del conjunto de prueba. El bot del paciente admite
+5 cuestionarios por chat y día: las cinco consultas caben justas, y repetir
+una obliga a esperar al día siguiente o a usar otro chat. El cronómetro se
+pone en marcha al enviar la placa y se para cuando aparece el pre-informe: es
+el tiempo **total**, subida incluida, no el tramo que falta, y no se suma al
+p50. Son los cinco valores de `--manual`. Esas consultas quedan registradas
+con el chat de quien mide: son consultas de prueba del equipo, y el informe
+lo dice.
+
+Una consulta cuyo flujo acabó bien pero que el arnés no pudo confirmar con su
+propia llamada se descarta como `no_coincide`: no entra en la medida, y se ve
+en el recuento.
 
 Al terminar, las filas que el arnés dejó en `consultas` se borran con la
 orden que él mismo imprime.
@@ -215,7 +226,8 @@ orden que él mismo imprime.
 ## Qué se versiona y qué no
 
 Se versionan `sesion.json`, `acta-h7.md` (cifras, `patientId`, estratos y
-las dos huellas) y `latencia.json` (solo cifras agregadas). No se versionan
+las dos huellas) y `latencia.json` (cifras agregadas y las medidas
+ordenadas, sin identificadores). No se versionan
 las placas, los mensajes, los CSV del médico
 ni `clave.json`: el equipo los guarda, y las huellas del acta permiten
 comprobar que son esos.
