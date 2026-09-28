@@ -452,13 +452,13 @@ def main(argv=None) -> int:
         raise SystemExit("--replicas no puede ser negativo y --procesos debe ser al menos 1")
     salida = Path(args.salida)
     ruta = salida / NOMBRE_RESULTADOS
+    if args.solo_documento and not ruta.is_file():
+        raise SystemExit(f"no existe {ruta}: corre primero sin --solo-documento")
     if not args.sin_figuras:
         _pyplot()                 # sin matplotlib se sale ANTES de calcular nada
     if not args.solo_documento:
         escribir_resultados(calcular(args.replicas, args.procesos), ruta)
         print(f"resultados: {ruta}")
-    elif not ruta.is_file():
-        raise SystemExit(f"no existe {ruta}: corre primero sin --solo-documento")
     resultados = leer_resultados(ruta)
     if not args.sin_figuras:
         for figura in figuras(resultados, salida):

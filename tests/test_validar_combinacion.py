@@ -244,7 +244,7 @@ def test_las_casillas_y_las_barras_se_escriben_con_la_tinta_que_contrasta(
     # cifras puestas a mano, lejos del punto en que la tinta cambia (la
     # contencion cambia hacia el 59 %): la prueba es del dibujo, no de la
     # simulacion. Con la regla vieja (por posicion en la escala) el 55 % y las
-    # pendientes 0,65 y 0,79 irian en blanco.
+    # pendientes 0,65 y 1,30 irian en blanco.
     trucados = copy.deepcopy(resultados_minimos)
     for celda, contencion, pendiente in zip(
             trucados["celdas"], (1.0, 0.20, 0.55, 0.70), (1.0, 0.65, 0.79, 1.30)):
@@ -330,6 +330,9 @@ def test_sin_matplotlib_se_calcula_y_dibujar_lo_dice(
     with pytest.raises(SystemExit, match="--sin-figuras"):
         validar.main(orden + ["--solo-documento"])
     assert [p.name for p in tmp_path.glob("*.png")] == ["fiabilidad_0a.png"]
+    # y si lo que falta es el JSON, se dice eso: es lo primero que hay que arreglar
+    with pytest.raises(SystemExit, match="no existe .*corre primero sin --solo-documento"):
+        validar.main(["--salida", str(tmp_path / "vacia"), "--solo-documento"])
     with pytest.raises(ValueError, match="contencion"):      # se rechaza antes de importar nada
         validar.figura_rejilla(resultados_minimos, tmp_path / "x.png", "auc")
 
