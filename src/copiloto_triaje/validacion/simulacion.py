@@ -190,8 +190,15 @@ def bootstrap(conjunto: Conjunto, modelo: oraculo.Modelo, replicas: int = B_REPL
     todos los modelos sobre las mismas placas y la misma clinica."""
     corridas = [replica(conjunto, modelo, b) for b in range(replicas)]
     rutas = sorted(set().union(*corridas)) if corridas else []
-    return {r: metricas.percentiles([c.get(r, float("nan")) for c in corridas])
-            for r in rutas}
+    incompletas = [r for r in rutas if any(r not in c for c in corridas)]
+    if incompletas:
+        # Una cifra falta en una replica cuando su grupo de casos quedo vacio
+        # al remuestrear. No se calcula un intervalo sobre menos replicas de
+        # las que el resultado dice que hubo.
+        raise ArithmeticError(f"{len(incompletas)} cifras faltan en alguna réplica (la "
+                              f"primera, {incompletas[0]}): algún grupo de casos quedó "
+                              "vacío al remuestrear")
+    return {r: metricas.percentiles([c[r] for c in corridas]) for r in rutas}
 
 
 def escala_legible(modelo: oraculo.Modelo, conjunto: Conjunto) -> dict:
@@ -278,8 +285,11 @@ def optimismo_de_la_derivacion(conjunto: Conjunto, clinica: pd.DataFrame, salida
     cuantos casos con el asma conocida cambiarian de banda con las segundas."""
     s = salidas["conocida"]
     k = salidas["puntuacion"][s]
-    con_validacion = np.array([combinar(conjunto.prevalencia, RV_VALIDACION[int(kk)], float(r))
-                               for kk, r in zip(k, conjunto.rv[s])])
+    # A 4 decimales, como lo entregaria el sistema con esas RV: los dos lados
+    # de la comparacion son lo mismo salvo la tabla.
+    con_validacion = np.array([
+        round(combinar(conjunto.prevalencia, RV_VALIDACION[int(kk)], float(r)), 4)
+        for kk, r in zip(k, conjunto.rv[s])])
     return {
         "por_puntuacion": [{"k": kk, "rv_derivacion": RV_POR_PUNTUACION[kk],
                             "rv_validacion": RV_VALIDACION[kk],

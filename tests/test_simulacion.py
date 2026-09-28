@@ -255,6 +255,53 @@ def test_el_bootstrap_es_pareado_reproducible_y_por_percentiles(conjunto):
                                                        [2.5, 97.5])))
 
 
+def test_cada_replica_remuestrea_placas_y_vuelve_a_sortear_la_clinica(conjunto, monkeypatch):
+    """Las dos mitades del bootstrap, fijadas: si una réplica dejara de
+    remuestrear las placas, o midiera siempre la clínica de la estimación
+    puntual, los intervalos se estrecharían sin que nada más lo notara."""
+    modelo = oraculo.ajustar(conjunto.q, conjunto.y, 0.3, 0.3)
+    semillas, filas = [], []
+    generar, medir = generador.generar, simulacion.medir
+
+    def generar_espia(m, semilla):
+        semillas.append(semilla)
+        return generar(m, semilla)
+
+    def medir_espia(c, salidas, l_oraculo, f=None):
+        filas.append(f)
+        return medir(c, salidas, l_oraculo, f)
+
+    monkeypatch.setattr(generador, "generar", generar_espia)
+    monkeypatch.setattr(simulacion, "medir", medir_espia)
+    corridas = [simulacion.replica(conjunto, modelo, b) for b in (0, 1, 2)]
+    assert semillas == [simulacion.SEMILLA_CLINICA + b for b in (0, 1, 2)]
+    assert simulacion.SEMILLA_PUNTUAL not in semillas
+    n = conjunto.y.size
+    for b, f in enumerate(filas):
+        assert f is not None and f.shape == (n,)
+        assert 0 <= f.min() and f.max() < n
+        assert np.unique(f).size < n                    # con reemplazo: hay repetidas
+        assert np.array_equal(f, np.random.default_rng(
+            simulacion.SEMILLA_INDICES + b).integers(0, n, n))
+    assert not np.array_equal(filas[0], filas[1])
+    # pareado: la diferencia entre modelos es la de ESA réplica
+    for c in corridas:
+        for combinado in simulacion.COMBINADOS:
+            for cifra in ("auc", "brier", "pendiente"):
+                assert c[f"pareadas.{combinado}.{cifra}"] == pytest.approx(
+                    c[f"modelos.{combinado}.{cifra}"] - c[f"modelos.imagen.{cifra}"], abs=1e-15)
+
+
+def test_un_intervalo_no_se_calcula_sobre_menos_replicas_de_las_que_dice(conjunto, monkeypatch):
+    modelo = oraculo.ajustar(conjunto.q, conjunto.y, 0.3, 0.3)
+    monkeypatch.setattr(simulacion, "replica", lambda c, m, b: (
+        {"a.auc": 0.9, "a.ece": 0.01} if b != 2 else {"a.auc": 0.9}))
+    assert simulacion.bootstrap(conjunto, modelo, replicas=2) == {
+        "a.auc": [0.9, 0.9], "a.ece": [0.01, 0.01]}
+    with pytest.raises(ArithmeticError, match="a.ece"):
+        simulacion.bootstrap(conjunto, modelo, replicas=3)
+
+
 def test_las_replicas_no_reajustan_el_generador(conjunto, monkeypatch):
     """z_y, los umbrales y el calibrador quedan fijos: una réplica no vuelve
     a llamar a `oraculo.ajustar` (spec §4.6)."""
@@ -381,6 +428,8 @@ def test_0c_es_un_calculo_sobre_las_rv_publicadas(celda_0a, celda_simetrica):
         -0.46, 0.05, -0.40, 0.46, -0.15, 0.74]
     assert [f["rv_validacion"] for f in c["por_puntuacion"]] == [
         0.19, 0.19, 1.04, 1.04, 8.33, 8.33]
+    assert [f["rv_derivacion"] for f in c["por_puntuacion"]] == [
+        0.12, 0.20, 0.70, 1.64, 7.18, 17.5]
     assert c["bandas"] == {"casos": 3460, "cambian": 225,
                            "transiciones": {"baja→intermedia": 73, "intermedia→baja": 90,
                                             "intermedia→alta": 23, "alta→intermedia": 39}}
