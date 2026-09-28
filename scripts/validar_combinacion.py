@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -46,12 +47,21 @@ ADVERTENCIA = (
 def tareas_de_la_rejilla(replicas: int, rejilla=oraculo.RHO_REJILLA,
                          destacadas=oraculo.CELDAS_DESTACADAS) -> list:
     """(ρ1, ρ0, replicas, con_sensibilidad) por celda, en el orden de la
-    rejilla. Solo 0A y las destacadas llevan bootstrap y sensibilidad."""
+    rejilla. Solo 0A y las destacadas llevan bootstrap y sensibilidad. Una
+    destacada que no esta en la rejilla se rechaza: si no, el resultado la
+    anunciaria en sus parametros sin haberla calculado."""
+    rejilla = [float(r) for r in rejilla]
+    destacadas = {(float(a), float(b)) for a, b in destacadas}
+    fuera = sorted(d for d in destacadas
+                   if d[0] not in rejilla or d[1] not in rejilla or d == (0.0, 0.0))
+    if fuera:
+        raise ValueError(f"las celdas destacadas {fuera} no valen: tienen que estar en la "
+                         f"rejilla {rejilla}, y el origen es 0A, que se cuenta aparte")
     tareas = []
     for rho1 in rejilla:
         for rho0 in rejilla:
-            completa = (rho1 == 0.0 and rho0 == 0.0) or (rho1, rho0) in tuple(destacadas)
-            tareas.append((float(rho1), float(rho0), replicas if completa else 0, completa))
+            completa = (rho1 == 0.0 and rho0 == 0.0) or (rho1, rho0) in destacadas
+            tareas.append((rho1, rho0, replicas if completa else 0, completa))
     return tareas
 
 
@@ -62,8 +72,20 @@ def _relativa(ruta: Path) -> str:
         return Path(ruta).name
 
 
+def huella_de_los_pesos() -> str:
+    """El sha256 de los pesos con que se generaron las crudas congeladas. Aqui
+    no se puede recalcular (los pesos no viajan con el repositorio): se
+    comprueba que el fichero lleva UNA huella, y se escribe en los resultados."""
+    partes = datos.HASH_CONGELADO.read_text(encoding="utf-8").split()
+    if len(partes) != 1 or not re.fullmatch(r"[0-9a-f]{64}", partes[0]):
+        raise SystemExit(f"{_relativa(datos.HASH_CONGELADO)} no lleva un sha256: no se sabe "
+                         "con qué pesos se generaron las crudas congeladas")
+    return partes[0]
+
+
 def calcular(replicas: int = simulacion.B_REPLICAS, procesos: int = 1,
              rejilla=oraculo.RHO_REJILLA, destacadas=oraculo.CELDAS_DESTACADAS) -> dict:
+    pesos = huella_de_los_pesos()
     conjunto = simulacion.cargar_conjunto()
     tareas = tareas_de_la_rejilla(replicas, rejilla, destacadas)
     if procesos > 1:
@@ -80,7 +102,7 @@ def calcular(replicas: int = simulacion.B_REPLICAS, procesos: int = 1,
         "insumos": {
             "crudas": _relativa(datos.CRUDAS_CONGELADAS),
             "crudas_sha256": datos.huella_de_texto(datos.CRUDAS_CONGELADAS),
-            "pesos_sha256": datos.HASH_CONGELADO.read_text(encoding="utf-8").split()[0],
+            "pesos_sha256": pesos,
             "calibrador": _relativa(datos.CALIBRADOR),
             "calibrador_sha256": datos.huella_de_texto(datos.CALIBRADOR),
             "placas": int(conjunto.y.size),
@@ -110,7 +132,8 @@ def escribir_resultados(resultados: dict, ruta) -> Path:
     ruta = Path(ruta)
     ruta.parent.mkdir(parents=True, exist_ok=True)
     with ruta.open("w", encoding="utf-8", newline="\n") as f:
-        f.write(json.dumps(resultados, ensure_ascii=False, indent=1) + "\n")
+        # allow_nan=False: «NaN» no es JSON, y un tercero no podria leerlo.
+        f.write(json.dumps(resultados, ensure_ascii=False, indent=1, allow_nan=False) + "\n")
     return ruta
 
 
@@ -121,7 +144,8 @@ def leer_resultados(ruta) -> dict:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--replicas", type=int, default=simulacion.B_REPLICAS,
-                   help="réplicas del bootstrap en 0A y las seis celdas destacadas")
+                   help="réplicas del bootstrap en 0A y las seis celdas destacadas "
+                        "(0: sin bootstrap ni intervalos, para ensayos)")
     p.add_argument("--procesos", type=int, default=min(7, os.cpu_count() or 1),
                    help="celdas en paralelo (1: en serie)")
     p.add_argument("--salida", default=str(CARPETA),

@@ -25,6 +25,9 @@ def test_los_resultados_llevan_rotulo_insumos_y_parametros(resultados_minimos):
     assert "exactitud clínica" in r["advertencia"]
     i = r["insumos"]
     assert (i["placas"], i["positivas"], i["prevalencia"]) == (3811, 844, 0.2215)
+    # rutas relativas a la raiz del repo: ni la carpeta ni el usuario de nadie
+    assert i["crudas"] == "docs/validacion-semisintetica/crudas_prueba.csv"
+    assert i["calibrador"] == "servidor/calibrador.json"
     assert i["crudas_sha256"] == datos.huella_de_texto(datos.CRUDAS_CONGELADAS)
     assert i["calibrador_sha256"] == datos.huella_de_texto(datos.CALIBRADOR)
     assert i["pesos_sha256"] == datos.HASH_CONGELADO.read_text(encoding="utf-8").split()[0]
@@ -72,6 +75,38 @@ def test_en_paralelo_sale_lo_mismo_que_en_serie(validar, resultados_minimos):
     r = validar.calcular(replicas=2, procesos=2, rejilla=(0.0, 0.3),
                          destacadas=((0.3, 0.3),))
     assert json.loads(json.dumps(r, ensure_ascii=False)) == resultados_minimos
+
+    # y no solo los mismos datos: el mismo FICHERO, con las claves en su orden
+    def como_fichero(d):
+        return json.dumps(d, ensure_ascii=False, indent=1, allow_nan=False)
+    assert como_fichero(r) == como_fichero(resultados_minimos)
+
+
+def test_una_destacada_que_no_esta_en_la_rejilla_se_rechaza(validar):
+    # como listas, que es como las guarda el propio JSON, valen
+    tareas = validar.tareas_de_la_rejilla(5, rejilla=[0, 0.3], destacadas=[[0.3, 0.3]])
+    assert tareas == [(0.0, 0.0, 5, True), (0.0, 0.3, 0, False),
+                      (0.3, 0.0, 0, False), (0.3, 0.3, 5, True)]
+    with pytest.raises(ValueError, match="rejilla"):
+        validar.tareas_de_la_rejilla(5, rejilla=(0.0, 0.3), destacadas=((0.3, 0.45),))
+    with pytest.raises(ValueError, match="0A"):
+        validar.tareas_de_la_rejilla(5, rejilla=(0.0, 0.3), destacadas=((0.0, 0.0),))
+
+
+def test_la_huella_de_los_pesos_tiene_que_ser_un_sha256(validar, tmp_path, monkeypatch):
+    assert validar.huella_de_los_pesos() == datos.HASH_CONGELADO.read_text(
+        encoding="utf-8").strip()
+    for contenido in ("", "no-es-una-huella", "ab" * 32 + " " + "cd" * 32, "AB" * 32):
+        malo = tmp_path / "pesos.sha256"
+        malo.write_text(contenido, encoding="utf-8")
+        monkeypatch.setattr(datos, "HASH_CONGELADO", malo)
+        with pytest.raises(SystemExit, match="no lleva un sha256"):
+            validar.huella_de_los_pesos()
+
+
+def test_un_nan_no_llega_al_json(validar, tmp_path):
+    with pytest.raises(ValueError):
+        validar.escribir_resultados({"cifra": float("nan")}, tmp_path / "r.json")
 
 
 def test_main_escribe_los_resultados_donde_se_le_dice(validar, tmp_path, monkeypatch, capsys):
