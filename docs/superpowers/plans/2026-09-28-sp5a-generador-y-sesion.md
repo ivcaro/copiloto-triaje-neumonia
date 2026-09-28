@@ -24,7 +24,8 @@ resultado de simulación vive en `docs/validacion-semisintetica/`; todo lo de
 la sesión (placas, mensajes, CSV del médico) vive en `pruebas/sesion/`,
 ignorado por git.
 
-**Pila:** Python 3.12 (intérprete `C:/venv-copiloto/Scripts/python.exe`),
+**Pila:** Python ≥ 3.11 (el venv de la máquina de desarrollo corre 3.13; el
+contenedor, 3.12; intérprete `C:/venv-copiloto/Scripts/python.exe`),
 numpy, pandas, **scipy** (`ndtr`, `ndtri`, `rankdata`; ya está instalado como
 dependencia de scikit-learn y este plan lo declara en `pyproject.toml`),
 pytest; `node` para `pruebas/redactar.mjs` y para las pruebas `.mjs`. Las

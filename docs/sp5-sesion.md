@@ -5,6 +5,9 @@ es real, la clínica es generada, y el kappa mide acuerdo con un evaluador, no
 exactitud. Nada de la sesión se versiona: `pruebas/sesion/` está en
 `.gitignore`.
 
+Los comandos van en PowerShell o en Git Bash; donde la sintaxis cambia (una
+variable de entorno), se dan las dos.
+
 ## 0. Antes (una vez)
 
 - `RSNA_RAIZ` apunta a la raíz del dataset preparado (`crudo/stage_2_train_images/*.dcm`
@@ -17,10 +20,25 @@ exactitud. Nada de la sesión se versiona: `pruebas/sesion/` está en
 
 ## 1. Elegir los casos (5-oct, y se congela con el tag `h7-sesion`)
 
+**Primero, congelar el código.** Con el árbol limpio —`git status --porcelain`
+no imprime nada; `pruebas/sesion/` está ignorado y no cuenta— se crea el tag
+antes de elegir y antes de cualquier `docker build`: los casos, los mensajes y
+la imagen del respaldo salen así del código etiquetado.
+
+    git status --porcelain
+    git tag h7-sesion
+
+Después:
+
     C:/venv-copiloto/Scripts/python.exe scripts/preparar_sesion.py --fase elegir --salida pruebas/sesion --semilla 20261006
 
 Deja `casos.json` (27 casos: 24 + 3 de práctica), `clave.json`,
 `formulario/` con las placas y `datos_lectura1.js`, y `dosier_lectura1.md`.
+Cada elección lleva una marca, `preparacion` (semilla y hora), que viaja a los
+datos del formulario: el navegador no retoma un estado guardado de otra
+preparación. Si `clave.json` ya tiene la fase mensajes, el script se detiene:
+repetir la elección borra la lectura 2 y los bloques del mensaje (`--forzar`
+lo hace a sabiendas).
 
 ## 2. Los mensajes reales
 
@@ -43,55 +61,95 @@ Con el túnel al VPS y los secretos en el entorno (los de `pruebas/reproducir_ca
 
     C:/venv-copiloto/Scripts/python.exe pruebas/reproducir_casos.py --casos pruebas/sesion/casos.json --salida pruebas/sesion/corpus
 
-Sin túnel, el respaldo escrito en el spec §5.6: la imagen local construida del
-tag `h7-sesion`, y `--sin-bots`; el acta cita el tag y el digest de la imagen:
+Sin túnel, el respaldo escrito en el spec §5.6: la imagen local construida
+desde el código del tag `h7-sesion` (el árbol sigue limpio y en el tag), y
+`--sin-bots`; el acta cita el tag y el digest de la imagen:
 
     docker build -t copiloto-mcp:h7-sesion -f servidor/Dockerfile .
     docker image inspect copiloto-mcp:h7-sesion --format "{{.Id}}"
     (arrancar el contenedor como en tests/test_contrato_mcp.py::ARRANCAR, con ese tag y -p 127.0.0.1:18001:8000)
+
+y el arnés contra ese contenedor, en PowerShell:
+
+    $env:COPILOTO_URL = "http://127.0.0.1:18001/mcp"; C:/venv-copiloto/Scripts/python.exe pruebas/reproducir_casos.py --sin-bots --casos pruebas/sesion/casos.json --salida pruebas/sesion/corpus
+
+o en Git Bash:
+
     COPILOTO_URL=http://127.0.0.1:18001/mcp C:/venv-copiloto/Scripts/python.exe pruebas/reproducir_casos.py --sin-bots --casos pruebas/sesion/casos.json --salida pruebas/sesion/corpus
 
 En los dos casos queda `pruebas/sesion/corpus/mensajes.json` y un corpus legible en `00-sesion/`.
+Luego, con bots:
 
     C:/venv-copiloto/Scripts/python.exe scripts/preparar_sesion.py --fase mensajes --salida pruebas/sesion
 
-Comprueba que cada mensaje repite la viñeta y que la concordancia coincide con
-la prevista, y escribe `datos_lectura2.js`, `datos_planb.js`,
-`dosier_lectura2.md` y la clave definitiva. Si algo no cuadra, se detiene y
-lo lista: no se corrige a mano.
+o, sin bots, con el tag y el `Id` que imprimió `docker image inspect`:
 
-    git tag h7-sesion
+    C:/venv-copiloto/Scripts/python.exe scripts/preparar_sesion.py --fase mensajes --salida pruebas/sesion --imagen-tag h7-sesion --imagen-digest sha256:...
 
-## 3. Ensayo (antes del 5-oct)
+Comprueba que cada mensaje repite la viñeta, que su bloque `combinacion` es el
+previsto (concordancia, puntuación, RV de imagen y prevalencia) y, con bots,
+que lo que guardó el bot coincide con la lectura del arnés; y escribe
+`datos_lectura2.js`, `datos_planb.js`, `dosier_lectura2.md` y la clave
+definitiva, con el origen de los mensajes. Si algo no cuadra, se detiene y lo
+lista: no se corrige a mano. Si algún mensaje no se generó con bots y faltan
+`--imagen-tag` o `--imagen-digest`, también se detiene: el acta los cita.
 
-Un integrante del equipo hace las dos lecturas con el formulario
-(`pruebas/sesion/formulario/index.html?lectura=1` y `?lectura=2`), descarga
-los CSV y corre el análisis del paso 5. Sirve para probar el formulario, los
-tiempos y el acta; sus CSV se borran.
+## 3. Ensayo (1-4 oct), en una carpeta aparte
+
+Un integrante del equipo hace de lector con una sesión completa en
+`pruebas/sesion/ensayo/`, con otra semilla y sin crear el tag, para probar el
+formulario, los tiempos y el acta. Los pasos 1 y 2, con `--salida
+pruebas/sesion/ensayo --semilla 20261001`:
+
+    C:/venv-copiloto/Scripts/python.exe scripts/preparar_sesion.py --fase elegir --salida pruebas/sesion/ensayo --semilla 20261001
+    C:/venv-copiloto/Scripts/python.exe pruebas/reproducir_casos.py --casos pruebas/sesion/ensayo/casos.json --salida pruebas/sesion/ensayo/corpus
+    C:/venv-copiloto/Scripts/python.exe scripts/preparar_sesion.py --fase mensajes --salida pruebas/sesion/ensayo
+
+(sin bots, el arnés con `--sin-bots` y `COPILOTO_URL`, y `--fase mensajes` con
+`--imagen-tag` e `--imagen-digest`, como en el paso 2). Las dos lecturas con
+`pruebas/sesion/ensayo/formulario/index.html?lectura=1` y `?lectura=2`, los
+CSV en `pruebas/sesion/ensayo/`, y el análisis fuera de `docs/`, que se
+versiona:
+
+    C:/venv-copiloto/Scripts/python.exe scripts/analizar_sesion.py --sesion pruebas/sesion/ensayo --lectura1 lectura1.csv --lectura2 lectura2.csv --salida pruebas/sesion/ensayo/sesion.json --acta pruebas/sesion/ensayo/acta-h7.md
+
+Al terminar, se borra la carpeta `pruebas/sesion/ensayo/` entera, y la
+lectura real se abre la primera vez con `?nuevo=1`
+(`index.html?lectura=1&nuevo=1`), que borra lo que el navegador tuviera
+guardado para esa lectura antes de empezar.
 
 ## 4. Las lecturas
 
-- Abrir `pruebas/sesion/formulario/index.html?lectura=1` en el navegador del
-  equipo (en presencia) o compartirlo por videollamada. Tres casos de
-  práctica primero, luego los 24. Al terminar, «Descargar CSV» →
-  `pruebas/sesion/lectura1.csv`.
+- Antes de la lectura 1, abrir `pruebas/sesion/formulario/index.html?lectura=1`
+  y comprobar que arranca en «Práctica 1 de 3». Si la cabecera dice «Se
+  retoma: …», no es la lectura limpia: abrir con `?lectura=1&nuevo=1`.
+- La lectura 1 en el navegador del equipo (en presencia) o compartida por
+  videollamada. Tres casos de práctica primero, luego los 24. Al terminar,
+  «Descargar CSV» → `pruebas/sesion/lectura1.csv`.
 - Siete días después, `?lectura=2` → `pruebas/sesion/lectura2.csv`.
 - **Plan B** (una sola sesión): `?lectura=planb` → `pruebas/sesion/planb.csv`.
   El kappa sale de la primera respuesta; el tiempo no se mide.
-- El estado se guarda en el navegador tras cada envío: si se cierra, se
-  retoma en el caso a medias, que vuelve a empezar con su reloj.
+- El estado se guarda en el navegador tras cada envío, por lectura y por
+  preparación: si se cierra, se retoma en el caso a medias, que vuelve a
+  empezar con su reloj, y la cabecera dice cuántas respuestas se retoman.
 
 ## 5. El análisis y el acta
 
     C:/venv-copiloto/Scripts/python.exe scripts/analizar_sesion.py --sesion pruebas/sesion --lectura1 lectura1.csv --lectura2 lectura2.csv
     (plan B)  C:/venv-copiloto/Scripts/python.exe scripts/analizar_sesion.py --sesion pruebas/sesion --lectura1 planb.csv --planb planb.csv
 
+Exige la clave definitiva (la del paso 2) y `corpus/mensajes.json`, y rechaza
+lecturas cambiadas o incompletas y controles que no son los de la clave.
 Escribe `docs/validacion-semisintetica/sesion.json` y `acta-h7.md` con todas
-las cifras leídas del JSON. El acta se envía al médico el 16-oct; sus
-observaciones se anexan sin editar. Los resultados se presentan a la tutora
-en la tutoría del 17-oct.
+las cifras leídas del JSON. El acta cita el origen de los mensajes (con bots,
+o el tag y el digest de la imagen local) y, al final, el sha256 de
+`corpus/mensajes.json` y de `clave.json` («Congelado verificable»). El acta se
+envía al médico el 16-oct; sus observaciones se anexan sin editar. Los
+resultados se presentan a la tutora en la tutoría del 17-oct.
 
 ## Qué se versiona y qué no
 
-Se versionan `sesion.json` y `acta-h7.md` (cifras, `patientId`, estratos).
-No se versionan las placas, los mensajes, los CSV del médico ni `clave.json`.
+Se versionan `sesion.json` y `acta-h7.md` (cifras, `patientId`, estratos y
+las dos huellas). No se versionan las placas, los mensajes, los CSV del médico
+ni `clave.json`: el equipo los guarda, y las huellas del acta permiten
+comprobar que son esos.
