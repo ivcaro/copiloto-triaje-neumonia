@@ -2629,13 +2629,13 @@ git commit -m "feat(validacion): validar_combinacion.py corre la rejilla y escri
 **Ficheros:**
 - Modificar: `scripts/validar_combinacion.py` (bloque nuevo «LAS FIGURAS» antes de `main()`, y dos cambios dentro de `main()`)
 - Modificar: `pyproject.toml` (el extra `figuras`)
-- Prueba: `tests/test_validar_combinacion.py` (un cambio en una prueba de la tarea 4 y seis pruebas nuevas al final)
+- Prueba: `tests/test_validar_combinacion.py` (un cambio en una prueba de la tarea 4 y once pruebas nuevas al final)
 
 **Interfaces:**
 - Consume: del propio script, `ROTULO`, `NOMBRE_RESULTADOS`, `leer_resultados(ruta) -> dict`,
   `escribir_resultados`, `calcular`; `simulacion.MODELOS`; el diccionario `resultados`
   (de cada celda: `nombre`, `rho1`, `rho0`, `destacada`, `modelos[m].fiabilidad[] {p_media, observada}`,
-  `modelos[m].ece`, `modelos[m].suelo.media`, `modelos.independencia.pendiente`,
+  `modelos[m].ece`, `modelos[m].suelo.{media,p95}`, `modelos.independencia.pendiente`,
   `horquilla.{todos,a_favor,en_contra}.{bajo,contencion,sobre}`; y `parametros.rejilla`);
   las fixtures de sesión `validar` y `resultados_minimos` de `tests/conftest.py`.
 - Produce, en `scripts/validar_combinacion.py`:
@@ -2651,8 +2651,10 @@ git commit -m "feat(validacion): validar_combinacion.py corre la rejilla y escri
   - `figuras(resultados: dict, carpeta) -> list[Path]` (en orden: las `fiabilidad_<slug>.png`
     en el orden de la rejilla, `horquilla_por_celda.png`, `contencion_rejilla.png`, `pendiente_rejilla.png`);
   - `figuras_presentes(carpeta) -> list[Path]` (los PNG propios que existen, ordenados; `[]` si la carpeta no existe);
-  - privadas `_pyplot()`, `_ejes(ax, titulo, x, y)`, `_coma(valor, decimales)`, `_rho(valor)`,
-    `_guardar(plt, fig, destino, titulo) -> Path`;
+  - privadas `_pyplot()` (sin matplotlib sale con `SystemExit` y dice qué instalar),
+    `_luminancia(color) -> float`, `_tinta_sobre(color) -> str` (blanco o `TINTA`: la que más
+    contrasta con el color pintado), `_ejes(ax, titulo, x, y)`, `_coma(valor, decimales)`,
+    `_rho(valor)`, `_guardar(plt, fig, destino, titulo) -> Path`;
   - `main()`: tras escribir el JSON lo lee con `leer_resultados(ruta)` y, salvo `--sin-figuras`,
     llama a `figuras(resultados, salida)` e imprime `figura: <ruta>` por cada una.
   - Todo PNG mide 2700 × 1650 píxeles (9 × 5,5 pulgadas a 300 DPI) y lleva su título —con
@@ -2753,6 +2755,104 @@ def test_cada_figura_se_puede_dibujar_por_separado(validar, resultados_minimos, 
     assert not (tmp_path / "cinco.png").exists()
 
 
+def test_la_tinta_es_la_que_mas_contrasta_con_el_color_pintado(validar):
+    pytest.importorskip("matplotlib")
+    for claro in ("#e34948", "#2a78d6", "#3987e5", "#c9c8c3", "#f0efec", "white"):
+        assert validar._tinta_sobre(claro) == validar.TINTA, claro
+    for oscuro in ("#1c5cab", "#0d366b", validar.TINTA, "black"):
+        assert validar._tinta_sobre(oscuro) == "white", oscuro
+    # tal como lo da un mapa de color: una tupla RGBA
+    assert validar._tinta_sobre((0.05, 0.21, 0.42, 1.0)) == "white"
+    assert validar._tinta_sobre((0.91, 0.55, 0.54, 1.0)) == validar.TINTA
+    assert validar._luminancia("white") == pytest.approx(1.0)
+    assert validar._luminancia("black") == 0.0
+
+
+def test_las_casillas_y_las_barras_se_escriben_con_la_tinta_que_contrasta(
+        validar, resultados_minimos, tmp_path, monkeypatch):
+    pytest.importorskip("matplotlib")
+    from matplotlib.axes import Axes
+    escritos = []
+    escribir = Axes.text
+
+    def escribir_espia(self, x, y, texto, **kwargs):
+        escritos.append((texto, kwargs.get("color")))
+        return escribir(self, x, y, texto, **kwargs)
+
+    monkeypatch.setattr(Axes, "text", escribir_espia)
+    validar.figura_rejilla(resultados_minimos, tmp_path / "pendiente.png", "pendiente")
+    pendientes = {c["nombre"]: c["modelos"]["independencia"]["pendiente"]
+                  for c in resultados_minimos["celdas"]}
+    # todas las pendientes de la rejilla minima caen en la mitad roja o en el
+    # gris del centro: ninguna casilla es bastante oscura para el blanco
+    assert all(0.6 < p < 1.1 for p in pendientes.values())
+    assert len(escritos) == 4
+    assert all(color == validar.TINTA for _, color in escritos)
+
+    escritos.clear()
+    validar.figura_rejilla(resultados_minimos, tmp_path / "contencion.png", "contencion")
+    por_texto = dict(escritos)
+    assert por_texto["100,0 %"] == "white"                  # 0A: el azul mas oscuro
+    contenciones = [100 * c["horquilla"]["todos"]["contencion"]
+                    for c in resultados_minimos["celdas"]]
+    for valor in contenciones:
+        texto = f"{valor:.1f}".replace(".", ",") + " %"
+        assert por_texto[texto] == ("white" if valor > 60 else validar.TINTA), texto
+
+    escritos.clear()
+    validar.figura_horquilla(resultados_minimos, tmp_path / "horquilla.png")
+    assert escritos and all(color == validar.TINTA for _, color in escritos)
+
+
+def test_la_leyenda_de_fiabilidad_da_la_ece_con_la_media_y_el_p95_de_su_suelo(
+        validar, resultados_minimos, tmp_path, monkeypatch):
+    pytest.importorskip("matplotlib")
+    from matplotlib.axes import Axes
+    rotulos = []
+    trazar = Axes.plot
+
+    def trazar_espia(self, *args, **kwargs):
+        rotulos.append(kwargs.get("label", ""))
+        return trazar(self, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "plot", trazar_espia)
+    celda = resultados_minimos["celdas"][3]
+    validar.figura_fiabilidad(celda, tmp_path / "fiabilidad.png")
+
+    def coma(x):
+        return f"{x:.3f}".replace(".", ",")
+
+    assert rotulos[0] == "calibración perfecta"
+    assert rotulos[1:] == [
+        f"{validar.NOMBRE_MODELO[m]} — ECE {coma(celda['modelos'][m]['ece'])} (suelo "
+        f"{coma(celda['modelos'][m]['suelo']['media'])}; "
+        f"p95 {coma(celda['modelos'][m]['suelo']['p95'])})"
+        for m in simulacion.MODELOS]
+
+
+def test_el_rojo_es_exagerar_en_la_horquilla_y_en_la_pendiente(validar):
+    colores = {clave: color for clave, _, color in validar.TRAMOS}
+    # λ < 0: el oraculo queda mas cerca del previo que las dos combinaciones
+    assert colores["bajo"] == validar.RAMPA_DIVERGENTE[0]          # pendiente < 1
+    assert colores["sobre"] == validar.RAMPA_DIVERGENTE[-1]        # pendiente > 1
+    assert [clave for clave, _, _ in validar.TRAMOS] == ["bajo", "contencion", "sobre"]
+
+
+def test_sin_matplotlib_se_calcula_y_dibujar_lo_dice(
+        validar, resultados_minimos, tmp_path, monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "matplotlib", None)      # como si no estuviera instalado
+    monkeypatch.setattr(validar, "calcular", lambda replicas, procesos: resultados_minimos)
+    orden = ["--replicas", "2", "--procesos", "1", "--salida", str(tmp_path)]
+    assert validar.main(orden + ["--sin-figuras"]) == 0
+    assert [p.name for p in tmp_path.iterdir()] == ["resultados_simulacion.json"]
+    with pytest.raises(SystemExit, match="--sin-figuras"):
+        validar.main(orden)
+    assert list(tmp_path.glob("*.png")) == []
+    with pytest.raises(ValueError, match="contencion"):      # se rechaza antes de importar nada
+        validar.figura_rejilla(resultados_minimos, tmp_path / "x.png", "auc")
+
+
 def test_las_figuras_borran_las_propias_rancias_y_respetan_las_ajenas(
         validar, resultados_minimos, tmp_path):
     pytest.importorskip("matplotlib")
@@ -2781,16 +2881,22 @@ def test_main_dibuja_las_figuras_leyendo_el_json(
 
     def leer_espia(ruta):
         leidos.append(ruta)
-        return leer(ruta)
+        leido = leer(ruta)
+        # lo leido NO es lo calculado: si main dibujara con lo que tiene en
+        # memoria, la figura de (0,3; 0,3) seguiria saliendo
+        leido["celdas"][3]["destacada"] = False
+        return leido
 
     monkeypatch.setattr(validar, "calcular", lambda replicas, procesos: resultados_minimos)
     monkeypatch.setattr(validar, "leer_resultados", leer_espia)
+    assert resultados_minimos["celdas"][3]["destacada"] is True
     assert validar.main(["--replicas", "2", "--procesos", "1", "--salida", str(tmp_path)]) == 0
     assert leidos == [tmp_path / "resultados_simulacion.json"]
-    assert sorted(p.name for p in tmp_path.glob("*.png")) == sorted(NOMBRES_MINIMOS)
+    dibujadas = [n for n in NOMBRES_MINIMOS if n != "fiabilidad_r1-030_r0-030.png"]
+    assert sorted(p.name for p in tmp_path.glob("*.png")) == sorted(dibujadas)
     salida = capsys.readouterr().out
     assert [linea[len("figura: "):] for linea in salida.splitlines()
-            if linea.startswith("figura: ")] == [str(tmp_path / n) for n in NOMBRES_MINIMOS]
+            if linea.startswith("figura: ")] == [str(tmp_path / n) for n in dibujadas]
 
 
 def test_main_sin_figuras_no_dibuja_nada(validar, tmp_path, capsys):
@@ -2806,7 +2912,7 @@ def test_main_sin_figuras_no_dibuja_nada(validar, tmp_path, capsys):
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_validar_combinacion.py`
 
-Esperado: `5 failed, 11 passed`. Fallan las cinco que dibujan o usan lo nuevo:
+Esperado: `10 failed, 11 passed`. Fallan las diez que dibujan o usan lo nuevo:
 
 ```
 E       AttributeError: module 'validar_combinacion' has no attribute 'slug_de_celda'
@@ -2817,14 +2923,19 @@ E       AssertionError: assert [] == [WindowsPath(...lacion.json')]
 FAILED tests/test_validar_combinacion.py::test_el_slug_de_celda - AttributeEr...
 FAILED tests/test_validar_combinacion.py::test_las_figuras_salen_con_su_nombre_a_300_dpi_y_con_el_rotulo
 FAILED tests/test_validar_combinacion.py::test_cada_figura_se_puede_dibujar_por_separado
+FAILED tests/test_validar_combinacion.py::test_la_tinta_es_la_que_mas_contrasta_con_el_color_pintado
+FAILED tests/test_validar_combinacion.py::test_las_casillas_y_las_barras_se_escriben_con_la_tinta_que_contrasta
+FAILED tests/test_validar_combinacion.py::test_la_leyenda_de_fiabilidad_da_la_ece_con_la_media_y_el_p95_de_su_suelo
+FAILED tests/test_validar_combinacion.py::test_el_rojo_es_exagerar_en_la_horquilla_y_en_la_pendiente
+FAILED tests/test_validar_combinacion.py::test_sin_matplotlib_se_calcula_y_dibujar_lo_dice
 FAILED tests/test_validar_combinacion.py::test_las_figuras_borran_las_propias_rancias_y_respetan_las_ajenas
 FAILED tests/test_validar_combinacion.py::test_main_dibuja_las_figuras_leyendo_el_json
-5 failed, 11 passed
+10 failed, 11 passed
 ```
 
 `test_main_sin_figuras_no_dibuja_nada` y la prueba modificada en (a) PASAN ya en este paso: el
 `main()` de la tarea 4 acepta `--sin-figuras` y todavía no dibuja. Es lo esperado: esas dos
-pruebas guardan el comportamiento, no lo estrenan. La última de las cinco falla porque `main()`
+pruebas guardan el comportamiento, no lo estrenan. La última de las diez falla porque `main()`
 aún no lee el JSON que acaba de escribir.
 
 - [ ] **Paso 3: Declarar el extra `figuras`**
@@ -2872,10 +2983,13 @@ NOMBRE_MODELO = {"imagen": "imagen sola", "clinica": "clínica sola",
                  "independencia": "combinación por independencia",
                  "conservador": "combinación conservadora"}
 # Las tres fracciones de la horquilla, en el orden del eje de λ: por debajo de
-# 0 (mas alla del extremo conservador), dentro, y por encima de 1.
-TRAMOS = (("bajo", "por el lado conservador (λ < 0)", "#2a78d6"),
+# 0 (mas alla del extremo conservador), dentro, y por encima de 1. Los colores
+# dicen lo mismo que en el mapa de la pendiente: rojo donde el sistema exagera
+# (λ < 0: el oraculo queda mas cerca del previo que las dos combinaciones) y
+# azul donde se queda corto (λ > 1).
+TRAMOS = (("bajo", "por el lado conservador (λ < 0)", "#e34948"),
           ("contencion", "dentro de la horquilla", "#c9c8c3"),
-          ("sobre", "más allá de la independencia (λ > 1)", "#e34948"))
+          ("sobre", "más allá de la independencia (λ > 1)", "#2a78d6"))
 LADOS = (("a_favor", "imagen a favor (RV ≥ 1)"),
          ("en_contra", "imagen en contra (RV < 1)"))
 RAMPA_AZUL = ("#cde2fb", "#86b6ef", "#3987e5", "#1c5cab", "#0d366b")
@@ -2886,10 +3000,31 @@ REJILLAS = ("contencion", "pendiente")
 
 
 def _pyplot():
-    import matplotlib
+    try:
+        import matplotlib
+    except ImportError:
+        raise SystemExit("para dibujar hace falta matplotlib, que es el extra `figuras` "
+                         "(pip install -e .[figuras]); sin él, corre con --sin-figuras") from None
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     return plt
+
+
+def _luminancia(color) -> float:
+    """La luminancia relativa de un color (WCAG 2), de 0 (negro) a 1 (blanco)."""
+    from matplotlib.colors import to_rgb
+    lineal = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+              for c in to_rgb(color)]
+    return 0.2126 * lineal[0] + 0.7152 * lineal[1] + 0.0722 * lineal[2]
+
+
+def _tinta_sobre(color) -> str:
+    """Blanco o tinta: la que mas contrasta (razon de contraste de WCAG) con el
+    color que de verdad se pinta debajo, no con su posicion en la escala."""
+    fondo = _luminancia(color) + 0.05
+    con_blanco = 1.05 / fondo
+    con_tinta = fondo / (_luminancia(TINTA) + 0.05)
+    return "white" if con_blanco > con_tinta else TINTA
 
 
 def _ejes(ax, titulo, x, y):
@@ -2936,7 +3071,9 @@ def celdas_con_figura(resultados: dict) -> list:
 def figura_fiabilidad(celda: dict, destino) -> Path:
     """La curva de fiabilidad por deciles de los cuatro modelos de una celda.
 
-    La ECE va en la leyenda AL LADO de su suelo: sola no dice nada."""
+    La ECE va en la leyenda AL LADO de su suelo (media y percentil 95): sola
+    no dice nada, y contra la media sola parece fuera del ruido la que no lo
+    esta."""
     plt = _pyplot()
     from matplotlib.ticker import FuncFormatter
     fig, ax = plt.subplots(figsize=(9, 5.5))
@@ -2949,8 +3086,8 @@ def figura_fiabilidad(celda: dict, destino) -> Path:
         ax.plot([b["p_media"] for b in curva], [b["observada"] for b in curva],
                 "-" + MARCA_MODELO[modelo], color=COLOR_MODELO[modelo], linewidth=1.6,
                 markersize=5, markeredgecolor="white", markeredgewidth=0.6,
-                label=f"{NOMBRE_MODELO[modelo]} — ECE {_coma(m['ece'], 3)}"
-                      f" (suelo {_coma(m['suelo']['media'], 3)})")
+                label=f"{NOMBRE_MODELO[modelo]} — ECE {_coma(m['ece'], 3)} (suelo "
+                      f"{_coma(m['suelo']['media'], 3)}; p95 {_coma(m['suelo']['p95'], 3)})")
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(-0.02, 1.02)
     for eje in (ax.xaxis, ax.yaxis):
@@ -2981,8 +3118,7 @@ def figura_horquilla(resultados: dict, destino) -> Path:
             for y, (x0, ancho) in enumerate(zip(izquierda, anchos)):
                 if ancho >= 12.0:
                     ax.text(x0 + ancho / 2, y, f"{_coma(ancho, 0)} %", ha="center",
-                            va="center", fontsize=8,
-                            color=TINTA if clave == "contencion" else "white")
+                            va="center", fontsize=8, color=_tinta_sobre(color))
             izquierda = [a + b for a, b in zip(izquierda, anchos)]
         _ejes(ax, rotulo, "% de los casos concordantes", "")
         ax.set_title(rotulo, fontsize=10)
@@ -3023,7 +3159,7 @@ def figura_rejilla(resultados: dict, destino, que: str) -> Path:
     if que == "contencion":
         mapa = LinearSegmentedColormap.from_list("azul", RAMPA_AZUL)
         norma = Normalize(vmin=0.0, vmax=100.0)
-        decimales, unidad, centro, corte = 1, " %", 0.0, 0.5
+        decimales, unidad = 1, " %"
         titulo = f"Contención del oráculo en la horquilla, por celda — {ROTULO}"
         barra = "contención (% de los casos concordantes)"
     else:
@@ -3031,7 +3167,7 @@ def figura_rejilla(resultados: dict, destino, que: str) -> Path:
         desvio = max([abs(v - 1.0) for v in presentes] + [0.05])
         mapa = LinearSegmentedColormap.from_list("divergente", RAMPA_DIVERGENTE)
         norma = TwoSlopeNorm(vcenter=1.0, vmin=1.0 - desvio, vmax=1.0 + desvio)
-        decimales, unidad, centro, corte = 2, "", 0.5, 0.3
+        decimales, unidad = 2, ""
         titulo = f"Pendiente de la independencia, por celda — {ROTULO}"
         barra = "pendiente de calibración (< 1 exagera; > 1 se queda corta)"
     mapa = mapa.with_extremes(bad="#f0efec")
@@ -3039,10 +3175,9 @@ def figura_rejilla(resultados: dict, destino, que: str) -> Path:
     imagen = ax.imshow(numeros, cmap=mapa, norm=norma, origin="lower", aspect="auto")
     for i, fila in enumerate(numeros):
         for j, v in enumerate(fila):
-            oscuro = v == v and abs(float(norma(v)) - centro) > corte
             ax.text(j, i, _coma(v, decimales) + (unidad if v == v else ""),
                     ha="center", va="center", fontsize=10 if len(rejilla) <= 5 else 8,
-                    color="white" if oscuro else TINTA)
+                    color=_tinta_sobre(mapa(norma(v))) if v == v else TINTA)
     _ejes(ax, titulo, "ρ0 (dependencia entre los casos sin neumonía)",
           "ρ1 (dependencia entre los casos con neumonía)")
     ax.grid(False)
@@ -3123,7 +3258,7 @@ y sustitúyelo por:
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_validar_combinacion.py`
 
-Esperado: `16 passed`, sin avisos (tarda cerca de medio minuto). Si aparece un `PendingDeprecationWarning` de
+Esperado: `21 passed`, sin avisos (tarda cerca de medio minuto). Si aparece un `PendingDeprecationWarning` de
 `set_bad`, el bloque no se copió bien: el código usa `mapa.with_extremes(bad=...)`.
 
 - [ ] **Paso 7: Correr los vecinos**
@@ -3149,9 +3284,9 @@ en este orden: `fiabilidad_0a.png`, `fiabilidad_r1-000_r0-030.png`, `fiabilidad_
 Abre al menos `fiabilidad_r1-060_r0-060.png`, `horquilla_por_celda.png`, `contencion_rejilla.png`
 y `pendiente_rejilla.png` y comprueba:
 - el título cabe entero y acaba en «— simulación semisintética» (los de fiabilidad llevan además «celda (0,6; 0,6)»);
-- fiabilidad: la leyenda (arriba a la izquierda, con la ECE al lado de su suelo) no tapa ningún punto; las marcas de los ejes llevan coma («0,2»);
-- horquilla: siete barras por panel, con 0A arriba y al 100 % en gris; los porcentajes escritos dentro de los tramos de 12 % o más; la leyenda de los tres tramos debajo, sin pisar el rótulo del eje;
-- rejillas: 25 casillas con su cifra («70,7 %», «0,79»), con ρ1 = 0 abajo y ρ0 = 0 a la izquierda; la barra de color de la pendiente tiene el gris en 1,00.
+- fiabilidad: la leyenda (arriba a la izquierda, con la ECE al lado de la media y del p95 de su suelo: «ECE 0,052 (suelo 0,010; p95 0,015)») no tapa ningún punto; las marcas de los ejes llevan coma («0,2»);
+- horquilla: siete barras por panel, con 0A arriba y al 100 % en gris; en rojo el lado conservador (λ < 0, el sistema exagera) y en azul más allá de la independencia (λ > 1); los porcentajes escritos dentro de los tramos de 12 % o más; la leyenda de los tres tramos debajo, sin pisar el rótulo del eje;
+- rejillas: 25 casillas con su cifra («70,7 %», «0,79»), con ρ1 = 0 abajo y ρ0 = 0 a la izquierda; la barra de color de la pendiente tiene el gris en 1,00; cada cifra se lee sin esfuerzo (en blanco solo sobre los azules oscuros de la contención).
 
 No copies nada de `<CARPETA_TEMPORAL>` al repo.
 
@@ -3159,7 +3294,7 @@ No copies nada de `<CARPETA_TEMPORAL>` al repo.
 
 ```bash
 git add pyproject.toml scripts/validar_combinacion.py tests/test_validar_combinacion.py
-git commit -m "feat(validacion): las figuras de la simulacion, a 300 DPI y desde el JSON (SP5-B1 T5)" -m "Fiabilidad por deciles de 0A y las destacadas, la horquilla por celda y lado, y los mapas de contencion y de pendiente. Se dibujan leyendo resultados_simulacion.json; matplotlib es el extra figuras y solo se importa dentro de las funciones. Todo titulo lleva el rotulo de simulacion semisintetica." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(validacion): las figuras de la simulacion, a 300 DPI y desde el JSON (SP5-B1 T5)" -m "Fiabilidad por deciles de 0A y las destacadas (la ECE, con la media y el p95 de su suelo), la horquilla por celda y lado, y los mapas de contencion y de pendiente. Se dibujan leyendo resultados_simulacion.json; matplotlib es el extra figuras y solo se importa dentro de las funciones. Todo titulo lleva el rotulo de simulacion semisintetica." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
 ---
@@ -4599,7 +4734,7 @@ def test_solo_documento_escribe_el_documento_sin_recalcular(
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_validar_combinacion.py`
 
-Esperado: `3 failed, 17 passed`:
+Esperado: `3 failed, 22 passed`:
 
 ```
 E       AttributeError: module 'validar_combinacion' has no attribute 'escribir_analisis'
@@ -4608,7 +4743,7 @@ E       FileNotFoundError: [Errno 2] No such file or directory: '...\\test_solo_
 FAILED tests/test_validar_combinacion.py::test_escribir_analisis_enlaza_las_figuras_con_rutas_relativas
 FAILED tests/test_validar_combinacion.py::test_main_escribe_el_analisis_leyendo_el_json
 FAILED tests/test_validar_combinacion.py::test_solo_documento_escribe_el_documento_sin_recalcular
-3 failed, 17 passed
+3 failed, 22 passed
 ```
 
 `test_solo_documento_sin_json_sale_con_un_mensaje` y la prueba modificada en (b) PASAN ya en este
@@ -4699,7 +4834,7 @@ y sustitúyelo por:
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_validar_combinacion.py`
 
-Esperado: `20 passed`. Después comprueba que ninguna prueba ha escrito en el repo:
+Esperado: `25 passed`. Después comprueba que ninguna prueba ha escrito en el repo:
 
 Run: `git status --short docs/`
 
