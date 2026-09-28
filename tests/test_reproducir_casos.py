@@ -568,47 +568,103 @@ def test_mensajes_json_lleva_el_veredicto_coincide_del_bot():
 # latencias.json: lo que `scripts/medir_latencia.py` lee (SP5 §6.3). Filas
 # fabricadas: no hay sistema desplegado al que hablar desde una prueba.
 # --------------------------------------------------------------------------
-CLAVES_DE_LATENCIA = ["patientId", "perfil", "con_bots", "fallo", "error",
-                      "ms_extremo", "ms_modelo", "ms_arnes"]
+CLAVES_DE_LATENCIA = ["patientId", "perfil", "rechazo_previsto", "con_bots", "fallo",
+                      "error_consulta", "coincide", "ms_extremo", "ms_modelo",
+                      "error_arnes", "ms_arnes"]
 
 
 def test_filas_de_latencia_da_una_fila_por_caso_con_lo_que_se_midio():
-    from pruebas.reproducir_casos import filas_de_latencia
+    from pruebas.reproducir_casos import RECHAZOS_PREVISTOS, filas_de_latencia
     bien = {"texto": "x", "texto_paciente": "", "error": None,
             "resultado": UN_RESULTADO}
     rechazo = {"texto": "NO PROCEDE", "texto_paciente": "",
                "error": "fuera_de_alcance: eso", "resultado": None}
     filas = [
         (_caso(pid="p-1"),
-         {"con_bots": True, "ms_extremo": 1840, "ms_arnes": 61.5,
+         {"con_bots": True, "ms_extremo": 1840, "ms_arnes": 61.5, "coincide": "sí",
           "error": None, "resultado": dict(UN_RESULTADO, milisegundos=150.0)},
          bien),
         (_caso(perfil=PERFILES[4], pid="p-2"),
-         {"con_bots": True, "ms_extremo": 410, "ms_arnes": 12.0,
-          "error": "otro_codigo: lo que guardo el bot"}, rechazo),
+         {"con_bots": True, "ms_extremo": 410, "ms_arnes": 12.0, "coincide": "sí",
+          "error": "fuera_de_alcance: lo que guardo el bot", "resultado": None},
+         rechazo),
         (_caso(pid="p-3"),
          {"con_bots": True, "fallo": "no se pudo subir la placa",
           "ms_arnes": 60.0}, bien),
         (_caso(pid="p-4"), {"con_bots": False, "ms_arnes": 58.25}, bien),
+        # El flujo agoto su tiempo limite; la llamada propia del arnes,
+        # segundos despues, salio limpia.
+        (_caso(pid="p-5"),
+         {"con_bots": True, "ms_extremo": 30450, "ms_arnes": 61.0,
+          "coincide": "NO: uno dio resultado y el otro no",
+          "error": "copiloto_no_responde: tiempo agotado", "resultado": None},
+         bien),
     ]
     salida = filas_de_latencia(filas)
-    assert [list(f) for f in salida] == [CLAVES_DE_LATENCIA] * 4
+    assert [list(f) for f in salida] == [CLAVES_DE_LATENCIA] * 5
     assert salida[0] == {
         "patientId": "p-1", "perfil": "03-banda_contradictoria",
-        "con_bots": True, "fallo": None, "error": None,
-        "ms_extremo": 1840, "ms_modelo": 37.4, "ms_arnes": 61.5}
-    # El error es el de la REDACCION y no el que guardo el bot; y sin
-    # resultado no hay milisegundos del modelo.
+        "rechazo_previsto": False, "con_bots": True, "fallo": None,
+        "error_consulta": None, "coincide": "sí", "ms_extremo": 1840,
+        # lo que tardo el modelo EN LA CONSULTA MEDIDA, no en la llamada del
+        # arnes (que dijo 37,4)
+        "ms_modelo": 150.0, "error_arnes": None, "ms_arnes": 61.5}
+    # El error que decide es el de la consulta que se midio: el que guardo el
+    # bot. El de la redaccion del arnes va aparte.
     assert salida[1]["perfil"] == "05-menor_edad"
-    assert salida[1]["error"] == "fuera_de_alcance: eso"
+    assert salida[1]["rechazo_previsto"] is True
+    assert salida[1]["error_consulta"] == "fuera_de_alcance: lo que guardo el bot"
+    assert salida[1]["error_arnes"] == "fuera_de_alcance: eso"
     assert salida[1]["ms_modelo"] is None and salida[1]["ms_extremo"] == 410
     assert salida[2]["fallo"] == "no se pudo subir la placa"
-    assert salida[2]["ms_extremo"] is None
+    assert salida[2]["ms_extremo"] is None and salida[2]["coincide"] is None
+    assert salida[2]["error_consulta"] is None and salida[2]["ms_modelo"] is None
+    # Sin bots no hay consulta: ni su error ni su medida; el modelo, el del arnes.
     assert salida[3]["con_bots"] is False and salida[3]["ms_extremo"] is None
+    assert salida[3]["error_consulta"] is None and salida[3]["ms_modelo"] == 37.4
     assert salida[3]["ms_arnes"] == 58.25
+    assert salida[4]["error_consulta"] == "copiloto_no_responde: tiempo agotado"
+    assert salida[4]["error_arnes"] is None and salida[4]["ms_modelo"] is None
+    assert salida[4]["ms_extremo"] == 30450
+    assert salida[4]["coincide"] == "NO: uno dio resultado y el otro no"
+    assert RECHAZOS_PREVISTOS == tuple(p.carpeta for p in PERFILES[4:])
+    assert RECHAZOS_PREVISTOS[0] == "05-menor_edad" and len(RECHAZOS_PREVISTOS) == 5
     # Tal cual a un fichero: ni perfiles ni tipos que JSON no sepa escribir.
     assert json.loads(json.dumps(salida)) == salida
     assert filas_de_latencia([]) == []
+
+
+def test_un_error_del_flujo_no_entra_en_la_medida_aunque_el_arnes_salga_limpio():
+    """De punta a punta: las filas del arnes, tal como las lee el script que
+    mide. Un `copiloto_no_responde` de 30 s no puede arrastrar el p95."""
+    import importlib.util
+    import pathlib
+
+    from pruebas.reproducir_casos import filas_de_latencia
+    ruta = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "medir_latencia.py"
+    spec = importlib.util.spec_from_file_location("medir_latencia", ruta)
+    medir = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(medir)
+    bien = {"texto": "x", "texto_paciente": "", "error": None, "resultado": UN_RESULTADO}
+    filas = [(_caso(pid=f"p-{i}"),
+              {"con_bots": True, "ms_extremo": 1000 + 100 * i, "ms_arnes": 60.0,
+               "coincide": "sí", "error": None, "resultado": UN_RESULTADO}, bien)
+             for i in range(30)]
+    filas.append((_caso(pid="p-lenta"),
+                  {"con_bots": True, "ms_extremo": 30450, "ms_arnes": 61.0,
+                   "coincide": "NO: uno dio resultado y el otro no",
+                   "error": "copiloto_no_responde: tiempo agotado", "resultado": None},
+                  bien))
+    filas.append((_caso(perfil=PERFILES[4], pid="p-menor"),
+                  {"con_bots": True, "ms_extremo": 410, "ms_arnes": 12.0, "coincide": "sí",
+                   "error": "fuera_de_alcance: eso", "resultado": None},
+                  {"texto": "NO PROCEDE", "texto_paciente": "",
+                   "error": "fuera_de_alcance: eso", "resultado": None}))
+    medido = medir.resumir(json.loads(json.dumps(filas_de_latencia(filas))))
+    assert medido["n"] == 30 and medido["maximo_ms"] == 3900.0
+    assert medido["descartadas"]["error"] == 1
+    assert medido["descartadas"]["rechazo_previsto"] == 1
+    assert medido["descartadas"]["total"] == 2
 
 
 def test_escribir_latencias_deja_el_json_en_la_carpeta_de_salida(tmp_path):
@@ -649,8 +705,11 @@ def test_main_escribe_latencias_json_tambien_sin_bots(tmp_path, monkeypatch, cap
     assert [f["patientId"] for f in filas] == ["p-1", "p-2"]
     assert [list(f) for f in filas] == [CLAVES_DE_LATENCIA] * 2
     assert all(f["con_bots"] is False and f["ms_extremo"] is None for f in filas)
+    assert all(f["error_consulta"] is None and f["coincide"] is None for f in filas)
     assert all(isinstance(f["ms_arnes"], float) for f in filas)
-    assert filas[0]["ms_modelo"] == 37.4 and filas[1]["error"].startswith("fuera_de_alcance")
+    assert filas[0]["ms_modelo"] == 37.4
+    assert filas[1]["error_arnes"].startswith("fuera_de_alcance")
+    assert [f["rechazo_previsto"] for f in filas] == [False, True]
     # El arnes sigue haciendo lo de siempre.
     assert (tmp_path / "RESUMEN.txt").is_file()
     assert (tmp_path / "03-banda_contradictoria" / "p-1.txt").is_file()

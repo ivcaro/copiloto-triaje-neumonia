@@ -1009,6 +1009,9 @@ def escribir_corpus(destino, filas):
 # Las latencias, caso a caso, para `scripts/medir_latencia.py` (SP5 §6.3)
 # --------------------------------------------------------------------------
 LATENCIAS = "latencias.json"
+# Los perfiles cuyo desenlace ESPERADO es un rechazo (05 a 09): al medir la
+# latencia se cuentan aparte de los errores que nadie esperaba.
+RECHAZOS_PREVISTOS = tuple(p.carpeta for p in PERFILES if p.orden >= 5)
 
 
 def filas_de_latencia(filas):
@@ -1016,24 +1019,38 @@ def filas_de_latencia(filas):
 
     `ms_extremo` es el de `consultas` y solo existe con bots: lo escribe el
     flujo, desde que `Normalizar update` recibe el update con la placa hasta
-    que `Desenlace` compone la respuesta. `ms_modelo` es lo que el servidor
-    dice que tardo el modelo, y `ms_arnes` la ida y vuelta de este arnes con
-    el copiloto: ninguno de los dos es la latencia de extremo a extremo.
+    que `Desenlace` compone la respuesta. Todo lo que dice si esa medida
+    cuenta es de LA MISMA consulta: `error_consulta` es el error que el flujo
+    guardo en esa fila de `consultas` (un `copiloto_no_responde` o una
+    `descarga_fallida` solo nacen alli), `coincide` dice si esa consulta y la
+    lectura de este arnes cuentan lo mismo, y `ms_modelo` es lo que el
+    servidor dijo que tardo el modelo EN ESA consulta.
 
-    El `error` es el de la redaccion, el mismo que cuenta el resumen. Aqui no
-    se filtra ni se resume nada: que filas cuentan lo decide quien mide.
+    `error_arnes` y `ms_arnes` son de la otra llamada, la que este arnes hace
+    por su cuenta al copiloto para redactar: no pasa por Telegram ni por n8n
+    y no dice nada de la latencia de extremo a extremo. Sin bots no hay
+    consulta, y `ms_modelo` es entonces el de la llamada del arnes.
+
+    Aqui no se filtra ni se resume nada: que filas cuentan lo decide quien
+    mide.
     """
     salida = []
     for caso, obs, redaccion in filas:
-        resultado = redaccion.get("resultado") or {}
+        con_bots = bool(obs.get("con_bots"))
+        resultado = obs.get("resultado") if con_bots else redaccion.get("resultado")
+        if not isinstance(resultado, dict):
+            resultado = {}
         salida.append({
             "patientId": caso["patientId"],
             "perfil": caso["perfil"].carpeta,
-            "con_bots": bool(obs.get("con_bots")),
+            "rechazo_previsto": caso["perfil"].carpeta in RECHAZOS_PREVISTOS,
+            "con_bots": con_bots,
             "fallo": obs.get("fallo"),
-            "error": redaccion.get("error"),
+            "error_consulta": obs.get("error") if con_bots else None,
+            "coincide": obs.get("coincide"),
             "ms_extremo": obs.get("ms_extremo"),
             "ms_modelo": resultado.get("milisegundos"),
+            "error_arnes": redaccion.get("error"),
             "ms_arnes": obs.get("ms_arnes"),
         })
     return salida

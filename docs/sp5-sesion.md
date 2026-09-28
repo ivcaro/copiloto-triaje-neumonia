@@ -168,30 +168,44 @@ corre sin bots y no mide nada.
 Solo cuentan las consultas que dan un resultado: los perfiles 01, 02 y 03
 (12 cada uno) y el 04 (siempre 1) suman 37, por encima de las 30 que pide el
 spec y con margen para alguna conversación que no llegue al final. Los otros
-cinco perfiles son rechazos (20 casos más) y se descartan. Con el
-`--por-perfil 10` por defecto serían 31: una sola conversación fallida
-dejaría la medición sin hacer. Son 57 casos y unos 20 minutos. El arnés
-imprime «N casos» al arrancar: si salen menos de 57, algún perfil no tiene 12
-placas en la caché y hay que subir `--por-perfil` hasta que las consultas
-válidas (`3 × por_perfil + 1`) pasen holgadamente de 30.
+cinco perfiles son rechazos previstos (20 casos más) y se cuentan aparte. Con
+el `--por-perfil 10` por defecto serían 31: bastarían dos conversaciones
+fallidas para dejar la medición sin hacer. Son 57 casos y, como poco, 20
+minutos. El arnés imprime «N casos» al arrancar: si salen menos de 57, a algún
+perfil le faltan placas en la caché; lo que importa es que las consultas de
+los perfiles 01 a 04 pasen holgadamente de 30, y `scripts/medir_latencia.py`
+dice cuántas contó y cuántas descartó, con el motivo.
 
 La corrida deja `pruebas/corpus/latencia/latencias.json` (una fila por caso;
 la carpeta está ignorada). Después:
 
-    C:/venv-copiloto/Scripts/python.exe scripts/medir_latencia.py --corrida pruebas/corpus/latencia/latencias.json --manual "5.2,4.8,6.1,5.0,5.5"
+    C:/venv-copiloto/Scripts/python.exe scripts/medir_latencia.py --corrida pruebas/corpus/latencia/latencias.json --manual "S1,S2,S3,S4,S5"
+
+`S1`…`S5` son los cinco tiempos cronometrados a mano (más abajo), en segundos
+y con punto decimal: la orden, copiada tal cual, se niega a correr. Sin
+medición a mano se omite `--manual`, y el JSON dice «no medido».
 
 Escribe `docs/validacion-semisintetica/latencia.json` con el p50 y el p95 de
-`ms_extremo` frente a los umbrales de 8 s y 3 s, y cuántas filas se
-descartaron y por qué. Con menos de 30 consultas válidas se detiene, lo dice
-y no escribe nada.
+`ms_extremo` frente a los umbrales de 8 s y 3 s, las medidas ordenadas (sin
+identificadores, para que cualquiera pueda recalcular) y cuántas filas se
+descartaron y por qué. Una consulta cuenta si pasó por los bots, llegó al
+final, no es un rechazo previsto, no dio error **en la propia consulta** y
+coincide con la lectura del arnés. Con menos de 30 consultas válidas se
+detiene, lo dice y no escribe nada.
 
 `ms_extremo` va desde que `Normalizar update` recibe el update con la placa
 hasta que `Desenlace` compone la respuesta: no ve la subida a Telegram, la
-entrega del webhook ni el envío de `Responder`. Ese tramo se acota **a mano
-en 5 casos**, con un chat real y el cliente de Telegram: la hora en que se
-envía la placa frente a la hora en que llega la respuesta, en segundos. Son
-los valores de `--manual` (con punto decimal y separados por comas); sin
-`--manual`, el JSON dice «no medido» en ese tramo.
+entrega del webhook ni el envío de `Responder`. Es, por tanto, una **cota
+inferior** de lo que espera el profesional: si no cumple un umbral, la
+latencia de extremo a extremo tampoco lo cumple; si lo cumple, es necesario
+pero no suficiente.
+
+Lo que `ms_extremo` no ve se acota **a mano, en 5 consultas**, con un chat
+real de profesional, cinco placas de las que usó la corrida (perfiles 01 a
+03) y un cronómetro, porque el cliente de Telegram solo enseña horas y
+minutos. El cronómetro se pone en marcha al enviar la placa y se para cuando
+aparece el pre-informe: es el tiempo **total**, subida incluida, no el tramo
+que falta, y no se suma al p50. Son los valores de `--manual`.
 
 Al terminar, las filas que el arnés dejó en `consultas` se borran con la
 orden que él mismo imprime.

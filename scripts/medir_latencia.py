@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Mide la latencia de extremo a extremo: de latencias.json del arnes a latencia.json.
+"""Mide la latencia del sistema desplegado: de latencias.json del arnes a latencia.json.
 
 USO
     python scripts/medir_latencia.py --corrida pruebas/corpus/latencia/latencias.json
-    python scripts/medir_latencia.py --corrida pruebas/corpus/latencia/latencias.json --manual "5.2,4.8,6.1,5.0,5.5"
+    python scripts/medir_latencia.py --corrida pruebas/corpus/latencia/latencias.json --manual "S1,S2,S3,S4,S5"
 
 Lee el `latencias.json` que deja una corrida CON BOTS de
 `pruebas/reproducir_casos.py` contra el sistema desplegado y escribe
@@ -11,12 +11,19 @@ docs/validacion-semisintetica/latencia.json (spec de SP5 §6.3). Es una
 MEDICION, no una simulacion: lo dice el titulo del JSON.
 
 Cuenta solo las consultas que pasaron por los bots, llegaron al final, no
-dieron error y llevan `ms_extremo`. Con menos de 30 no escribe nada: la
-latencia queda «no medida», y el informe lo dice con la causa.
+son un rechazo previsto, no dieron error EN LA CONSULTA MEDIDA, coinciden
+con la lectura del arnes y llevan `ms_extremo`. Con menos de 30 no escribe
+nada: la latencia queda «no medida», y el informe lo dice con la causa.
 
-`--manual` son segundos medidos a mano en el cliente de Telegram (hora del
-envio de la placa frente a hora de la respuesta), en los 5 casos con que se
-acota el tramo que `ms_extremo` no ve.
+`ms_extremo` es una COTA INFERIOR de lo que espera el profesional: no ve la
+subida a Telegram, la entrega del webhook ni el envio de la respuesta. Por
+eso el JSON dice que cumplir un umbral aqui es necesario y no suficiente.
+
+`--manual` son los segundos, cronometrados a mano en el cliente de Telegram,
+desde que se envia la placa hasta que aparece la respuesta: el tiempo TOTAL,
+en 5 consultas. Acota lo que `ms_extremo` no ve; no es un percentil ni se
+suma al p50. S1..S5 son los cinco tiempos, con punto decimal: sin medicion a
+mano, `--manual` se omite.
 """
 import argparse
 import json
@@ -31,19 +38,38 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 CARPETA = REPO / "docs" / "validacion-semisintetica"
 NOMBRE = "latencia.json"
 
-TITULO = ("Latencia de extremo a extremo: medición con el arnés sobre el "
-          "sistema desplegado (no es una simulación)")
+TITULO = ("Latencia del sistema desplegado, medida con el arnés (no es una "
+          "simulación): el tramo `ms_extremo`, cota inferior de la latencia "
+          "de extremo a extremo")
 TRAMO = ("`ms_extremo` de la tabla `consultas`: desde que `Normalizar update` "
          "recibe el update con la placa hasta que `Desenlace` compone la "
          "respuesta. Excluye la subida a Telegram, la entrega del webhook y "
          "el envío de `Responder`: no es el tiempo desde que el profesional "
          "sube la radiografía hasta que recibe el pre-informe.")
+LECTURA = ("`ms_extremo` es una cota inferior de lo que espera el "
+           "profesional. Si un percentil NO cumple un umbral aquí, tampoco "
+           "lo cumple de extremo a extremo; si lo cumple aquí, es necesario "
+           "pero no suficiente. Lo que `ms_extremo` no ve se acota en "
+           "`total_a_mano`.")
+PERCENTIL = ("interpolación lineal entre estadísticos de orden (el método "
+             "«linear» de numpy, tipo 7 de Hyndman y Fan) sobre "
+             "`ms_extremo_ordenados`")
+A_MANO = ("segundos desde que se envía la placa hasta que aparece la "
+          "respuesta, cronometrados a mano en el cliente de Telegram. Es el "
+          "tiempo TOTAL, no el tramo que falta: una acotación en pocas "
+          "consultas, no un percentil, y no se suma a `p50_ms`")
 MINIMO = 30
 UMBRALES_S = {"minimo": 8, "objetivo": 3}
 NO_MEDIDO = "no medido"
 # Los motivos de descarte, en el orden en que se miran: cada fila cuenta en
 # uno solo, el primero que le toca.
-MOTIVOS = ("sin_bots", "fallo", "error", "sin_ms_extremo")
+MOTIVOS = ("sin_bots", "fallo", "rechazo_previsto", "error", "no_coincide",
+           "sin_ms_extremo")
+# Las claves de una fila de latencias.json (las escribe
+# `pruebas/reproducir_casos.py::filas_de_latencia`).
+CLAVES = ("patientId", "perfil", "rechazo_previsto", "con_bots", "fallo",
+          "error_consulta", "coincide", "ms_extremo", "ms_modelo",
+          "error_arnes", "ms_arnes")
 
 
 def _es_una_medida(v) -> bool:
@@ -54,13 +80,22 @@ def _es_una_medida(v) -> bool:
 
 
 def _motivo(fila):
-    """Por que una fila no cuenta, o None si cuenta."""
+    """Por que una fila no cuenta, o None si cuenta.
+
+    Todo se decide con lo que dice LA CONSULTA MEDIDA, la que paso por los
+    bots y escribio `ms_extremo`. El error de la llamada propia del arnes
+    (`error_arnes`) no entra: es otra llamada, que no pasa por Telegram ni
+    por n8n, y un `copiloto_no_responde` del flujo no la alcanza."""
     if not fila.get("con_bots"):
         return "sin_bots"
     if fila.get("fallo"):
         return "fallo"
-    if fila.get("error"):
+    if fila.get("rechazo_previsto"):
+        return "rechazo_previsto"
+    if fila.get("error_consulta"):
         return "error"
+    if fila.get("coincide") != "sí":
+        return "no_coincide"
     if not _es_una_medida(fila.get("ms_extremo")):
         return "sin_ms_extremo"
     return None
@@ -74,9 +109,10 @@ def _frente_a(ms):
 def resumir(filas, minimo=MINIMO, manual=None) -> dict:
     """El contenido de latencia.json, desde las filas de latencias.json.
 
-    `manual` son los segundos del tramo que falta, medidos a mano; sin ellos,
-    `tramo_manual` dice «no medido». Con menos de `minimo` consultas validas
-    sale con `SystemExit`: no hay cifra que dar.
+    `manual` son los segundos de envio a respuesta cronometrados a mano (el
+    tiempo total, no el tramo que falta); sin ellos, `total_a_mano` dice «no
+    medido». Con menos de `minimo` consultas validas sale con `SystemExit`:
+    no hay cifra que dar.
     """
     descartadas = {"total": 0, **{m: 0 for m in MOTIVOS}}
     validas = []
@@ -89,12 +125,14 @@ def resumir(filas, minimo=MINIMO, manual=None) -> dict:
             descartadas["total"] += 1
     if len(validas) < minimo:
         raise SystemExit(
-            f"hay {len(validas)} consultas con bots, sin fallo ni error y con "
-            f"ms_extremo, y hacen falta {minimo}: la latencia de extremo a "
-            f"extremo queda «no medida» y no se escribe nada "
-            f"(descartadas: {descartadas})")
+            f"hay {len(validas)} consultas con bots, sin fallo ni error, que "
+            f"coinciden con el arnés y llevan ms_extremo, y hacen falta "
+            f"{minimo}: la latencia de extremo a extremo queda «no medida» y "
+            f"no se escribe nada (descartadas: {descartadas}). Vuelve a correr "
+            f"el arnés con un --por-perfil mayor o, si no se puede, lleva "
+            f"esta causa al informe")
 
-    ms = np.array([float(f["ms_extremo"]) for f in validas])
+    ms = np.sort(np.array([float(f["ms_extremo"]) for f in validas]))
     # Los umbrales se comparan con el percentil SIN redondear: 8 000,04 ms se
     # escribe «8000,0» y no cumple los 8 s. Se redondea solo lo que se escribe.
     p50, p95 = (float(v) for v in np.percentile(ms, [50, 95]))
@@ -103,16 +141,21 @@ def resumir(filas, minimo=MINIMO, manual=None) -> dict:
     return {
         "titulo": TITULO,
         "tramo": TRAMO,
+        "lectura": LECTURA,
         "n": len(validas),
+        "percentil": PERCENTIL,
         "p50_ms": round(p50, 1),
         "p95_ms": round(p95, 1),
         "minimo_ms": round(float(ms.min()), 1),
         "maximo_ms": round(float(ms.max()), 1),
+        "ms_extremo_ordenados": [round(float(v), 1) for v in ms],
+        # lo que el servidor dijo que tardo el modelo EN las consultas medidas
         "modelo_p50_ms": round(statistics.median(modelo), 1) if modelo else None,
         "umbrales_s": dict(UMBRALES_S),
         "frente_a_umbrales": {"p50": _frente_a(p50), "p95": _frente_a(p95)},
-        "tramo_manual": ({"valores_s": manual, "n": len(manual),
-                          "mediana_s": round(statistics.median(manual), 2)}
+        "total_a_mano": ({"que_es": A_MANO, "valores_s": manual, "n": len(manual),
+                          "mediana_s": round(statistics.median(manual), 2),
+                          "minimo_s": min(manual), "maximo_s": max(manual)}
                          if manual else NO_MEDIDO),
         "descartadas": descartadas,
     }
@@ -128,9 +171,42 @@ def leer_manual(texto):
         valores = []
     if not valores or any(not 0 < v < float("inf") for v in valores):
         raise SystemExit(
-            f"--manual espera segundos positivos separados por comas y con "
-            f"punto decimal, como \"5.2,4.8,6.1,5.0,5.5\"; llegó «{texto}»")
+            f"--manual espera los segundos cronometrados, positivos, con punto "
+            f"decimal y separados por comas; llegó «{texto}». Sin medición a "
+            f"mano, omite --manual")
     return valores
+
+
+def leer_corrida(ruta) -> list:
+    """Las filas de un latencias.json, comprobadas: lo que no es de este
+    arnes no se mide."""
+    ruta = pathlib.Path(ruta)
+    if not ruta.is_file():
+        raise SystemExit(f"no existe {ruta}: lo escribe una corrida de "
+                         f"pruebas/reproducir_casos.py en su carpeta de salida")
+    try:
+        filas = json.loads(ruta.read_text(encoding="utf-8"))
+    except ValueError as error:
+        raise SystemExit(f"{ruta} no es un JSON ({error}): vuelve a correr "
+                         f"pruebas/reproducir_casos.py") from None
+    if not isinstance(filas, list):
+        raise SystemExit(f"{ruta} no es una lista de filas de latencia")
+    for n, fila in enumerate(filas, 1):
+        if not isinstance(fila, dict) or set(fila) != set(CLAVES):
+            raise SystemExit(
+                f"la fila {n} de {ruta} no lleva las claves de una fila de "
+                f"latencia ({', '.join(CLAVES)}): si es de una versión "
+                f"anterior del arnés, vuelve a correr pruebas/reproducir_casos.py")
+    return filas
+
+
+def _a_mano_anterior(salida) -> bool:
+    """Si el latencia.json que se va a pisar llevaba una medicion a mano."""
+    try:
+        anterior = json.loads(pathlib.Path(salida).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(anterior, dict) and isinstance(anterior.get("total_a_mano"), dict)
 
 
 def _segundos(ms):
@@ -143,24 +219,21 @@ def main(argv=None) -> int:
                    help="el latencias.json de una corrida con bots del arnés")
     p.add_argument("--salida", default=str(CARPETA / NOMBRE))
     p.add_argument("--manual", metavar="SEGUNDOS",
-                   help="el tramo que falta, medido a mano en el cliente de "
-                        "Telegram: \"5.2,4.8,6.1,5.0,5.5\"")
+                   help="los segundos de envío a respuesta cronometrados a mano "
+                        "en el cliente de Telegram, con punto decimal y "
+                        "separados por comas; sin medición a mano se omite")
     args = p.parse_args(argv)
 
     manual = leer_manual(args.manual)
-    corrida = pathlib.Path(args.corrida)
-    if not corrida.is_file():
-        raise SystemExit(f"no existe {corrida}: lo escribe una corrida de "
-                         f"pruebas/reproducir_casos.py en su carpeta de salida")
-    filas = json.loads(corrida.read_text(encoding="utf-8"))
-    if not isinstance(filas, list):
-        raise SystemExit(f"{corrida} no es una lista de filas de latencia")
-    resultado = resumir(filas, manual=manual)
+    resultado = resumir(leer_corrida(args.corrida), manual=manual)
 
     salida = pathlib.Path(args.salida)
+    if manual is None and _a_mano_anterior(salida):
+        print(f"AVISO: el {salida.name} anterior llevaba una medición a mano y "
+              f"este no: repite la orden con --manual para conservarla")
     salida.parent.mkdir(parents=True, exist_ok=True)
     with open(salida, "w", encoding="utf-8", newline="\n") as f:
-        f.write(json.dumps(resultado, ensure_ascii=False, indent=1) + "\n")
+        f.write(json.dumps(resultado, ensure_ascii=False, indent=1, allow_nan=False) + "\n")
     print(f"{resultado['n']} consultas: p50 {_segundos(resultado['p50_ms'])}, "
           f"p95 {_segundos(resultado['p95_ms'])} "
           f"({resultado['descartadas']['total']} descartadas); {salida}")
