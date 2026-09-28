@@ -51,6 +51,20 @@ def test_un_modelo_que_se_queda_corto_tiene_pendiente_mayor_que_uno():
         _logit(0.9) / _logit(0.7), abs=1e-8)
 
 
+def test_la_pendiente_sale_aunque_el_modelo_este_muy_lejos_de_calibrado():
+    """Un modelo que ordena AL REVÉS (pendiente verdadera −0,5): la pendiente
+    existe, y Newton sin retroceso se dispara desde (0, 1) sin encontrarla."""
+    from sklearn.linear_model import LogisticRegression
+    rng = np.random.default_rng(11)
+    p = rng.uniform(0.02, 0.98, 2000)
+    y = (rng.random(2000) < 1.0 / (1.0 + np.exp(0.5 * metricas.logit(p)))).astype(int)
+    modelo = LogisticRegression(C=np.inf, solver="lbfgs", tol=1e-10, max_iter=5000).fit(
+        metricas.logit(p).reshape(-1, 1), y)
+    pendiente = metricas.pendiente_de_calibracion(y, p)
+    assert pendiente == pytest.approx(float(modelo.coef_[0, 0]), abs=1e-4)
+    assert -0.6 < pendiente < -0.4
+
+
 def test_sin_pendiente_finita_se_dice_y_no_se_devuelve_la_ultima_iteracion():
     """Clases separadas del todo: la verosimilitud no tiene máximo finito."""
     with pytest.raises(ArithmeticError, match="no converge"):
@@ -58,6 +72,9 @@ def test_sin_pendiente_finita_se_dice_y_no_se_devuelve_la_ultima_iteracion():
     # todas las p iguales: la pendiente no está identificada
     with pytest.raises(ArithmeticError, match="no converge"):
         metricas.pendiente_de_calibracion([0, 1, 0, 1], [0.5, 0.5, 0.5, 0.5])
+    # y con una sola clase tampoco hay intercepto
+    with pytest.raises(ArithmeticError, match="una sola clase"):
+        metricas.intercepto_de_calibracion([1, 1, 1], [0.2, 0.5, 0.8])
 
 
 def test_el_intercepto_es_el_desplazamiento_en_log_odds():
@@ -131,6 +148,20 @@ def test_vectores_de_distinta_forma_se_rechazan():
         metricas.auc([], [])
 
 
+def test_lo_que_no_es_una_etiqueta_o_una_probabilidad_se_rechaza():
+    with pytest.raises(ValueError, match="0 o 1"):
+        metricas.brier([0, 0.7], [0.2, 0.5])          # antes se truncaba a 0
+    with pytest.raises(ValueError, match="0 o 1"):
+        metricas.auc([0, 2], [0.2, 0.5])
+    for mala in (1.2, -0.1, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="probabilidad"):
+            metricas.brier([0, 1], [0.2, mala])
+    with pytest.raises(ValueError, match="probabilidad"):
+        metricas.pendiente_de_calibracion([0, 1], [0.2, float("nan")])
+    # los booleanos y los enteros de numpy son etiquetas
+    assert metricas.brier(np.array([False, True]), [0.2, 0.7]) == pytest.approx(0.065)
+
+
 # La horquilla: los casos de borde del spec §8. Dependencia en 0, independencia
 # en 1 (evidencia a favor) salvo el ultimo, que apunta hacia abajo.
 L_DEP = [0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
@@ -187,6 +218,11 @@ def test_un_valor_sin_dato_no_cuenta_como_contenido():
         metricas.contencion_en_rango([0.5], [float("nan")], [1.0])
     with pytest.raises(ValueError, match="sin dato"):
         metricas.error_puntual([0.5], [float("nan")])
+    # dos infinitos restados dan otro NaN
+    with pytest.raises(ValueError, match="infinitos"):
+        metricas.horquilla([0.0], [float("inf")], [float("inf")])
+    with pytest.raises(ValueError, match="infinitos"):
+        metricas.error_puntual([float("inf")], [float("inf")])
 
 
 def test_los_vectores_de_log_odds_tienen_que_casar():

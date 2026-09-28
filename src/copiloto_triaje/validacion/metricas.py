@@ -37,12 +37,18 @@ def logit(p) -> np.ndarray:
 
 
 def _vectores(y, p):
-    y = np.asarray(y, dtype=int)
+    """`y` como 0/1 y `p` como probabilidades, de la misma forma. Se rechaza
+    lo que no lo es en vez de truncarlo: un 0,7 en `y` pasaria a 0 sin aviso."""
+    y = np.asarray(y, dtype=float)
     p = np.asarray(p, dtype=float)
     if y.ndim != 1 or y.shape != p.shape or y.size == 0:
         raise ValueError(f"y y p deben ser vectores no vacíos de la misma forma, "
                          f"y son {y.shape} y {p.shape}")
-    return y, p
+    if not np.isin(y, (0.0, 1.0)).all():
+        raise ValueError("y debe valer 0 o 1 en todos los casos")
+    if not (np.isfinite(p).all() and (p >= 0.0).all() and (p <= 1.0).all()):
+        raise ValueError("p debe ser una probabilidad (entre 0 y 1) en todos los casos")
+    return y.astype(int), p
 
 
 def auc(y, p) -> float:
@@ -55,10 +61,22 @@ def brier(y, p) -> float:
     return float(np.mean((p - y) ** 2))
 
 
-def pendiente_de_calibracion(y, p, pasos: int = 50) -> float:
+def _verosimilitud(y, x, a: float, b: float) -> float:
+    eta = a + b * x
+    return float(np.sum(y * eta - np.logaddexp(0.0, eta)))
+
+
+def pendiente_de_calibracion(y, p, pasos: int = 100) -> float:
     """La pendiente de la regresion logistica SIN penalizar de Y sobre
-    logit p (con intercepto libre), por Newton. Menor que 1: el modelo
-    exagera; mayor que 1: se queda corto."""
+    logit p (con intercepto libre). Menor que 1: el modelo exagera; mayor
+    que 1: se queda corto.
+
+    Newton con retroceso: la verosimilitud es concava, asi que un paso que la
+    empeora se acorta a la mitad hasta que no la empeore. Sin el retroceso,
+    Newton se dispara desde (0, 1) cuando el modelo esta muy lejos de
+    calibrado, aunque la pendiente exista. El margen de la comparacion es el
+    ruido de redondeo de la propia verosimilitud: cerca del maximo, un paso
+    bueno la cambia menos que eso."""
     y, p = _vectores(y, p)
     x = logit(p)
     a, b = 0.0, 1.0
@@ -72,13 +90,18 @@ def pendiente_de_calibracion(y, p, pasos: int = 50) -> float:
             paso = np.linalg.solve(h, g)
         except np.linalg.LinAlgError:
             break
-        a, b = a + paso[0], b + paso[1]
         if not np.all(np.isfinite(paso)):
             break
-        if float(np.max(np.abs(paso))) < 1e-10:
-            return float(b)
-    # Con las clases separadas del todo (o una sola p) no hay pendiente finita
-    # que estimar: se dice, en vez de devolver la ultima iteracion.
+        if float(np.max(np.abs(paso))) < 1e-8:
+            return float(b + paso[1])
+        actual, t = _verosimilitud(y, x, a, b), 1.0
+        margen = 1e-10 * (1.0 + abs(actual))
+        while t > 1e-10 and (_verosimilitud(y, x, a + t * paso[0], b + t * paso[1])
+                             < actual - margen):
+            t *= 0.5
+        a, b = a + t * paso[0], b + t * paso[1]
+    # Con las clases separadas del todo, o con una sola p, no hay pendiente
+    # finita que estimar: se dice, en vez de devolver la ultima iteracion.
     raise ArithmeticError(f"la regresión de calibración no converge en {pasos} pasos: "
                           "¿las p separan del todo las clases, o son todas iguales?")
 
@@ -90,6 +113,9 @@ def intercepto_de_calibracion(y, p) -> float:
     y, p = _vectores(y, p)
     x = logit(p)
     objetivo = float(np.mean(y))
+    if objetivo in (0.0, 1.0):
+        raise ArithmeticError("con una sola clase no hay intercepto de calibración "
+                              "que estimar")
     return float(brentq(lambda a: float(np.mean(expit(a + x))) - objetivo, -20.0, 20.0,
                         xtol=1e-12))
 
@@ -135,15 +161,16 @@ def resumen_de_modelo(y, p, orden) -> dict:
 
 
 def _log_odds(*vectores) -> list:
-    """Los vectores como float, de la misma forma y SIN NaN. Un NaN no es
+    """Los vectores como float, de la misma forma y FINITOS. Un NaN no es
     mayor ni menor que nada: sin esta guarda, un caso sin dato (la dependencia
-    vacia de un discordante) contaria en silencio como «dentro»."""
+    vacia de un discordante) contaria en silencio como «dentro». Y dos
+    infinitos restados dan otro NaN."""
     v = [np.asarray(x, dtype=float) for x in vectores]
     if any(x.ndim != 1 or x.shape != v[0].shape for x in v):
         raise ValueError("los vectores deben tener la misma forma")
-    if any(np.isnan(x).any() for x in v):
-        raise ValueError("hay valores sin dato (NaN): se mide solo donde hay dato; "
-                         "filtra los casos antes de medir")
+    if not all(np.isfinite(x).all() for x in v):
+        raise ValueError("hay valores sin dato (NaN) o infinitos: se mide solo donde "
+                         "hay dato; filtra los casos antes de medir")
     return v
 
 
