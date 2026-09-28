@@ -20,3 +20,17 @@ se reentrena, se regenera la caché y se vuelve a congelar aquí.
 
 Los identificadores son los públicos de RSNA (`patientId`); no hay ningún
 dato de persona.
+
+## `latencia.json`
+
+Tampoco es simulación: es una **medición del sistema desplegado con casos de
+prueba** (spec de SP5, §6.3), y su título lo dice. Lo escribe
+`scripts/medir_latencia.py` desde el `latencias.json` de una corrida con
+bots de `pruebas/reproducir_casos.py`: el p50 y el p95 de `ms_extremo` sobre
+al menos 30 consultas sin error, frente a los umbrales de 8 s y 3 s. El tramo
+medido va desde que `Normalizar update` recibe el update con la placa hasta
+que `Desenlace` compone la respuesta; la subida a Telegram, la entrega del
+webhook y el envío de `Responder` quedan fuera y se acotan a mano en 5 casos
+(`tramo_manual`). Los casos son placas de RSNA con clínica inventada: no hay
+usuarios ni pacientes. Si el fichero no está, la latencia de extremo a
+extremo no se midió. Cómo se mide: `docs/sp5-sesion.md`, «Medir la latencia».

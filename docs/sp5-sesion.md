@@ -147,9 +147,59 @@ o el tag y el digest de la imagen local) y, al final, el sha256 de
 envía al médico el 16-oct; sus observaciones se anexan sin editar. Los
 resultados se presentan a la tutora en la tutoría del 17-oct.
 
+## 6. Medir la latencia
+
+No es parte de la sesión ni es simulación: es una **medición del sistema
+desplegado** con casos de prueba (spec de SP5 §6.3). Los mensajes de la
+sesión no la miden; hace falta una corrida propia del arnés **con bots**, y
+tiene que estar hecha antes del 16-oct: sin ella, la latencia de extremo a
+extremo se declara «no medida», con la causa.
+
+Lo pone quien la corre, en el entorno y nunca en un fichero del repositorio:
+`N8N_URL` (la dirección del n8n desplegado, p. ej. `https://n8n.ejemplo.test`),
+el túnel a la base (`COPILOTO_BD_DSN`), los dos secretos
+(`TELEGRAM_SECRET_PRUEBA` y `TELEGRAM_TOKEN_PROFESIONAL`), `CHAT_SUBIDA_PLACAS`
+y `COPILOTO_URL`; la cabecera de `pruebas/reproducir_casos.py` dice qué es
+cada uno. Si falta `COPILOTO_BD_DSN` o alguno de los dos secretos, el arnés
+corre sin bots y no mide nada.
+
+    C:/venv-copiloto/Scripts/python.exe pruebas/reproducir_casos.py --por-perfil 12 --salida pruebas/corpus/latencia
+
+Solo cuentan las consultas que dan un resultado: los perfiles 01, 02 y 03
+(12 cada uno) y el 04 (siempre 1) suman 37, por encima de las 30 que pide el
+spec y con margen para alguna conversación que no llegue al final. Los otros
+cinco perfiles son rechazos (20 casos más) y se descartan. Con el
+`--por-perfil 10` por defecto serían 31: una sola conversación fallida
+dejaría la medición sin hacer. Son 57 casos y unos 20 minutos. El arnés
+imprime «N casos» al arrancar: si salen menos de 57, algún perfil no tiene 12
+placas en la caché y hay que subir `--por-perfil` hasta que las consultas
+válidas (`3 × por_perfil + 1`) pasen holgadamente de 30.
+
+La corrida deja `pruebas/corpus/latencia/latencias.json` (una fila por caso;
+la carpeta está ignorada). Después:
+
+    C:/venv-copiloto/Scripts/python.exe scripts/medir_latencia.py --corrida pruebas/corpus/latencia/latencias.json --manual "5.2,4.8,6.1,5.0,5.5"
+
+Escribe `docs/validacion-semisintetica/latencia.json` con el p50 y el p95 de
+`ms_extremo` frente a los umbrales de 8 s y 3 s, y cuántas filas se
+descartaron y por qué. Con menos de 30 consultas válidas se detiene, lo dice
+y no escribe nada.
+
+`ms_extremo` va desde que `Normalizar update` recibe el update con la placa
+hasta que `Desenlace` compone la respuesta: no ve la subida a Telegram, la
+entrega del webhook ni el envío de `Responder`. Ese tramo se acota **a mano
+en 5 casos**, con un chat real y el cliente de Telegram: la hora en que se
+envía la placa frente a la hora en que llega la respuesta, en segundos. Son
+los valores de `--manual` (con punto decimal y separados por comas); sin
+`--manual`, el JSON dice «no medido» en ese tramo.
+
+Al terminar, las filas que el arnés dejó en `consultas` se borran con la
+orden que él mismo imprime.
+
 ## Qué se versiona y qué no
 
-Se versionan `sesion.json` y `acta-h7.md` (cifras, `patientId`, estratos y
-las dos huellas). No se versionan las placas, los mensajes, los CSV del médico
+Se versionan `sesion.json`, `acta-h7.md` (cifras, `patientId`, estratos y
+las dos huellas) y `latencia.json` (solo cifras agregadas). No se versionan
+las placas, los mensajes, los CSV del médico
 ni `clave.json`: el equipo los guarda, y las huellas del acta permiten
 comprobar que son esos.
