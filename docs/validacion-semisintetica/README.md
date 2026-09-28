@@ -1,12 +1,46 @@
 # Validación semisintética de la combinación (SP5)
 
-**Todo lo que hay en esta carpeta, salvo `crudas_prueba.csv`, es resultado
-de una simulación semisintética** (spec de SP5, §4): las placas y sus
-etiquetas son reales (conjunto de prueba de RSNA), la clínica se sortea con
-la distribución publicada de la puntuación de Heckerling, y la dependencia
-entre clínica e imagen es un supuesto declarado. Nada de aquí mide exactitud
-clínica en pacientes. Cada tabla, figura y JSON lleva ese rótulo en su
-título.
+**Todo lo que hay en esta carpeta, salvo `crudas_prueba.csv` y
+`latencia.json`, es resultado de una simulación semisintética** (spec de
+SP5, §4): las placas y sus etiquetas son reales (conjunto de prueba de
+RSNA), la clínica se sortea con la distribución publicada de la puntuación
+de Heckerling, y la dependencia entre clínica e imagen es un supuesto
+declarado. Nada de aquí mide exactitud clínica en pacientes. Cada tabla,
+figura y JSON de resultados lleva ese rótulo en su título.
+
+## `resultados_simulacion.json`
+
+Lo escribe `scripts/validar_combinacion.py`. Lleva el rótulo, las huellas de
+los insumos (las crudas congeladas, los pesos con que se generaron y el
+calibrador), las semillas y los parámetros, la calibración de la imagen sola
+y las 25 celdas `(ρ1, ρ0)` de la rejilla: en cada una, los cuatro modelos
+puntuales, las diferencias pareadas frente a la imagen sola, la posición, las
+colas y la contención de la horquilla frente al oráculo por lado de la
+imagen, los casos discordantes, los del asma desconocida y la escala
+legible. 0A y las seis celdas destacadas llevan además los intervalos del
+95 % (bootstrap de 1 000 réplicas) y la sensibilidad al previo; 0A, el
+cálculo 0C. No lleva fecha: dos corridas dan el mismo fichero.
+
+## Las figuras (`fiabilidad_*.png`, `horquilla_por_celda.png`, `contencion_rejilla.png`, `pendiente_rejilla.png`)
+
+A 300 DPI, dibujadas **leyendo** `resultados_simulacion.json`. Cada una lleva
+«simulación semisintética» en el título, que va también en el metadato
+`Title` del PNG.
+
+## El análisis
+
+`docs/validacion-semisintetica-sp5.md`, una carpeta más arriba. Lo redacta
+`src/copiloto_triaje/validacion/informe.py` desde el mismo JSON: ninguna
+cifra se teclea y el documento no se edita a mano.
+
+## Cómo se regenera todo
+
+    python scripts/validar_combinacion.py
+
+Sin los pesos, sin red y sin contenedores; de 3 a 5 minutos. Con
+`--solo-documento` se regeneran las figuras y el análisis sin recalcular.
+`tests/test_resultados_publicados.py` falla si lo versionado deja de
+corresponder a los insumos o al código.
 
 ## `crudas_prueba.csv` y `crudas_prueba.sha256`
 
