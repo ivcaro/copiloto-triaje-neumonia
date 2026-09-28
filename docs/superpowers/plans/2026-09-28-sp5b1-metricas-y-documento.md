@@ -128,16 +128,21 @@ Lo que el spec dejaba abierto, fijado aquí con su razón.
   con `combinar` y `mas_informativa`, y `salidas_del_sistema` comprueba en
   cada caso que el bloque es su redondeo; si no lo fuera, se detiene.
 - **D5. Pendiente e intercepto sin librería.** La pendiente es la de la
-  regresión logística sin penalizar de `Y` sobre `logit p`, por Newton con
-  retroceso (2 parámetros; un paso que empeora la verosimilitud se acorta:
-  sin eso Newton se dispara cuando el modelo está muy lejos de calibrado); el
+  regresión logística sin penalizar de `Y` sobre `logit p` (2 parámetros); el
   intercepto, el de la calibración global con la pendiente fijada en 1, por
   `brentq`. scikit-learn no admite *offset* y `statsmodels` no está
-  instalado. Dos pruebas contrastan la pendiente con
-  `LogisticRegression(C=np.inf)`, una de ellas con un modelo que ordena al
-  revés. **Si una pendiente no converge, la corrida se detiene**
-  (`ArithmeticError`): una réplica del bootstrap no se cuenta en silencio
-  como dato ausente.
+  instalado. **Antes de iterar se dice cuándo la pendiente no existe**: con
+  una sola clase, con todas las `p` iguales, o con las clases separadas por
+  las `p` (el máximo de una clase no supera el mínimo de la otra). Si existe,
+  es única: la busca Newton con retroceso (un paso que empeora la
+  verosimilitud se acorta; sin eso Newton se dispara cuando el modelo está
+  muy lejos de calibrado) y, si se queda sin paso, una región de confianza
+  con la hessiana exacta (`scipy.optimize.minimize`, `trust-exact`) que
+  Newton pule. Las pruebas la contrastan con `LogisticRegression(C=np.inf)`
+  —una de ellas con un modelo que ordena al revés— y con la forma cerrada de
+  dos grupos. **Si una pendiente no se puede calcular, la corrida se
+  detiene** (`ArithmeticError`): una réplica del bootstrap no se cuenta en
+  silencio como dato ausente.
 - **D5 bis. Las métricas rechazan lo que no pueden medir.** Las métricas por
   modelo exigen `y` en 0/1 y `p` entre 0 y 1; las de log-odds (`horquilla`,
   `error_puntual`, `contencion_en_rango`), vectores de la misma forma y
@@ -212,15 +217,19 @@ Lo que el spec dejaba abierto, fijado aquí con su razón.
 - Modificar: `tests/test_validacion_0a.py` (la tolerancia pasa a ser `metricas.EPSILON`)
 
 **Interfaces:**
-- Consume: nada del paquete. `numpy`, `scipy.optimize.brentq`,
+- Consume: nada del paquete. `numpy`, `scipy.optimize` (`brentq`, `minimize`),
   `scipy.special.expit`, `sklearn.metrics.roc_auc_score`.
 - Produce (todas aceptan listas o arrays):
   - Constantes `EPSILON = 0.015`, `BINS = 10`, `REPETICIONES_SUELO = 200`,
     `SEMILLA_SUELO = 20261009`, `MARGEN = 1e-6`, `CUARTILES = (0.25, 0.5, 0.75)`.
   - `logit(p) -> np.ndarray`
   - `auc(y, p) -> float`, `brier(y, p) -> float`
-  - `pendiente_de_calibracion(y, p, pasos=100) -> float` (`ArithmeticError` si no converge)
-  - `intercepto_de_calibracion(y, p) -> float` (`ArithmeticError` con una sola clase)
+  - `auc(y, p)`, `pendiente_de_calibracion(y, p, pasos=100)` e
+    `intercepto_de_calibracion(y, p)` lanzan `ArithmeticError` con una sola
+    clase; la pendiente, además, con todas las `p` iguales o con las clases
+    separadas por las `p`
+  - `pendiente_de_calibracion(y, p, pasos=100) -> float`
+  - `intercepto_de_calibracion(y, p) -> float`
   - `ece(y, p, orden, bins=BINS) -> float`
   - `fiabilidad(y, p, orden, bins=BINS) -> list[dict]` con `n`, `p_media`, `observada`
   - `suelo_de_ece(p, orden, repeticiones=REPETICIONES_SUELO, semilla=SEMILLA_SUELO, bins=BINS) -> dict` con `media`, `p95`
@@ -321,16 +330,44 @@ def test_la_pendiente_sale_aunque_el_modelo_este_muy_lejos_de_calibrado():
     assert -0.6 < pendiente < -0.4
 
 
-def test_sin_pendiente_finita_se_dice_y_no_se_devuelve_la_ultima_iteracion():
-    """Clases separadas del todo: la verosimilitud no tiene máximo finito."""
-    with pytest.raises(ArithmeticError, match="no converge"):
-        metricas.pendiente_de_calibracion([0, 0, 1, 1], [0.1, 0.2, 0.8, 0.9])
-    # todas las p iguales: la pendiente no está identificada
-    with pytest.raises(ArithmeticError, match="no converge"):
-        metricas.pendiente_de_calibracion([0, 1, 0, 1], [0.5, 0.5, 0.5, 0.5])
-    # y con una sola clase tampoco hay intercepto
-    with pytest.raises(ArithmeticError, match="una sola clase"):
-        metricas.intercepto_de_calibracion([1, 1, 1], [0.2, 0.5, 0.8])
+def test_con_dos_valores_de_p_y_el_orden_invertido_la_pendiente_es_la_exacta():
+    """Con dos grupos la regresión reproduce las dos frecuencias, así que la
+    pendiente tiene forma cerrada. Desde (0, 1) el primer paso de Newton cae
+    donde la hessiana ya no distingue nada: lo resuelve el respaldo."""
+    y, p = _grupos((0.0283, 1088, 1065), (0.336, 1589, 695))
+    exacta = ((_logit(695 / 1589) - _logit(1065 / 1088))
+              / (_logit(0.336) - _logit(0.0283)))
+    assert exacta == pytest.approx(-1.431, abs=1e-3)
+    assert metricas.pendiente_de_calibracion(y, p) == pytest.approx(exacta, abs=1e-8)
+
+
+def test_sin_pendiente_finita_se_dice_antes_de_iterar():
+    # clases separadas del todo, en los dos sentidos, y casi del todo (un empate)
+    for y, p in (([0, 0, 1, 1], [0.1, 0.2, 0.8, 0.9]),
+                 ([1, 1, 0, 0], [0.1, 0.2, 0.8, 0.9]),
+                 ([0, 0, 1, 1], [0.1, 0.5, 0.5, 0.9])):
+        with pytest.raises(ArithmeticError, match="separan del todo"):
+            metricas.pendiente_de_calibracion(y, p)
+    # todas las p iguales: la pendiente no está identificada, valgan lo que valgan
+    for constante in (0.3, 0.5, 0.7, 0.9):
+        with pytest.raises(ArithmeticError, match="todas las p iguales"):
+            metricas.pendiente_de_calibracion(np.tile([0, 1], 2000), np.full(4000, constante))
+    # y con una sola clase no hay ni pendiente, ni intercepto, ni AUC
+    for medida in (metricas.pendiente_de_calibracion, metricas.intercepto_de_calibracion,
+                   metricas.auc):
+        with pytest.raises(ArithmeticError, match="una sola clase"):
+            medida([1, 1, 1], [0.2, 0.5, 0.8])
+
+
+def test_el_intercepto_sale_aunque_una_clase_sea_rarisima():
+    y = np.zeros(4000, dtype=int)
+    y[0] = 1
+    p = np.full(4000, 0.5)
+    assert metricas.intercepto_de_calibracion(1 - y, p) == pytest.approx(
+        _logit(3999 / 4000), abs=1e-9)
+    # y con las p acotadas en el extremo: hace falta un intercepto de más de 20
+    assert metricas.intercepto_de_calibracion(1 - y, np.zeros(4000)) == pytest.approx(
+        _logit(3999 / 4000) - _logit(metricas.MARGEN), abs=1e-6)
 
 
 def test_el_intercepto_es_el_desplazamiento_en_log_odds():
@@ -416,6 +453,7 @@ def test_lo_que_no_es_una_etiqueta_o_una_probabilidad_se_rechaza():
         metricas.pendiente_de_calibracion([0, 1], [0.2, float("nan")])
     # los booleanos y los enteros de numpy son etiquetas
     assert metricas.brier(np.array([False, True]), [0.2, 0.7]) == pytest.approx(0.065)
+    assert metricas.brier(np.array([0, 1], dtype=np.int8), [0.2, 0.7]) == pytest.approx(0.065)
 ```
 
 - [ ] **Paso 3: Correrlas y ver que fallan**
@@ -450,7 +488,7 @@ sistema suma evidencia.
 from __future__ import annotations
 
 import numpy as np
-from scipy.optimize import brentq
+from scipy.optimize import brentq, minimize
 from scipy.special import expit
 from sklearn.metrics import roc_auc_score
 
@@ -483,8 +521,14 @@ def _vectores(y, p):
     return y.astype(int), p
 
 
+def _dos_clases(y, que: str) -> None:
+    if float(np.ptp(y)) == 0.0:
+        raise ArithmeticError(f"con una sola clase no hay {que} que estimar")
+
+
 def auc(y, p) -> float:
     y, p = _vectores(y, p)
+    _dos_clases(y, "AUC")
     return float(roc_auc_score(y, p))
 
 
@@ -498,44 +542,75 @@ def _verosimilitud(y, x, a: float, b: float) -> float:
     return float(np.sum(y * eta - np.logaddexp(0.0, eta)))
 
 
+def _gradiente_y_hessiana(y, x, a: float, b: float):
+    mu = expit(a + b * x)
+    w = mu * (1.0 - mu)
+    g = np.array([np.sum(y - mu), np.sum((y - mu) * x)])
+    h = np.array([[np.sum(w), np.sum(w * x)],
+                  [np.sum(w * x), np.sum(w * x * x)]])
+    return g, h
+
+
+def _newton(y, x, a: float, b: float, pasos: int):
+    """Newton con retroceso desde (a, b): (a, b) al converger, o None si se
+    queda sin paso que dar. La verosimilitud es concava, asi que un paso que
+    la empeora se acorta a la mitad; el margen de la comparacion es el ruido
+    de redondeo de la propia verosimilitud (cerca del maximo un paso bueno la
+    cambia menos que eso)."""
+    for _ in range(pasos):
+        g, h = _gradiente_y_hessiana(y, x, a, b)
+        try:
+            paso = np.linalg.solve(h, g)
+        except np.linalg.LinAlgError:
+            return None
+        if not np.all(np.isfinite(paso)):
+            return None
+        if float(np.max(np.abs(paso))) < 1e-8:
+            return a + paso[0], b + paso[1]
+        actual, t = _verosimilitud(y, x, a, b), 1.0
+        margen = 1e-10 * (1.0 + abs(actual))
+        while _verosimilitud(y, x, a + t * paso[0], b + t * paso[1]) < actual - margen:
+            t *= 0.5
+            if t < 1e-10:
+                return None
+        a, b = a + t * paso[0], b + t * paso[1]
+    return None
+
+
 def pendiente_de_calibracion(y, p, pasos: int = 100) -> float:
     """La pendiente de la regresion logistica SIN penalizar de Y sobre
     logit p (con intercepto libre). Menor que 1: el modelo exagera; mayor
     que 1: se queda corto.
 
-    Newton con retroceso: la verosimilitud es concava, asi que un paso que la
-    empeora se acorta a la mitad hasta que no la empeore. Sin el retroceso,
-    Newton se dispara desde (0, 1) cuando el modelo esta muy lejos de
-    calibrado, aunque la pendiente exista. El margen de la comparacion es el
-    ruido de redondeo de la propia verosimilitud: cerca del maximo, un paso
-    bueno la cambia menos que eso."""
+    Antes de iterar se dice cuando NO existe: con una sola clase, con todas
+    las p iguales, o con las clases separadas por las p (la pendiente seria
+    infinita). Si existe, es unica: la busca Newton con retroceso y, si se
+    queda sin paso (con muy pocos valores distintos de p y el orden invertido,
+    el primer paso puede caer donde la hessiana ya no distingue nada), una
+    region de confianza con la hessiana exacta, que Newton pule despues."""
     y, p = _vectores(y, p)
+    _dos_clases(y, "pendiente de calibración")
     x = logit(p)
-    a, b = 0.0, 1.0
-    for _ in range(pasos):
-        mu = expit(a + b * x)
-        w = mu * (1.0 - mu)
-        g = np.array([np.sum(y - mu), np.sum((y - mu) * x)])
-        h = np.array([[np.sum(w), np.sum(w * x)],
-                      [np.sum(w * x), np.sum(w * x * x)]])
-        try:
-            paso = np.linalg.solve(h, g)
-        except np.linalg.LinAlgError:
-            break
-        if not np.all(np.isfinite(paso)):
-            break
-        if float(np.max(np.abs(paso))) < 1e-8:
-            return float(b + paso[1])
-        actual, t = _verosimilitud(y, x, a, b), 1.0
-        margen = 1e-10 * (1.0 + abs(actual))
-        while t > 1e-10 and (_verosimilitud(y, x, a + t * paso[0], b + t * paso[1])
-                             < actual - margen):
-            t *= 0.5
-        a, b = a + t * paso[0], b + t * paso[1]
-    # Con las clases separadas del todo, o con una sola p, no hay pendiente
-    # finita que estimar: se dice, en vez de devolver la ultima iteracion.
-    raise ArithmeticError(f"la regresión de calibración no converge en {pasos} pasos: "
-                          "¿las p separan del todo las clases, o son todas iguales?")
+    if float(np.ptp(x)) == 0.0:
+        raise ArithmeticError("con todas las p iguales no hay pendiente de calibración "
+                              "que estimar")
+    unos, ceros = x[y == 1], x[y == 0]
+    if unos.min() >= ceros.max() or ceros.min() >= unos.max():
+        raise ArithmeticError("las p separan del todo las clases: la pendiente de "
+                              "calibración no es finita")
+    solucion = _newton(y, x, 0.0, 1.0, pasos)
+    if solucion is None:
+        n = float(y.size)
+        respaldo = minimize(
+            lambda t: -_verosimilitud(y, x, t[0], t[1]) / n, np.array([0.0, 1.0]),
+            jac=lambda t: -_gradiente_y_hessiana(y, x, t[0], t[1])[0] / n,
+            hess=lambda t: _gradiente_y_hessiana(y, x, t[0], t[1])[1] / n,
+            method="trust-exact", options={"gtol": 1e-8, "maxiter": 1000})
+        solucion = _newton(y, x, float(respaldo.x[0]), float(respaldo.x[1]), pasos)
+    if solucion is None:
+        raise ArithmeticError("la regresión de calibración no converge, aunque la "
+                              "pendiente existe: revisa las p")
+    return float(solucion[1])
 
 
 def intercepto_de_calibracion(y, p) -> float:
@@ -543,12 +618,12 @@ def intercepto_de_calibracion(y, p) -> float:
     `a` que iguala la media de expit(a + logit p) a la frecuencia observada.
     Positivo: el modelo predice de menos."""
     y, p = _vectores(y, p)
+    _dos_clases(y, "intercepto de calibración")
     x = logit(p)
     objetivo = float(np.mean(y))
-    if objetivo in (0.0, 1.0):
-        raise ArithmeticError("con una sola clase no hay intercepto de calibración "
-                              "que estimar")
-    return float(brentq(lambda a: float(np.mean(expit(a + x))) - objetivo, -20.0, 20.0,
+    # logit() acota x a ±13,8: con a = ±50 la media predicha pasa de la
+    # observada por los dos lados, por desequilibradas que esten las clases.
+    return float(brentq(lambda a: float(np.mean(expit(a + x))) - objetivo, -50.0, 50.0,
                         xtol=1e-12))
 
 
@@ -610,7 +685,7 @@ def _log_odds(*vectores) -> list:
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_metricas.py -q`
 
-Esperado: `16 passed`.
+Esperado: `18 passed`.
 
 - [ ] **Paso 6: Escribir las pruebas de la horquilla, los percentiles y los cuantiles**
 
@@ -720,7 +795,7 @@ def test_cuantiles_ponderados():
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_metricas.py -q`
 
-Esperado: `8 failed, 16 passed`; los fallos son
+Esperado: `8 failed, 18 passed`; los fallos son
 `AttributeError: module 'copiloto_triaje.validacion.metricas' has no attribute 'horquilla'`
 (y `error_puntual`, `percentiles`, `cuantiles_ponderados`).
 
@@ -809,7 +884,7 @@ def cuantiles_ponderados(valores, pesos, cuantiles=CUARTILES) -> np.ndarray:
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_metricas.py -q`
 
-Esperado: `24 passed`.
+Esperado: `26 passed`.
 
 - [ ] **Paso 10: Una sola definición de la tolerancia**
 
@@ -839,7 +914,7 @@ TOLERANCIA = metricas.EPSILON   # 0,015: el redondeo máximo de las RV publicada
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_validacion_0a.py tests/test_metricas.py -q`
 
-Esperado: `34 passed` (las 24 de las métricas y las 10 de 0A).
+Esperado: `36 passed` (las 26 de las métricas y las 10 de 0A).
 
 - [ ] **Paso 11: Commit**
 
@@ -1298,7 +1373,7 @@ def aplanar(d: dict, prefijo: str = "") -> dict:
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_simulacion.py tests/test_metricas.py -q`
 
-Esperado: `37 passed`.
+Esperado: `39 passed`.
 
 Si `test_los_recuentos_cuadran` o alguna cifra fijada no coincide, **no
 cambies la prueba**: las cifras salen de la semilla 1 sobre las crudas
@@ -1344,18 +1419,245 @@ git commit -m "feat(validacion): el sistema y el oráculo caso a caso, y las mé
   - `evaluar_tarea(tarea) -> dict`, con `tarea = (rho1, rho0, replicas, con_sensibilidad)`
   - `imagen_sola(conjunto) -> dict`
 
-- [ ] **Paso 1: Escribir las pruebas del bootstrap**
+- [ ] **Paso 0: Cerrar tres menores de la revisión de la tarea 2**
 
-En `tests/test_simulacion.py` sustituye la línea
+La revisión aprobó la tarea 2 y dejó tres menores sobre `salidas_del_sistema`,
+que se cierran aquí porque esta tarea edita el mismo fichero:
+
+- con el asma desconocida el diccionario guardaba, en `independencia`,
+  `conservador`, `clinica`, `l_independencia` y `l_dependencia`, el valor de la
+  PRIMERA de las dos puntuaciones. `medir` lo filtraba, pero era una trampa
+  para quien recibiera el diccionario: pasan a `nan`, y las métricas rechazan
+  un `nan`;
+- `zip` cortaba en silencio si las RV de imagen y los casos no tenían la misma
+  longitud;
+- ninguna prueba afirmaba el punto medio de los `no_se` ni ejercitaba la rama
+  de `dependencia` de la guarda del bloque.
+
+Primero las pruebas.
+
+**1.** En `tests/test_simulacion.py`, busca
 
 ```python
 from copiloto_triaje.servicio.heckerling import combinacion
 ```
 
+y sustitúyelo por
+
+```python
+from copiloto_triaje.servicio.heckerling import RV_POR_PUNTUACION, combinacion, combinar
+```
+
+**2.** En `tests/test_simulacion.py`, busca
+
+```python
+    _, clinica, salidas, _ = escenario_0a
+    filas = clinica.to_dict("records")
+    for i in (0, 1, 2, 500, 3810):
+        b = combinacion(conjunto.prevalencia, generador.hallazgos(filas[i]), float(conjunto.rv[i]))
+        assert salidas["independencia"][i] == b["independencia"][0]
+        assert salidas["concordantes"][i] == b["concordantes"]
+        assert salidas["conservador"][i] == (b["dependencia"][0] if b["concordantes"]
+                                             else b["independencia"][0])
+        assert salidas["puntuacion"][i] == b["puntuacion"][0]
+    conocida = salidas["conocida"]
+    assert np.array_equal(conocida, (clinica["asma"] != "no_se").values)
+    assert np.array_equal(salidas["puntuacion"][conocida], clinica["k"].values[conocida])
+    assert np.array_equal(salidas["puntuacion"][~conocida], clinica["k4"].values[~conocida])
+    # la horquilla solo existe con concordancia
+    assert np.array_equal(np.isfinite(salidas["l_dependencia"]), salidas["concordantes"])
+    assert np.all(salidas["l_minima"] <= salidas["l_maxima"])
+    assert set(salidas["primaria"]) <= {"baja", "intermedia", "alta"}
+```
+
+y sustitúyelo por
+
+```python
+    _, clinica, salidas, _ = escenario_0a
+    filas = clinica.to_dict("records")
+    conocida = salidas["conocida"]
+    assert np.array_equal(conocida, (clinica["asma"] != "no_se").values)
+    for i in np.flatnonzero(conocida)[[0, 1, 2, 500, -1]]:
+        b = combinacion(conjunto.prevalencia, generador.hallazgos(filas[i]), float(conjunto.rv[i]))
+        assert salidas["independencia"][i] == b["independencia"][0]
+        assert salidas["concordantes"][i] == b["concordantes"]
+        assert salidas["conservador"][i] == (b["dependencia"][0] if b["concordantes"]
+                                             else b["independencia"][0])
+        assert salidas["puntuacion"][i] == b["puntuacion"][0]
+    assert np.array_equal(salidas["puntuacion"][conocida], clinica["k"].values[conocida])
+    assert np.array_equal(salidas["puntuacion"][~conocida], clinica["k4"].values[~conocida])
+    # la horquilla solo existe con concordancia y con UNA puntuacion
+    assert np.array_equal(np.isfinite(salidas["l_dependencia"]),
+                          salidas["concordantes"] & conocida)
+    assert np.all(salidas["l_minima"] <= salidas["l_maxima"])
+    assert set(salidas["primaria"]) <= {"baja", "intermedia", "alta"}
+
+
+def test_con_el_asma_desconocida_no_hay_un_modelo_puntual_sino_un_rango(conjunto, escenario_0a):
+    """Dos puntuaciones, [k4, k4 + 1]: los modelos puntuales quedan sin dato y
+    lo que se mide es el rango y su punto medio EN LOG-ODDS."""
+    _, clinica, salidas, _ = escenario_0a
+    no_se = np.flatnonzero(~salidas["conocida"])
+    assert no_se.size == 351
+    for nombre in ("independencia", "conservador", "clinica", "l_independencia",
+                   "l_dependencia"):
+        assert np.all(np.isnan(salidas[nombre][no_se])), nombre
+        assert np.all(np.isfinite(salidas[nombre][salidas["conocida"]])
+                      | (nombre == "l_dependencia")), nombre
+    for i in no_se[[0, 1, 2, 100, -1]]:
+        k4, r = int(clinica["k4"].values[i]), float(conjunto.rv[i])
+        dos = [metricas.logit([combinar(conjunto.prevalencia, RV_POR_PUNTUACION[k], r)])[0]
+               for k in (k4, k4 + 1)]
+        assert salidas["l_medio"][i] == pytest.approx(sum(dos) / 2, abs=1e-12)
+        assert salidas["l_minima"][i] <= min(dos) and max(dos) <= salidas["l_maxima"][i]
+        assert salidas["l_minima"][i] <= salidas["l_medio"][i] <= salidas["l_maxima"][i]
+
+
+def test_las_rv_de_imagen_tienen_que_casar_con_los_casos(conjunto, escenario_0a):
+    _, clinica, _, _ = escenario_0a
+    with pytest.raises(ValueError, match="tienen que casar"):
+        simulacion.salidas_del_sistema(conjunto.prevalencia, clinica.head(5), conjunto.rv[:4])
+```
+
+**3.** En `tests/test_simulacion.py`, busca
+
+```python
+    def alterada(prevalencia, hallazgos, rv_imagen):
+        b = combinacion(prevalencia, hallazgos, rv_imagen)
+        b["independencia"] = [round(x + 0.0001, 4) for x in b["independencia"]]
+        return b
+
+    monkeypatch.setattr(simulacion, "combinacion", alterada)
+    with pytest.raises(AssertionError, match="no es el redondeo"):
+        simulacion.salidas_del_sistema(conjunto.prevalencia, clinica.head(5), conjunto.rv[:5])
+```
+
+y sustitúyelo por
+
+```python
+    def con(campo):
+        def alterada(prevalencia, hallazgos, rv_imagen):
+            b = combinacion(prevalencia, hallazgos, rv_imagen)
+            if b[campo] is not None:
+                b[campo] = [round(x + 0.0001, 4) for x in b[campo]]
+            return b
+        return alterada
+
+    concordantes = clinica[escenario_0a[2]["concordantes"]].head(5)
+    rv = conjunto.rv[concordantes.index.values]
+    for campo in ("independencia", "dependencia"):
+        monkeypatch.setattr(simulacion, "combinacion", con(campo))
+        with pytest.raises(AssertionError, match="no es el redondeo"):
+            simulacion.salidas_del_sistema(conjunto.prevalencia, concordantes, rv)
+```
+
+Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_simulacion.py -q`
+
+Esperado: `3 failed, 12 passed`. Fallan
+`test_las_salidas_son_las_del_codigo_del_servidor` (la horquilla aún existe
+para los `no_se` concordantes),
+`test_con_el_asma_desconocida_no_hay_un_modelo_puntual_sino_un_rango` y
+`test_las_rv_de_imagen_tienen_que_casar_con_los_casos`. La prueba de la guarda
+del bloque ya pasa: la guarda miraba `dependencia`; lo que faltaba era la
+prueba.
+
+Después el código.
+
+**1.** En `src/copiloto_triaje/validacion/simulacion.py`, busca
+
+```python
+    """Lo que el codigo del servidor da para cada caso. Las probabilidades de
+    los modelos puntuales son las del BLOQUE (redondeadas a 4 decimales, lo
+    que el sistema entrega); los extremos de la horquilla van SIN redondear,
+    recalculados con `combinar` y contrastados con el bloque."""
+    n = len(clinica)
+```
+
+y sustitúyelo por
+
+```python
+    """Lo que el codigo del servidor da para cada caso. Las probabilidades de
+    los modelos puntuales son las del BLOQUE (redondeadas a 4 decimales, lo
+    que el sistema entrega); los extremos de la horquilla van SIN redondear,
+    recalculados con `combinar` y contrastados con el bloque.
+
+    Con el asma desconocida el sistema da DOS puntuaciones: no hay UN modelo
+    puntual ni UNA horquilla, y `independencia`, `conservador`, `clinica`,
+    `l_independencia` y `l_dependencia` quedan en nan. Esos casos se miden con
+    `l_minima`, `l_maxima` y `l_medio`."""
+    n = len(clinica)
+    rv = np.asarray(rv, dtype=float)
+    if rv.shape != (n,):
+        raise ValueError(f"hay {n} casos y {rv.size} RV de imagen: tienen que casar")
+```
+
+**2.** En `src/copiloto_triaje/validacion/simulacion.py`, busca
+
+```python
+        s["conocida"][i] = fila["asma"] != "no_se"
+        s["concordantes"][i] = b["concordantes"]
+        s["puntuacion"][i] = b["puntuacion"][0]
+        s["primaria"][i] = categoria_del_sistema(b)["primaria"]
+        s["independencia"][i] = b["independencia"][0]
+        s["conservador"][i] = b["dependencia"][0] if b["concordantes"] else b["independencia"][0]
+        s["clinica"][i] = combinar(prevalencia, RV_POR_PUNTUACION[b["puntuacion"][0]], 1.0)
+        l_ind = [math.log(x / (1.0 - x)) for x in ind]
+        todas = [math.log(x / (1.0 - x)) for x in ind + dep]
+        s["l_independencia"][i] = l_ind[0]
+        if dep:
+            s["l_dependencia"][i] = math.log(dep[0] / (1.0 - dep[0]))
+        s["l_minima"][i], s["l_maxima"][i] = min(todas), max(todas)
+        s["l_medio"][i] = sum(l_ind) / len(l_ind)
+    return s
+```
+
+y sustitúyelo por
+
+```python
+        s["conocida"][i] = fila["asma"] != "no_se"
+        s["concordantes"][i] = b["concordantes"]
+        s["puntuacion"][i] = b["puntuacion"][0]
+        s["primaria"][i] = categoria_del_sistema(b)["primaria"]
+        l_ind = [math.log(x / (1.0 - x)) for x in ind]
+        todas = [math.log(x / (1.0 - x)) for x in ind + dep]
+        s["l_minima"][i], s["l_maxima"][i] = min(todas), max(todas)
+        s["l_medio"][i] = sum(l_ind) / len(l_ind)
+        if not s["conocida"][i]:
+            continue
+        s["independencia"][i] = b["independencia"][0]
+        s["conservador"][i] = b["dependencia"][0] if b["concordantes"] else b["independencia"][0]
+        s["clinica"][i] = combinar(prevalencia, RV_POR_PUNTUACION[b["puntuacion"][0]], 1.0)
+        s["l_independencia"][i] = l_ind[0]
+        if dep:
+            s["l_dependencia"][i] = math.log(dep[0] / (1.0 - dep[0]))
+    return s
+```
+
+Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_simulacion.py tests/test_metricas.py -q`
+
+Esperado: `41 passed` (15 de la simulación y 26 de las métricas). Las cifras
+fijadas de la tarea 2 no cambian: solo cambia lo que se guarda de los casos
+que `medir` ya dejaba fuera.
+
+```bash
+git add src/copiloto_triaje/validacion/simulacion.py tests/test_simulacion.py
+git commit -m "fix(validacion): con el asma desconocida no hay modelo puntual, y las RV casan con los casos" -m "salidas_del_sistema deja en nan los modelos puntuales y la horquilla de los casos con dos puntuaciones, en vez de guardar los de la primera, y rechaza unas RV de imagen que no casan con los casos. Pruebas del punto medio de los no_se, en log-odds, y de la rama de dependencia de la guarda del bloque." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+- [ ] **Paso 1: Escribir las pruebas del bootstrap**
+
+En `tests/test_simulacion.py` sustituye la línea
+
+```python
+from copiloto_triaje.servicio.heckerling import RV_POR_PUNTUACION, combinacion, combinar
+```
+
 por
 
 ```python
-from copiloto_triaje.servicio.heckerling import PREVALENCIA_COHORTE, combinacion
+from copiloto_triaje.servicio.heckerling import (
+    PREVALENCIA_COHORTE, RV_POR_PUNTUACION, combinacion, combinar,
+)
 ```
 
 y añade al final del fichero (dos líneas en blanco antes):
@@ -1401,7 +1703,7 @@ def test_las_replicas_no_reajustan_el_generador(conjunto, monkeypatch):
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_simulacion.py -q`
 
-Esperado: `2 failed, 13 passed`, con
+Esperado: `2 failed, 15 passed`, con
 `AttributeError: module 'copiloto_triaje.validacion.simulacion' has no attribute 'bootstrap'`.
 
 - [ ] **Paso 3: Ampliar los imports y las constantes, y escribir la réplica y el bootstrap**
@@ -1476,7 +1778,7 @@ def bootstrap(conjunto: Conjunto, modelo: oraculo.Modelo, replicas: int = B_REPL
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_simulacion.py -q`
 
-Esperado: `15 passed`.
+Esperado: `17 passed`.
 
 - [ ] **Paso 5: Escribir las pruebas de la celda completa**
 
@@ -1617,7 +1919,7 @@ def test_la_imagen_sola_es_el_suelo_de_calibracion(conjunto):
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_simulacion.py -q`
 
-Esperado: `15 passed` y las 10 nuevas en
+Esperado: `17 passed` y las 10 nuevas en
 rojo (fallos y errores de fixture), con
 `AttributeError: … has no attribute 'evaluar_celda'` (y `'cambios_de_banda'`,
 `'evaluar_tarea'`, `'imagen_sola'`).
@@ -1780,7 +2082,7 @@ def imagen_sola(conjunto: Conjunto) -> dict:
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_simulacion.py tests/test_metricas.py tests/test_validacion_0a.py tests/test_oraculo.py tests/test_generador.py -q`
 
 Esperado: todo en verde; `tests/test_simulacion.py` aporta
-`25` pruebas.
+`27` pruebas.
 
 - [ ] **Paso 9: Commit**
 
