@@ -13,7 +13,7 @@ def test_la_logica_del_formulario_pasa_sus_pruebas_en_node():
     salida = subprocess.run([node, str(REPO / "tests" / "formulario.mjs")],
                             capture_output=True, text=True, encoding="utf-8")
     assert salida.returncode == 0, salida.stderr
-    assert salida.stdout.strip().endswith("7 OK"), salida.stdout
+    assert salida.stdout.strip().endswith("12 OK"), salida.stdout
 
 
 def test_el_html_carga_la_logica_y_los_datos_por_lectura():

@@ -35,6 +35,31 @@
     };
   }
 
+  function mismosIds(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) { return false; }
+    for (let i = 0; i < a.length; i++) {
+      if (a[i].id !== b[i].id) { return false; }
+    }
+    return true;
+  }
+
+  // Decide si un estado guardado en localStorage sirve para esta carga de la
+  // página (misma lectura, mismos casos y práctica, en el mismo orden) y, si
+  // sirve, cómo retomarlo: el caso a medias reinicia su reloj; la respuesta
+  // pendiente de un plan B ya revelado se conserva con su reloj reiniciado;
+  // una lectura terminada se devuelve intacta para que la pantalla final
+  // vuelva a mostrarse.
+  function retomar(previo, datos, ahora) {
+    if (!previo || previo.lectura !== datos.lectura ||
+        !mismosIds(previo.casos, datos.casos) || !mismosIds(previo.practica, datos.practica)) {
+      return nuevoEstado(datos);
+    }
+    if (previo.fase === "fin") { return previo; }
+    previo.abierto_en = null;
+    if (previo.pendiente) { previo.revelado_en = ahora; }
+    return previo;
+  }
+
   function lista(e) { return e.fase === "practica" ? e.practica : e.casos; }
   function casoActual(e) { return e.fase === "fin" ? null : (lista(e)[e.indice] || null); }
   function terminado(e) { return e.fase === "fin"; }
@@ -123,5 +148,5 @@
     return lineas.join("\n") + "\n";
   }
 
-  raiz.Formulario = { BANDAS, NOTAS, COLUMNAS, nuevoEstado, casoActual, terminado, abrir, enviar, enviarConAyuda, aCSV };
+  raiz.Formulario = { BANDAS, NOTAS, COLUMNAS, nuevoEstado, retomar, casoActual, terminado, abrir, enviar, enviarConAyuda, aCSV };
 })(typeof module !== "undefined" && module.exports ? module.exports : window);

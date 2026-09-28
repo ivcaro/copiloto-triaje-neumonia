@@ -106,4 +106,70 @@ prueba("banda o porcentaje inválidos se rechazan sin avanzar", () => {
   assert.equal(e.respuestas.length, 0);
 });
 
+prueba("retomar: sin estado guardado o con otra lectura, arranca de cero", () => {
+  const d = datos("simple");
+  const fresco = Formulario.retomar(null, d, 0);
+  assert.equal(fresco.indice, 0);
+  assert.equal(fresco.respuestas.length, 0);
+  assert.equal(fresco.fase, "practica");
+
+  const previoOtraLectura = Formulario.nuevoEstado({ lectura: 1, modo: "simple", practica: [], casos: d.casos });
+  const otro = Formulario.retomar(previoOtraLectura, d, 0);      // d.lectura es 2
+  assert.equal(otro.fase, "practica");                           // arrancó de cero, con la práctica de d
+  assert.equal(otro.respuestas.length, 0);
+});
+
+prueba("retomar: si los ids de los casos no coinciden con los datos actuales, arranca de cero", () => {
+  const d = datos("simple");
+  const previo = Formulario.nuevoEstado(d);
+  Formulario.abrir(previo, 0);
+  Formulario.enviar(previo, conNotas, 500);                      // termina la práctica
+  const otrosDatos = { lectura: 2, modo: "simple", practica: d.practica,
+    casos: [{ id: "z-9", placa: "placas/z-9.png", vineta: "otro run", mensaje: null, control: true }] };
+  const nuevo = Formulario.retomar(previo, otrosDatos, 1000);
+  assert.equal(nuevo.respuestas.length, 0);
+  assert.equal(nuevo.casos[0].id, "z-9");
+});
+
+prueba("retomar: mismos ids a mitad de lectura conserva las respuestas y reinicia el reloj del caso interrumpido", () => {
+  const d = datos("simple");
+  const previo = Formulario.nuevoEstado(d);
+  Formulario.abrir(previo, 0);
+  Formulario.enviar(previo, conNotas, 500);                      // termina la práctica, entra en casos
+  Formulario.abrir(previo, 1000);                                // c-1 abierto pero no enviado
+  const retomado = Formulario.retomar(previo, d, 9000);
+  assert.equal(retomado.respuestas.length, 1);
+  assert.equal(retomado.fase, "casos");
+  assert.equal(retomado.indice, 0);
+  assert.equal(retomado.abierto_en, null);
+  assert.equal(retomado.pendiente, null);
+});
+
+prueba("retomar en plan B tras revelar conserva la respuesta pendiente y reinicia su reloj", () => {
+  const d = { lectura: 1, modo: "secuencial", practica: [], casos: datos("secuencial").casos };
+  const previo = Formulario.nuevoEstado(d);
+  Formulario.abrir(previo, 0);
+  const r = Formulario.enviar(previo, { banda: "intermedia", porcentaje: 40 }, 30000);
+  assert.equal(r.revelar, true);
+  const retomado = Formulario.retomar(previo, d, 100000);
+  assert.notEqual(retomado.pendiente, null);
+  assert.equal(retomado.revelado_en, 100000);
+  Formulario.enviarConAyuda(retomado, { banda: "alta", porcentaje: 85, correccion: 4, utilidad: 5, lenguaje: 4 }, 103000);
+  const fila = retomado.respuestas[0];
+  assert.equal(fila.banda, "intermedia"); assert.equal(fila.segundos, 30);
+  assert.equal(fila.banda_con, "alta"); assert.equal(fila.segundos_con, 3);
+});
+
+prueba("retomar con la lectura terminada la deja intacta, con sus respuestas", () => {
+  const d = { lectura: 1, modo: "simple", practica: [], casos: datos("simple").casos };
+  const previo = Formulario.nuevoEstado(d);
+  Formulario.abrir(previo, 0); Formulario.enviar(previo, conNotas, 1);
+  Formulario.abrir(previo, 2); Formulario.enviar(previo, { banda: "baja", porcentaje: 0 }, 3);
+  assert.equal(previo.fase, "fin");
+  const retomado = Formulario.retomar(previo, d, 9999);
+  assert.equal(retomado.fase, "fin");
+  assert.equal(retomado.respuestas.length, 2);
+  assert.equal(Formulario.terminado(retomado), true);
+});
+
 console.log(ok + " OK");

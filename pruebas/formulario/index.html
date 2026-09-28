@@ -39,9 +39,9 @@
         </fieldset>
         <fieldset id="notas" hidden>
           <legend>El pre-informe, de 1 (peor) a 5 (mejor)</legend>
-          <label>Corrección <select name="correccion"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
-          <label>Utilidad <select name="utilidad"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
-          <label>Lenguaje <select name="lenguaje"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
+          <label>Corrección <select name="correccion"><option value="" selected>—</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
+          <label>Utilidad <select name="utilidad"><option value="" selected>—</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
+          <label>Lenguaje <select name="lenguaje"><option value="" selected>—</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
         </fieldset>
         <label>Comentario (opcional)<br><textarea name="comentario" rows="3" cols="60"></textarea></label>
         <p id="error" class="aviso"></p>
@@ -69,13 +69,11 @@
   function recuperar() { try { var t = localStorage.getItem(clave); return t ? JSON.parse(t) : null; } catch (e) { return null; } }
 
   function arrancar() {
-    var previo = recuperar();
-    if (previo && previo.lectura === window.DATOS.lectura && previo.fase !== "fin") {
-      // Se retoma donde se cerró; el caso a medias vuelve a empezar y su reloj también.
-      estado = previo; estado.abierto_en = null; estado.pendiente = null; estado.revelado_en = null;
-    } else {
-      estado = Formulario.nuevoEstado(window.DATOS);
-    }
+    // Formulario.retomar decide si el estado guardado sirve (misma lectura y
+    // mismos casos) y, si sirve, cómo retomarlo: el caso a medias reinicia su
+    // reloj, la respuesta pendiente de un plan B revelado se conserva, y una
+    // lectura terminada se deja intacta para que vuelva a verse la pantalla final.
+    estado = Formulario.retomar(recuperar(), window.DATOS, Date.now());
     pintar();
   }
 
