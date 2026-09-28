@@ -27,11 +27,15 @@ abrir el caso a enviar la banda.
 - **Kappa ponderado lineal (primario):** {{kappa_ponderado}}.
 - **Kappa de Cohen sin ponderar:** {{kappa_cohen}}.
 - **Kappa binario en «alta»:** {{kappa_binario}}.
-- **Sensibilidad a la regla de categoría del sistema (kappa ponderado):** {{sensibilidad}}.
+- **Frente a 0,4 y 0,6:** {{criterio_kappa}}
+- **Sensibilidad a la regla de categoría del sistema (kappa ponderado):**
+  {{sensibilidad}}; casos cuya horquilla cruza un límite: {{n_cruzan_un_limite}} de {{n}}.
 - **Acuerdo continuo:** Spearman {{spearman}}; diferencia media en log-odds
   (médico − sistema) {{bland_altman}}; el porcentaje del médico cae dentro de
-  la horquilla en el {{dentro_horquilla}} % de los casos; porcentajes de 0 o
-  100 acotados: {{acotados}}.
+  la horquilla en el {{dentro_horquilla}} % de los casos
+  ({{horquillas_anchura_cero}} de {{n}} horquillas son un solo porcentaje: en
+  ellas solo cuenta el valor exacto); porcentajes de 0 o 100 acotados:
+  {{acotados}}.
 - **Influencia del sistema (no es concordancia independiente):** {{influencia}}.
 - **Utilidad del pre-informe (1-5):** {{utilidad}}.
 - **Tiempo de triaje:** {{tiempo}}.

@@ -34,6 +34,19 @@ def test_kappa_de_cohen_y_ponderado_lineal_del_ejemplo_a_mano():
     assert cc.kappa(ib, ia, 3, "lineal")["kappa"] == pytest.approx(lineal["kappa"])
 
 
+def test_el_intervalo_analitico_se_acota_al_recorrido_del_kappa():
+    # sin acotar, el ejemplo a mano da [0,175; 1,063] (Cohen) y [0,398; 1,069] (lineal)
+    ia, ib = cc.indices(A), cc.indices(B)
+    for tipo in ("ninguno", "lineal"):
+        r = cc.kappa(ia, ib, 3, tipo)
+        assert r["kappa"] + 1.96 * r["ee"] > 1.0
+        assert r["ic95"][1] == 1.0
+        assert r["ic95"][0] == pytest.approx(r["kappa"] - 1.96 * r["ee"])
+    # por abajo: un desacuerdo sistemático da un kappa negativo, nunca menor que −1
+    r = cc.kappa([0, 1, 0, 1], [1, 0, 1, 0], 2, "ninguno")
+    assert r["ic95"][0] >= -1.0
+
+
 def test_el_acuerdo_perfecto_da_kappa_1_con_error_tipico_0():
     ia = cc.indices(A)
     r = cc.kappa(ia, ia, 3, "lineal")
@@ -72,6 +85,21 @@ def test_acuerdo_continuo_acota_0_y_100_y_mide_spearman():
     assert r["fraccion_dentro_de_la_horquilla"] == pytest.approx(1.0)
 
 
+@pytest.mark.parametrize("minima, maxima, pct, dentro", [
+    (0.4406, 0.4406, 44, True),     # horquilla de un solo valor: el bot imprime «44 %»
+    (0.4406, 0.4406, 45, False),
+    (0.0003, 0.0028, 0, True),      # el bot imprime «< 1 %»; el 0 no se acota a 0,5 aquí
+    (0.0003, 0.0028, 1, False),
+    (0.8000, 0.9940, 99, True),     # 0,9940 → 99
+    (0.8000, 0.9940, 100, False),
+])
+def test_dentro_de_la_horquilla_compara_enteros_como_los_imprime_el_bot(minima, maxima, pct, dentro):
+    r = cc.acuerdo_continuo([pct, 50], [0.5, 0.5], minima=[minima, 0.4], maxima=[maxima, 0.6])
+    assert r["fraccion_dentro_de_la_horquilla"] == pytest.approx(0.5 + 0.5 * dentro)
+    assert r["horquillas_de_anchura_cero"] == int(cc.porcentaje_entero(minima) == cc.porcentaje_entero(maxima))
+
+
+@pytest.mark.filterwarnings("error::RuntimeWarning")
 def test_acuerdo_continuo_con_porcentaje_constante_da_spearman_nan_sin_avisos():
     # Ruling 5: un vector de rangos constante (porcentaje del médico fijo)
     # no debe llamar a np.corrcoef; el resultado es NaN, no un aviso.
@@ -131,6 +159,9 @@ def _clave():
                       "bloque": {"minima": pm - 0.05, "maxima": pm + 0.05},
                       "categoria": {"primaria": banda, "punto_medio": pm, "independencia": banda,
                                     "conservador": banda, "cruza": banda, "cruza_limite": False}})
+    # un caso cuya horquilla cruza el 20 %: la variante «cruza» lo pone en intermedia
+    casos[0]["bloque"] = {"minima": 0.12, "maxima": 0.22}
+    casos[0]["categoria"].update({"cruza": "intermedia", "cruza_limite": True})
     return {"rotulo": "simulación semisintética — sesión H7", "casos": casos,
             "ordenes": {"lectura1": [c["patientId"] for c in casos],
                         "lectura2": [c["patientId"] for c in casos][::-1],
@@ -185,6 +216,13 @@ def test_analizar_una_sesion_fabricada(tmp_path):
         assert k["ic95"][0] <= k["kappa"] <= k["ic95"][1]
         assert k["ic95_bca"][0] <= k["kappa"] <= k["ic95_bca"][1]
     assert set(s["sensibilidad_categoria"]) == {"independencia", "conservador", "cruza"}
+    assert s["n_cruzan_un_limite"] == 1
+    assert s["sensibilidad_categoria"]["cruza"] < s["kappa"]["ponderado_lineal"]["kappa"]
+    for nombre in ("ponderado_lineal", "cohen", "binario_alta"):
+        u = s["kappa"][nombre]["frente_a_umbrales"]
+        assert set(u) == {"puntual_ge_0_4", "puntual_ge_0_6", "li_analitico_lt_0_4", "li_bca_lt_0_4"}
+    assert s["lectura2"]["kappa_con_mensaje"]["frente_a_umbrales"]["puntual_ge_0_6"] is True
+    assert s["acuerdo_continuo"]["horquillas_de_anchura_cero"] == 0
     assert len(s["desacuerdos"]) == 4
     assert {d["id"] for d in s["desacuerdos"]} == set(discrepa)
     assert all(d["comentario"] == "dudoso" for d in s["desacuerdos"])
@@ -247,13 +285,80 @@ def test_el_acta_se_rellena_desde_sesion_json_y_no_deja_huecos(tmp_path):
     assert cc.TEXTO_FIJADO in acta
     assert "c-00" in acta and "positiva_clara" in acta
     assert "no medido" in acta       # sin lectura 2 ni plan B, el tiempo no se midió
+    plano = _plano(acta)
+    assert "casos cuya horquilla cruza un límite: 1 de 24" in plano
+    assert "(0 de 24 horquillas son un solo porcentaje: en ellas solo cuenta el valor exacto)" in plano
+    # acuerdo perfecto: los tres kappas valen 1 y su límite inferior queda por encima de 0,4
+    assert ("El kappa ponderado (1,00) alcanza el mínimo de 0,4 de la Semana 1 y el objetivo de 0,6; "
+            "el límite inferior del intervalo queda por encima de 0,4 con los dos métodos") in plano
+    assert "El kappa de Cohen (1,00)" in plano and "El kappa binario en «alta» (1,00)" in plano
+    assert plano.index("Kappa binario en «alta»") < plano.index("El kappa ponderado (1,00)") < plano.index(cc.TEXTO_FIJADO)
     with pytest.raises(KeyError):
         cc.rellenar_acta("{{no_existe}}", {})
+
+
+# Ocho discrepancias en 24, dos de ellas de dos bandas: kappa ponderado 0,55
+# con los límites inferiores de los dos intervalos por debajo de 0,4.
+OCHO = {"c-02": "alta", "c-04": "intermedia", "c-10": "baja", "c-12": "intermedia",
+        "c-17": "baja", "c-19": "alta", "c-21": "alta", "c-23": "baja"}
+
+
+def test_el_acta_compara_cada_kappa_con_0_4_y_0_6(tmp_path):
+    clave = _clave()
+    casos = {c["patientId"]: c for c in clave["casos"]}
+    l1 = [_fila(1, i + 1, casos[pid], OCHO.get(pid, casos[pid]["categoria"]["primaria"]), 50, 60.0)
+          for i, pid in enumerate(clave["ordenes"]["lectura1"])]
+    _csv(tmp_path / "l1.csv", l1)
+    s = cc.analizar(clave, cc.leer_csv(tmp_path / "l1.csv"))
+    k = s["kappa"]["ponderado_lineal"]
+    assert 0.4 <= k["kappa"] < 0.6
+    assert k["frente_a_umbrales"] == {"puntual_ge_0_4": True, "puntual_ge_0_6": False,
+                                      "li_analitico_lt_0_4": True, "li_bca_lt_0_4": True}
+    acta = cc.rellenar_acta(_plantilla(), cc.valores_para_acta(s, clave))
+    assert (f"El kappa ponderado ({cc._f(k['kappa'])}) alcanza el mínimo de 0,4 de la Semana 1 y no "
+            f"el objetivo de 0,6; el límite inferior del intervalo queda por debajo de 0,4 con los dos "
+            f"métodos (analítico {cc._f(k['ic95'][0])}; BCa {cc._f(k['ic95_bca'][0])}).") in _plano(acta)
+
+
+def test_la_frase_del_criterio_cubre_cada_combinacion():
+    def k(kappa, li_a, li_b):
+        r = {"kappa": kappa, "ic95": [li_a, 1.0], "ic95_bca": [li_b, 1.0]}
+        r["frente_a_umbrales"] = cc.frente_a_umbrales(r)
+        return r
+    assert "no alcanza el mínimo de 0,4" in cc._criterio("El kappa de Cohen", k(0.3, 0.1, 0.05))
+    assert "con el método analítico (0,38) y no con el BCa (0,41)" in cc._criterio("K", k(0.7, 0.38, 0.41))
+    assert "con el BCa (0,35) y no con el método analítico (0,42)" in cc._criterio("K", k(0.7, 0.42, 0.35))
+    nan = float("nan")
+    assert cc.frente_a_umbrales({"kappa": nan, "ic95": [nan, nan], "ic95_bca": [nan, nan]}) is None
+    assert cc._criterio("El kappa binario en «alta»", {"kappa": nan, "frente_a_umbrales": None}) == \
+        "El kappa binario en «alta» no es calculable con estas lecturas."
+
+
+def test_la_tabla_de_desacuerdos_imprime_la_horquilla_como_el_bot(tmp_path):
+    clave = _clave()
+    clave["casos"][2]["bloque"] = {"minima": 0.125, "maxima": 0.125}     # el bot dice 13 %, no 12 %
+    clave["casos"][4]["bloque"] = {"minima": 0.0047, "maxima": 0.0470}   # «entre menos de 1 % y 5 %»
+    casos = {c["patientId"]: c for c in clave["casos"]}
+    discrepa = {"c-02": "intermedia", "c-04": "intermedia"}
+    l1 = [_fila(1, i + 1, casos[pid], discrepa.get(pid, casos[pid]["categoria"]["primaria"]), 50, 60.0)
+          for i, pid in enumerate(clave["ordenes"]["lectura1"])]
+    _csv(tmp_path / "l1.csv", l1)
+    s = cc.analizar(clave, cc.leer_csv(tmp_path / "l1.csv"))
+    acta = cc.rellenar_acta(_plantilla(), cc.valores_para_acta(s, clave))
+    assert "| 13 % |" in acta
+    assert "| entre menos de 1 % y 5 % |" in acta
+    assert cc._horquilla_como_el_bot(0.97, 0.9960) == "entre 97 % y más de 99 %"
 
 
 def _plantilla():
     return (pathlib.Path(__file__).resolve().parents[1] / "docs" / "validacion-semisintetica"
             / "acta-h7-plantilla.md").read_text(encoding="utf-8")
+
+
+def _plano(acta):
+    """El acta con los saltos de línea de la plantilla como espacios, para
+    buscar frases que la plantilla parte en dos líneas."""
+    return " ".join(acta.split())
 
 
 def test_el_acta_del_plan_b_describe_una_sola_sesion_secuencial(tmp_path):

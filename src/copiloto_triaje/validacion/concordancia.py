@@ -19,6 +19,8 @@ import numpy as np
 from scipy.special import ndtr, ndtri
 from scipy.stats import rankdata
 
+from .categoria import porcentaje_entero
+
 CATEGORIAS = ("baja", "intermedia", "alta")
 NOTAS = ("correccion", "utilidad", "lenguaje")
 COLUMNAS_CSV = ("lectura", "orden", "id", "practica", "control", "banda", "porcentaje",
@@ -58,7 +60,9 @@ def kappa(a, b, c: int = 3, tipo: str = "lineal") -> dict:
     """Kappa (ponderado lineal o de Cohen) con el error tipico de Fleiss,
     Cohen y Everitt (1969):
         Var = [Σ p_ij (w_ij − (w̄_i. + w̄_.j)(1 − κ))² − (κ − p_e(1 − κ))²] / [n (1 − p_e)²]
-    con w̄_i. = Σ_j p_.j w_ij y w̄_.j = Σ_i p_i. w_ij."""
+    con w̄_i. = Σ_j p_.j w_ij y w̄_.j = Σ_i p_i. w_ij. El intervalo analitico
+    κ ± 1,96·ee se acota a [−1, 1], el recorrido del kappa (con 24 casos y un
+    kappa alto, sin acotar pasaria de 1)."""
     a = np.asarray(a, dtype=int)
     b = np.asarray(b, dtype=int)
     n = a.size
@@ -81,7 +85,7 @@ def kappa(a, b, c: int = 3, tipo: str = "lineal") -> dict:
     var = ((m * termino).sum() - (k - pe * (1.0 - k)) ** 2) / (n * (1.0 - pe) ** 2)
     ee = math.sqrt(max(float(var), 0.0))
     return {"kappa": float(k), "ee": ee,
-            "ic95": [float(k - 1.96 * ee), float(k + 1.96 * ee)],
+            "ic95": [max(-1.0, float(k - 1.96 * ee)), min(1.0, float(k + 1.96 * ee))],
             "po": po, "pe": pe, "n": int(n)}
 
 
@@ -138,7 +142,13 @@ def kappa_con_intervalos(a, b, tipo: str = "lineal") -> dict:
 def acuerdo_continuo(pct_medico, p_sistema, minima=None, maxima=None) -> dict:
     """Spearman entre el porcentaje del medico y el punto medio del sistema;
     Bland-Altman en log-odds con 0 y 100 acotados a 0,5 y 99,5; y la fraccion
-    de porcentajes que caen dentro de la horquilla."""
+    de porcentajes que caen dentro de la horquilla.
+
+    «Dentro» compara el porcentaje entero del medico, SIN acotar, con la
+    horquilla tal como la imprime el bot: `porcentaje_entero` de la minima y
+    de la maxima (Math.round en Desenlace). Una horquilla de un solo valor
+    (los discordantes con el asma conocida) solo admite ese entero, y se
+    cuentan aparte para que el acta lo diga."""
     pct = np.asarray(pct_medico, dtype=float)
     p = np.asarray(p_sistema, dtype=float)
     acotados = int(np.sum((pct <= 0) | (pct >= 100)))
@@ -155,8 +165,11 @@ def acuerdo_continuo(pct_medico, p_sistema, minima=None, maxima=None) -> dict:
               "limites_95": [float(d.mean() - 1.96 * de), float(d.mean() + 1.96 * de)],
               "acotados_0_o_100": acotados}
     if minima is not None and maxima is not None:
-        dentro = (pm >= np.asarray(minima, dtype=float)) & (pm <= np.asarray(maxima, dtype=float))
+        lo = np.array([porcentaje_entero(x) for x in minima], dtype=int)
+        hi = np.array([porcentaje_entero(x) for x in maxima], dtype=int)
+        dentro = (pct >= lo) & (pct <= hi)
         salida["fraccion_dentro_de_la_horquilla"] = float(dentro.mean())
+        salida["horquillas_de_anchura_cero"] = int(np.sum(lo == hi))
     return salida
 
 
@@ -246,6 +259,22 @@ def _notas(filas) -> dict:
     return salida
 
 
+def frente_a_umbrales(k: dict) -> dict | None:
+    """El kappa frente al 0,4 de la Semana 1 y el 0,6 (spec §5.5, §11.4):
+    la estimacion puntual y el limite inferior de cada intervalo. None si el
+    kappa no es calculable."""
+    if k["kappa"] is None or math.isnan(k["kappa"]):
+        return None
+    return {"puntual_ge_0_4": bool(k["kappa"] >= 0.4), "puntual_ge_0_6": bool(k["kappa"] >= 0.6),
+            "li_analitico_lt_0_4": bool(k["ic95"][0] < 0.4),
+            "li_bca_lt_0_4": bool(k["ic95_bca"][0] < 0.4)}
+
+
+def _con_umbrales(k: dict) -> dict:
+    k["frente_a_umbrales"] = frente_a_umbrales(k)
+    return k
+
+
 def analizar(clave: dict, lectura1: list, lectura2: list | None = None,
              planb: list | None = None) -> dict:
     """De los CSV y la clave a la estructura de `sesion.json`."""
@@ -262,11 +291,12 @@ def analizar(clave: dict, lectura1: list, lectura2: list | None = None,
     medico = [f["banda"] for f in l1]
     pct = [f["porcentaje"] for f in l1]
 
-    kappas = {"ponderado_lineal": kappa_con_intervalos(sistema, medico, "lineal"),
-              "cohen": kappa_con_intervalos(sistema, medico, "ninguno"),
-              "binario_alta": kappa_con_intervalos(sistema, medico, "binario_alta")}
+    kappas = {"ponderado_lineal": _con_umbrales(kappa_con_intervalos(sistema, medico, "lineal")),
+              "cohen": _con_umbrales(kappa_con_intervalos(sistema, medico, "ninguno")),
+              "binario_alta": _con_umbrales(kappa_con_intervalos(sistema, medico, "binario_alta"))}
     sensibilidad = {v: kappa(indices([casos[i][clave_cat][v] for i in ids]), indices(medico), 3, "lineal")["kappa"]
                     for v in ("independencia", "conservador", "cruza")}
+    n_cruzan = sum(bool(casos[i][clave_cat]["cruza_limite"]) for i in ids)
     acuerdo = acuerdo_continuo(pct, [casos[i][clave_cat]["punto_medio"] for i in ids],
                                minima=[casos[i][clave_bloque]["minima"] for i in ids],
                                maxima=[casos[i][clave_bloque]["maxima"] for i in ids])
@@ -280,7 +310,8 @@ def analizar(clave: dict, lectura1: list, lectura2: list | None = None,
 
     salida = {"rotulo": clave.get("rotulo", "simulación semisintética — sesión H7"),
               "n": len(ids), "categoria_de": categoria_de, "kappa": kappas,
-              "sensibilidad_categoria": sensibilidad, "acuerdo_continuo": acuerdo,
+              "sensibilidad_categoria": sensibilidad, "n_cruzan_un_limite": n_cruzan,
+              "acuerdo_continuo": acuerdo,
               "desacuerdos": desacuerdos, "lectura2": None, "plan_b": None,
               "texto_fijado": TEXTO_FIJADO}
 
@@ -304,8 +335,8 @@ def analizar(clave: dict, lectura1: list, lectura2: list | None = None,
         tiempo["medido"] = True
         salida["lectura2"] = {
             "n_con_mensaje": len(con), "n_controles": len(controles),
-            "kappa_con_mensaje": kappa_con_intervalos(
-                [casos[f["id"]][clave_cat]["primaria"] for f in con], [f["banda"] for f in con], "lineal"),
+            "kappa_con_mensaje": _con_umbrales(kappa_con_intervalos(
+                [casos[f["id"]][clave_cat]["primaria"] for f in con], [f["banda"] for f in con], "lineal")),
             "cambios_de_banda": sum(f["banda"] != medico1[f["id"]] for f in con),
             "utilidad": _notas(con), "tiempo": tiempo}
 
@@ -316,8 +347,8 @@ def analizar(clave: dict, lectura1: list, lectura2: list | None = None,
             "segundos_adicionales_leer_mensaje": {
                 "mediana": float(statistics.median([f["segundos_con"] for f in pb if f["segundos_con"] is not None])),
                 "n": sum(f["segundos_con"] is not None for f in pb)},
-            "kappa_con_mensaje": kappa_con_intervalos(
-                [casos[f["id"]][clave_cat]["primaria"] for f in pb], [f["banda_con"] for f in pb], "lineal"),
+            "kappa_con_mensaje": _con_umbrales(kappa_con_intervalos(
+                [casos[f["id"]][clave_cat]["primaria"] for f in pb], [f["banda_con"] for f in pb], "lineal")),
             "cambios_de_banda": sum(f["banda_con"] != f["banda"] for f in pb),
             "utilidad": _notas(pb)}
     return salida
@@ -342,6 +373,54 @@ def _fecha(ms):
     return datetime.datetime.fromtimestamp(ms / 1000).strftime("%Y-%m-%d") if ms else "—"
 
 
+def _pct_como_el_bot(x: float) -> str:
+    """Un extremo de la horquilla como lo imprime Desenlace: entero con
+    Math.round (`porcentaje_entero`), y nunca 0 % ni 100 %."""
+    if x < 0.01:
+        return "< 1 %"
+    if x > 0.99:
+        return "> 99 %"
+    return f"{porcentaje_entero(x)} %"
+
+
+def _horquilla_como_el_bot(minima: float, maxima: float) -> str:
+    """La horquilla con la convencion de Desenlace: un solo valor si los dos
+    extremos se imprimen igual, y las cotas en palabras dentro de un rango."""
+    lo, hi = _pct_como_el_bot(minima), _pct_como_el_bot(maxima)
+    if lo == hi:
+        return lo
+    palabras = {"< 1 %": "menos de 1 %", "> 99 %": "más de 99 %"}
+    return f"entre {palabras.get(lo, lo)} y {palabras.get(hi, hi)}"
+
+
+NOMBRES_KAPPA = {"ponderado_lineal": "El kappa ponderado", "cohen": "El kappa de Cohen",
+                 "binario_alta": "El kappa binario en «alta»"}
+
+
+def _criterio(nombre: str, k: dict) -> str:
+    """Una frase: el kappa frente a 0,4 y 0,6, y su limite inferior frente a
+    0,4 con los dos intervalos (spec §5.5, §11.4), desde `frente_a_umbrales`."""
+    u = k.get("frente_a_umbrales")
+    if u is None:
+        return f"{nombre} no es calculable con estas lecturas."
+    if not u["puntual_ge_0_4"]:
+        alcance = "no alcanza el mínimo de 0,4 de la Semana 1"
+    elif not u["puntual_ge_0_6"]:
+        alcance = "alcanza el mínimo de 0,4 de la Semana 1 y no el objetivo de 0,6"
+    else:
+        alcance = "alcanza el mínimo de 0,4 de la Semana 1 y el objetivo de 0,6"
+    la, lb = _f(k["ic95"][0]), _f(k["ic95_bca"][0])
+    if u["li_analitico_lt_0_4"] and u["li_bca_lt_0_4"]:
+        limite = f"queda por debajo de 0,4 con los dos métodos (analítico {la}; BCa {lb})"
+    elif u["li_analitico_lt_0_4"]:
+        limite = f"queda por debajo de 0,4 con el método analítico ({la}) y no con el BCa ({lb})"
+    elif u["li_bca_lt_0_4"]:
+        limite = f"queda por debajo de 0,4 con el BCa ({lb}) y no con el método analítico ({la})"
+    else:
+        limite = f"queda por encima de 0,4 con los dos métodos (analítico {la}; BCa {lb})"
+    return f"{nombre} ({_f(k['kappa'])}) {alcance}; el límite inferior del intervalo {limite}."
+
+
 def valores_para_acta(sesion: dict, clave: dict, lectura1: list | None = None,
                       lectura2: list | None = None) -> dict:
     """Los valores que rellenan la plantilla. Ninguno se teclea: salen de
@@ -351,7 +430,7 @@ def valores_para_acta(sesion: dict, clave: dict, lectura1: list | None = None,
                       for c in clave["casos"])
     desacuerdos = "\n".join(
         f"| {d['id']} | {d['estrato']} | {d['sistema']} | {d['medico']} ({d['porcentaje']} %) | "
-        f"{_f(d['horquilla'][0] * 100, 0)}-{_f(d['horquilla'][1] * 100, 0)} % | {d['comentario']} |"
+        f"{_horquilla_como_el_bot(*d['horquilla'])} | {d['comentario']} |"
         for d in sesion["desacuerdos"]) or "| (ninguno) | | | | | |"
     fecha1 = _fecha(lectura1[0]["abierto_en"]) if lectura1 else "—"
     fecha2 = _fecha(lectura2[0]["abierto_en"]) if lectura2 else "—"
@@ -402,9 +481,12 @@ def valores_para_acta(sesion: dict, clave: dict, lectura1: list | None = None,
         "kappa_ponderado": _kappa_texto(k["ponderado_lineal"]),
         "kappa_cohen": _kappa_texto(k["cohen"]),
         "kappa_binario": _kappa_texto(k["binario_alta"]),
+        "criterio_kappa": " ".join(_criterio(NOMBRES_KAPPA[v], k[v]) for v in NOMBRES_KAPPA),
         "sensibilidad": "; ".join(f"{v} {_f(x)}" for v, x in sesion["sensibilidad_categoria"].items()),
+        "n_cruzan_un_limite": str(sesion["n_cruzan_un_limite"]),
         "spearman": _f(a["spearman"]), "bland_altman": f"{_f(a['diferencia_media_log_odds'])} (DE {_f(a['de'])})",
         "dentro_horquilla": _f(a.get("fraccion_dentro_de_la_horquilla", float("nan")) * 100, 0),
+        "horquillas_anchura_cero": str(a.get("horquillas_de_anchura_cero", "—")),
         "acotados": str(a["acotados_0_o_100"]),
         "influencia": influencia, "utilidad": utilidad, "tiempo": tiempo,
         "tabla_casos": casos, "tabla_desacuerdos": desacuerdos,
