@@ -4,7 +4,7 @@ métrica: con dependencia nula el oráculo no puede salirse de la horquilla."""
 import numpy as np
 import pytest
 
-from copiloto_triaje.servicio.heckerling import combinacion
+from copiloto_triaje.servicio.heckerling import RV_POR_PUNTUACION, combinacion, combinar
 from copiloto_triaje.validacion import generador, metricas, oraculo, simulacion
 
 
@@ -44,21 +44,48 @@ def test_los_nombres_de_las_celdas():
 def test_las_salidas_son_las_del_codigo_del_servidor(conjunto, escenario_0a):
     _, clinica, salidas, _ = escenario_0a
     filas = clinica.to_dict("records")
-    for i in (0, 1, 2, 500, 3810):
+    conocida = salidas["conocida"]
+    assert np.array_equal(conocida, (clinica["asma"] != "no_se").values)
+    for i in np.flatnonzero(conocida)[[0, 1, 2, 500, -1]]:
         b = combinacion(conjunto.prevalencia, generador.hallazgos(filas[i]), float(conjunto.rv[i]))
         assert salidas["independencia"][i] == b["independencia"][0]
         assert salidas["concordantes"][i] == b["concordantes"]
         assert salidas["conservador"][i] == (b["dependencia"][0] if b["concordantes"]
                                              else b["independencia"][0])
         assert salidas["puntuacion"][i] == b["puntuacion"][0]
-    conocida = salidas["conocida"]
-    assert np.array_equal(conocida, (clinica["asma"] != "no_se").values)
     assert np.array_equal(salidas["puntuacion"][conocida], clinica["k"].values[conocida])
     assert np.array_equal(salidas["puntuacion"][~conocida], clinica["k4"].values[~conocida])
-    # la horquilla solo existe con concordancia
-    assert np.array_equal(np.isfinite(salidas["l_dependencia"]), salidas["concordantes"])
+    # la horquilla solo existe con concordancia y con UNA puntuacion
+    assert np.array_equal(np.isfinite(salidas["l_dependencia"]),
+                          salidas["concordantes"] & conocida)
     assert np.all(salidas["l_minima"] <= salidas["l_maxima"])
     assert set(salidas["primaria"]) <= {"baja", "intermedia", "alta"}
+
+
+def test_con_el_asma_desconocida_no_hay_un_modelo_puntual_sino_un_rango(conjunto, escenario_0a):
+    """Dos puntuaciones, [k4, k4 + 1]: los modelos puntuales quedan sin dato y
+    lo que se mide es el rango y su punto medio EN LOG-ODDS."""
+    _, clinica, salidas, _ = escenario_0a
+    no_se = np.flatnonzero(~salidas["conocida"])
+    assert no_se.size == 351
+    for nombre in ("independencia", "conservador", "clinica", "l_independencia",
+                   "l_dependencia"):
+        assert np.all(np.isnan(salidas[nombre][no_se])), nombre
+        assert np.all(np.isfinite(salidas[nombre][salidas["conocida"]])
+                      | (nombre == "l_dependencia")), nombre
+    for i in no_se[[0, 1, 2, 100, -1]]:
+        k4, r = int(clinica["k4"].values[i]), float(conjunto.rv[i])
+        dos = [metricas.logit([combinar(conjunto.prevalencia, RV_POR_PUNTUACION[k], r)])[0]
+               for k in (k4, k4 + 1)]
+        assert salidas["l_medio"][i] == pytest.approx(sum(dos) / 2, abs=1e-12)
+        assert salidas["l_minima"][i] <= min(dos) and max(dos) <= salidas["l_maxima"][i]
+        assert salidas["l_minima"][i] <= salidas["l_medio"][i] <= salidas["l_maxima"][i]
+
+
+def test_las_rv_de_imagen_tienen_que_casar_con_los_casos(conjunto, escenario_0a):
+    _, clinica, _, _ = escenario_0a
+    with pytest.raises(ValueError, match="tienen que casar"):
+        simulacion.salidas_del_sistema(conjunto.prevalencia, clinica.head(5), conjunto.rv[:4])
 
 
 def test_un_bloque_que_no_es_el_redondeo_de_combinar_se_denuncia(conjunto, escenario_0a,
@@ -67,14 +94,20 @@ def test_un_bloque_que_no_es_el_redondeo_de_combinar_se_denuncia(conjunto, escen
     dejara de ser su redondeo, la simulación se detiene en vez de medir otra cosa."""
     _, clinica, _, _ = escenario_0a
 
-    def alterada(prevalencia, hallazgos, rv_imagen):
-        b = combinacion(prevalencia, hallazgos, rv_imagen)
-        b["independencia"] = [round(x + 0.0001, 4) for x in b["independencia"]]
-        return b
+    def con(campo):
+        def alterada(prevalencia, hallazgos, rv_imagen):
+            b = combinacion(prevalencia, hallazgos, rv_imagen)
+            if b[campo] is not None:
+                b[campo] = [round(x + 0.0001, 4) for x in b[campo]]
+            return b
+        return alterada
 
-    monkeypatch.setattr(simulacion, "combinacion", alterada)
-    with pytest.raises(AssertionError, match="no es el redondeo"):
-        simulacion.salidas_del_sistema(conjunto.prevalencia, clinica.head(5), conjunto.rv[:5])
+    concordantes = clinica[escenario_0a[2]["concordantes"]].head(5)
+    rv = conjunto.rv[concordantes.index.values]
+    for campo in ("independencia", "dependencia"):
+        monkeypatch.setattr(simulacion, "combinacion", con(campo))
+        with pytest.raises(AssertionError, match="no es el redondeo"):
+            simulacion.salidas_del_sistema(conjunto.prevalencia, concordantes, rv)
 
 
 def test_el_oraculo_usa_la_misma_informacion_que_el_sistema(conjunto, escenario_0a):

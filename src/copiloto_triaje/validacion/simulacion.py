@@ -62,8 +62,16 @@ def salidas_del_sistema(prevalencia: float, clinica: pd.DataFrame, rv) -> dict:
     """Lo que el codigo del servidor da para cada caso. Las probabilidades de
     los modelos puntuales son las del BLOQUE (redondeadas a 4 decimales, lo
     que el sistema entrega); los extremos de la horquilla van SIN redondear,
-    recalculados con `combinar` y contrastados con el bloque."""
+    recalculados con `combinar` y contrastados con el bloque.
+
+    Con el asma desconocida el sistema da DOS puntuaciones: no hay UN modelo
+    puntual ni UNA horquilla, y `independencia`, `conservador`, `clinica`,
+    `l_independencia` y `l_dependencia` quedan en nan. Esos casos se miden con
+    `l_minima`, `l_maxima` y `l_medio`."""
     n = len(clinica)
+    rv = np.asarray(rv, dtype=float)
+    if rv.shape != (n,):
+        raise ValueError(f"hay {n} casos y {rv.size} RV de imagen: tienen que casar")
     s = {"conocida": np.zeros(n, bool), "concordantes": np.zeros(n, bool),
          "puntuacion": np.zeros(n, int), "primaria": np.empty(n, dtype=object)}
     for nombre in ("independencia", "conservador", "clinica", "l_independencia",
@@ -82,16 +90,18 @@ def salidas_del_sistema(prevalencia: float, clinica: pd.DataFrame, rv) -> dict:
         s["concordantes"][i] = b["concordantes"]
         s["puntuacion"][i] = b["puntuacion"][0]
         s["primaria"][i] = categoria_del_sistema(b)["primaria"]
+        l_ind = [math.log(x / (1.0 - x)) for x in ind]
+        todas = [math.log(x / (1.0 - x)) for x in ind + dep]
+        s["l_minima"][i], s["l_maxima"][i] = min(todas), max(todas)
+        s["l_medio"][i] = sum(l_ind) / len(l_ind)
+        if not s["conocida"][i]:
+            continue
         s["independencia"][i] = b["independencia"][0]
         s["conservador"][i] = b["dependencia"][0] if b["concordantes"] else b["independencia"][0]
         s["clinica"][i] = combinar(prevalencia, RV_POR_PUNTUACION[b["puntuacion"][0]], 1.0)
-        l_ind = [math.log(x / (1.0 - x)) for x in ind]
-        todas = [math.log(x / (1.0 - x)) for x in ind + dep]
         s["l_independencia"][i] = l_ind[0]
         if dep:
             s["l_dependencia"][i] = math.log(dep[0] / (1.0 - dep[0]))
-        s["l_minima"][i], s["l_maxima"][i] = min(todas), max(todas)
-        s["l_medio"][i] = sum(l_ind) / len(l_ind)
     return s
 
 
