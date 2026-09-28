@@ -227,6 +227,22 @@ def test_la_tolerancia_es_la_de_0a3_y_se_puede_cambiar():
     assert (fuera["bajo"], fuera["sobre"], fuera["contencion"]) == (1.0, 0.0, 0.0)
 
 
+def test_la_contencion_se_cuenta_y_un_90_por_ciento_exacto_lo_es():
+    """Restando, 1 − 0,06 − 0,04 da 0,8999999999999999 y no alcanza el 0,90."""
+    assert 1.0 - 0.06 - 0.04 < 0.9
+    n = 2000
+    oraculo = np.array([-1.0] * 120 + [2.0] * 80 + [0.5] * (n - 200))
+    h = metricas.horquilla(oraculo, np.zeros(n), np.ones(n))
+    assert (h["bajo"], h["sobre"], h["contencion"]) == (0.06, 0.04, 0.9)
+    assert h["contencion"] >= 0.90
+    r = metricas.contencion_en_rango(oraculo, np.zeros(n), np.ones(n))
+    assert (r["bajo"], r["sobre"], r["contencion"]) == (0.06, 0.04, 0.9)
+    # en todos los repartos de colas que suman un 10 %
+    for bajos in range(0, 201, 8):
+        oraculo = np.array([-1.0] * bajos + [2.0] * (200 - bajos) + [0.5] * (n - 200))
+        assert metricas.horquilla(oraculo, np.zeros(n), np.ones(n))["contencion"] == 0.9
+
+
 def test_sin_ningun_caso_con_horquilla_no_hay_fracciones():
     h = metricas.horquilla([0.3], [0.0], [0.0])
     assert h == {"n": 0, "sin_horquilla": 1,

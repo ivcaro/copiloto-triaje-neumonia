@@ -233,10 +233,12 @@ def horquilla(l_oraculo, l_dependencia, l_independencia, epsilon: float = EPSILO
     sentido = np.sign(delta[con])
     bajo = (o[con] - d[con]) * sentido < -epsilon
     sobre = (o[con] - i[con]) * sentido > epsilon
+    # La contencion se CUENTA, no se resta: 1 − 0,06 − 0,04 da
+    # 0,8999999999999999, y un 90 % exacto no alcanzaria su umbral.
     return {"n": n, "sin_horquilla": int((~con).sum()),
             "lambda": _cuartiles((o[con] - d[con]) / delta[con]),
             "bajo": float(bajo.mean()), "sobre": float(sobre.mean()),
-            "contencion": float(1.0 - bajo.mean() - sobre.mean())}
+            "contencion": float((~(bajo | sobre)).mean())}
 
 
 def error_puntual(l_sistema, l_oraculo) -> dict:
@@ -259,7 +261,7 @@ def contencion_en_rango(l_oraculo, l_minima, l_maxima, epsilon: float = EPSILON)
         return {"n": 0, "bajo": None, "sobre": None, "contencion": None}
     bajo, sobre = o < lo - epsilon, o > hi + epsilon
     return {"n": int(o.size), "bajo": float(bajo.mean()), "sobre": float(sobre.mean()),
-            "contencion": float(1.0 - bajo.mean() - sobre.mean())}
+            "contencion": float((~(bajo | sobre)).mean())}
 
 
 def percentiles(valores, alfa: float = 0.05) -> list:

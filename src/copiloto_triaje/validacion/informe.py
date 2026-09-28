@@ -128,6 +128,12 @@ def _a_la_vista(x, decimales: int) -> float:
     return float(f"{float(x):.{decimales}f}")
 
 
+def _alcanza(x, umbral) -> bool:
+    """Si una fraccion alcanza un umbral que se cumple con la igualdad («≥»),
+    con las dos cifras tal como se imprimen: en porcentaje y con un decimal."""
+    return _a_la_vista(100.0 * x, 1) >= _a_la_vista(100.0 * umbral, 1)
+
+
 def _cifra(celda: dict, ruta: str, decimales: int, signo: bool = False) -> str:
     return (numero(_valor(celda, ruta), decimales, signo)
             + _intervalo(celda, ruta, lambda v: numero(v, decimales, signo)))
@@ -202,7 +208,7 @@ def _frente_al_suelo(ece, suelo: dict) -> str:
     """La ECE solo se lee al lado de su suelo de ruido."""
     if _falta(ece) or _falta(suelo["p95"]):
         return "no se puede comparar con su suelo"
-    if ece <= suelo["p95"]:
+    if _a_la_vista(ece, 3) <= _a_la_vista(suelo["p95"], 3):
         return "no supera el percentil 95 de su suelo: no se distingue del ruido de muestreo"
     return "supera el percentil 95 de su suelo: hay descalibración más allá del ruido de muestreo"
 
@@ -227,9 +233,31 @@ def _completas(resultados: dict) -> list:
 
 
 def _la_fila_0a_se_cumple(cero: dict) -> bool:
-    """Colas exactamente 0 y contencion 100 %: la comprobacion de la metrica."""
+    """Colas exactamente 0 y contencion 100 %: la comprobacion de la metrica.
+    Es exacta, no «tal como se imprime»: un solo caso fuera la incumple."""
     h = cero["horquilla"]["todos"]
     return h["bajo"] == 0 and h["sobre"] == 0 and h["contencion"] == 1
+
+
+def _fuera_en_0a(cero: dict) -> str:
+    """Cuantos casos quedan fuera en 0A: la tabla puede imprimir «0,0 %» con
+    un caso fuera, y entonces hay que dar la cuenta."""
+    h = cero["horquilla"]["todos"]
+    if _falta(h["bajo"]) or _falta(h["sobre"]) or not h["n"]:
+        return "no hay casos concordantes con horquilla"
+    fuera = round((h["bajo"] + h["sobre"]) * h["n"])
+    return (f"quedan fuera de la horquilla {entero(fuera)} de los {entero(h['n'])} "
+            f"concordantes")
+
+
+def _que_previo(insumos: dict) -> str:
+    """El previo del analisis principal es el del calibrador: se dice si es,
+    como tiene que ser, la prevalencia del conjunto."""
+    del_conjunto = (insumos["positivas"] / insumos["placas"] if insumos["placas"] else None)
+    if numero(del_conjunto, 4) == numero(insumos["prevalencia"], 4):
+        return "el del calibrador, que es la prevalencia del conjunto"
+    return (f"el del calibrador, que **no es la prevalencia del conjunto** "
+            f"({numero(del_conjunto, 4)})")
 
 
 def _pendiente_de_0a(cero: dict) -> str:
@@ -249,7 +277,7 @@ VEREDICTOS = {
                          "enteros a un lado del umbral",
     "punto_si": "se sostiene (estimación puntual, sin intervalo)",
     "punto_no": "no se sostiene (estimación puntual, sin intervalo)",
-    "sin_casos": "no se puede decir: no hay casos concordantes",
+    "sin_casos": "no se puede decir: no hay casos concordantes con horquilla",
 }
 
 
@@ -257,17 +285,20 @@ def _veredicto(celda: dict) -> tuple:
     """(clave, texto) del veredicto de la hipotesis en una celda. Con
     intervalo decide el intervalo ENTERO, y tiene que quedar del mismo lado
     del umbral que la estimacion; sin el, solo esta la estimacion puntual, y
-    el texto lo dice."""
-    h = celda["hipotesis"]
-    if _falta(celda["horquilla"]["todos"]["contencion"]) or _falta(h["umbral"]):
+    el texto lo dice. Todo, con las cifras tal como se imprimen: una
+    contencion que se imprime «90,0 %» alcanza un umbral del 90 %."""
+    umbral = celda["hipotesis"]["umbral"]
+    punto = celda["horquilla"]["todos"]["contencion"]
+    if _falta(punto):
         clave = "sin_casos"
     else:
         par = _par(celda, "horquilla.todos.contencion")
+        alcanza = _alcanza(punto, umbral)
         if par is None:
-            clave = "punto_si" if h["se_sostiene"] else "punto_no"
-        elif h["se_sostiene"] and _a_la_vista(par[0], 3) >= h["umbral"]:
+            clave = "punto_si" if alcanza else "punto_no"
+        elif alcanza and _alcanza(par[0], umbral):
             clave = "se_sostiene"
-        elif not h["se_sostiene"] and _a_la_vista(par[1], 3) < h["umbral"]:
+        elif not alcanza and not _alcanza(par[1], umbral):
             clave = "no_se_sostiene"
         else:
             clave = "no_se_puede_decir"
@@ -315,7 +346,8 @@ def _insumos(r: dict) -> list:
         f"neumonía.",
         "- **Clínica:** a cada placa se le sortea la puntuación de Heckerling dada su "
         "etiqueta, con las frecuencias publicadas de la cohorte de derivación. No se "
-        "inventa la exactitud de la regla: se usa la publicada, tal como la usa el sistema.",
+        "inventa la exactitud de la regla: se usa la publicada, tal como la usa el sistema. "
+        "Cada placa con su clínica sorteada es una viñeta.",
         "- **Dependencia:** la estructura de dependencia entre clínica e imagen es un "
         "supuesto: nula en 0A y barrida en el resto de la rejilla.",
         "- **Transporte:** el generador supone que la distribución de la puntuación por "
@@ -328,8 +360,8 @@ def _insumos(r: dict) -> list:
         f"(sha256 `{huella(i['crudas_sha256'])}…`), generadas con los pesos de sha256 "
         f"`{huella(i['pesos_sha256'])}…`.",
         f"- Calibrador: `{i['calibrador']}` (sha256 `{huella(i['calibrador_sha256'])}…`).",
-        f"- Previo del análisis principal: {numero(i['prevalencia'], 4)}, la prevalencia de "
-        f"la población simulada. El previo desplegado, "
+        f"- Previo del análisis principal: {numero(i['prevalencia'], 4)}, {_que_previo(i)}. "
+        f"El previo desplegado, "
         f"{numero(p['previo_desplegado'], 4)}, solo entra en la sensibilidad al previo.",
         f"- Rejilla: ρ1 y ρ0 toman los valores {' / '.join(rho(x) for x in p['rejilla'])}: "
         f"{entero(len(r['celdas']))} celdas. El origen es 0A y se cuenta aparte; "
@@ -427,9 +459,11 @@ def _escenario_0a(r: dict) -> list:
                 [[cero["nombre"], entero(h["n"]), _fraccion(cero, "horquilla.todos.bajo"),
                   _fraccion(cero, "horquilla.todos.sobre"),
                   _fraccion(cero, "horquilla.todos.contencion")]]),
-        ("Se cumple: la métrica de la horquilla mide lo que tiene que medir." if limpia else
-         "**NO se cumple: la métrica de la horquilla o el generador tienen un defecto, y las "
-         "tablas de la horquilla de este documento no se pueden leer hasta corregirlo.**"),
+        ("Se cumple: la métrica de la horquilla pasa su comprobación en el caso nulo."
+         if limpia else
+         f"**NO se cumple: {_fuera_en_0a(cero)}. La métrica de la horquilla o el generador "
+         f"tienen un defecto, y las tablas de la horquilla de este documento no se pueden "
+         f"leer hasta corregirlo.**"),
         "",
     ]
     return lineas
@@ -649,17 +683,17 @@ def _sensibilidad(r: dict) -> list:
     previo, principal = numero(s["previo"], 4), numero(s["previo_principal"], 4)
     d = s["desplazamiento_log_odds"]
     lineas += [
-        f"El análisis principal usa {principal}, la prevalencia de la población simulada; el "
-        f"sistema desplegado arranca con {previo}. Declarar {previo} en una población de "
-        f"{principal} tiene un efecto analítico: todas las odds posteriores se multiplican "
+        f"El análisis principal usa como previo {principal} (el de «Insumos y parámetros»); "
+        f"el sistema desplegado arranca con {previo}. Declarar {previo} donde el previo "
+        f"correcto es {principal} tiene un efecto analítico: todas las odds posteriores se multiplican "
         f"por {numero(math.exp(d), 3)}, es decir, se desplazan {numero(d, 2, signo=True)} en "
         f"log-odds por igual. El intercepto de calibración debe moverse, por tanto, en "
         f"torno a {numero(-d, 2, signo=True)} respecto del principal.",
         "",
         "**El AUC no cambia** (un desplazamiento común no altera el orden de los casos) y "
         "no se reporta en esta tabla. **Esto no recomienda configurar el despliegue con "
-        f"{principal}:** es la prevalencia del conjunto de datos de un reto, no la de ningún "
-        "servicio.",
+        f"{principal}:** es el previo de un conjunto de datos de un reto, no la prevalencia "
+        "de ningún servicio.",
         "",
         f"Con el previo {previo} (casos con el asma conocida); «principal» es la misma cifra "
         f"con {principal}. Las bandas son < 20 %, 20-70 % y > 70 %:",
@@ -741,10 +775,11 @@ def _colas(h: dict) -> str:
     dentro = f"queda dentro el {porcentaje(h['contencion'])}"
     bajo, sobre = h["bajo"], h["sobre"]
     if _falta(bajo) or _falta(sobre):
-        return "no hay casos"
+        return "no hay casos con horquilla"
     if bajo == 0 and sobre == 0:
         return f"{dentro}; ninguna cola tiene casos"
-    if bajo == sobre:
+    # cual es la mayor, con las dos tal como se imprimen
+    if _a_la_vista(100.0 * bajo, 1) == _a_la_vista(100.0 * sobre, 1):
         return f"{dentro}; las dos colas pesan lo mismo ({porcentaje(bajo)} cada una)"
     if sobre > bajo:
         return (f"{dentro}; la cola mayor es la de más allá de la independencia "
@@ -799,11 +834,12 @@ def _del_lado(celdas, clave: str, debajo: bool) -> tuple:
 
 
 def _lectura_de_la_pendiente(celdas, clave: str, debajo: bool, esperada: str,
-                             contraria: str) -> list:
+                             contraria: str, quiere_decir: dict) -> list:
     """Las frases de la pendiente de un modelo: primero el lado esperado y
-    despues, si alguna celda cae en el, el contrario. En los dos se dice en
-    cuantas el intervalo queda ENTERO de ese lado: la estimacion sola no
-    decide."""
+    despues, si alguna celda cae en el, el contrario. La estimacion sola no
+    decide: lo que la pendiente `quiere_decir` (por debajo de 1, True; por
+    encima, False) se dice solo de las celdas con el intervalo ENTERO de ese
+    lado."""
     ruta = f"modelos.{clave}.pendiente"
     lineas = []
     for lado, frase in ((debajo, esperada), (not debajo, contraria)):
@@ -815,7 +851,7 @@ def _lectura_de_la_pendiente(celdas, clave: str, debajo: bool, esperada: str,
         if con_intervalo:
             lineas.append(
                 f"- De esas, con el intervalo entero por {'debajo' if lado else 'encima'} "
-                f"de 1: {len(enteras)} de {len(con_intervalo)}"
+                f"de 1 ({quiere_decir[lado]}): {len(enteras)} de {len(con_intervalo)}"
                 + (": " + _lista(c["nombre"] for c in enteras) if enteras else "") + ".")
     return lineas
 
@@ -837,10 +873,11 @@ def _lectura_de_las_pareadas(celdas) -> list:
             mejoran, empeoran = (encima, debajo) if sube else (debajo, encima)
             lineas.append(
                 f"- **Frente a la imagen sola: {titulo}, {nombre}.** Celdas destacadas con "
-                f"intervalo: {len(con_intervalo)}. El intervalo queda entero del lado de la "
-                f"mejora (por {'encima' if sube else 'debajo'} de 0) en "
-                f"{_nombradas(mejoran)}. Entero del lado contrario, en "
-                f"{_nombradas(empeoran)}. Cruza el 0 en {_nombradas(cruzan)}.")
+                f"intervalo: {len(con_intervalo)}. Con el intervalo entero del lado de la "
+                f"mejora (por {'encima' if sube else 'debajo'} de 0): "
+                f"{_nombradas(mejoran)}. Con el intervalo entero del lado contrario: "
+                f"{_nombradas(empeoran)}. Con el 0 dentro del intervalo: "
+                f"{_nombradas(cruzan)}.")
     return lineas
 
 
@@ -863,16 +900,18 @@ def _lectura_de_la_hipotesis(r: dict) -> str:
     if con_intervalo:
         frases += [
             "Donde hay intervalo decide el intervalo entero.",
-            f"Se sostiene en {_nombradas(clases['se_sostiene'])}.",
-            f"No se sostiene en {_nombradas(clases['no_se_sostiene'])}.",
-            f"No se puede decir, porque la estimación y su intervalo no quedan enteros a un "
-            f"lado del umbral, en {_nombradas(clases['no_se_puede_decir'])}."]
+            f"Celdas en las que se sostiene: {_nombradas(clases['se_sostiene'])}.",
+            f"Celdas en las que no se sostiene: {_nombradas(clases['no_se_sostiene'])}.",
+            f"Celdas en las que no se puede decir, porque la estimación y su intervalo no "
+            f"quedan enteros a un lado del umbral: {_nombradas(clases['no_se_puede_decir'])}."]
     if sin_intervalo:
         frases.append(
-            f"Sin intervalo, {entero(len(sin_intervalo))}: solo hay estimación puntual, que "
-            f"alcanza el umbral en {_nombradas(clases['punto_si'])}.")
+            f"Sin intervalo, {entero(len(sin_intervalo))}: solo hay estimación puntual. "
+            f"Celdas en las que la estimación alcanza el umbral: "
+            f"{_nombradas(clases['punto_si'])}.")
     if clases["sin_casos"]:
-        frases.append(f"Sin casos concordantes, {_nombradas(clases['sin_casos'])}.")
+        frases.append(f"Celdas sin casos concordantes con horquilla: "
+                      f"{_nombradas(clases['sin_casos'])}.")
     return " ".join(frases)
 
 
@@ -882,8 +921,8 @@ def _lectura(r: dict) -> list:
         "",
         "Estas frases se componen contando sobre las cifras de las tablas: dicen lo que las "
         "cifras dicen, y nada más. Todo se refiere a la simulación. Las comparaciones se "
-        "hacen con las cifras tal como se imprimen: un extremo que redondea al umbral no "
-        "queda a ningún lado de él.",
+        "hacen con las cifras tal como se imprimen: «por encima» y «por debajo» son "
+        "estrictos, y un umbral «≥» se alcanza también con la igualdad.",
         "",
     ]
     destacadas = _destacadas(r)
@@ -898,18 +937,20 @@ def _lectura(r: dict) -> list:
     else:
         independencia = _lectura_de_la_pendiente(
             destacadas, "independencia", True,
-            "**La independencia.** Celdas destacadas en las que la pendiente de la "
-            "combinación por independencia es menor que 1",
-            "En sentido contrario, la pendiente de la combinación por independencia es "
-            "mayor que 1 (se queda corta)")
+            "**La independencia.** Celdas destacadas en las que la estimación de la "
+            "pendiente de la combinación por independencia es menor que 1",
+            "En sentido contrario, la estimación de la pendiente de la combinación por "
+            "independencia es mayor que 1",
+            {True: "exagera", False: "se queda corta"})
         independencia[0] += " Una pendiente menor que 1 es la forma cuantitativa de «exagera»."
         lineas += independencia
         lineas += _lectura_de_la_pendiente(
             destacadas, "conservador", False,
-            "**El extremo conservador.** Celdas destacadas en las que su pendiente es mayor "
-            "que 1 (se queda corto)",
-            "En sentido contrario, la pendiente del extremo conservador es menor que 1 "
-            "(también el extremo conservador exagera)")
+            "**El extremo conservador.** Celdas destacadas en las que la estimación de su "
+            "pendiente es mayor que 1",
+            "En sentido contrario, la estimación de la pendiente del extremo conservador es "
+            "menor que 1",
+            {True: "también el extremo conservador exagera", False: "se queda corto"})
         lineas += _lectura_de_las_pareadas(destacadas)
     lineas.append(_lectura_de_la_hipotesis(r))
     fuera, cifras = _fuera_de_su_intervalo(r["celdas"])
@@ -923,7 +964,8 @@ def _lectura(r: dict) -> list:
             f"de su intervalo {entero(fuera)} de las {entero(cifras)} cifras que lo "
             f"llevan.")
     if destacadas:
-        lineas += ["", "Hacia qué lado cae el oráculo, por eje y por lado de la imagen:", ""]
+        lineas += ["", "Hacia qué lado cae el oráculo, por eje y por lado de la imagen "
+                       "(estimaciones puntuales):", ""]
         for eje in EJES:
             celdas = [c for c in destacadas if _eje(c) == eje]
             if not celdas:
@@ -955,7 +997,9 @@ def _limites(r: dict) -> list:
         "",
         "**Puede decir:**",
         "",
-        "- si el sistema reproduce caso a caso la posterior del generador (0A);",
+        f"- si el sistema reproduce caso a caso la posterior del generador (0A: lo "
+        f"comprueban, caso a caso, las pruebas de `{PRUEBA_0A}`; la fila 0A de la horquilla "
+        f"lo resume para los concordantes);",
         "- si, **cuando** la puntuación tiene la exactitud publicada y es condicionalmente "
         "independiente de la imagen, la aritmética y la calibración de la imagen dan una "
         "posterior calibrada en el conjunto de prueba de RSNA;",
@@ -964,7 +1008,8 @@ def _limites(r: dict) -> list:
         "horquilla;",
         "- cuánto desplaza la calibración un previo equivocado.",
         "",
-        corrida + " Lo demás se lee en «Lectura de los resultados».",
+        corrida + " Lo demás se lee en «Lectura de los resultados» y, lo del previo, en "
+                  "«Sensibilidad al previo».",
         "",
         "**No puede afirmar** exactitud clínica real ni cuánto aporta la clínica en "
         "pacientes: las viñetas no son pacientes, la exactitud es la publicada y la "
