@@ -539,6 +539,20 @@ def test_casos_desde_fichero_construye_los_casos_de_la_sesion(tmp_path):
         casos_desde_fichero(fichero)
 
 
+def test_casos_desde_fichero_rechaza_un_patientid_repetido(tmp_path):
+    """mensajes.json va por patientId: un caso repetido pisaria el mensaje del
+    otro y la sesion se quedaria con uno menos sin que nadie lo notara."""
+    from pruebas.reproducir_casos import SIGNOS, SINTOMAS, casos_desde_fichero
+    dcm = tmp_path / "a.dcm"
+    dcm.write_bytes(b"x")
+    caso = {"ruta_dcm": str(dcm), "signos": SIGNOS, "sintomas": SINTOMAS}
+    fichero = tmp_path / "casos.json"
+    fichero.write_text(json.dumps([{"patientId": "p-1", **caso}, {"patientId": "p-2", **caso},
+                                   {"patientId": "p-1", **caso}]), encoding="utf-8")
+    with pytest.raises(SystemExit, match="repite el patientId p-1 en los casos 0 y 2"):
+        casos_desde_fichero(fichero)
+
+
 def test_el_explorado_del_mensaje_repite_los_signos_del_caso():
     """Los nodos reales redactan EXPLORADO con lo que el arnes tecleo: 37,8 y
     100 exactos (no puntuan) tienen que salir tal cual, no como 38 y 100."""

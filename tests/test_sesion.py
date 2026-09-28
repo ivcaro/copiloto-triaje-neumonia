@@ -248,11 +248,28 @@ def test_fase_mensajes_con_bots_no_pide_la_imagen(sesion_elegida):
 
 def test_fase_mensajes_sin_bots_exige_el_tag_y_el_digest_de_la_imagen(sesion_elegida):
     preparar, salida = sesion_elegida
-    mensajes = _mensajes_coherentes(_leer_clave(salida), con_bots=True)
-    next(iter(mensajes.values()))["con_bots"] = False              # uno solo sin bots basta
-    _escribir_mensajes(salida, mensajes)
+    _escribir_mensajes(salida, _mensajes_coherentes(_leer_clave(salida)))
     with pytest.raises(SystemExit, match="--imagen-digest"):
         preparar.fase_mensajes(salida, imagen_tag="h7-sesion")
+    assert not (salida / "formulario" / "datos_lectura2.js").exists()
+    assert _leer_clave(salida)["fase"] == "elegir"
+
+
+def test_fase_mensajes_rechaza_una_mezcla_de_origenes(sesion_elegida):
+    """El acta cita UN origen: los 27 mensajes salen todos con bots o todos
+    de la imagen local, aunque se pasen el tag y el digest."""
+    preparar, salida = sesion_elegida
+    clave = _leer_clave(salida)
+    mensajes = _mensajes_coherentes(clave, con_bots=True)
+    sin_bots = [c["patientId"] for c in clave["casos"][:2]]
+    for pid in sin_bots:
+        mensajes[pid].update(con_bots=False, coincide=None)
+    _escribir_mensajes(salida, mensajes)
+    with pytest.raises(SystemExit) as e:
+        preparar.fase_mensajes(salida, **IMAGEN)
+    assert "los mensajes mezclan orígenes: 25 con bots y 2 sin bots" in str(e.value)
+    assert f"sin bots: {', '.join(sin_bots)}" in str(e.value)
+    assert "un solo modo para los 27 casos" in str(e.value)
     assert not (salida / "formulario" / "datos_lectura2.js").exists()
     assert _leer_clave(salida)["fase"] == "elegir"
 

@@ -312,17 +312,23 @@ def casos_desde_fichero(ruta):
     """Los casos de `--casos`: una lista JSON de
     {patientId, ruta_dcm, signos, sintomas}. Se comprueba cada uno ANTES de
     empezar: un caso a medias haria que el arnes dijera «SIN COMBINAR» de un
-    caso que el medico va a leer como combinado."""
+    caso que el medico va a leer como combinado, y un `patientId` repetido
+    pisaria un mensaje con otro en `mensajes.json`, que va por `patientId`."""
     ruta = pathlib.Path(ruta)
     datos = json.loads(ruta.read_text(encoding="utf-8"))
     if not isinstance(datos, list) or not datos:
         raise SystemExit(f"{ruta} no es una lista de casos")
     meta = _metadatos()
     casos = []
+    vistos = {}
     for i, d in enumerate(datos):
         faltan = [k for k in ("patientId", "ruta_dcm", "signos", "sintomas") if k not in d]
         if faltan:
             raise SystemExit(f"al caso {i} de {ruta} le faltan {faltan}")
+        if d["patientId"] in vistos:
+            raise SystemExit(f"{ruta} repite el patientId {d['patientId']} en los casos "
+                             f"{vistos[d['patientId']]} y {i}: cada caso va una sola vez")
+        vistos[d["patientId"]] = i
         if hallazgos_del_caso(d["sintomas"], d["signos"]) is None:
             raise SystemExit(f"el caso {d['patientId']} no lleva los cinco hallazgos "
                              f"con su tipo: no se puede combinar")

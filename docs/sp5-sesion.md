@@ -91,8 +91,10 @@ previsto (concordancia, puntuación, RV de imagen y prevalencia) y, con bots,
 que lo que guardó el bot coincide con la lectura del arnés; y escribe
 `datos_lectura2.js`, `datos_planb.js`, `dosier_lectura2.md` y la clave
 definitiva, con el origen de los mensajes. Si algo no cuadra, se detiene y lo
-lista: no se corrige a mano. Si algún mensaje no se generó con bots y faltan
-`--imagen-tag` o `--imagen-digest`, también se detiene: el acta los cita.
+lista: no se corrige a mano. Si unos mensajes se generaron con bots y otros
+sin bots, también se detiene: la sesión usa un solo modo para los 27 casos,
+porque el acta cita un solo origen. Y si se generaron sin bots y faltan
+`--imagen-tag` o `--imagen-digest`, también: el acta los cita.
 
 ## 3. Ensayo (1-4 oct), en una carpeta aparte
 

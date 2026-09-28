@@ -16,7 +16,9 @@ Dos fases:
                    coinciden), y escribe datos_lectura2.js, datos_planb.js,
                    dosier_lectura2.md y la clave definitiva: la categoria del
                    sistema sale del bloque DEL MENSAJE, que es lo que el
-                   medico ve. Si algun mensaje no se genero con bots, exige
+                   medico ve. Los mensajes salen todos del mismo origen
+                   (el acta cita UNO): una mezcla de mensajes con bots y sin
+                   bots se rechaza. Si no se generaron con bots, exige
                    --imagen-tag y --imagen-digest, que el acta cita (spec §5.6).
 
 Cada eleccion lleva una marca, `preparacion` (semilla y hora), que viaja a
@@ -217,9 +219,17 @@ def fase_mensajes(salida: pathlib.Path, imagen_tag: str | None = None,
     if problemas:
         raise SystemExit("mensajes que no sirven; no se escribe la lectura 2:\n  "
                          + "\n  ".join(problemas))
-    con_bots = all(bool(c["con_bots"]) for c in clave["casos"] + clave["practica"])
+    todos = clave["casos"] + clave["practica"]
+    sin_bots = [c["patientId"] for c in todos if not c["con_bots"]]
+    if sin_bots and len(sin_bots) < len(todos):
+        raise SystemExit(f"los mensajes mezclan orígenes: {len(todos) - len(sin_bots)} con bots y "
+                         f"{len(sin_bots)} sin bots (sin bots: {', '.join(sin_bots)}). La sesión "
+                         f"usa un solo modo para los {len(todos)} casos, porque el acta cita un "
+                         f"solo origen: repite pruebas/reproducir_casos.py --casos con todos los "
+                         f"casos en el mismo modo; no se escribe la lectura 2")
+    con_bots = not sin_bots
     if not con_bots and not (imagen_tag and imagen_digest):
-        raise SystemExit("hay mensajes que no se generaron con bots: el acta cita la imagen "
+        raise SystemExit("los mensajes no se generaron con bots: el acta cita la imagen "
                          "local de la que salieron (spec §5.6); pasa --imagen-tag y "
                          "--imagen-digest (docker image inspect <imagen> --format \"{{.Id}}\")")
     clave["origen_mensajes"] = {"con_bots": con_bots, "imagen_tag": imagen_tag,
