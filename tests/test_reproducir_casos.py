@@ -546,3 +546,19 @@ def test_el_explorado_del_mensaje_repite_los_signos_del_caso():
               "crepitantes": False, "murmullo_disminuido": True}
     d = _redactar({"statusCode": 200, "cuerpo": _sse(UN_RESULTADO)}, signos=signos)
     assert "EXPLORADO — 37,8 °C, 101 lpm, crepitantes no, murmullo disminuido" in d["texto"]
+
+
+def test_mensajes_json_lleva_el_veredicto_coincide_del_bot():
+    """Ruling 12: `preparar_sesion.py --fase mensajes` rechaza un caso cuyo
+    `coincide` empieza por «NO»; para eso el veredicto tiene que llegar a
+    mensajes.json. `main` necesita el copiloto, así que se ata al código:
+    el diccionario de cada caso lleva la clave, leída de la observación."""
+    import ast
+    arbol = ast.parse((REPO / "pruebas" / "reproducir_casos.py").read_text(encoding="utf-8"))
+    principal = next(n for n in arbol.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+    por_caso = [n for n in ast.walk(principal) if isinstance(n, ast.Dict)
+                and any(isinstance(k, ast.Constant) and k.value == "texto_paciente" for k in n.keys)]
+    assert len(por_caso) == 1
+    claves = {k.value: v for k, v in zip(por_caso[0].keys, por_caso[0].values)}
+    assert {"texto", "resultado", "con_bots", "fallo", "coincide"} <= set(claves)
+    assert ast.unparse(claves["coincide"]) == "obs.get('coincide')"

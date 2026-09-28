@@ -3,6 +3,7 @@ import importlib.util
 import json
 import pathlib
 import re
+import shutil
 
 import numpy as np
 import pytest
@@ -90,13 +91,21 @@ def test_la_vineta_se_lee_como_un_caso_y_con_coma_decimal(eleccion):
               "sintomas": {**sesion.SINTOMAS_FIJOS, "fiebre": "si", "asma": "no_se"}})
     v = sesion.vineta(c)
     assert v.startswith("Paciente de 57 años, sexo masculino; radiografía de tórax en proyección AP.")
-    assert "fiebre; tos con flema; entre 3 y 7 días de evolución; sin disnea; con dolor torácico; no sabe si tiene asma." in v
+    assert ("\nRefiere fiebre; tos con flema; entre 3 y 7 días de evolución; sin disnea; "
+            "con dolor torácico; no sabe si tiene asma.") in v
     assert "temperatura 38,2 °C; frecuencia cardíaca 104 lpm; crepitantes: sí; murmullo vesicular: normal." in v
+    sin_fiebre = dict(c, signos={**c["signos"], "temperatura_c": 37.1},
+                      sintomas={**c["sintomas"], "fiebre": "no", "asma": "no"})
+    v = sesion.vineta(sin_fiebre)
+    assert "\nNo refiere fiebre; tos con flema;" in v and "\nRefiere fiebre" not in v
+    assert "no tiene asma." in v and "temperatura 37,1 °C" in v
 
 
-def test_linea_explorado_es_la_que_redacta_el_nodo_desenlace():
-    signos = {"temperatura_c": 37.8, "frecuencia_cardiaca": 101,
-              "crepitantes": False, "murmullo_disminuido": True}
+@pytest.mark.parametrize("signos", [
+    {"temperatura_c": 37.8, "frecuencia_cardiaca": 101, "crepitantes": False, "murmullo_disminuido": True},
+    {"temperatura_c": 39.4, "frecuencia_cardiaca": 88, "crepitantes": True, "murmullo_disminuido": False},
+])
+def test_linea_explorado_es_la_que_redacta_el_nodo_desenlace(signos):
     d = _redactar({"statusCode": 200, "cuerpo": _sse(UN_RESULTADO)}, signos=signos)
     assert sesion.linea_explorado(signos) in d["texto"]
 
@@ -128,15 +137,41 @@ def _leer_datos_js(ruta):
     return json.loads(texto[len("window.DATOS = "):].rstrip().rstrip(";"))
 
 
-def test_fase_elegir_deja_lo_que_el_arnes_y_el_formulario_necesitan(tmp_path, monkeypatch):
-    preparar = _preparar()
-    raiz = tmp_path / "rsna"
-    (raiz / "png").mkdir(parents=True)
+def _leer_clave(salida):
+    return json.loads((salida / "clave.json").read_text(encoding="utf-8"))
+
+
+@pytest.fixture(scope="module")
+def rsna(tmp_path_factory):
+    """Una raíz de RSNA falsa con un PNG por placa de las crudas congeladas."""
+    raiz = tmp_path_factory.mktemp("rsna")
+    (raiz / "png").mkdir()
     for pid in datos.cargar_crudas()["patientId"]:
         (raiz / "png" / f"{pid}.png").write_bytes(b"png")
-    monkeypatch.setenv("RSNA_RAIZ", str(raiz))
+    return raiz
+
+
+@pytest.fixture(scope="module")
+def elegida(rsna, tmp_path_factory):
+    """`--fase elegir` con la semilla de la sesión, una sola vez por módulo."""
+    salida = tmp_path_factory.mktemp("elegida") / "sesion"
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("RSNA_RAIZ", str(rsna))
+        _preparar().fase_elegir(salida, semilla=20261006)
+    return salida
+
+
+@pytest.fixture
+def sesion_elegida(elegida, rsna, tmp_path, monkeypatch):
+    """Una copia propia de la sesión elegida, con RSNA_RAIZ puesta."""
+    monkeypatch.setenv("RSNA_RAIZ", str(rsna))
     salida = tmp_path / "sesion"
-    preparar.fase_elegir(salida, semilla=20261006)
+    shutil.copytree(elegida, salida)
+    return _preparar(), salida
+
+
+def test_fase_elegir_deja_lo_que_el_arnes_y_el_formulario_necesitan(sesion_elegida):
+    _, salida = sesion_elegida
     casos = json.loads((salida / "casos.json").read_text(encoding="utf-8"))
     assert len(casos) == 27
     assert all(set(c) == {"patientId", "ruta_dcm", "signos", "sintomas", "cruda"} for c in casos)
@@ -146,34 +181,44 @@ def test_fase_elegir_deja_lo_que_el_arnes_y_el_formulario_necesitan(tmp_path, mo
     assert len(d1["casos"]) == 24 and len(d1["practica"]) == 3
     assert all(e["mensaje"] is None and not e["control"] for e in d1["casos"])
     assert (salida / "formulario" / "placas" / f"{d1['casos'][0]['id']}.png").is_file()
-    clave = json.loads((salida / "clave.json").read_text(encoding="utf-8"))
+    clave = _leer_clave(salida)
     assert clave["fase"] == "elegir" and clave["prevalencia_sesion"] == PREVALENCIA_COHORTE
     assert "simulación semisintética" in clave["rotulo"]
-    assert "simulación semisintética" in (salida / "dosier_lectura1.md").read_text(encoding="utf-8")
+    # la marca de la preparación: semilla y hora de la elección, la misma en la clave y en los datos
+    assert re.fullmatch(r"20261006-\d{8}T\d{6}", clave["preparacion"])
+    assert d1["preparacion"] == clave["preparacion"]
+    dosier = (salida / "dosier_lectura1.md").read_text(encoding="utf-8")
+    assert "simulación semisintética" in dosier
+    # la numeración del formulario: tres de práctica y luego los casos, con el patientId
+    assert f"\n## Práctica 1 — {d1['practica'][0]['id']}\n" in dosier
+    assert f"\n## Práctica 3 — {d1['practica'][2]['id']}\n" in dosier
+    assert f"\n## Caso 1 — {d1['casos'][0]['id']}\n" in dosier
+    assert f"\n## Caso 24 — {d1['casos'][23]['id']}\n" in dosier
+    assert "## Caso 25" not in dosier and "## Práctica 4" not in dosier
 
 
-def _mensajes_coherentes(clave):
+def _mensajes_coherentes(clave, con_bots=False):
     return {c["patientId"]: {"texto": "CRIBADO — ...\n" + sesion.linea_explorado(c["signos"]) + "\nCOMBINADO — ...",
                              "texto_paciente": None, "error": None,
-                             "resultado": {"combinacion": c["bloque_previsto"]},
-                             "codigo": "ABC123", "ms_extremo": 1500, "con_bots": False, "fallo": None}
+                             "resultado": {"combinacion": dict(c["bloque_previsto"])},
+                             "codigo": "ABC123", "ms_extremo": 1500, "con_bots": con_bots, "fallo": None,
+                             "coincide": "sí" if con_bots else None}
             for c in clave["casos"] + clave["practica"]}
 
 
-def test_fase_mensajes_construye_la_lectura_2_con_20_mensajes_y_4_controles(tmp_path, monkeypatch):
-    preparar = _preparar()
-    raiz = tmp_path / "rsna"
-    (raiz / "png").mkdir(parents=True)
-    for pid in datos.cargar_crudas()["patientId"]:
-        (raiz / "png" / f"{pid}.png").write_bytes(b"png")
-    monkeypatch.setenv("RSNA_RAIZ", str(raiz))
-    salida = tmp_path / "sesion"
-    preparar.fase_elegir(salida, semilla=20261006)
-    clave = json.loads((salida / "clave.json").read_text(encoding="utf-8"))
-    (salida / "corpus").mkdir()
-    (salida / "corpus" / "mensajes.json").write_text(
-        json.dumps(_mensajes_coherentes(clave)), encoding="utf-8")
-    preparar.fase_mensajes(salida)
+def _escribir_mensajes(salida, mensajes):
+    (salida / "corpus").mkdir(exist_ok=True)
+    (salida / "corpus" / "mensajes.json").write_text(json.dumps(mensajes), encoding="utf-8")
+
+
+IMAGEN = {"imagen_tag": "h7-sesion", "imagen_digest": "sha256:0123abcd"}
+
+
+def test_fase_mensajes_construye_la_lectura_2_con_20_mensajes_y_4_controles(sesion_elegida):
+    preparar, salida = sesion_elegida
+    clave = _leer_clave(salida)
+    _escribir_mensajes(salida, _mensajes_coherentes(clave))
+    preparar.fase_mensajes(salida, **IMAGEN)
     d2 = _leer_datos_js(salida / "formulario" / "datos_lectura2.js")
     assert d2["lectura"] == 2 and d2["modo"] == "simple" and len(d2["casos"]) == 24
     assert sum(e["mensaje"] is not None for e in d2["casos"]) == 20
@@ -182,29 +227,137 @@ def test_fase_mensajes_construye_la_lectura_2_con_20_mensajes_y_4_controles(tmp_
     assert [e["id"] for e in d2["casos"]] == clave["ordenes"]["lectura2"]
     planb = _leer_datos_js(salida / "formulario" / "datos_planb.js")
     assert planb["modo"] == "secuencial" and all(e["mensaje"] for e in planb["casos"])
-    clave = json.loads((salida / "clave.json").read_text(encoding="utf-8"))
+    d1 = _leer_datos_js(salida / "formulario" / "datos_lectura1.js")
+    clave = _leer_clave(salida)
     assert clave["fase"] == "mensajes"
     assert all("categoria" in c and c["bloque"] == c["bloque_previsto"] for c in clave["casos"])
+    # Ruling 14: la misma preparación en la clave y en los tres ficheros de datos
+    assert d1["preparacion"] == d2["preparacion"] == planb["preparacion"] == clave["preparacion"]
+    # Ruling 13: sin bots, el origen es la imagen local, con su tag y su digest
+    assert clave["origen_mensajes"] == {"con_bots": False, **IMAGEN}
+    assert "## Práctica 1 — " in (salida / "dosier_lectura2.md").read_text(encoding="utf-8")
 
 
-def test_fase_mensajes_aborta_si_un_mensaje_no_repite_la_vineta(tmp_path, monkeypatch):
-    preparar = _preparar()
-    raiz = tmp_path / "rsna"
-    (raiz / "png").mkdir(parents=True)
-    for pid in datos.cargar_crudas()["patientId"]:
-        (raiz / "png" / f"{pid}.png").write_bytes(b"png")
-    monkeypatch.setenv("RSNA_RAIZ", str(raiz))
-    salida = tmp_path / "sesion"
-    preparar.fase_elegir(salida, semilla=20261006)
-    clave = json.loads((salida / "clave.json").read_text(encoding="utf-8"))
-    mensajes = _mensajes_coherentes(clave)
-    primero = clave["casos"][0]["patientId"]
-    mensajes[primero]["texto"] = "EXPLORADO — 40,0 °C, 150 lpm, crepitantes sí, murmullo disminuido"
-    (salida / "corpus").mkdir()
-    (salida / "corpus" / "mensajes.json").write_text(json.dumps(mensajes), encoding="utf-8")
-    with pytest.raises(SystemExit, match="EXPLORADO no repite"):
-        preparar.fase_mensajes(salida)
+def test_fase_mensajes_con_bots_no_pide_la_imagen(sesion_elegida):
+    preparar, salida = sesion_elegida
+    _escribir_mensajes(salida, _mensajes_coherentes(_leer_clave(salida), con_bots=True))
+    preparar.fase_mensajes(salida)
+    assert _leer_clave(salida)["origen_mensajes"] == {"con_bots": True, "imagen_tag": None,
+                                                      "imagen_digest": None}
+
+
+def test_fase_mensajes_sin_bots_exige_el_tag_y_el_digest_de_la_imagen(sesion_elegida):
+    preparar, salida = sesion_elegida
+    mensajes = _mensajes_coherentes(_leer_clave(salida), con_bots=True)
+    next(iter(mensajes.values()))["con_bots"] = False              # uno solo sin bots basta
+    _escribir_mensajes(salida, mensajes)
+    with pytest.raises(SystemExit, match="--imagen-digest"):
+        preparar.fase_mensajes(salida, imagen_tag="h7-sesion")
     assert not (salida / "formulario" / "datos_lectura2.js").exists()
+    assert _leer_clave(salida)["fase"] == "elegir"
+
+
+def _sin_explorado(m, c):
+    m["texto"] = "EXPLORADO — 40,0 °C, 150 lpm, crepitantes sí, murmullo disminuido"
+
+
+def _otra_concordancia(m, c):
+    m["resultado"]["combinacion"]["concordantes"] = not c["concordante"]
+
+
+def _sin_mensaje(m, c):
+    m.clear()
+
+
+def _con_error(m, c):
+    m["error"] = "E_IMAGEN: la placa no se pudo leer"
+
+
+def _con_fallo(m, c):
+    m["fallo"] = "no hubo codigo: el bot no contestó"
+
+
+def _otra_puntuacion(m, c):
+    m["resultado"]["combinacion"]["puntuacion"] = [c["bloque_previsto"]["puntuacion"][0] + 1]
+
+
+def _otra_rv_imagen(m, c):
+    m["resultado"]["combinacion"]["rv_imagen"] = c["rv_imagen"] * 1.01
+
+
+def _otra_prevalencia(m, c):
+    m["resultado"]["combinacion"]["prevalencia"] = 0.2215
+
+
+def _no_coincide(m, c):
+    m.update(con_bots=True, coincide="NO: clasificaciones distintas")
+
+
+@pytest.mark.parametrize("estropear, motivo", [
+    (_sin_explorado, "EXPLORADO no repite la viñeta"),
+    (_otra_concordancia, "concordancia"),
+    (_sin_mensaje, "sin mensaje"),
+    (_con_error, "E_IMAGEN"),
+    (_con_fallo, "no hubo codigo"),
+    (_otra_puntuacion, "puntuación"),
+    (_otra_rv_imagen, "RV de imagen"),
+    (_otra_prevalencia, "prevalencia 0.2215"),
+    (_no_coincide, "no coinciden \\(NO: clasificaciones distintas\\)"),
+])
+def test_fase_mensajes_aborta_y_lista_cada_mensaje_que_no_sirve(sesion_elegida, estropear, motivo):
+    preparar, salida = sesion_elegida
+    clave = _leer_clave(salida)
+    mensajes = _mensajes_coherentes(clave)
+    c = clave["casos"][0]
+    estropear(mensajes[c["patientId"]], c)
+    if not mensajes[c["patientId"]]:
+        del mensajes[c["patientId"]]
+    _escribir_mensajes(salida, mensajes)
+    with pytest.raises(SystemExit, match=f"{c['patientId']}: .*{motivo}"):
+        preparar.fase_mensajes(salida, **IMAGEN)
+    assert not (salida / "formulario" / "datos_lectura2.js").exists()
+    assert _leer_clave(salida)["fase"] == "elegir"
+
+
+def test_la_rv_de_imagen_admite_el_redondeo_del_servidor(sesion_elegida):
+    preparar, salida = sesion_elegida
+    clave = _leer_clave(salida)
+    mensajes = _mensajes_coherentes(clave)
+    for c in clave["casos"] + clave["practica"]:
+        mensajes[c["patientId"]]["resultado"]["combinacion"]["rv_imagen"] = c["rv_imagen"] * (1 + 5e-4)
+        mensajes[c["patientId"]]["resultado"]["combinacion"]["prevalencia"] = 0.1466   # la de docker-compose
+    _escribir_mensajes(salida, mensajes)
+    preparar.fase_mensajes(salida, **IMAGEN)
+    assert _leer_clave(salida)["fase"] == "mensajes"
+
+
+def test_elegir_otra_vez_con_forzar_borra_lo_de_la_eleccion_anterior(sesion_elegida):
+    preparar, salida = sesion_elegida
+    _escribir_mensajes(salida, _mensajes_coherentes(_leer_clave(salida)))
+    preparar.fase_mensajes(salida, **IMAGEN)
+    viejos = [salida / "formulario" / "datos_lectura2.js", salida / "formulario" / "datos_planb.js",
+              salida / "dosier_lectura2.md", salida / "corpus" / "mensajes.json"]
+    assert all(r.is_file() for r in viejos)
+    placas_antes = {p.name for p in (salida / "formulario" / "placas").iterdir()}
+    preparacion_antes = _leer_clave(salida)["preparacion"]
+    preparar.fase_elegir(salida, semilla=20261007, forzar=True)
+    assert not any(r.exists() for r in viejos)
+    clave = _leer_clave(salida)
+    assert clave["fase"] == "elegir" and clave["semilla"] == 20261007
+    assert clave["preparacion"].startswith("20261007-") and clave["preparacion"] != preparacion_antes
+    placas = {p.name for p in (salida / "formulario" / "placas").iterdir()}
+    assert placas == {f"{c['patientId']}.png" for c in clave["casos"] + clave["practica"]}
+    assert placas != placas_antes                                  # las de la otra semilla ya no están
+
+
+def test_elegir_otra_vez_sin_forzar_no_pisa_la_clave_definitiva(sesion_elegida):
+    preparar, salida = sesion_elegida
+    _escribir_mensajes(salida, _mensajes_coherentes(_leer_clave(salida)))
+    preparar.fase_mensajes(salida, **IMAGEN)
+    with pytest.raises(SystemExit, match="ya tiene la fase mensajes.*--forzar"):
+        preparar.fase_elegir(salida, semilla=20261007)
+    assert _leer_clave(salida)["fase"] == "mensajes"
+    assert (salida / "formulario" / "datos_lectura2.js").is_file()
 
 
 def test_sin_rsna_raiz_el_script_lo_dice(monkeypatch):

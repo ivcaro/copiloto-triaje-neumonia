@@ -1421,6 +1421,9 @@ def main() -> int:
                     "ms_extremo": obs.get("ms_extremo"),
                     "con_bots": obs["con_bots"],
                     "fallo": obs.get("fallo"),
+                    # «sí», o «NO: …» si lo que guardo el bot y esta
+                    # lectura no cuentan lo mismo: preparar_sesion lo rechaza.
+                    "coincide": obs.get("coincide"),
                 }
             (destino / "mensajes.json").write_text(
                 json.dumps(mensajes, ensure_ascii=False, indent=1), encoding="utf-8")
