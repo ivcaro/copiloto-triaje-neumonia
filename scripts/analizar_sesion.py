@@ -14,6 +14,7 @@ para que el congelado sea verificable. La clave tiene que ser la definitiva
 """
 import argparse
 import json
+import math
 import pathlib
 import sys
 
@@ -24,6 +25,18 @@ from copiloto_triaje.validacion import concordancia as cc  # noqa: E402
 from copiloto_triaje.validacion.datos import sha256_de  # noqa: E402
 
 CARPETA = REPO / "docs" / "validacion-semisintetica"
+
+
+def sin_nan(x):
+    """Lo mismo, con `None` donde habia un NaN o un infinito: «NaN» no es
+    JSON, y un lector estricto no abriria sesion.json."""
+    if isinstance(x, dict):
+        return {clave: sin_nan(valor) for clave, valor in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [sin_nan(valor) for valor in x]
+    if isinstance(x, float) and not math.isfinite(x):
+        return None
+    return x
 
 
 def main() -> int:
@@ -54,11 +67,15 @@ def main() -> int:
     except ValueError as exc:
         raise SystemExit(f"no se analiza: {exc}") from None
 
+    # Lo que se escribe y lo que rellena el acta es lo mismo: el resultado sin
+    # NaN. Se serializa ANTES de abrir: si falla, el fichero anterior sigue.
+    escrito = sin_nan(resultado)
+    texto = json.dumps(escrito, ensure_ascii=False, indent=1, allow_nan=False)
     salida = pathlib.Path(args.salida)
     salida.parent.mkdir(parents=True, exist_ok=True)
-    salida.write_text(json.dumps(resultado, ensure_ascii=False, indent=1), encoding="utf-8")
+    salida.write_text(texto, encoding="utf-8")
     plantilla = (CARPETA / "acta-h7-plantilla.md").read_text(encoding="utf-8")
-    acta = cc.rellenar_acta(plantilla, cc.valores_para_acta(resultado, clave))
+    acta = cc.rellenar_acta(plantilla, cc.valores_para_acta(escrito, clave))
     ruta_acta = pathlib.Path(args.acta)
     ruta_acta.parent.mkdir(parents=True, exist_ok=True)
     ruta_acta.write_text(acta, encoding="utf-8")

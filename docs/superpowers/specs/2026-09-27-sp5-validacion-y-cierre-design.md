@@ -251,7 +251,7 @@ derivación sobre las bandas de validación externa (0-1 → 0,19; 2-3 → 1,04;
 4-5 → 8,33). La diferencia `ln RV_derivación − ln RV_validación` por
 puntuación es fija: −0,46; +0,05; −0,40; +0,46; −0,15; +0,74 (k = 0..5). La
 derivación es más extrema que la validación en k = 0, 2, 3 y 5 y menos en
-k = 4: el «optimismo» no es uniforme. Se reporta la tabla completa y
+k = 1 y 4: el «optimismo» no es uniforme. Se reporta la tabla completa y
 **cuántos casos del conjunto cambiarían de banda** si el sistema usara las
 bandas de validación. Es un cálculo, no un experimento, y se rotula así.
 
@@ -368,15 +368,32 @@ de la etiqueta.
 ### 4.6. Qué se mide
 
 Sobre el conjunto de prueba, con **bootstrap de B = 1 000 réplicas**: cada
-réplica remuestrea con reemplazo las 3 811 placas (una por paciente, así que es
-un bootstrap por paciente) y vuelve a sortear la clínica con la semilla `b`.
-`z_y`, los umbrales `τ` y el calibrador **quedan fijos**, calculados una vez
-sobre el conjunto completo: solo se remuestrean placas y se resortea la
-clínica, para que el generador sea el mismo en todas las réplicas. Intervalos
-del 95 % por percentiles. Las diferencias entre modelos se calculan **dentro
-de cada réplica** (pareadas). El oráculo cerrado hace que todo cueste segundos;
-el bootstrap completo se corre en las seis celdas destacadas (§4.5) y en 0A;
-el resto de la rejilla se publica sin intervalos.
+réplica remuestrea con reemplazo los 3 811 **casos de la estimación puntual**,
+cada placa con la clínica que se le sorteó (una placa por paciente, así que es
+un bootstrap por paciente). `z_y`, los umbrales `τ` y el calibrador **quedan
+fijos**, calculados una vez sobre el conjunto completo. Intervalos del 95 %
+por percentiles. Las diferencias entre modelos se calculan **dentro de cada
+réplica** (pareadas). El bootstrap completo se corre en las seis celdas
+destacadas (§4.5) y en 0A; el resto de la rejilla se publica sin intervalos.
+
+> **Corregido el 28-sep, en la revisión final de SP5-B1.** Este párrafo decía
+> que cada réplica, además de remuestrear las placas, **volvía a sortear la
+> clínica**. Eso cuenta dos veces el ruido del sorteo —el remuestreo de los
+> casos ya lo lleva—: medido sobre la simulación, la varianza de las réplicas
+> salía × 1,57 en mediana, y el «IC 95 %» de una cifra que depende de la
+> clínica cubría bastante más del 95 % (entre el 97 y el 100 %, según la
+> cifra, en un ensayo con la misma estructura; el de la imagen sola, que no
+> depende de la clínica, no cambiaba). Remuestrear primero y sortear después
+> quita la doble cuenta, pero centra las réplicas en la media sobre la clínica
+> y no en la estimación que se publica, y el intervalo por percentiles sigue
+> cubriendo de más (entre el 96 y el 100 % en el mismo ensayo). El bootstrap
+> de los casos de la estimación cubre entre el 92 y el 95 %. Las estimaciones puntuales no cambian; de los
+> 328 intervalos con anchura, 292 se estrechan y 13 se ensanchan (la anchura
+> mediana pasa a 0,83 de la anterior).
+>
+> Un intervalo así recoge solo el muestreo de los casos bajo este generador:
+> no la incertidumbre del calibrador, ni la de `z_y` y `τ`, ni la de las RV
+> publicadas, ni la de `ρ`. El documento lo dice.
 
 **Cuatro modelos puntuales** (casos con asma conocida; los `no_se` van aparte):
 
@@ -552,16 +569,38 @@ antemano:** la banda del extremo de independencia, la del extremo conservador,
 y la regla «si la horquilla cruza un límite, intermedia» con el número de casos
 que cruzan. Con las tablas actuales ninguna horquilla cruza a la vez el 20 % y
 el 70 % (barrido de RV de imagen 0,016-77,3 × 48 combinaciones de hallazgos ×
-dos previos, 27-sep); tiene explicación analítica —el cociente de odds de los
-dos extremos vale `min(RV_clínica, RV_imagen) ≤ 17,5`, y cruzar 20 y 70 % a
-la vez exige además `odds_previas × max(RV_clínica, RV_imagen) < 0,25`, lo que
-solo ocurre con prevalencia declarada por debajo de ≈ 3,3 %— y una prueba lo
-afirma con los dos previos y con el umbral analítico (§8). Como
+dos previos, 27-sep); tiene explicación analítica —solo ocurre con una
+prevalencia declarada por debajo de ≈ 3,3 %; la cuenta está al final de este
+apartado— y una prueba lo afirma con los dos previos y con el umbral
+analítico (§8). Como
 `PREVALENCIA_LOCAL` es configurable, la regla «cruza → intermedia» del análisis
 de sensibilidad cubre el caso si algún despliegue lo produjera. Los mensajes
 de la sesión se generan con la prevalencia desplegada, **0,1466**, y el acta
 lo dice: la categoría del sistema en la sesión usa el previo del despliegue,
 no el del §4.
+
+**De dónde sale el ≈ 3,3 %: la vía de dos puntuaciones.** Cruzar el 20 % y el
+70 % a la vez exige que las odds de la mínima queden por debajo de 0,25 y las
+de la máxima por encima de 7/3, es decir, un cociente de odds entre los dos
+extremos mayor que ≈ 9,33. Con una sola puntuación y las dos RV a favor ese
+cociente es `min(RV_clínica, RV_imagen)` (con las dos en contra no pasa de
+8,33, y en los casos discordantes la horquilla es un punto); la única RV
+clínica que pasa de 9,33 es la de 5
+puntos (17,5), y la mínima vale entonces al menos `odds_previas × 17,5`: el
+cruce doble exigiría una prevalencia por debajo de ≈ 1,4 %. El umbral más alto,
+y por eso el que cuenta, es el del asma `no_se` con los otros cuatro hallazgos
+presentes: el sistema entrega dos puntuaciones, [4, 5], y
+`heckerling.combinacion` funde en una sola horquilla los extremos de las dos.
+Con una imagen a favor y no más informativa que los 4 puntos (RV de imagen
+entre 1 y 7,18), la mínima es la dependencia total de la puntuación 4,
+`odds_previas × 7,18`, y la máxima es la independencia de la puntuación 5,
+`odds_previas × 17,5 × RV_imagen`; el cociente, `17,5 × RV_imagen / 7,18`,
+llega a 17,5. La mínima baja del 20 % si `odds_previas × 7,18 < 0,25`, o sea
+con una prevalencia por debajo de ≈ 3,36 %; como la banda se decide sobre el
+porcentaje entero (19 % o menos: una mínima menor que 0,195), el umbral
+efectivo es ≈ 3,26 %. De ahí el «≈ 3,3 %», y por eso la prueba lo fija con
+0,032 (hay cruces dobles, todos por esta vía) y 0,034 (ninguno). Las dos
+prevalencias que se usan, 0,1466 y 0,2215, quedan muy por encima.
 
 ### 5.4. Diseño: dos lecturas del mismo conjunto
 
@@ -626,10 +665,17 @@ condición con casos y con periodo. Por eso:
   (0,6), ni generaliza a otros médicos ni a otro reparto de casos, que aquí es
   deliberado. El criterio ≥ 0,4 de la Semana 1 se evalúa sobre la estimación
   puntual y se publica siempre con su intervalo; si el límite inferior queda por
-  debajo de 0,4, se dice.»*
+  debajo de 0,4, se dice.»* El acta y el informe lo citan como lo que es, lo
+  **declarado antes de la sesión**, y a continuación dan lo **observado**: los
+  límites y la anchura del intervalo del kappa ponderado por los dos métodos, y
+  si 0,4 y 0,6 quedan dentro. Así el texto no afirma en presente una anchura
+  que las cifras de la sesión puedan desmentir (con un kappa de 0,9 el
+  intervalo es mucho más estrecho).
 - **Acuerdo continuo (secundario):** Spearman entre el porcentaje del médico y
   el punto medio del sistema; Bland-Altman en log-odds, con los porcentajes 0 y
-  100 acotados a 0,5 y 99,5 antes del logit (y contando cuántas veces ocurre);
+  100 acotados a 0,5 y 99,5 antes del logit (y contando cuántas veces ocurre, y
+  en cuántos casos el punto medio del sistema queda fuera de esa cota: en ellos
+  la diferencia no puede ser cero);
   fracción de casos en que el porcentaje del médico cae dentro de la
   horquilla.
 - **Influencia del sistema:** kappa de la lectura 2 **sobre los 20 casos con
@@ -818,7 +864,7 @@ las decida sobre la marcha:
 | Verificación bayesiana con casos simulados (§5.2) | cumplido | §4.4, 0A: caso a caso |
 | «Probabilidad previa, de imagen y combinada por separado» (§7.9) | cumplido con cambio | el mensaje imprime prevalencia, RV clínica, RV de imagen y horquilla combinada, no una «probabilidad previa por síntomas» |
 | Sesión con médico, 20-30 casos, kappa, utilidad, tiempos (H7; kappa 0,4/0,6) | cumplido con cambio, si hay acta | dos lecturas del mismo conjunto en vez de una sesión (para que el kappa sea independiente y el tiempo se mida sobre el mismo set, como pedía el KPI 1); pregunta por opacidad compatible, no por neumonía (SP4 §8.1); kappa ponderado como primario y el de Cohen sin ponderar como prometido; tiempo medido con el efecto de releer estimado aparte; el objetivo 0,6 no es evaluable con 24 casos. Plan B: además el tiempo no se mide. Si la estimación puntual queda por debajo de 0,4: «no cumplido, causa documentada caso por caso», que es lo que §5.7 permite |
-| Latencia de extremo a extremo (8 s / 3 s) | cumplido con cambio (provisional) | se mide `ms_extremo`, el tramo n8n → respuesta, no la subida a Telegram ni la entrega (§6.3); si no hay corrida con bots antes del 16-oct, «no medido» con la causa |
+| Latencia de extremo a extremo (8 s / 3 s) | cumplido con cambio (provisional) | se mide `ms_extremo`, el tramo n8n → respuesta, no la subida a Telegram ni la entrega (§6.3): es una cota inferior. La etiqueta se decide con el p95 frente al mínimo de 8 s (`veredicto.p95_cumple_el_minimo` de `latencia.json`; el p50 y el objetivo de 3 s se reportan al lado): si no lo cumple, «no cumplido»; si lo cumple, «cumplido con cambio», diciendo el tramo que no ve y lo cronometrado a mano. Lo cronometrado a mano pesa en contra: si su mediana, sin redondear, supera los 8 s (`veredicto.a_mano_supera_el_minimo`), «no cumplido»; si no se cronometró, «cumplido con cambio» diciendo que no se cronometró. `latencia.json` lleva la regla y la etiqueta que sale de ella (`veredicto`). Si antes del 16-oct no hay una corrida con bots con al menos 30 consultas válidas, «no medido» con la causa |
 | Reducción del tiempo de triaje (20 / 40 %) | por la sesión | §5.4; plan B: «cumplido con cambio», no medido |
 | PadChest como validación externa | **descopado** | el acuerdo no se gestionó; sesgo de origen único declarado en ética |
 | Grad-CAM (opcional) | descopado | opcional en la Semana 1; sin tiempo |
@@ -844,7 +890,7 @@ se pudo y declarada donde no:
 | KPI | Dónde se mide |
 | :--- | :--- |
 | recall, especificidad, AUC de la CNN | SP2, conjunto de prueba, reporte de métricas de los pesos desplegados |
-| **latencia de extremo a extremo** (objetivo 2, umbrales 8 s / 3 s, §7.9) | `consultas.ms_extremo` de **una corrida de `pruebas/reproducir_casos.py` en modo con bots contra el VPS** (N ≥ 30 consultas sin error; los mensajes de la sesión no la miden, §5.6): **p50 y p95** a `docs/validacion-semisintetica/latencia.json`, con el tramo declarado: desde que `Normalizar update` recibe el update con la placa hasta que `Desenlace` compone la respuesta (excluye la subida a Telegram, la entrega del webhook y el envío de `Responder`), que no es el «desde que el profesional sube la radiografía hasta que recibe el pre-informe» de la Semana 1 §5.4. El tramo que falta se acota a mano en 5 casos (hora del envío en el cliente de Telegram frente a hora de la respuesta) y se dice. Sin corrida con bots antes del 16-oct, **no medido** con la causa |
+| **latencia de extremo a extremo** (objetivo 2, umbrales 8 s / 3 s, §7.9) | `consultas.ms_extremo` de **una corrida de `pruebas/reproducir_casos.py` en modo con bots contra el VPS** (N ≥ 30 consultas sin error; los mensajes de la sesión no la miden, §5.6): **p50 y p95** a `docs/validacion-semisintetica/latencia.json`, con el tramo declarado: desde que `Normalizar update` recibe el update con la placa hasta que `Desenlace` compone la respuesta (excluye la subida a Telegram, la entrega del webhook y el envío de `Responder`), que no es el «desde que el profesional sube la radiografía hasta que recibe el pre-informe» de la Semana 1 §5.4. `ms_extremo` es, por tanto, una cota inferior: no cumplir un umbral con él es no cumplirlo de extremo a extremo; cumplirlo es necesario, no suficiente. Lo que no ve se acota a mano en 5 consultas, cronometrando el tiempo total desde que se envía la placa hasta que aparece la respuesta (el cliente de Telegram solo muestra horas y minutos), y se dice. Sin corrida con bots antes del 16-oct, **no medido** con la causa |
 | latencia del modelo | VPS, mediana 143 ms (H4) |
 | kappa (tres), utilidad (tres notas), tiempo de triaje | sesión (§5) |
 | KPI 2, derivaciones innecesarias | cumplido según su propia definición (porcentaje de placas sin opacidad correctamente filtradas = especificidad de la CNN en el conjunto de prueba); medido en RSNA, no en operación: sin usuarios no hay derivaciones reales que contar |
@@ -1016,7 +1062,8 @@ Todas en la suite, sin red:
 - **Categoría del sistema (§5.3):** punto medio en log-odds, redondeo hacia
   arriba en ,5, bandas con los bordes 20 y 70 exactos, y la prueba de que
   **ninguna horquilla cruza los dos límites** con los previos 0,1466, 0,2215 y
-  0,05, y de que sí lo hace con 0,02 (el umbral analítico).
+  0,05, y de que sí lo hace por debajo del umbral analítico (≈ 3,3 %, §5.3):
+  con 0,02 y con 0,032, y no con 0,034.
 - **Sesión:** `analizar_sesion.py` sobre CSV de ejemplo con valores conocidos:
   los tres kappas y sus intervalos, el acuerdo continuo (con un 0 % y un 100 %
   acotados), los 20 tiempos pareados y los 4 controles, la influencia del

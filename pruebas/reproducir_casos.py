@@ -312,17 +312,23 @@ def casos_desde_fichero(ruta):
     """Los casos de `--casos`: una lista JSON de
     {patientId, ruta_dcm, signos, sintomas}. Se comprueba cada uno ANTES de
     empezar: un caso a medias haria que el arnes dijera «SIN COMBINAR» de un
-    caso que el medico va a leer como combinado."""
+    caso que el medico va a leer como combinado, y un `patientId` repetido
+    pisaria un mensaje con otro en `mensajes.json`, que va por `patientId`."""
     ruta = pathlib.Path(ruta)
     datos = json.loads(ruta.read_text(encoding="utf-8"))
     if not isinstance(datos, list) or not datos:
         raise SystemExit(f"{ruta} no es una lista de casos")
     meta = _metadatos()
     casos = []
+    vistos = {}
     for i, d in enumerate(datos):
         faltan = [k for k in ("patientId", "ruta_dcm", "signos", "sintomas") if k not in d]
         if faltan:
             raise SystemExit(f"al caso {i} de {ruta} le faltan {faltan}")
+        if d["patientId"] in vistos:
+            raise SystemExit(f"{ruta} repite el patientId {d['patientId']} en los casos "
+                             f"{vistos[d['patientId']]} y {i}: cada caso va una sola vez")
+        vistos[d["patientId"]] = i
         if hallazgos_del_caso(d["sintomas"], d["signos"]) is None:
             raise SystemExit(f"el caso {d['patientId']} no lleva los cinco hallazgos "
                              f"con su tipo: no se puede combinar")
@@ -932,7 +938,7 @@ def texto_del_caso(caso, obs, redaccion):
         lineas += [
             _punto("por los dos bots de Telegram", "sí"),
             _punto("código del cuestionario", obs.get("codigo") or "(ninguno)"),
-            _punto("de extremo a extremo",
+            _punto("ms_extremo (de n8n a la respuesta)",
                    f"{obs['ms_extremo']} ms" if obs.get("ms_extremo") is not None
                    else "(no se registró)"),
             _punto("el bot y esta lectura coinciden",
@@ -1003,6 +1009,68 @@ def escribir_corpus(destino, filas):
         carpeta.mkdir(parents=True, exist_ok=True)
         (carpeta / nombre_fichero(caso)).write_text(
             texto_del_caso(caso, obs, redaccion), encoding="utf-8")
+
+
+# --------------------------------------------------------------------------
+# Las latencias, caso a caso, para `scripts/medir_latencia.py` (SP5 §6.3)
+# --------------------------------------------------------------------------
+LATENCIAS = "latencias.json"
+# Los perfiles cuyo desenlace ESPERADO es un rechazo (05 a 09): al medir la
+# latencia se cuentan aparte de los errores que nadie esperaba.
+RECHAZOS_PREVISTOS = tuple(p.carpeta for p in PERFILES if p.orden >= 5)
+
+
+def filas_de_latencia(filas):
+    """Una fila por caso con lo que esta corrida midio, lista para JSON.
+
+    `ms_extremo` es el de `consultas` y solo existe con bots: lo escribe el
+    flujo, desde que `Normalizar update` recibe el update con la placa hasta
+    que `Desenlace` compone la respuesta. Todo lo que dice si esa medida
+    cuenta es de LA MISMA consulta: `error_consulta` es el error que el flujo
+    guardo en esa fila de `consultas` (un `copiloto_no_responde` DEL FLUJO o
+    una `descarga_fallida`, que solo nace alli), `coincide` dice si esa
+    consulta y la lectura de este arnes cuentan lo mismo, y `ms_modelo` es lo
+    que el servidor dijo que tardo el modelo EN ESA consulta.
+
+    `error_arnes` y `ms_arnes` son de la otra llamada, la que este arnes hace
+    por su cuenta al copiloto para redactar: no pasa por Telegram ni por n8n
+    y no dice nada de la latencia de extremo a extremo. Puede llevar el
+    mismo codigo (`copiloto_no_responde`, si esa llamada no llega): es el de
+    la otra llamada, y no descarta la medida por `error`. Sin bots no hay
+    consulta, y `ms_modelo` es entonces el de la llamada del arnes.
+
+    Aqui no se filtra ni se resume nada: que filas cuentan lo decide quien
+    mide.
+    """
+    salida = []
+    for caso, obs, redaccion in filas:
+        con_bots = bool(obs.get("con_bots"))
+        resultado = obs.get("resultado") if con_bots else redaccion.get("resultado")
+        if not isinstance(resultado, dict):
+            resultado = {}
+        salida.append({
+            "patientId": caso["patientId"],
+            "perfil": caso["perfil"].carpeta,
+            "rechazo_previsto": caso["perfil"].carpeta in RECHAZOS_PREVISTOS,
+            "con_bots": con_bots,
+            "fallo": obs.get("fallo"),
+            "error_consulta": obs.get("error") if con_bots else None,
+            "coincide": obs.get("coincide"),
+            "ms_extremo": obs.get("ms_extremo"),
+            "ms_modelo": resultado.get("milisegundos"),
+            "error_arnes": redaccion.get("error"),
+            "ms_arnes": obs.get("ms_arnes"),
+        })
+    return salida
+
+
+def escribir_latencias(destino, filas):
+    """Escribe `<destino>/latencias.json`, pisando el de la corrida anterior."""
+    destino.mkdir(parents=True, exist_ok=True)
+    ruta = destino / LATENCIAS
+    ruta.write_text(json.dumps(filas_de_latencia(filas), ensure_ascii=False,
+                               indent=1), encoding="utf-8")
+    return ruta
 
 
 # --------------------------------------------------------------------------
@@ -1192,7 +1260,10 @@ def resumen(filas, con_bots, destino, url_copiloto=None):
     lineas += ["", " LATENCIA"]
     if con_bots:
         extremo = _mediana([obs.get("ms_extremo") for _, obs, _ in filas])
-        lineas.append(_punto("  de extremo a extremo (mediana)",
+        # Todas las filas, rechazos incluidos, y solo el tramo que ve el
+        # flujo: NO es la latencia de extremo a extremo. La medida, con sus
+        # descartes, la da scripts/medir_latencia.py.
+        lineas.append(_punto("  ms_extremo, todas las filas (mediana)",
                              f"{extremo:.0f} ms" if extremo is not None
                              else "(no se registró)"))
         lineas.append(_punto("  solo el modelo (mediana)",
@@ -1441,6 +1512,9 @@ def main() -> int:
 
     filas = [(c, o, r) for c, o, r in filas if r is not None]
     escribir_corpus(destino, filas)
+    # Siempre, tambien sin bots: `scripts/medir_latencia.py` decide que filas
+    # cuentan, y una corrida sin bots tiene que poder decir que no midio nada.
+    escribir_latencias(destino, filas)
     texto = resumen(filas, con_bots, destino, url_copiloto)
     (destino / "RESUMEN.txt").write_text(texto + "\n", encoding="utf-8")
     print()

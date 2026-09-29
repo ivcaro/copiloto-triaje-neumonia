@@ -16,10 +16,11 @@ from copiloto_triaje.servicio import heckerling
 from copiloto_triaje.servicio.heckerling import (
     RV_POR_PUNTUACION, combinacion, combinar, mas_informativa,
 )
-from copiloto_triaje.validacion import datos, generador, oraculo
+from copiloto_triaje.validacion import datos, generador, metricas, oraculo, simulacion
 
-TOLERANCIA = 0.015   # el redondeo máximo de las RV publicadas (0,013 en k = 1)
-SEMILLA = 1
+TOLERANCIA = metricas.EPSILON   # 0,015: el redondeo máximo de las RV publicadas (0,013 en k = 1)
+# La clínica de la estimación puntual que se publica, no la de un literal.
+SEMILLA = simulacion.SEMILLA_PUNTUAL
 
 
 def _logit(p):

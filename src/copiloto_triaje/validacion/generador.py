@@ -20,6 +20,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from copiloto_triaje.servicio.heckerling import ESTADOS_ASMA
+
 from .oraculo import PROBABILIDAD_ASMA_PRESENTE, Modelo
 
 FRACCION_NO_SE = 0.10          # asma oculta al azar (MCAR), §4.2 paso 4
@@ -85,7 +87,10 @@ def ocultar_asma(asma_real: str, rng: np.random.Generator) -> str:
 def sortear_caso(modelo: Modelo, indice: int, rng: np.random.Generator,
                  asma: str | None = None) -> dict:
     """La clinica de UNA placa, para la sesion (spec §5.1). `asma` fuerza el
-    estado DECLARADO (`no_se` en el estrato del asma); el real sigue sorteado."""
+    estado DECLARADO (`no_se` en el estrato del asma); el real sigue sorteado.
+    Tiene que ser uno de `heckerling.ESTADOS_ASMA`, o None para no forzarlo."""
+    if asma is not None and not (isinstance(asma, str) and asma in ESTADOS_ASMA):
+        raise ValueError(f"«asma» debe ser uno de {list(ESTADOS_ASMA)} o None, y es {asma!r}")
     y = int(modelo.etiquetas[indice])
     rho, tau = (modelo.rho1, modelo.tau1) if y == 1 else (modelo.rho0, modelo.tau0)
     u = rho * float(modelo.z_propia()[indice]) + np.sqrt(1.0 - rho ** 2) * rng.standard_normal()

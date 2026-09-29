@@ -31,11 +31,23 @@ COLUMNAS = ("patientId", "edad", "sexo", "vista", "etiqueta", "cruda")
 
 
 def sha256_de(ruta) -> str:
+    """El sha256 de los BYTES de un fichero, tal como estan: sin normalizar
+    finales de linea. Es el de los ficheros que NO se versionan y que el acta
+    cita (`mensajes.json`, `clave.json`): quien los guarda comprueba esos
+    bytes. Para un insumo versionado, `huella_de_texto`."""
     h = hashlib.sha256()
     with pathlib.Path(ruta).open("rb") as f:
         for bloque in iter(lambda: f.read(1 << 20), b""):
             h.update(bloque)
     return h.hexdigest()
+
+
+def huella_de_texto(ruta) -> str:
+    """El sha256 de un fichero de TEXTO con los finales de linea normalizados
+    a LF: con `core.autocrlf` el mismo fichero versionado tiene CRLF en un
+    clon de Windows y LF en uno de Linux, y la huella tiene que ser la misma."""
+    crudo = pathlib.Path(ruta).read_bytes().replace(b"\r\n", b"\n")
+    return hashlib.sha256(crudo).hexdigest()
 
 
 def cargar_crudas(ruta=CRUDAS_CONGELADAS) -> pd.DataFrame:

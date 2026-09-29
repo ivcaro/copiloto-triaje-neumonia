@@ -91,8 +91,10 @@ previsto (concordancia, puntuación, RV de imagen y prevalencia) y, con bots,
 que lo que guardó el bot coincide con la lectura del arnés; y escribe
 `datos_lectura2.js`, `datos_planb.js`, `dosier_lectura2.md` y la clave
 definitiva, con el origen de los mensajes. Si algo no cuadra, se detiene y lo
-lista: no se corrige a mano. Si algún mensaje no se generó con bots y faltan
-`--imagen-tag` o `--imagen-digest`, también se detiene: el acta los cita.
+lista: no se corrige a mano. Si unos mensajes se generaron con bots y otros
+sin bots, también se detiene: la sesión usa un solo modo para los 27 casos,
+porque el acta cita un solo origen. Y si se generaron sin bots y faltan
+`--imagen-tag` o `--imagen-digest`, también: el acta los cita.
 
 ## 3. Ensayo (1-4 oct), en una carpeta aparte
 
@@ -147,9 +149,112 @@ o el tag y el digest de la imagen local) y, al final, el sha256 de
 envía al médico el 16-oct; sus observaciones se anexan sin editar. Los
 resultados se presentan a la tutora en la tutoría del 17-oct.
 
+## 6. Medir la latencia
+
+No es parte de la sesión ni es simulación: es una **medición del sistema
+desplegado** con casos de prueba (spec de SP5 §6.3). Los mensajes de la
+sesión no la miden; hace falta una corrida propia del arnés **con bots**, y
+tiene que estar hecha antes del 16-oct: sin ella, la latencia de extremo a
+extremo se declara «no medida», con la causa.
+
+Lo pone quien la corre, en el entorno y nunca en un fichero del repositorio:
+`N8N_URL` (la dirección del n8n desplegado, p. ej. `https://n8n.ejemplo.test`),
+el túnel a la base (`COPILOTO_BD_DSN`), los dos secretos
+(`TELEGRAM_SECRET_PRUEBA` y `TELEGRAM_TOKEN_PROFESIONAL`), `CHAT_SUBIDA_PLACAS`
+y `COPILOTO_URL`; la cabecera de `pruebas/reproducir_casos.py` dice qué es
+cada uno. Si falta `COPILOTO_BD_DSN` o alguno de los dos secretos, el arnés
+corre sin bots y no mide nada. Cómo se abre el túnel a la base y cómo se
+escribe el DSN está en `docs/sp3-operacion.md` §3; cómo se levanta el copiloto
+que contesta al arnés (`COPILOTO_URL`), en su §2, «El arnés». **Ese copiloto
+tiene que ser la misma imagen que la desplegada:** el arnés confirma cada
+consulta con una lectura propia, y si la otra imagen da otra probabilidad
+las lecturas no coinciden y las consultas se descartan como `no_coincide`.
+
+    C:/venv-copiloto/Scripts/python.exe pruebas/reproducir_casos.py --por-perfil 12 --salida pruebas/corpus/latencia
+
+Solo cuentan las consultas que dan un resultado: los perfiles 01, 02 y 03
+(12 cada uno) y el 04 (siempre 1) suman 37, por encima de las 30 que pide el
+spec y con margen para alguna conversación que no llegue al final. Los otros
+cinco perfiles son rechazos previstos (20 casos más) y se cuentan aparte. Con
+el `--por-perfil 10` por defecto serían 31: bastarían dos conversaciones
+fallidas para dejar la medición sin hacer. Son 57 casos y, como poco, 20
+minutos. El arnés imprime «N casos» al arrancar: si salen menos de 57, a algún
+perfil le faltan placas en la caché; lo que importa es que las consultas de
+los perfiles 01 a 04 pasen holgadamente de 30, y `scripts/medir_latencia.py`
+dice cuántas contó y cuántas descartó, con el motivo.
+
+La corrida deja `pruebas/corpus/latencia/latencias.json` (una fila por caso;
+la carpeta está ignorada). Después:
+
+    C:/venv-copiloto/Scripts/python.exe scripts/medir_latencia.py --corrida pruebas/corpus/latencia/latencias.json --manual "S1,S2,S3,S4,S5"
+
+`S1`…`S5` son los cinco tiempos cronometrados a mano (más abajo), en segundos
+y con punto decimal: la orden, copiada tal cual, se niega a correr. Sin
+medición a mano se omite `--manual`, y el JSON dice «no medido».
+
+Escribe `docs/validacion-semisintetica/latencia.json` con el p50 y el p95 de
+`ms_extremo` frente a los umbrales de 8 s y 3 s, las medidas ordenadas (sin
+identificadores, para que cualquiera pueda recalcular) y cuántas filas se
+descartaron y por qué. Una consulta cuenta si pasó por los bots, llegó al
+final, no es un rechazo previsto, no dio error **en la propia consulta** y
+coincide con la lectura del arnés. Con menos de 30 consultas válidas se
+detiene, lo dice y no escribe nada.
+
+`ms_extremo` va desde que `Normalizar update` recibe el update con la placa
+hasta que `Desenlace` compone la respuesta: no ve la subida a Telegram, la
+entrega del webhook ni el envío de `Responder`. Es, por tanto, una **cota
+inferior** de lo que espera el profesional: si no cumple un umbral, la
+latencia de extremo a extremo tampoco lo cumple; si lo cumple, es necesario
+pero no suficiente.
+
+Lo que `ms_extremo` no ve se acota **a mano, en 5 consultas** completas,
+hechas por una persona con los dos bots y un cronómetro, porque el cliente de
+Telegram solo enseña horas y minutos. Hace falta:
+
+- un chat dado de alta como profesional (`pruebas/profesionales.py --alta`;
+  cómo se hace y de dónde sale el identificador del chat, en
+  `docs/sp3-operacion.md` §1);
+- un código de cuestionario, del bot del paciente. Basta uno para las cinco
+  consultas: el código no es de un solo uso (spec de SP3 §5.2) y vale 7 días
+  (§5.4), y cada uso queda en `consultas`. Un cuestionario nuevo cuenta
+  contra el límite de 5 por chat y día (spec de SP3 §4.2);
+- cinco placas del conjunto de prueba, en DICOM, de las que dan pre-informe.
+  Valen cinco de las que usó el arnés en consultas que no son un rechazo
+  previsto: en `latencias.json`, las filas con `rechazo_previsto` en `false`
+  llevan el `patientId`, y el fichero de cada una es
+  `<RSNA_RAIZ>/crudo/stage_2_train_images/<patientId>.dcm`.
+
+En el bot del profesional cada consulta empieza con `/reiniciar` (es lo que
+envía el arnés): el bot contesta pidiendo el código, también si de la
+consulta anterior quedó una conversación a medias. Sin conversación abierta
+vale cualquier mensaje, pero un código enviado como primer mensaje no se lee
+como código. Después van el código, los cuatro
+signos (temperatura, frecuencia cardiaca, crepitantes y murmullo) y la placa,
+enviada como **documento** (como foto, Telegram la recomprime a JPEG y deja
+de ser un DICOM). El cronómetro se pone en marcha al enviar la placa y se para cuando
+aparece el pre-informe: es el tiempo **total**, subida incluida, no el tramo
+que falta, y no se suma al p50. Son los cinco valores de `--manual`. Esas
+consultas quedan registradas con el chat de quien mide: son consultas de
+prueba del equipo, y el informe lo dice.
+
+Una consulta cuyo flujo acabó bien pero que el arnés no pudo confirmar con su
+propia llamada se descarta como `no_coincide`: no entra en la medida, y se ve
+en el recuento.
+
+Al terminar, las filas que el arnés dejó en `consultas` se borran con la
+sentencia que él mismo imprime (`DELETE FROM consultas WHERE chat_id = …`).
+Se ejecuta desde cualquier cliente de PostgreSQL, con el mismo túnel abierto
+(`docs/sp3-operacion.md` §3).
+
+La etiqueta del KPI («cumplido con cambio», «no cumplido» o «no medido») se
+decide con la regla del spec de SP5 §6.2. `latencia.json` la lleva escrita
+(`veredicto.regla`) y aplicada (`veredicto.etiqueta`), y la orden la imprime.
+
 ## Qué se versiona y qué no
 
-Se versionan `sesion.json` y `acta-h7.md` (cifras, `patientId`, estratos y
-las dos huellas). No se versionan las placas, los mensajes, los CSV del médico
+Se versionan `sesion.json`, `acta-h7.md` (cifras, `patientId`, estratos y
+las dos huellas) y `latencia.json` (cifras agregadas y las medidas
+ordenadas, sin identificadores). No se versionan
+las placas, los mensajes, los CSV del médico
 ni `clave.json`: el equipo los guarda, y las huellas del acta permiten
 comprobar que son esos.

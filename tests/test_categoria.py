@@ -65,15 +65,20 @@ def _hallazgos():
                "murmullo_disminuido": mu, "asma": asma}
 
 
-def _cruces_dobles(prevalencia):
-    cruces = 0
+def _los_cruces_dobles(prevalencia):
+    """(hallazgos, bloque) de cada horquilla que cruza el 20 y el 70 % a la vez."""
+    cruces = []
     for rv in np.geomspace(0.016, 77.3, 400):
         for h in _hallazgos():
             b = combinacion(prevalencia, h, float(rv))
             if (categoria.porcentaje_entero(b["minima"]) < 20
                     and categoria.porcentaje_entero(b["maxima"]) > 70):
-                cruces += 1
+                cruces.append((h, b))
     return cruces
+
+
+def _cruces_dobles(prevalencia):
+    return len(_los_cruces_dobles(prevalencia))
 
 
 @pytest.mark.parametrize("prevalencia", [PREVALENCIA_COHORTE, 0.2215, 0.05, 0.034])
@@ -88,3 +93,17 @@ def test_ninguna_horquilla_cruza_los_dos_limites_con_las_tablas_actuales(prevale
 def test_con_una_prevalencia_bajo_el_umbral_analitico_si_hay_cruces_dobles(prevalencia):
     """Con 0,032 cruza por la vía del asma `no_se` con puntuación [4, 5]."""
     assert _cruces_dobles(prevalencia) > 0
+
+
+def test_con_0_032_todos_los_cruces_dobles_son_de_la_via_de_dos_puntuaciones():
+    """Spec §5.3: entre ≈ 1,4 % y ≈ 3,3 % solo cruza el asma `no_se` con los
+    otros cuatro hallazgos presentes, que da las dos puntuaciones [4, 5]."""
+    cruces = _los_cruces_dobles(0.032)
+    assert cruces
+    for hallazgos, bloque in cruces:
+        assert hallazgos["asma"] == "no_se"
+        assert list(bloque["puntuacion"]) == [4, 5]
+    # y por debajo del 1,4 % tambien cruza una sola puntuacion, la de 5 puntos
+    una = [b for _, b in _los_cruces_dobles(0.012) if len(b["puntuacion"]) == 1]
+    assert una and all(list(b["puntuacion"]) == [5] for b in una)
+    assert not [b for _, b in _los_cruces_dobles(0.016) if len(b["puntuacion"]) == 1]
