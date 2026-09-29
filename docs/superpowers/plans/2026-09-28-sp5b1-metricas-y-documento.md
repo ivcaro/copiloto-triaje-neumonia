@@ -57,12 +57,18 @@ Copiadas del spec de SP5. **Los requisitos de cada tarea las incluyen.**
 3. **El previo del análisis principal es la prevalencia del conjunto, 0,2215**,
    leída de `servidor/calibrador.json`; la sensibilidad usa
    `heckerling.PREVALENCIA_COHORTE` (0,1466). Ninguna de las dos se teclea.
-4. **Bootstrap (spec §4.6):** `B = 1 000` réplicas; cada réplica remuestrea con
-   reemplazo las 3 811 placas y vuelve a sortear la clínica; `z_y`, los
-   umbrales `τ` y el calibrador quedan **fijos**, calculados una vez sobre el
-   conjunto completo; intervalos del 95 % por percentiles; las diferencias
-   entre modelos se calculan **dentro de cada réplica**. Se corre en 0A y en
-   las seis celdas destacadas; el resto de la rejilla va sin intervalos.
+4. **Bootstrap (spec §4.6, corregido por la tarea 11):** `B = 1 000` réplicas;
+   cada réplica remuestrea con reemplazo los 3 811 **casos de la estimación
+   puntual**, cada placa con la clínica que se le sorteó; `z_y`, los umbrales
+   `τ` y el calibrador quedan **fijos**, calculados una vez sobre el conjunto
+   completo; intervalos del 95 % por percentiles; las diferencias entre
+   modelos se calculan **dentro de cada réplica**. Se corre en 0A y en las
+   seis celdas destacadas; el resto de la rejilla va sin intervalos. *Las
+   tareas 3 a 7 se escribieron con la versión anterior de esta restricción
+   («remuestrea las placas y vuelve a sortear la clínica»), que contaba dos
+   veces el ruido del sorteo: el «IC 95 %» de una cifra que depende de la
+   clínica cubría bastante más del 95 %. La tarea 11 la sustituye y dice por
+   qué.*
 5. **Los modelos puntuales leen `independencia` y `dependencia` del bloque,
    nunca `minima` ni `maxima`**, y solo sobre los casos con el asma conocida;
    los `no_se` van en fila aparte.
@@ -115,13 +121,18 @@ Lo que el spec dejaba abierto, fijado aquí con su razón.
   `SEMILLA_CLINICA = 10 000` y `SEMILLA_INDICES = 20 000`. El spec dice «la
   semilla `b`»; se desplaza para que ninguna réplica repita la clínica de la
   estimación puntual, y las tres constantes se escriben en el JSON.
+  **Corregido por la tarea 11:** la réplica ya no sortea la clínica;
+  `SEMILLA_CLINICA` desaparece del código, del JSON y del documento.
 - **D3. La réplica llama al sistema caso a caso.** Cada réplica genera la
   clínica con `generador.generar` y llama a `combinacion` para las 3 811
   placas (≈ 0,08 s por réplica con las métricas; 1 000 réplicas ≈ 1,3 min por
   celda). No hay camino vectorizado: sería una reimplementación. El coste se
   reparte con **un proceso por celda** (`ProcessPoolExecutor`); el trabajador
   es `simulacion.evaluar_tarea`, en el paquete, para que un proceso hijo lo
-  pueda importar.
+  pueda importar. **Corregido por la tarea 11:** la réplica ya no llama al
+  sistema; remuestrea lo que el sistema dio, caso a caso, en la estimación
+  puntual (la corrida entera pasa de unos tres minutos y medio a menos de
+  uno).
 - **D4. Probabilidades redondeadas, extremos sin redondear.** Los modelos
   puntuales usan lo que el sistema entrega (`independencia[0]`,
   `dependencia[0]`: 4 decimales). Los extremos de la horquilla se recalculan
@@ -213,6 +224,7 @@ Lo que el spec dejaba abierto, fijado aquí con su razón.
 | `pruebas/reproducir_casos.py` | 8, 9 | `latencias.json`; `patientId` repetido |
 | `src/copiloto_triaje/validacion/concordancia.py`, `generador.py`, `scripts/preparar_sesion.py` | 9 | residuos de SP5-A |
 | `README.md` | 10 | el estado de SP5 |
+| casi todos los anteriores, `scripts/analizar_sesion.py`, `src/copiloto_triaje/validacion/categoria.py`, el runbook, el spec y lo publicado | 11, 12 | lo que pidió la revisión final de la rama, y su cierre |
 
 ---
 
@@ -5863,7 +5875,10 @@ git commit -m "feat(validacion): el documento de analisis, generado desde el JSO
 Hasta aquí todo se ha probado con rejillas mínimas y en carpetas temporales.
 Esta tarea corre la simulación entera —25 celdas, 1 000 réplicas en 0A y en
 las seis destacadas—, versiona lo que sale y deja en la suite la prueba que
-vigila que lo versionado corresponde a los insumos y al código de hoy.
+vigila que lo versionado corresponde a los insumos y al código de hoy: vuelve
+a calcular con el propio guion todo lo que no es bootstrap y lo compara cifra
+a cifra. Lo que no vigila (los intervalos del bootstrap y el contenido de las
+figuras) lo dicen la prueba y el README.
 
 **Ficheros:**
 - Crear: `tests/test_resultados_publicados.py`
@@ -5893,23 +5908,33 @@ Crea `tests/test_resultados_publicados.py` con este contenido:
 el JSON versionado corresponde a los insumos y al código de hoy, y el
 documento y las figuras salen de él.
 
-No vuelve a correr el bootstrap (son minutos): recalcula la estimación
-puntual de dos celdas y la compara con la publicada, y regenera el documento
-desde el JSON para comprobar que el versionado es ese. Si alguien cambia las
-crudas, el calibrador, el generador, el oráculo, las métricas o el documento
-sin volver a correr `scripts/validar_combinacion.py`, esto falla.
+QUÉ VIGILA. Todo lo que no es bootstrap se vuelve a calcular con el propio
+guion (`calcular` con 0 réplicas: las 25 celdas, la imagen sola, los insumos y
+los parámetros) y se compara con lo publicado, cifra a cifra. El documento se
+regenera desde el JSON y tiene que ser el versionado. Las figuras tienen que
+ser las de las celdas del JSON, con su resolución y su rótulo. Si alguien
+cambia las crudas, el calibrador, el generador, el oráculo, las métricas, una
+semilla, un umbral o el documento sin volver a correr
+`scripts/validar_combinacion.py`, esto falla.
+
+QUÉ NO VIGILA. Los intervalos del bootstrap no se vuelven a calcular (son
+minutos): solo se comprueba que están donde tienen que estar y bien formados.
+Tampoco se compara el contenido de las figuras: solo sus nombres, su
+resolución y su título. Si se toca algo que cambie el bootstrap o el dibujo,
+hay que volver a correr el guion: ninguna prueba lo va a pedir.
 """
 import json
 import os
 
 import pytest
 
+from copiloto_triaje.servicio.heckerling import PREVALENCIA_COHORTE
 from copiloto_triaje.validacion import datos, informe, metricas, oraculo, simulacion
 
 RESULTADOS = datos.CARPETA / "resultados_simulacion.json"
 ANALISIS = datos.REPO / "docs" / "validacion-semisintetica-sp5.md"
 ROTULO = "simulación semisintética"
-MEDIDO = ("modelos", "pareadas", "horquilla", "discordantes", "no_se")
+DEL_BOOTSTRAP = ("intervalos", "replicas")     # lo unico de una celda que no se recalcula
 
 
 @pytest.fixture(scope="module")
@@ -5917,8 +5942,36 @@ def publicados():
     return json.loads(RESULTADOS.read_text(encoding="utf-8"))
 
 
+@pytest.fixture(scope="module")
+def hoy(validar):
+    """Lo que el guion calcula HOY, sin bootstrap, tal como lo escribiria."""
+    return json.loads(json.dumps(validar.calcular(replicas=0, procesos=1),
+                                 ensure_ascii=False, allow_nan=False))
+
+
 def _celda(publicados, nombre):
     return next(c for c in publicados["celdas"] if c["nombre"] == nombre)
+
+
+def _sin_bootstrap(celda):
+    return {k: v for k, v in celda.items() if k not in DEL_BOOTSTRAP}
+
+
+def _comparar(publicado, recalculado, ruta):
+    """Las mismas claves, las mismas listas y las mismas cifras (a 1e-9)."""
+    if isinstance(publicado, dict):
+        assert isinstance(recalculado, dict) and set(publicado) == set(recalculado), ruta
+        for clave in publicado:
+            _comparar(publicado[clave], recalculado[clave], f"{ruta}.{clave}")
+    elif isinstance(publicado, list):
+        assert isinstance(recalculado, list) and len(publicado) == len(recalculado), ruta
+        for i, (a, b) in enumerate(zip(publicado, recalculado)):
+            _comparar(a, b, f"{ruta}[{i}]")
+    elif isinstance(publicado, float) and isinstance(recalculado, (int, float)) \
+            and not isinstance(recalculado, bool):
+        assert recalculado == pytest.approx(publicado, abs=1e-9), ruta
+    else:
+        assert recalculado == publicado, ruta
 
 
 def test_llevan_el_rotulo_y_las_huellas_de_los_insumos_de_hoy(publicados):
@@ -5932,12 +5985,27 @@ def test_llevan_el_rotulo_y_las_huellas_de_los_insumos_de_hoy(publicados):
     assert (i["placas"], i["positivas"], i["prevalencia"]) == (3811, 844, 0.2215)
 
 
+def test_los_parametros_publicados_son_las_constantes_del_codigo(publicados):
+    """Una semilla o un umbral cambiados en el codigo dejan viejo lo publicado."""
+    assert publicados["parametros"] == {
+        "replicas": simulacion.B_REPLICAS,
+        "semilla_puntual": simulacion.SEMILLA_PUNTUAL,
+        "semilla_clinica": simulacion.SEMILLA_CLINICA,
+        "semilla_indices": simulacion.SEMILLA_INDICES,
+        "epsilon": metricas.EPSILON,
+        "bins": metricas.BINS,
+        "repeticiones_suelo": metricas.REPETICIONES_SUELO,
+        "semilla_suelo": metricas.SEMILLA_SUELO,
+        "hipotesis_contencion": simulacion.HIPOTESIS_CONTENCION,
+        "previo_desplegado": PREVALENCIA_COHORTE,
+        "rejilla": [float(r) for r in oraculo.RHO_REJILLA],
+        "destacadas": [[float(a), float(b)] for a, b in oraculo.CELDAS_DESTACADAS],
+    }
+    assert publicados["parametros"]["replicas"] == 1000
+
+
 def test_son_la_rejilla_entera_con_mil_replicas_en_0a_y_las_destacadas(publicados):
     p = publicados["parametros"]
-    assert p["replicas"] == simulacion.B_REPLICAS == 1000
-    assert p["epsilon"] == metricas.EPSILON
-    assert p["rejilla"] == list(oraculo.RHO_REJILLA)
-    assert [tuple(d) for d in p["destacadas"]] == list(oraculo.CELDAS_DESTACADAS)
     celdas = publicados["celdas"]
     assert len(celdas) == 25
     assert [(c["rho1"], c["rho0"]) for c in celdas] == [
@@ -5946,7 +6014,8 @@ def test_son_la_rejilla_entera_con_mil_replicas_en_0a_y_las_destacadas(publicado
     assert destacadas == set(oraculo.CELDAS_DESTACADAS)
     con_intervalos = {(c["rho1"], c["rho0"]) for c in celdas if "intervalos" in c}
     assert con_intervalos == destacadas | {(0.0, 0.0)}
-    assert all(c["replicas"] == 1000 for c in celdas if "intervalos" in c)
+    assert all(c["replicas"] == p["replicas"] for c in celdas if "intervalos" in c)
+    assert all("replicas" not in c for c in celdas if "intervalos" not in c)
     assert {(c["rho1"], c["rho0"]) for c in celdas
             if "sensibilidad_al_previo" in c} == con_intervalos
 
@@ -5963,27 +6032,36 @@ def test_la_fila_0a_publicada_es_la_comprobacion_de_la_metrica(publicados):
     assert "optimismo_de_la_derivacion" in cero
 
 
-@pytest.mark.parametrize("nombre, rho1, rho0", [("0A", 0.0, 0.0), ("(0,3; 0,3)", 0.3, 0.3)])
-def test_el_codigo_de_hoy_reproduce_las_cifras_publicadas(publicados, nombre, rho1, rho0):
-    publicada = _celda(publicados, nombre)
-    hoy = simulacion.evaluar_celda(simulacion.cargar_conjunto(), rho1, rho0,
-                                   con_sensibilidad=True)
-    assert hoy["recuentos"] == publicada["recuentos"]
-    a = simulacion.aplanar({k: hoy[k] for k in MEDIDO})
-    b = simulacion.aplanar({k: publicada[k] for k in MEDIDO})
-    assert set(a) == set(b)
-    for ruta in a:
-        assert a[ruta] == pytest.approx(b[ruta], abs=1e-9), ruta
-    assert simulacion.aplanar(hoy["escala_legible"]) == pytest.approx(
-        simulacion.aplanar(publicada["escala_legible"]), abs=1e-9)
-    assert simulacion.aplanar(hoy["sensibilidad_al_previo"]) == pytest.approx(
-        simulacion.aplanar(publicada["sensibilidad_al_previo"]), abs=1e-9)
+def test_el_codigo_de_hoy_reproduce_todo_lo_publicado_salvo_el_bootstrap(publicados, hoy):
+    """Las 25 celdas, enteras: tambien las asimetricas (intercambiar ρ1 y ρ0
+    no cambia las simetricas), 0C, la correlacion teorica y la hipotesis."""
+    assert set(publicados) == set(hoy)
+    for clave in ("rotulo", "titulo", "advertencia", "insumos", "imagen_sola"):
+        _comparar(publicados[clave], hoy[clave], clave)
+    _comparar({k: v for k, v in publicados["parametros"].items() if k != "replicas"},
+              {k: v for k, v in hoy["parametros"].items() if k != "replicas"}, "parametros")
+    assert [c["nombre"] for c in hoy["celdas"]] == [c["nombre"] for c in publicados["celdas"]]
+    for publicada, recalculada in zip(publicados["celdas"], hoy["celdas"]):
+        assert not set(recalculada) & set(DEL_BOOTSTRAP), publicada["nombre"]
+        _comparar(_sin_bootstrap(publicada), recalculada, publicada["nombre"])
+    # y lo que se compara no es poca cosa: cada celda lleva todo lo medido
+    for celda in publicados["celdas"]:
+        assert {"recuentos", "modelos", "pareadas", "horquilla", "discordantes", "no_se",
+                "hipotesis", "escala_legible", "correlacion_teorica"} <= set(celda)
 
 
 def test_cada_intervalo_publicado_esta_bien_formado(publicados):
+    """El bootstrap no se repite aqui: se comprueba su forma, no sus cifras."""
+    total = 0
     for celda in publicados["celdas"]:
         for ruta, (li, ls) in celda.get("intervalos", {}).items():
             assert li is not None and ls is not None and li <= ls, (celda["nombre"], ruta)
+            valor = celda
+            for clave in ruta.split("."):
+                valor = valor[clave]               # el intervalo es de una cifra que existe
+            assert isinstance(valor, (int, float)), (celda["nombre"], ruta)
+            total += 1
+    assert total > 300
 
 
 def test_las_figuras_publicadas_son_las_de_las_celdas_del_json(publicados, validar):
@@ -6093,7 +6171,10 @@ intervalo, la estimación alcanza el umbral en 1, que es (0,15; 0,15).
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_resultados_publicados.py -q`
 
-Esperado: `8 passed`.
+Esperado: `8 passed` (unos 20 segundos: recalcula la rejilla entera sin bootstrap).
+Para ver que tiene dientes, cambia en `src/copiloto_triaje/validacion/simulacion.py`
+el último valor de `RV_VALIDACION` de `8.33` a `17.5`: tiene que dar `1 failed, 7 passed`.
+Deshaz el cambio con `git checkout -- src/copiloto_triaje/validacion/simulacion.py`.
 
 - [ ] **Paso 7: El README de la carpeta dice qué es cada cosa**
 
@@ -6102,13 +6183,14 @@ que empieza por «**Todo lo que hay en esta carpeta, salvo `crudas_prueba.csv`,
 es resultado» y acaba en «lleva ese rótulo en su título.») por:
 
 ```markdown
-**Todo lo que hay en esta carpeta, salvo `crudas_prueba.csv` y
-`latencia.json`, es resultado de una simulación semisintética** (spec de
-SP5, §4): las placas y sus etiquetas son reales (conjunto de prueba de
-RSNA), la clínica se sortea con la distribución publicada de la puntuación
-de Heckerling, y la dependencia entre clínica e imagen es un supuesto
-declarado. Nada de aquí mide exactitud clínica en pacientes. Cada tabla,
-figura y JSON de resultados lleva ese rótulo en su título.
+**Todo lo que hay en esta carpeta, salvo `crudas_prueba.csv`,
+`crudas_prueba.sha256` y `latencia.json`, es resultado de una simulación
+semisintética** (spec de SP5, §4): las placas y sus etiquetas son reales
+(conjunto de prueba de RSNA), la clínica se sortea con la distribución
+publicada de la puntuación de Heckerling, y la dependencia entre clínica e
+imagen es un supuesto declarado. Nada de aquí mide exactitud clínica en
+pacientes. Cada tabla, figura y JSON de resultados lleva ese rótulo en su
+título.
 
 ## `resultados_simulacion.json`
 
@@ -6141,8 +6223,22 @@ cifra se teclea y el documento no se edita a mano.
 
 Sin los pesos, sin red y sin contenedores; de 3 a 5 minutos. Con
 `--solo-documento` se regeneran las figuras y el análisis sin recalcular.
-`tests/test_resultados_publicados.py` falla si lo versionado deja de
-corresponder a los insumos o al código.
+
+`tests/test_resultados_publicados.py` vuelve a calcular todo lo que no es
+bootstrap (las 25 celdas, la imagen sola, los insumos y los parámetros) y
+falla si lo versionado deja de corresponder a los insumos o al código;
+también regenera el análisis desde el JSON y lo compara con el versionado.
+**No** repite el bootstrap ni compara el contenido de las figuras: de los
+intervalos solo comprueba la forma, y de las figuras, el nombre, la
+resolución y el título. Si se toca algo que cambie el bootstrap o el dibujo,
+hay que volver a correr el guion, porque ninguna prueba lo va a pedir.
+
+## `acta-h7-plantilla.md`
+
+No es un resultado: es la **plantilla** del acta de la sesión con el médico
+(spec de SP5, §5). La rellena `scripts/analizar_sesion.py` con las cifras de
+`sesion.json`; hasta que la sesión se haga, ni `sesion.json` ni `acta-h7.md`
+están en esta carpeta. El procedimiento está en `docs/sp5-sesion.md`.
 ```
 
 - [ ] **Paso 8: Los vecinos**
@@ -9145,6 +9241,5915 @@ git commit -m "docs(sp5): el README dice dónde está la validación semisintét
 
 ---
 
+---
+
+### Tarea 11: Lo que pidió la revisión final de la rama
+
+Las tareas 1 a 10 pasaron cada una su revisión. Esta es la **única tanda de
+arreglos** de la revisión final de la rama entera, que miró lo que una
+revisión de tarea no puede ver: la estadística en conjunto, el documento leído
+como lo leerá el tribunal, los instrumentos de un solo uso y las costuras entre
+tareas. Junta tres cosas:
+
+1. **Un error de método en el bootstrap** (el hallazgo grave). Cada réplica
+   sorteaba la clínica de las 3 811 placas y después remuestreaba las parejas.
+   El remuestreo de parejas ya lleva el ruido del sorteo: sorteando otra vez,
+   ese ruido se contaba dos veces. Medido sobre la propia simulación, la
+   varianza de las réplicas salía × 1,57 en mediana, y el «IC 95 %» de una
+   cifra que depende de la clínica cubría bastante más del 95 % (entre el 97 y
+   el 100 % en un ensayo con la misma estructura). Remuestrear primero y
+   sortear después quita la doble cuenta, pero centra las réplicas en la media
+   sobre la clínica y no en la estimación que se publica, y el intervalo por
+   percentiles sigue cubriendo de más.
+   **Ahora cada réplica remuestrea los casos de la estimación puntual, cada
+   placa con la clínica que se le sorteó, y no vuelve a sortear.** Las
+   estimaciones puntuales no cambian; casi todos los intervalos se estrechan, y
+   quedan centrados, y cambian tres lecturas del documento. Es una corrección del
+   spec §4.6 (la restricción 4 y las decisiones D2 y D3 de este plan decían
+   «vuelve a sortear la clínica»), y el spec lo dice con una nota fechada.
+2. **Frases del documento y del acta que afirmaban algo falso o que podían
+   llegar a serlo**: «la categoría que el sistema imprime» (no imprime
+   ninguna), «el punto medio del rango» (lo que se mide es la media de las dos
+   posteriores de independencia), «casos con neumonía» (la etiqueta es de
+   opacidad), «pueden ser de una corrida anterior» (ahora cada figura lleva la
+   huella de los resultados de los que sale, y el documento y la prueba lo
+   comprueban), y el texto fijado del acta, que afirmaba en presente una
+   anchura del intervalo que las cifras de la sesión pueden desmentir (se
+   conserva literal, citado como lo declarado antes de la sesión, y detrás va
+   lo observado).
+3. **Los menores que las revisiones de tarea dejaron aplazados** y los que
+   encontró la revisión final: redacción, pruebas que afirmaban menos de lo
+   que decía su nombre, lógica duplicada entre `informe.py` y el guion, un
+   `NaN` que el bootstrap callaba, `sesion.json` con `NaN`, el JSON de la
+   latencia sin la regla con que se decide su etiqueta, y los sitios del
+   runbook donde una persona se quedaba parada.
+
+**Ficheros:**
+
+- Modificar: `docs/sp5-sesion.md`
+- Modificar: `docs/superpowers/specs/2026-09-27-sp5-validacion-y-cierre-design.md`
+- Modificar: `docs/validacion-semisintetica/README.md`
+- Modificar: `docs/validacion-semisintetica/acta-h7-plantilla.md`
+- Modificar: `pruebas/reproducir_casos.py`
+- Modificar: `scripts/analizar_sesion.py`
+- Modificar: `scripts/medir_latencia.py`
+- Modificar: `scripts/validar_combinacion.py`
+- Modificar: `src/copiloto_triaje/validacion/categoria.py`
+- Modificar: `src/copiloto_triaje/validacion/concordancia.py`
+- Modificar: `src/copiloto_triaje/validacion/informe.py`
+- Modificar: `src/copiloto_triaje/validacion/metricas.py`
+- Modificar: `src/copiloto_triaje/validacion/simulacion.py`
+- Modificar: `tests/test_concordancia.py`
+- Modificar: `tests/test_informe.py`
+- Modificar: `tests/test_medir_latencia.py`
+- Modificar: `tests/test_metricas.py`
+- Modificar: `tests/test_reproducir_casos.py`
+- Modificar: `tests/test_resultados_publicados.py`
+- Modificar: `tests/test_simulacion.py`
+- Modificar: `tests/test_validacion_0a.py`
+- Modificar: `tests/test_validar_combinacion.py`
+
+Y, **regenerados** por el guion (no se editan): `docs/validacion-semisintetica/resultados_simulacion.json`,
+los diez PNG de esa carpeta y `docs/validacion-semisintetica-sp5.md`.
+
+**Interfaces:**
+
+- Cambia: `simulacion.replica(conjunto, salidas, l_oraculo, b)` y
+  `simulacion.bootstrap(conjunto, salidas, l_oraculo, replicas)` reciben lo que
+  midió la estimación puntual, no el modelo. Desaparece
+  `simulacion.SEMILLA_CLINICA`, y con ella `parametros.semilla_clinica` del
+  JSON.
+- Cambia: `metricas.percentiles` lanza `ArithmeticError` si alguna réplica no
+  es un número finito (antes la descartaba en silencio).
+- Cambia: `informe.redactar(resultados, figuras=None, ajenas=())`; `ajenas`
+  son los nombres de las figuras enlazadas que no llevan la huella de esos
+  resultados.
+- Nuevo en `informe`: `slug_de_celda`, `celdas_completas` (antes `_slug` y
+  `_completas`) y `LIBRERIAS`. El guion los toma de ahí, con `TITULO`,
+  `PREFIJO_FIABILIDAD`, `FIGURAS_GLOBALES`, `rho` y `MODELOS`.
+- Nuevo en el guion: `entorno()`, `huella_de_resultados(resultados)`,
+  `huella_de_figura(ruta)`, `figuras_ajenas(resultados, figuras)`; las tres
+  funciones de figura aceptan `huella=None`.
+- Cambia el JSON de resultados: clave nueva `entorno`; en cada celda,
+  `correlacion_teorica.con_opacidad` y `.sin_opacidad` (antes `con_neumonia` y
+  `sin_neumonia`).
+- Cambia `medir_latencia.resumir(filas, minimo, manual, corrida_del=None)` y
+  su JSON: claves nuevas `corrida_del`, `veredicto` y `glosario`;
+  `menor_ms`/`mayor_ms` (antes `minimo_ms`/`maximo_ms`) y, en `total_a_mano`,
+  `menor_s`/`mayor_s`.
+- Nuevo en `concordancia`: `COTA_DEL_MEDICO`, `_anchura_observada`,
+  `_dentro_de_la_horquilla`; `acuerdo_continuo` devuelve además
+  `sistema_fuera_de_la_cota`, `dentro_de_la_horquilla` y
+  `horquillas_que_son_una_cota`. La plantilla del acta pide tres valores
+  nuevos: `horquillas_cota`, `sistema_fuera` y `anchura_observada`.
+- Nuevo en `scripts/analizar_sesion.py`: `sin_nan(x)`.
+
+- [ ] **Paso 1: las pruebas, y verlas fallar**
+
+Aplica las sustituciones del **grupo 1** (solo ficheros de `tests/`).
+
+```bash
+C:/venv-copiloto/Scripts/python.exe -m pytest -q tests/test_concordancia.py tests/test_simulacion.py tests/test_informe.py tests/test_validar_combinacion.py tests/test_reproducir_casos.py tests/test_medir_latencia.py tests/test_sesion.py tests/test_metricas.py tests/test_validacion_0a.py tests/test_resultados_publicados.py tests/test_categoria.py tests/test_generador.py tests/test_validacion_datos.py
+```
+
+Esperado: `77 failed, 249 passed`. Fallan las pruebas nuevas y las que fijan las frases y
+las claves que cambian; las demás siguen en verde.
+
+- [ ] **Paso 2: el código y los documentos**
+
+Aplica las sustituciones del **grupo 2**.
+
+- [ ] **Paso 3: regenerar lo publicado**
+
+```bash
+C:/venv-copiloto/Scripts/python.exe scripts/validar_combinacion.py
+```
+
+En torno a un minuto (el bootstrap ya no llama al sistema en cada réplica).
+Escribe el JSON, las diez figuras y el documento. Comprueba las cifras que
+cambian de lectura:
+
+```bash
+C:/venv-copiloto/Scripts/python.exe -c "import json; r = json.load(open('docs/validacion-semisintetica/resultados_simulacion.json', encoding='utf-8')); c = {x['nombre']: x for x in r['celdas']}; print(list(r)); print(sorted(r['parametros'])); print([round(v, 4) for v in c['(0,6; 0)']['intervalos']['modelos.conservador.pendiente']]); print([round(v, 4) for v in c['(0,3; 0)']['intervalos']['modelos.independencia.pendiente']]); print([round(v, 4) for v in c['(0,6; 0,6)']['intervalos']['pareadas.independencia.brier']]); print(sorted(c['0A']['correlacion_teorica']))"
+```
+
+Esperado:
+
+```
+['rotulo', 'titulo', 'advertencia', 'insumos', 'parametros', 'entorno', 'imagen_sola', 'celdas']
+['bins', 'destacadas', 'epsilon', 'hipotesis_contencion', 'previo_desplegado', 'rejilla', 'repeticiones_suelo', 'replicas', 'semilla_indices', 'semilla_puntual', 'semilla_suelo']
+[1.0484, 1.2162]
+[0.8635, 1.0063]
+[0.0013, 0.0091]
+['con_opacidad', 'sin_opacidad']
+```
+
+- [ ] **Paso 4: el verde**
+
+```bash
+C:/venv-copiloto/Scripts/python.exe -m pytest -q tests/test_concordancia.py tests/test_simulacion.py tests/test_informe.py tests/test_validar_combinacion.py tests/test_reproducir_casos.py tests/test_medir_latencia.py tests/test_sesion.py tests/test_metricas.py tests/test_validacion_0a.py tests/test_resultados_publicados.py tests/test_categoria.py tests/test_generador.py tests/test_validacion_datos.py
+```
+
+Esperado: `326 passed`. Y la suite entera y el formulario:
+
+```bash
+C:/venv-copiloto/Scripts/python.exe -m pytest -q
+node tests/formulario.mjs
+```
+
+Esperado: ningún fallo (las que se saltan son las que piden red, Docker o
+secretos) y `16 OK`.
+
+- [ ] **Paso 5: commit**
+
+```bash
+git add docs/sp5-sesion.md docs/superpowers/specs/2026-09-27-sp5-validacion-y-cierre-design.md docs/validacion-semisintetica/README.md docs/validacion-semisintetica/acta-h7-plantilla.md pruebas/reproducir_casos.py scripts/analizar_sesion.py scripts/medir_latencia.py scripts/validar_combinacion.py src/copiloto_triaje/validacion/categoria.py src/copiloto_triaje/validacion/concordancia.py src/copiloto_triaje/validacion/informe.py src/copiloto_triaje/validacion/metricas.py src/copiloto_triaje/validacion/simulacion.py tests/test_concordancia.py tests/test_informe.py tests/test_medir_latencia.py tests/test_metricas.py tests/test_reproducir_casos.py tests/test_resultados_publicados.py tests/test_simulacion.py tests/test_validacion_0a.py tests/test_validar_combinacion.py docs/validacion-semisintetica/resultados_simulacion.json docs/validacion-semisintetica/*.png docs/validacion-semisintetica-sp5.md
+git commit -m "fix(validacion): el bootstrap remuestrea los casos de la estimación, y lo que pidió la revisión final" -m "El bootstrap sorteaba la clínica y después remuestreaba las parejas: el ruido del sorteo se contaba dos veces y un IC 95 % cubría más del 99 %. Ahora remuestrea los casos de la estimación puntual. Las estimaciones no cambian; los intervalos sí, y con ellos tres lecturas del documento. Además: cada figura lleva la huella de los resultados de los que sale; el JSON dice con qué versiones se calculó; el documento no atribuye al sistema una categoría que no imprime ni llama punto medio del rango a lo que no lo es; el acta cita el texto fijado como lo declarado y da lo observado; sesion.json no lleva NaN; latencia.json lleva la regla y la etiqueta del KPI." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+#### Grupo 1 — Las pruebas
+
+**Sustituciones: `tests/test_concordancia.py`**
+
+8, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+    assert r["fraccion_dentro_de_la_horquilla"] == pytest.approx(1.0)
+
+````
+
+y sustitúyelo por
+
+````python
+    assert r["fraccion_dentro_de_la_horquilla"] == pytest.approx(1.0)
+    assert r["dentro_de_la_horquilla"] == 5
+    assert r["sistema_fuera_de_la_cota"] == 0
+
+
+def test_donde_el_sistema_queda_fuera_de_la_cota_la_diferencia_no_puede_ser_cero():
+    """Se acota al médico y no al sistema (spec §5.5): con el sistema por
+    debajo del 0,5 %, contestar 0 % cuenta como contestar MÁS que él."""
+    assert cc.COTA_DEL_MEDICO == (0.005, 0.995)
+    r = cc.acuerdo_continuo([0, 0, 100, 50], [0.0034, 0.005, 0.9960, 0.5])
+    assert r["sistema_fuera_de_la_cota"] == 2           # 0,005 justo no queda fuera
+    assert r["acotados_0_o_100"] == 3
+    solo = cc.acuerdo_continuo([0, 0], [0.0034, 0.0009])
+    assert solo["sistema_fuera_de_la_cota"] == 2 and solo["diferencia_media_log_odds"] > 0.3
+    arriba = cc.acuerdo_continuo([100, 100], [0.9960, 0.9991])
+    assert arriba["diferencia_media_log_odds"] < -0.2
+    # acotar sigue dando lo de siempre: un 0 % es un 0,5 %
+    igual = cc.acuerdo_continuo([0, 100], [0.005, 0.995])
+    assert igual["diferencia_media_log_odds"] == pytest.approx(0.0, abs=1e-12)
+    assert igual["de"] == pytest.approx(0.0, abs=1e-12)
+
+````
+
+2. Busca
+
+````python
+    assert r["horquillas_de_anchura_cero"] == int(un_solo_valor)
+    assert cc._horquilla_como_el_bot(minima, maxima).count("%") == (1 if un_solo_valor else 2)
+````
+
+y sustitúyelo por
+
+````python
+    assert r["horquillas_de_anchura_cero"] == int(un_solo_valor)
+    # y de esas, las que el bot imprime como una cota
+    assert r["horquillas_que_son_una_cota"] == int(
+        un_solo_valor and cc._pct_como_el_bot(minima) in ("< 1 %", "> 99 %"))
+    assert r["dentro_de_la_horquilla"] == 1 + int(dentro)
+    assert cc._horquilla_como_el_bot(minima, maxima).count("%") == (1 if un_solo_valor else 2)
+````
+
+3. Busca
+
+````python
+        "K", con(0.7, li_a=un_ulp, li_b=0.39))
+    # y lo que a seis decimales NO es el umbral sigue sin alcanzarlo, y se ve
+````
+
+y sustitúyelo por
+
+````python
+        "K", con(0.7, li_a=un_ulp, li_b=0.39))
+    # tambien con el ulp en el limite del BCa
+    u = con(0.7, li_a=0.39, li_b=un_ulp)["frente_a_umbrales"]
+    assert (u["li_analitico_lt_0_4"], u["li_bca_lt_0_4"]) == (True, False)
+    assert "con el método analítico (0,39) y no con el BCa (0,40)" in cc._criterio(
+        "K", con(0.7, li_a=0.39, li_b=un_ulp))
+    # un limite que ES el umbral no queda por debajo; tampoco «por encima»
+    en_el_umbral = cc._criterio("K", con(0.7, li_a=un_ulp, li_b=0.4))
+    assert ("el límite inferior del intervalo no queda por debajo de 0,4 con ninguno de los "
+            "dos métodos (analítico 0,40; BCa 0,40).") in en_el_umbral
+    assert "por encima" not in en_el_umbral
+    # y lo que a seis decimales NO es el umbral sigue sin alcanzarlo, y se ve
+````
+
+4. Busca
+
+````python
+    assert cc._criterio("K", con(0.399999)).startswith("K (0,399999) no alcanza el mínimo")
+
+````
+
+y sustitúyelo por
+
+````python
+    assert cc._criterio("K", con(0.399999)).startswith("K (0,399999) no alcanza el mínimo")
+    # la tolerancia son SEIS decimales, ni siete ni 1e-9: lo que a seis es el
+    # umbral lo alcanza, y no puede salir «K (0,400000) no alcanza»
+    assert con(0.3999996)["frente_a_umbrales"]["puntual_ge_0_4"] is True
+    assert cc._criterio("K", con(0.3999996)).startswith("K (0,40) alcanza el mínimo de 0,4")
+    assert con(0.3999994)["frente_a_umbrales"]["puntual_ge_0_4"] is False
+    assert cc._criterio("K", con(0.3999994)).startswith("K (0,399999) no alcanza el mínimo")
+    assert con(0.5999996)["frente_a_umbrales"]["puntual_ge_0_6"] is True
+
+````
+
+5. Busca
+
+````python
+    assert "(0 de 24 horquillas son un solo porcentaje: en ellas solo cuenta el valor exacto)" in plano
+    # acuerdo perfecto: los tres kappas valen 1 y su límite inferior queda por encima de 0,4
+````
+
+y sustitúyelo por
+
+````python
+    assert ("el porcentaje del médico cae dentro de la horquilla en 8 de 24 casos (33 %) "
+            "(0 de 24 horquillas son un solo valor impreso, y 0 de ellas una cota, «< 1 %» "
+            "o «> 99 %»: en ellas solo cuenta ese entero, y una «< 1 %» solo la cumple un "
+            "0 y una «> 99 %», un 100; en un rango, «menos de 1 %» admite desde el 0 y "
+            "«más de 99 %», hasta el 100); porcentajes de 0 o 100 acotados: 0; puntos "
+            "medios del sistema por debajo de 0,5 % o por encima de 99,5 %: 0 (en ellos la "
+            "diferencia no puede ser cero: lo que conteste el médico se acota a 0,5 % y "
+            "99,5 %, y el sistema no).") in plano
+    # acuerdo perfecto: los tres kappas valen 1 y su límite inferior no queda por debajo de 0,4
+````
+
+6. Busca
+
+````python
+            "el límite inferior del intervalo queda por encima de 0,4 con los dos métodos") in plano
+````
+
+y sustitúyelo por
+
+````python
+            "el límite inferior del intervalo no queda por debajo de 0,4 con ninguno de los dos "
+            "métodos") in plano
+    # el texto fijado se cita como lo declarado, y detrás va lo observado
+    assert ("**Declarado antes de la sesión** (spec de SP5 §5.5): «" + cc.TEXTO_FIJADO
+            + "» **Observado en esta sesión:** el intervalo del 95 % del kappa ponderado "
+            "va de 1,00 a 1,00 con el método analítico (anchura 0,00) y de 1,00 a 1,00 con "
+            "el BCa (anchura 0,00); el 0,4 y el 0,6 quedan fuera con los dos métodos."
+            ) in plano
+````
+
+7. Busca
+
+````python
+        "El kappa binario en «alta» no es calculable con estas lecturas."
+
+````
+
+y sustitúyelo por
+
+````python
+        "El kappa binario en «alta» no es calculable con estas lecturas."
+
+
+def test_un_cero_con_residuo_de_coma_flotante_no_se_imprime_negativo():
+    """El limite inferior del BCa de una tabla puede ser −5e-16: es un 0."""
+    assert cc._f(-5.3e-16) == "0,00" and cc._f(-0.0) == "0,00" and cc._f(0.0) == "0,00"
+    assert cc._f(-0.004) == "0,00" and cc._f(-0.0004, 3) == "0,000"
+    assert cc._f(-0.005001) == "-0,01" and cc._f(-0.12) == "-0,12"
+    assert cc._f_frente_a_umbral(-5.3e-16) == "0,00"
+    k = {"kappa": 0.5, "ic95": [-5.3e-16, 0.75], "ic95_bca": [-1e-17, 0.75], "n": 24}
+    assert cc._kappa_texto(k) == ("0,50 (IC 95 % analítico 0,00 a 0,75; BCa 0,00 a 0,75; "
+                                  "n = 24)")
+
+
+def test_lo_observado_va_al_lado_de_lo_declarado_y_no_lo_contradice():
+    """El texto fijado dice «una anchura de 0,5 a 0,6»: con un kappa alto el
+    intervalo es mucho más estrecho, y el acta tiene que decir el suyo."""
+    def k(kappa, analitico, bca):
+        r = {"kappa": kappa, "ic95": list(analitico), "ic95_bca": list(bca), "n": 24}
+        r["frente_a_umbrales"] = cc.frente_a_umbrales(r)
+        return r
+    assert cc._anchura_observada(k(0.893, (0.7512, 1.0), (0.6488, 1.0))) == (
+        "el intervalo del 95 % del kappa ponderado va de 0,75 a 1,00 con el método "
+        "analítico (anchura 0,25) y de 0,65 a 1,00 con el BCa (anchura 0,35); el 0,4 y el "
+        "0,6 quedan fuera con los dos métodos.")
+    assert cc._anchura_observada(k(0.55, (0.28, 0.82), (0.25, 0.79))) == (
+        "el intervalo del 95 % del kappa ponderado va de 0,28 a 0,82 con el método "
+        "analítico (anchura 0,54) y de 0,25 a 0,79 con el BCa (anchura 0,54); el 0,4 y el "
+        "0,6 quedan dentro con los dos métodos.")
+    # los límites, tal como se imprimen: 0,3996 se imprime «0,40» y contiene el 0,4
+    assert cc._anchura_observada(k(0.7, (0.3996, 0.95), (0.41, 0.95))) == (
+        "el intervalo del 95 % del kappa ponderado va de 0,40 a 0,95 con el método "
+        "analítico (anchura 0,55) y de 0,41 a 0,95 con el BCa (anchura 0,54); el 0,4 queda "
+        "dentro con el método analítico y fuera con el BCa y el 0,6 queda dentro con los "
+        "dos métodos.")
+    assert "de 0,00 a 0,00 con el método analítico (anchura 0,00)" in cc._anchura_observada(
+        k(0.0, (-5.3e-16, 0.0), (0.0, 0.0)))
+    nan = float("nan")
+    for sin_kappa in ({"kappa": nan, "ic95": [nan, nan], "ic95_bca": [nan, nan],
+                       "frente_a_umbrales": None},
+                      {"kappa": None, "ic95": [None, None], "ic95_bca": [None, None],
+                       "frente_a_umbrales": None}):
+        assert cc._anchura_observada(sin_kappa) == (
+            "el kappa ponderado no es calculable con estas lecturas, y su intervalo tampoco.")
+
+
+def test_dentro_de_la_horquilla_da_el_recuento_y_redondea_como_el_bot():
+    def dicho(dentro, n=24):
+        return cc._dentro_de_la_horquilla({"dentro_de_la_horquilla": dentro, "n": n})
+    assert dicho(7) == "7 de 24 casos (29 %)"
+    # 3 de 24 son el 12,5 %: hacia arriba, como `Math.round` en el bot
+    assert dicho(3) == "3 de 24 casos (13 %)" and dicho(15) == "15 de 24 casos (63 %)"
+    assert dicho(9) == "9 de 24 casos (38 %)" and dicho(21) == "21 de 24 casos (88 %)"
+    assert dicho(0) == "0 de 24 casos (0 %)" and dicho(24) == "24 de 24 casos (100 %)"
+    assert dicho(1, 1) == "1 de 1 caso (100 %)"
+    assert cc._dentro_de_la_horquilla({"n": 24}) == "—"
+
+
+def test_sesion_json_no_lleva_nan(tmp_path):
+    """Con el porcentaje del médico constante Spearman no es calculable: en
+    `sesion.json` va `null`, que un lector estricto abre, y en el acta «—»."""
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    sesion = tmp_path / "sesion"
+    (sesion / "corpus").mkdir(parents=True)
+    clave = _clave()
+    (sesion / "clave.json").write_text(json.dumps(clave, ensure_ascii=False), encoding="utf-8")
+    (sesion / "corpus" / "mensajes.json").write_text("{}", encoding="utf-8")
+    casos = {c["patientId"]: c for c in clave["casos"]}
+    _csv(sesion / "lectura1.csv", [
+        _fila(1, i + 1, casos[pid], casos[pid]["categoria"]["primaria"], 50, 60.0)
+        for i, pid in enumerate(clave["ordenes"]["lectura1"])])
+    salida, acta = tmp_path / "out" / "sesion.json", tmp_path / "out" / "acta-h7.md"
+    r = subprocess.run(
+        [sys.executable, str(repo / "scripts" / "analizar_sesion.py"), "--sesion", str(sesion),
+         "--lectura1", "lectura1.csv", "--salida", str(salida), "--acta", str(acta)],
+        capture_output=True, text=True, encoding="utf-8",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    assert r.returncode == 0, r.stderr
+    crudo = salida.read_text(encoding="utf-8")
+    assert "NaN" not in crudo and "Infinity" not in crudo
+
+    def estricto(constante):
+        raise AssertionError(f"sesion.json lleva {constante}")
+    s = json.loads(crudo, parse_constant=estricto)
+    assert s["acuerdo_continuo"]["spearman"] is None
+    assert s["kappa"]["ponderado_lineal"]["kappa"] == pytest.approx(1.0)
+    assert "Spearman —;" in _plano(acta.read_text(encoding="utf-8"))
+
+````
+
+8. Busca
+
+````python
+    assert "horquillas son un solo porcentaje: en ellas solo cuenta el valor exacto" in plano
+````
+
+y sustitúyelo por
+
+````python
+    assert "horquillas son un solo valor impreso, y 0 de ellas una cota" in plano
+    assert "**Declarado antes de la sesión** (spec de SP5 §5.5): «" + cc.TEXTO_FIJADO in plano
+    assert "**Observado en esta sesión:** el intervalo del 95 % del kappa ponderado va de " in plano
+    # sesion.json lo abre un lector estricto: no lleva NaN
+    def estricto(constante):
+        raise AssertionError(f"sesion.json lleva {constante}")
+    json.loads(salida.read_text(encoding="utf-8"), parse_constant=estricto)
+````
+
+**Sustituciones: `tests/test_informe.py`**
+
+23, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+    # junto a la tabla se dice con que se decide, y que el JSON va sin redondear
+````
+
+y sustitúyelo por
+
+````python
+    # junto a la tabla se dice con que se decide, y que mira el campo del JSON
+````
+
+2. Busca
+
+````python
+            "del 90 %); el campo `se_sostiene` del fichero de resultados se calcula sin "
+            "redondear:") in horquilla
+````
+
+y sustitúyelo por
+
+````python
+            "del 90 %). El campo `se_sostiene` del fichero de resultados mira solo la "
+            "estimación, sin su intervalo y sin redondear, y puede no coincidir con esta "
+            "columna:") in horquilla
+    # y de verdad pueden no coincidir: el campo dice que si, y la columna, que
+    # no se puede decir
+    otro = _con_hipotesis(resultados_minimos, 3, 0.91, (0.88, 0.97))
+    assert otro["celdas"][3]["hipotesis"]["se_sostiene"] is True
+    assert _veredictos(informe.redactar(otro))["(0,3; 0,3)"] == NO_SE_PUEDE
+````
+
+3. Busca
+
+````python
+    assert "en ≥ 90,5 % de los concordantes»" in documento
+    assert "(contención ≥ 90,5 % de los concordantes)" in documento
+````
+
+y sustitúyelo por
+
+````python
+    assert "en ≥ 90,5 % de los concordantes»" in documento
+    assert "(un «90,5 %» alcanza un umbral del 90,5 %)" in documento
+    assert "«90,0 %»" not in documento
+    assert "(contención ≥ 90,5 % de los concordantes)" in documento
+````
+
+4. Busca
+
+````python
+        "Con intervalo, celdas en las que se sostiene: ninguna. "
+        "Con intervalo, celdas en las que no se sostiene: 1, que es (0,3; 0,3). "
+        "Con intervalo, celdas en las que no se puede decir, porque la estimación y su "
+        "intervalo no quedan enteros a un lado del umbral: ninguna. "
+````
+
+y sustitúyelo por
+
+````python
+        "Con dependencia y con intervalo, celdas en las que se sostiene: ninguna. "
+        "Con dependencia y con intervalo, celdas en las que no se sostiene: 1, que es "
+        "(0,3; 0,3). "
+        "Con dependencia y con intervalo, celdas en las que no se puede decir, porque la "
+        "estimación y su intervalo no quedan enteros a un lado del umbral: ninguna. "
+````
+
+5. Busca
+
+````python
+    assert "Con intervalo, celdas en las que se sostiene: ninguna." in _hipotesis(
+        informe.redactar(otro))
+````
+
+y sustitúyelo por
+
+````python
+    assert ("Con dependencia y con intervalo, celdas en las que se sostiene: ninguna."
+            ) in _hipotesis(informe.redactar(otro))
+````
+
+6. Busca
+
+````python
+    assert ("Con intervalo, celdas en las que se sostiene: 1, que es (0,3; 0,3). Con "
+            "intervalo, celdas en las que no se sostiene: ninguna.") in _hipotesis(
+        informe.redactar(otro))
+````
+
+y sustitúyelo por
+
+````python
+    assert ("Con dependencia y con intervalo, celdas en las que se sostiene: 1, que es "
+            "(0,3; 0,3). Con dependencia y con intervalo, celdas en las que no se "
+            "sostiene: ninguna.") in _hipotesis(informe.redactar(otro))
+````
+
+7. Busca
+
+````python
+    assert ("Con intervalo, celdas en las que se sostiene: ninguna. Con intervalo, celdas "
+            "en las que no se sostiene: ninguna.") in frase
+````
+
+y sustitúyelo por
+
+````python
+    assert ("Con dependencia y con intervalo, celdas en las que se sostiene: ninguna. Con "
+            "dependencia y con intervalo, celdas en las que no se sostiene: ninguna."
+            ) in frase
+    # 0A lleva intervalo y en la tabla «se sostiene»: la cuenta dice que no es de ella
+    assert "| 0A | 100,0 % (IC 95 %: 100,0 a 100,0) | ≥ 90 % | se sostiene |" in (
+        informe.redactar(otro))
+    assert not re.search(r"(?<!Con dependencia y )con intervalo, celdas", frase,
+                         flags=re.IGNORECASE)
+````
+
+8. Busca
+
+````python
+    assert f"quedan fuera de su intervalo 0 de las {total} cifras que lo llevan" in lectura
+````
+
+y sustitúyelo por
+
+````python
+    assert (f"de 2 réplicas, no queda fuera de su intervalo ninguna de las {total} cifras "
+            f"que lo llevan (comparadas sin redondear).") in lectura
+````
+
+9. Busca
+
+````python
+    otro["celdas"][3]["intervalos"]["modelos.imagen.auc"] = [0.1, 0.2]
+    otro["celdas"][0]["intervalos"]["modelos.imagen.auc"] = [0.99, 0.999]
+````
+
+y sustitúyelo por
+
+````python
+    otro["celdas"][3]["intervalos"]["modelos.imagen.auc"] = [0.1, 0.2]
+    lectura = _seccion(informe.redactar(otro), "Lectura de los resultados")
+    assert (f"de 2 réplicas, queda fuera de su intervalo 1 de las {total} cifras que lo "
+            f"llevan (comparadas sin redondear).") in lectura
+    otro["celdas"][0]["intervalos"]["modelos.imagen.auc"] = [0.99, 0.999]
+````
+
+10. Busca
+
+````python
+    assert f"quedan fuera de su intervalo 2 de las {total} cifras que lo llevan" in lectura
+    assert "de 2 réplicas" in lectura
+````
+
+y sustitúyelo por
+
+````python
+    assert (f"de 2 réplicas, quedan fuera de su intervalo 2 de las {total} cifras que lo "
+            f"llevan (comparadas sin redondear).") in lectura
+    assert "quedan fuera de su intervalo 1 " not in informe.redactar(resultados_minimos)
+
+
+def test_las_cifras_fuera_de_su_intervalo_se_cuentan_sin_redondear():
+    """0,12341 y 0,12344 se imprimen igual («0,123»): impreso, el valor toca
+    el extremo; crudo, queda fuera, y es lo que la frase dice contar."""
+    celda = {"modelos": {"imagen": {"auc": 0.12341}},
+             "intervalos": {"modelos.imagen.auc": [0.12344, 0.9]}}
+    assert informe.numero(0.12341, 3) == informe.numero(0.12344, 3) == "0,123"
+    assert informe._fuera_de_su_intervalo([celda]) == (1, 1)
+    celda["intervalos"]["modelos.imagen.auc"] = [0.12341, 0.9]          # en el extremo
+    assert informe._fuera_de_su_intervalo([celda]) == (0, 1)
+    celda["intervalos"]["modelos.imagen.auc"] = [0.12341 + 1e-12, 0.9]  # ruido de coma
+    assert informe._fuera_de_su_intervalo([celda]) == (0, 1)
+    celda["intervalos"]["modelos.imagen.auc"] = [0.1, 0.12340]          # por arriba
+    assert informe._fuera_de_su_intervalo([celda]) == (1, 1)
+    celda["intervalos"]["modelos.imagen.auc"] = [None, 0.9]             # sin intervalo
+    assert informe._fuera_de_su_intervalo([celda]) == (0, 0)
+    assert informe._fuera_de_su_intervalo([{"modelos": {}}]) == (0, 0)
+````
+
+11. Busca
+
+````python
+                    "- **Dependencia solo entre los casos con neumonía (ρ0 = 0).**",
+                    "- **Dependencia solo entre los casos sin neumonía (ρ1 = 0).**"]
+````
+
+y sustitúyelo por
+
+````python
+                    "- **Dependencia solo entre los casos con opacidad (ρ0 = 0).**",
+                    "- **Dependencia solo entre los casos sin opacidad (ρ1 = 0).**"]
+````
+
+12. Busca
+
+````python
+        # los «§4.7» son referencias, no cifras
+        assert not re.search(r"(?<![§\d.])\d+\.\d", documento)
+````
+
+y sustitúyelo por
+
+````python
+        # los «§4.7» son referencias, no cifras; y las versiones de las
+        # librerias, que van entre acentos graves, llevan punto y no coma
+        sin_codigo = re.sub(r"`[^`\n]*`", "", documento)
+        assert not re.search(r"(?<![§\d.])\d+\.\d", sin_codigo)
+        assert re.search(r"`NumPy \d+\.\d", documento)
+````
+
+13. Busca
+
+````python
+    assert "sin los pesos" in reproducir
+
+````
+
+y sustitúyelo por
+
+````python
+    assert "sin los pesos" in reproducir
+    assert ("con `--sin-figuras` no se dibujan, y el documento enlaza las que hubiera en "
+            "la carpeta.") in reproducir
+
+
+def test_como_se_reproduce_dice_con_que_versiones_se_calculo(texto, resultados_minimos):
+    e = resultados_minimos["entorno"]
+    reproducir = _seccion(texto, "Cómo se reproduce")
+    assert (f"Estos resultados se calcularon con `Python {e['python']}`, "
+            f"`NumPy {e['numpy']}`, `SciPy {e['scipy']}`, `pandas {e['pandas']}` y "
+            f"`scikit-learn {e['scikit-learn']}`. Con otras versiones las cifras pueden "
+            f"no ser las mismas: NumPy no garantiza el mismo flujo de números aleatorios "
+            f"de una versión a otra.") in reproducir
+    # salen del diccionario, en el orden de siempre y sin perder ninguna
+    otro = copy.deepcopy(resultados_minimos)
+    otro["entorno"] = {"zlib": "1.3", "numpy": "9.8.7", "python": "4.0.1"}
+    assert "se calcularon con `Python 4.0.1`, `NumPy 9.8.7` y `zlib 1.3`. Con" in _seccion(
+        informe.redactar(otro), "Cómo se reproduce")
+    del otro["entorno"]
+    with pytest.raises(KeyError, match="entorno"):
+        informe.redactar(otro)
+
+````
+
+14. Busca
+
+````python
+def test_el_modulo_es_puro():
+    fuente = pathlib.Path(informe.__file__).read_text(encoding="utf-8")
+````
+
+y sustitúyelo por
+
+````python
+def test_el_modulo_es_puro():
+    """Ni lee ni escribe ni dibuja ni calcula: no importa mas que `math`.
+    (Nombra NumPy y pandas, para citar sus versiones: no los importa.)"""
+    fuente = pathlib.Path(informe.__file__).read_text(encoding="utf-8")
+````
+
+15. Busca
+
+````python
+    for prohibido in ("matplotlib", "open(", "pathlib", "import os", "numpy", "pandas"):
+````
+
+y sustitúyelo por
+
+````python
+    importados = re.findall(r"^[ \t]*(?:import|from)[ \t]+([\w.]+)", fuente,
+                            flags=re.MULTILINE)
+    assert importados == ["__future__", "math"]
+    for prohibido in ("open(", "__import__", "importlib"):
+````
+
+16. Busca
+
+````python
+    """El documento y el guion nombran las figuras por separado (el paquete
+    no puede importar el guion): que no se separen."""
+````
+
+y sustitúyelo por
+
+````python
+    """El paquete no puede importar el guion, pero el guion sí el paquete:
+    los nombres de las figuras, de las celdas y de los modelos y el título
+    se escriben UNA vez, aquí, y el guion los toma de `informe`."""
+````
+
+17. Busca
+
+````python
+    assert informe.PREFIJO_FIABILIDAD == validar.PREFIJO_FIABILIDAD
+
+````
+
+y sustitúyelo por
+
+````python
+    assert informe.PREFIJO_FIABILIDAD == validar.PREFIJO_FIABILIDAD
+    assert validar.slug_de_celda is informe.slug_de_celda
+    assert validar.celdas_con_figura is informe.celdas_completas
+    assert validar.TITULO == informe.TITULO and validar.ROTULO in informe.TITULO
+    assert validar.NOMBRE_MODELO == dict(informe.MODELOS)
+    assert validar._rho(0.15) == informe.rho(0.15) == "0,15"
+
+
+def test_nada_del_paquete_importa_matplotlib():
+    """El Dockerfile instala el paquete entero, sin el extra `figuras`: un
+    `import matplotlib` en `src/` pasaría aquí y rompería el contenedor."""
+    raiz = pathlib.Path(informe.__file__).resolve().parents[2]
+    assert raiz.name == "src"
+    fuentes = sorted(raiz.rglob("*.py"))
+    assert len(fuentes) > 20
+    culpables = [f"{f.relative_to(raiz).as_posix()}:{n}"
+                 for f in fuentes
+                 for n, linea in enumerate(f.read_text(encoding="utf-8").splitlines(), 1)
+                 if re.match(r"\s*(import|from)\s+matplotlib\b", linea)]
+    assert culpables == []
+
+````
+
+18. Busca
+
+````python
+    assert "**No se puede comprobar: no hay casos concordantes con horquilla" in cero
+````
+
+y sustitúyelo por
+
+````python
+    assert ("**No se puede comprobar: no hay casos concordantes con horquilla. Las tablas "
+            "de la horquilla de este documento quedan sin la comprobación de 0A.**") in cero
+    assert "no se pueden leer" not in documento
+````
+
+19. Busca
+
+````python
+    assert "Horquilla: no hay casos con horquilla." in _seccion(
+````
+
+y sustitúyelo por
+
+````python
+    assert "Horquilla: no hay casos que medir." in _seccion(
+````
+
+20. Busca
+
+````python
+    assert colas(None, 0.1) == colas(0.1, None) == "no hay casos con horquilla"
+````
+
+y sustitúyelo por
+
+````python
+    assert colas(None, 0.1) == colas(0.1, None) == "no hay casos que medir"
+````
+
+21. Busca
+
+````python
+    # con un solo caso en una cola no se dice que ninguna tiene casos
+    assert colas(0.0004, 0.0) == ("queda dentro el 100,0 %; las dos colas pesan lo mismo "
+                                  "(0,0 % cada una)")
+````
+
+y sustitúyelo por
+
+````python
+    # con un solo caso en una cola no se dice que ninguna tiene casos, ni que
+    # las dos pesan lo mismo: se dice cual los tiene
+    assert colas(0.0004, 0.0) == ("queda dentro el 100,0 %; las dos colas se imprimen "
+                                  "«0,0 %», pero la del lado conservador tiene casos")
+    assert colas(0.0, 0.0004) == ("queda dentro el 100,0 %; las dos colas se imprimen "
+                                  "«0,0 %», pero la de más allá de la independencia "
+                                  "tiene casos")
+    assert colas(0.0004, 0.0003) == ("queda dentro el 99,9 %; las dos colas se imprimen "
+                                     "«0,0 %», pero las dos tienen casos")
+````
+
+22. Busca
+
+````python
+    assert "clínica de la réplica b, 10000 + b; placas de la réplica b, 20000 + b." in insumos
+````
+
+y sustitúyelo por
+
+````python
+    assert "- Semillas: clínica, 1; casos de la réplica b, 20000 + b." in insumos
+````
+
+23. Busca
+
+````python
+    assert "las figuras que ya hubiera" not in texto
+    assert "que pueden ser de una corrida anterior" in informe.redactar(
+        resultados_minimos, {"contencion_rejilla": "f/contencion_rejilla.png"})
+````
+
+y sustitúyelo por
+
+````python
+
+
+def test_la_ece_va_sin_intervalo_y_el_documento_dice_por_que(texto, resultados_minimos):
+    cero = resultados_minimos["celdas"][0]
+    assert "modelos.independencia.ece" in cero["intervalos"]      # el JSON lo lleva
+    seccion = _seccion(texto, "Escenario 0A: la aritmética")
+    fila = next(l for l in seccion.splitlines()
+                if l.startswith("| combinación, independencia |"))
+    celdas = [c.strip() for c in fila.strip("|").split("|")]
+    # modelo, AUC, Brier, pendiente, intercepto, ECE, suelo (media), suelo (p95)
+    assert len(celdas) == 8
+    assert all("(IC 95 %:" in c for c in celdas[1:5])
+    assert celdas[5] == informe.numero(cero["modelos"]["independencia"]["ece"], 3)
+    assert "La ECE va sin intervalo: se lee al lado de su suelo." in seccion
+    lectura = _seccion(texto, "Lectura de los resultados")
+    assert ("El intervalo de la ECE está desplazado hacia arriba por construcción: la "
+            "ECE de un remuestreo suma el ruido del remuestreo al de la muestra. Por eso "
+            "la ECE se lee al lado de su suelo y no contra su intervalo, que no se "
+            "imprime.") in lectura
+
+
+def test_el_documento_dice_que_bootstrap_es(texto):
+    insumos = _seccion(texto, "Insumos y parámetros")
+    assert ("cada réplica remuestrea con reemplazo los casos de la estimación puntual, "
+            "cada placa con la clínica que se le sorteó (una placa por paciente, así que "
+            "es un bootstrap por paciente). La clínica no se vuelve a sortear: el "
+            "remuestreo de los casos ya lleva el ruido del sorteo, y sortearla otra vez lo "
+            "contaría dos veces.") in insumos
+    lectura = _seccion(texto, "Lectura de los resultados")
+    assert ("con la semilla 1 sobre todas las placas; cada réplica remuestrea esos mismos "
+            "casos, cada placa con su clínica. El intervalo son los percentiles de las "
+            "réplicas: en esta corrida, de 2 réplicas, ") in lectura
+    for vieja in ("vuelve a sortear la clínica.", "sortea otra clínica",
+                  "no está centrado en la estimación puntual", "clínica de la réplica"):
+        assert vieja not in texto, vieja
+
+
+def test_lo_que_pidio_la_revision_de_la_rama(texto, resultados_minimos):
+    # DOC-1: el sistema no imprime ninguna categoria
+    sensibilidad = _seccion(texto, "Sensibilidad al previo")
+    assert ("La categoría del sistema (todos los casos, también los del asma desconocida). "
+            "El sistema no imprime ninguna categoría: entrega un rango, [mínima, máxima]. "
+            "La categoría es una regla de este análisis: la banda del punto medio, en "
+            "log-odds, de ese rango:") in sensibilidad
+    assert ("Las bandas son baja (< 20 %), intermedia (20-70 %) y alta (> 70 %): una "
+            "convención del equipo, no un estándar publicado:") in sensibilidad
+    assert "el sistema imprime (" not in texto
+    # DOC-2: lo que se mide con el asma desconocida
+    horquilla = _seccion(texto, "La horquilla frente al oráculo")
+    assert ("y el error, en log-odds, de la media de las dos posteriores de "
+            "independencia (una por puntuación posible). Esa media no es el centro del "
+            "rango cuando clínica e imagen son concordantes, porque entonces el rango "
+            "incluye además los extremos conservadores; tampoco es el punto medio con "
+            "que se decide la categoría del sistema, que sí es el del rango:") in horquilla
+    assert ("| media de las independencias: error absoluto mediano | media de las "
+            "independencias: sesgo mediano |") in horquilla
+    assert "punto medio del rango" not in texto
+    # DOC-3: las clases son las de la etiqueta de opacidad
+    assert "neumonía" not in texto.replace("sospecha de neumonía", "")
+    assert "| celda | ρ1 | ρ0 | correlación con opacidad | correlación sin opacidad |" in texto
+    # DOC-4: el criterio y la cifra se leen igual
+    escala = _seccion(texto, "Cuánto de su evidencia conserva la puntuación")
+    assert "(|ln RV de recuentos| < 0,5)" in escala
+    filas = [l.split(" | ") for l in escala.splitlines() if l.startswith(("| 2 |", "| 3 |"))]
+    assert {f[1] for f in filas} == {"−0,353", "+0,495"}
+    assert all(f[-1] == "poco informativa |" for f in filas)
+    # DOC-5: por que cambia la fila de la imagen sola
+    dependencia = _seccion(texto, "Dependencia entre clínica e imagen")
+    assert ("La fila de la imagen sola cambia de una celda a otra aunque el modelo de "
+            "imagen es el mismo: cada celda sortea su clínica") in dependencia
+    # DOC-6: sin bootstrap, la pendiente no «lleva su intervalo»
+    assert "La pendiente lleva su intervalo; la ECE va al lado de su suelo:" in dependencia
+    otro = copy.deepcopy(resultados_minimos)
+    otro["parametros"]["replicas"] = 0
+    for celda in otro["celdas"]:
+        celda.pop("intervalos", None)
+        celda.pop("replicas", None)
+    sin_bootstrap = _seccion(informe.redactar(otro), "Dependencia entre clínica e imagen")
+    assert "lleva su intervalo" not in sin_bootstrap
+    assert ("(casos con el asma conocida). La ECE va al lado de su suelo:") in sin_bootstrap
+    # DOC-9: los terminos, definidos una vez
+    insumos = _seccion(texto, "Insumos y parámetros")
+    for termino in ("- **RV:** razón de verosimilitud.", "- **Oráculo:** la probabilidad "
+                    "posterior que da el propio generador", "- **Modelos puntuales:** la "
+                    "imagen sola (", "- **Clases:** «con opacidad» y «sin opacidad»"):
+        assert termino in insumos, termino
+    assert texto.index("razón de verosimilitud") < texto.index("RV de recuentos")
+    assert texto.index("- **Oráculo:**") < texto.index("El oráculo toma")
+
+
+def test_las_figuras_dicen_si_salen_de_estos_resultados(texto, resultados_minimos):
+    figuras = {"pendiente_rejilla": "f/pendiente_rejilla.png",
+               "fiabilidad_0a": "f/fiabilidad_0a.png",
+               "contencion_rejilla": "f/contencion_rejilla.png"}
+
+    def seccion(enlazadas, ajenas=()):
+        return _seccion(informe.redactar(resultados_minimos, enlazadas, ajenas), "Figuras")
+
+    intro = ("El guion las dibuja leyendo el mismo fichero de resultados que este "
+             "documento, y escribe en los metadatos de cada una la huella de los "
+             "resultados de los que sale.")
+    al_dia = seccion(figuras)
+    assert (intro + " Las 3 figuras enlazadas llevan la huella de los resultados de este "
+            "documento.") in al_dia
+    assert "Aviso" not in al_dia and "corrida" not in al_dia
+    una = {"contencion_rejilla": "f/contencion_rejilla.png"}
+    assert (intro + " La única figura enlazada lleva la huella de los resultados de este "
+            "documento.") in seccion(una)
+    # el aviso nombra las que no la llevan, en el orden en que se enlazan
+    dos = seccion(figuras, ["pendiente_rejilla", "fiabilidad_0a"])
+    assert (intro + "\n\n**Aviso: 2 de las 3 figuras enlazadas no llevan la huella de los "
+            "resultados de este documento** (`fiabilidad_0a` y `pendiente_rejilla`): son "
+            "de otra corrida, o no las dibujó este guion. Se redibujan con "
+            "`python scripts/validar_combinacion.py --solo-documento`.\n") in dos
+    assert "enlazadas llevan la huella" not in dos
+    assert ("**Aviso: 1 de las 3 figuras enlazadas no lleva la huella de los resultados "
+            "de este documento** (`contencion_rejilla`): es de otra corrida, o no la "
+            "dibujó este guion. Se redibuja con ") in seccion(figuras, ["contencion_rejilla"])
+    assert ("**Aviso: ninguna de las 3 figuras enlazadas lleva la huella de los "
+            "resultados de este documento** (`fiabilidad_0a`, `contencion_rejilla` y "
+            "`pendiente_rejilla`): son de otra corrida, o no las dibujó este guion. Se "
+            "redibujan con ") in seccion(figuras, list(figuras))
+    assert ("**Aviso: la única figura enlazada no lleva la huella de los resultados de "
+            "este documento** (`contencion_rejilla`): es de otra corrida, o no la dibujó "
+            "este guion. Se redibuja con ") in seccion(una, ["contencion_rejilla"])
+    # una que no se enlaza no cuenta; y el aviso no quita ni pone enlaces
+    assert seccion(figuras, ["otra"]) == al_dia
+    assert [l for l in dos.splitlines() if l.startswith("![")] == [
+        l for l in al_dia.splitlines() if l.startswith("![")]
+    assert len([l for l in dos.splitlines() if l.startswith("![")]) == 3
+    # ya no se siembra la duda sobre todas las figuras
+    for documento in (al_dia, dos, texto):
+        assert "pueden ser de una corrida anterior" not in documento
+        assert "las figuras que ya hubiera" not in documento
+````
+
+**Sustituciones: `tests/test_medir_latencia.py`**
+
+14, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+    assert r["minimo_ms"] == 1000.0 and r["maximo_ms"] == 4900.0
+````
+
+y sustitúyelo por
+
+````python
+    assert r["menor_ms"] == 1000.0 and r["mayor_ms"] == 4900.0
+    assert "minimo_ms" not in r and "maximo_ms" not in r
+````
+
+2. Busca
+
+````python
+    assert list(r) == ["titulo", "tramo", "lectura", "n", "percentil", "p50_ms",
+                       "p95_ms", "minimo_ms", "maximo_ms", "ms_extremo_ordenados",
+                       "modelo_p50_ms", "umbrales_s", "frente_a_umbrales",
+                       "total_a_mano", "descartadas"]
+````
+
+y sustitúyelo por
+
+````python
+    assert list(r) == ["titulo", "tramo", "lectura", "corrida_del", "n", "percentil",
+                       "p50_ms", "p95_ms", "menor_ms", "mayor_ms",
+                       "ms_extremo_ordenados", "modelo_p50_ms", "umbrales_s",
+                       "frente_a_umbrales", "total_a_mano", "veredicto",
+                       "descartadas", "glosario"]
+````
+
+3. Busca
+
+````python
+    assert list(r["descartadas"]) == ["total"] + list(medir.MOTIVOS)
+
+````
+
+y sustitúyelo por
+
+````python
+    assert list(r["descartadas"]) == ["total"] + list(medir.MOTIVOS)
+    # cada motivo de descarte y cada clave que no se explica sola, glosados
+    assert list(r["glosario"]["descartadas"]) == list(medir.MOTIVOS)
+    assert set(r["glosario"]) == {"n", "menor_ms y mayor_ms", "modelo_p50_ms",
+                                  "corrida_del", "descartadas"}
+    assert "no son umbrales" in r["glosario"]["menor_ms y mayor_ms"]
+
+
+def test_el_json_lleva_la_regla_y_la_etiqueta_que_sale_de_ella(medir):
+    """Con el p95 cumpliendo y lo cronometrado por encima de 8 s, lo único que
+    el JSON afirmaba como dato era `cumple_minimo: true`. La etiqueta que
+    manda el spec §6.2 es «no cumplido»."""
+    def v(ms, manual=None):
+        return medir.resumir([_fila(ms_extremo=ms)] * 30, manual=manual)["veredicto"]
+    lento = [9.4, 8.7, 10.2, 9.0, 8.9]
+    assert v(4000) == {"regla": medir.REGLA, "p95_cumple_el_minimo": True,
+                       "a_mano_supera_el_minimo": None, "etiqueta": "cumplido con cambio"}
+    assert v(4000, CINCO)["etiqueta"] == "cumplido con cambio"
+    assert v(4000, CINCO)["a_mano_supera_el_minimo"] is False
+    assert v(4000, lento) == {"regla": medir.REGLA, "p95_cumple_el_minimo": True,
+                              "a_mano_supera_el_minimo": True, "etiqueta": "no cumplido"}
+    assert v(8001)["etiqueta"] == "no cumplido" and v(8001, CINCO)["etiqueta"] == "no cumplido"
+    # los bordes: 8 s justos cumplen, y una mediana de 8 s justos no supera
+    assert v(8000)["etiqueta"] == "cumplido con cambio"
+    assert v(8000, [8.0] * 5)["etiqueta"] == "cumplido con cambio"
+    # sin redondear: 8,004 s se escribe «8.0» y supera los 8 s
+    apenas = medir.resumir([_fila(ms_extremo=4000)] * 30, manual=[8.004] * 5)
+    assert apenas["total_a_mano"]["mediana_s"] == 8.0
+    assert apenas["veredicto"]["a_mano_supera_el_minimo"] is True
+    assert apenas["veredicto"]["etiqueta"] == "no cumplido"
+    assert v(8000.04)["etiqueta"] == "no cumplido"
+    for trozo in ("p95 de `ms_extremo` frente al mínimo de 8 s", "«cumplido con cambio»",
+                  "Lo cronometrado a mano pesa en contra", "objetivo de 3 s",
+                  "spec de SP5 §6.2"):
+        assert trozo in medir.REGLA, trozo
+
+
+def test_la_corrida_lleva_su_fecha_en_la_hora_de_ecuador(medir, tmp_path):
+    import datetime
+    import os
+    corrida = tmp_path / "latencias.json"
+    corrida.write_text(json.dumps(_validas(30)), encoding="utf-8")
+    # las 04:59:59 UTC del 7 son las 23:59:59 del 6 en Ecuador continental
+    instante = datetime.datetime(2026, 10, 7, 4, 59, 59,
+                                 tzinfo=datetime.timezone.utc).timestamp()
+    os.utime(corrida, (instante, instante))
+    assert medir.fecha_de(corrida) == "2026-10-06"
+    os.utime(corrida, (instante + 1, instante + 1))
+    assert medir.fecha_de(corrida) == "2026-10-07"
+    assert medir.ZONA == datetime.timezone(datetime.timedelta(hours=-5))
+    salida = tmp_path / "latencia.json"
+    assert medir.main(["--corrida", str(corrida), "--salida", str(salida)]) == 0
+    assert json.loads(salida.read_text(encoding="utf-8"))["corrida_del"] == "2026-10-07"
+    assert medir.resumir(_validas(30))["corrida_del"] is None
+
+````
+
+4. Busca
+
+````python
+    Un `copiloto_no_responde` solo nace en el flujo (el tiempo limite del
+    nodo HTTP): la llamada propia del arnes, segundos despues, sale limpia.
+    Esa consulta NO es valida, y sus 30 s no entran en el p95."""
+````
+
+y sustitúyelo por
+
+````python
+    Un `copiloto_no_responde` DEL FLUJO (el copiloto no contesto a n8n) no
+    alcanza a la llamada propia del arnes, que segundos despues sale limpia.
+    Esa consulta NO es valida, y su medida no entra en el p95. (Los 30 450 ms
+    son ilustrativos: el nodo reintenta, y un tiempo agotado de verdad pasa
+    del minuto.)"""
+````
+
+5. Busca
+
+````python
+    r = medir.resumir(filas)
+    assert r["n"] == 30 and r["maximo_ms"] == 3900.0
+    assert r["descartadas"] == _descartes(error=2)
+````
+
+y sustitúyelo por
+
+````python
+    r = medir.resumir(filas)
+    assert r["n"] == 30 and r["mayor_ms"] == 3900.0
+    assert r["descartadas"] == _descartes(error=2)
+````
+
+6. Busca
+
+````python
+    assert r["n"] == 31 and r["maximo_ms"] == 5000.0
+````
+
+y sustitúyelo por
+
+````python
+    assert r["n"] == 31 and r["mayor_ms"] == 5000.0
+````
+
+7. Busca
+
+````python
+    assert r["maximo_ms"] == 3900.0, "ni el rechazo de 90 s ni el error de 30 s cuentan"
+````
+
+y sustitúyelo por
+
+````python
+    assert r["mayor_ms"] == 3900.0, "ni el rechazo de 90 s ni el error de 30 s cuentan"
+````
+
+8. Busca
+
+````python
+    assert r["n"] == 30 and r["maximo_ms"] == 3900.0
+````
+
+y sustitúyelo por
+
+````python
+    assert r["n"] == 30 and r["mayor_ms"] == 3900.0
+````
+
+9. Busca
+
+````python
+    assert "que no son un rechazo previsto" in mensaje
+    with pytest.raises(SystemExit, match="0 consultas"):
+````
+
+y sustitúyelo por
+
+````python
+    assert "que no son un rechazo previsto" in mensaje
+    assert "COPILOTO_URL" not in mensaje
+    # si lo que descarta es `no_coincide`, un --por-perfil mayor no arregla nada
+    otro_copiloto = ([_fila(coincide="NO: el bot vio 0.9512 y aquí 0.9498")] * 35
+                     + [_fila(rechazo_previsto=True)] * 20 + [_fila(fallo="x")])
+    with pytest.raises(SystemExit) as salida:
+        medir.resumir(otro_copiloto)
+    mensaje = str(salida.value)
+    assert "hay 0 consultas" in mensaje and "'no_coincide': 35" in mensaje
+    assert ("Lo que más descarta es `no_coincide`: el copiloto que contesta al arnés "
+            "(COPILOTO_URL) no da la misma lectura que el desplegado.") in mensaje
+    assert "--por-perfil mayor" not in mensaje and "lleva esta causa al informe" in mensaje
+    with pytest.raises(SystemExit, match="0 consultas"):
+````
+
+10. Busca
+
+````python
+        "mediana_s": 5.2, "minimo_s": 4.8, "maximo_s": 6.1}
+````
+
+y sustitúyelo por
+
+````python
+        "mediana_s": 5.2, "menor_s": 4.8, "mayor_s": 6.1}
+````
+
+11. Busca
+
+````python
+    assert escrito == medir.resumir(_validas(36), manual=CINCO)
+````
+
+y sustitúyelo por
+
+````python
+    assert escrito == medir.resumir(_validas(36), manual=CINCO,
+                                    corrida_del=medir.fecha_de(corrida))
+````
+
+12. Busca
+
+````python
+    assert "36 consultas" in dicho and "p50 2,75 s" in dicho and "p95 4,33 s" in dicho
+    assert "AVISO" not in dicho
+````
+
+y sustitúyelo por
+
+````python
+    assert "36 consultas" in dicho and "p50 2,75 s" in dicho and "p95 4,33 s" in dicho
+    assert f"corrida del {medir.fecha_de(corrida)}" in dicho
+    assert "etiqueta del KPI: «cumplido con cambio»" in dicho
+    assert "AVISO" not in dicho
+````
+
+13. Busca
+
+````python
+    assert not otra.exists()
+
+````
+
+y sustitúyelo por
+
+````python
+    assert not otra.exists()
+
+
+def test_la_ayuda_de_manual_dice_que_son_cinco_tiempos(medir, capsys):
+    with pytest.raises(SystemExit) as salida:
+        medir.main(["--help"])
+    assert salida.value.code == 0
+    ayuda = " ".join(capsys.readouterr().out.split())
+    assert "los cinco tiempos, en segundos, de envío a respuesta" in ayuda
+    assert "con punto decimal y separados por comas" in ayuda
+
+````
+
+14. Busca
+
+````python
+    monkeypatch.setattr(medir, "resumir",
+                        lambda filas, manual=None: {"p50_ms": float("nan")})
+````
+
+y sustitúyelo por
+
+````python
+    monkeypatch.setattr(medir, "resumir", lambda *a, **k: {"p50_ms": float("nan")})
+````
+
+**Sustituciones: `tests/test_metricas.py`**
+
+3, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+    assert e == {"n": 3, "error_abs_mediano": 0.5, "sesgo_mediano": 0.0}
+    assert metricas.error_puntual([], [])["error_abs_mediano"] is None
+````
+
+y sustitúyelo por
+
+````python
+    assert e == {"n": 3, "error_abs_mediano": 0.5, "sesgo_mediano": 0.0}
+    # el signo: sistema MENOS oráculo (positivo, el sistema da de más)
+    e = metricas.error_puntual([1.0, 2.0, 0.0], [0.5, 1.0, 0.0])
+    assert e == {"n": 3, "error_abs_mediano": 0.5, "sesgo_mediano": 0.5}
+    e = metricas.error_puntual([0.5, 1.0, 0.0], [1.0, 2.0, 0.0])
+    assert e["sesgo_mediano"] == -0.5
+    assert metricas.error_puntual([], [])["error_abs_mediano"] is None
+````
+
+2. Busca
+
+````python
+def test_percentiles_ignora_lo_que_no_es_un_numero():
+    lo, hi = metricas.percentiles(list(range(1, 101)) + [float("nan")])
+````
+
+y sustitúyelo por
+
+````python
+def test_percentiles_no_calla_lo_que_no_es_un_numero():
+    lo, hi = metricas.percentiles(list(range(1, 101)))
+````
+
+3. Busca
+
+````python
+    assert metricas.percentiles([float("nan")]) == [None, None]
+````
+
+y sustitúyelo por
+
+````python
+    assert metricas.percentiles([]) == [None, None]
+    # un intervalo no se calcula sobre menos replicas de las que se dicen
+    with pytest.raises(ArithmeticError, match="1 de las 101 réplicas no dan un número"):
+        metricas.percentiles(list(range(1, 101)) + [float("nan")])
+    with pytest.raises(ArithmeticError, match="2 de las 3 réplicas"):
+        metricas.percentiles([float("inf"), 0.5, float("nan")])
+````
+
+**Sustituciones: `tests/test_reproducir_casos.py`**
+
+2, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+    assert medido["n"] == 30 and medido["maximo_ms"] == 3900.0
+````
+
+y sustitúyelo por
+
+````python
+    assert medido["n"] == 30 and medido["mayor_ms"] == 3900.0
+````
+
+2. Busca
+
+````python
+    assert "de extremo a extremo (mediana)" not in dicho
+````
+
+y sustitúyelo por
+
+````python
+    assert "de extremo a extremo" not in dicho
+````
+
+**Sustituciones: `tests/test_resultados_publicados.py`**
+
+20, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+ser las de las celdas del JSON, con su resolución y su rótulo. Si alguien
+````
+
+y sustitúyelo por
+
+````python
+ser las de las celdas del JSON, con su resolución, su rótulo y la huella de
+ESE JSON en sus metadatos: una figura de otra corrida no pasa. Si alguien
+````
+
+2. Busca
+
+````python
+minutos): solo se comprueba que están donde tienen que estar y bien formados.
+Tampoco se compara el contenido de las figuras: solo sus nombres, su
+resolución y su título. Si se toca algo que cambie el bootstrap o el dibujo,
+hay que volver a correr el guion: ninguna prueba lo va a pedir.
+````
+
+y sustitúyelo por
+
+````python
+minutos): se comprueba que están todos, donde tienen que estar y bien
+formados. Sus cifras solo quedan vigiladas de rebote: las que el documento
+imprime, y con los decimales con que las imprime, porque el documento se
+regenera y se compara. Tampoco se comparan los píxeles de las figuras: solo
+sus nombres, su resolución, su huella y su título (que lleve el rótulo y, en
+las de fiabilidad, el nombre de su celda). Si se toca algo que cambie el
+bootstrap o el dibujo, hay que volver a correr el guion: ninguna prueba lo va
+a pedir.
+
+Las versiones de las librerías (`entorno`) no se comparan con las de esta
+máquina: lo publicado salió con las suyas. Pero si el recálculo no coincide y
+las versiones son otras, el fallo lo dice.
+````
+
+3. Busca
+
+````python
+import os
+
+````
+
+y sustitúyelo por
+
+````python
+import os
+import re
+
+````
+
+4. Busca
+
+````python
+DEL_BOOTSTRAP = ("intervalos", "replicas")     # lo unico de una celda que no se recalcula
+
+````
+
+y sustitúyelo por
+
+````python
+DEL_BOOTSTRAP = ("intervalos", "replicas")     # lo unico de una celda que no se recalcula
+# Las claves de primer nivel que NO se comparan con `_comparar`, y por que:
+# `parametros` lleva las replicas, que son del bootstrap (se compara sin ellas);
+# `celdas` se compara celda a celda, sin lo del bootstrap; `entorno` es de la
+# maquina que publico. Cualquier otra clave, tambien una nueva, se compara.
+APARTE = ("parametros", "celdas", "entorno")
+LIBRERIAS = ["python", "numpy", "scipy", "pandas", "scikit-learn"]
+
+````
+
+5. Busca
+
+````python
+    """Las mismas claves, las mismas listas y las mismas cifras (a 1e-9)."""
+````
+
+y sustitúyelo por
+
+````python
+    """Las mismas claves, las mismas listas, los mismos tipos y las mismas
+    cifras (a 1e-9). Un 3 no es un 3.0 ni un 1 es un True: los dos salen de
+    `json.loads`, y una diferencia de tipo es una diferencia."""
+    assert type(recalculado) is type(publicado), ruta
+````
+
+6. Busca
+
+````python
+        assert isinstance(recalculado, dict) and set(publicado) == set(recalculado), ruta
+````
+
+y sustitúyelo por
+
+````python
+        assert set(publicado) == set(recalculado), ruta
+````
+
+7. Busca
+
+````python
+        assert isinstance(recalculado, list) and len(publicado) == len(recalculado), ruta
+````
+
+y sustitúyelo por
+
+````python
+        assert len(publicado) == len(recalculado), ruta
+````
+
+8. Busca
+
+````python
+    elif isinstance(publicado, float) and isinstance(recalculado, (int, float)) \
+            and not isinstance(recalculado, bool):
+````
+
+y sustitúyelo por
+
+````python
+    elif isinstance(publicado, float):
+````
+
+9. Busca
+
+````python
+        assert recalculado == publicado, ruta
+
+````
+
+y sustitúyelo por
+
+````python
+        assert recalculado == publicado, ruta
+
+
+def _otra_pila(publicados, hoy) -> str:
+    """Si lo publicado se calculo con otras versiones, la frase que lo dice."""
+    antes, ahora = publicados["entorno"], hoy["entorno"]
+    distintas = [f"{clave} {antes[clave]} → {ahora.get(clave, 'no está')}"
+                 for clave in antes if antes[clave] != ahora.get(clave)]
+    if not distintas:
+        return ""
+    return ("\nOJO: lo publicado se calculó con otras versiones (" + "; ".join(distintas)
+            + "): la diferencia puede venir de la librería y no del código.")
+
+
+def test_comparar_distingue_tipos_claves_y_cifras():
+    _comparar({"a": [1, 2.0, "x", None, True]}, {"a": [1, 2.0 + 5e-10, "x", None, True]}, "r")
+    for publicado, recalculado in (
+            (3, 3.0), (3.0, 3), (1, True), (True, 1), (0.0, False), (None, 0), ("1", 1),
+            (2.0, 2.0 + 2e-9), (1e6, 1e6 + 1e-6), ([1, 2], [1, 2, 3]), ([1, 2], [2, 1]),
+            ({"a": 1}, {"a": 1, "b": 2}), ({"a": 1, "b": 2}, {"a": 1}), ({"a": 1}, [1]),
+            ([1.0], (1.0,))):
+        with pytest.raises(AssertionError):
+            _comparar(publicado, recalculado, "r")
+    assert _otra_pila({"entorno": {"numpy": "2.5.2"}}, {"entorno": {"numpy": "2.5.2"}}) == ""
+    assert _otra_pila({"entorno": {"numpy": "2.5.2", "scipy": "1.18.1"}},
+                      {"entorno": {"numpy": "2.6.0"}}) == (
+        "\nOJO: lo publicado se calculó con otras versiones (numpy 2.5.2 → 2.6.0; scipy "
+        "1.18.1 → no está): la diferencia puede venir de la librería y no del código.")
+
+````
+
+10. Busca
+
+````python
+
+def test_los_parametros_publicados_son_las_constantes_del_codigo(publicados):
+````
+
+y sustitúyelo por
+
+````python
+
+def test_dicen_con_que_versiones_se_calcularon(publicados):
+    """Las de la maquina que publico, que no tienen por que ser las de esta."""
+    assert list(publicados["entorno"]) == LIBRERIAS
+    for version in publicados["entorno"].values():
+        assert re.fullmatch(r"\d+(\.\w+)+", version), version
+
+
+def test_los_parametros_publicados_son_las_constantes_del_codigo(publicados):
+````
+
+11. Busca
+
+````python
+        "semilla_clinica": simulacion.SEMILLA_CLINICA,
+````
+
+y sustitúyelo por
+
+````python
+````
+
+12. Busca
+
+````python
+    celdas = publicados["celdas"]
+    assert len(celdas) == 25
+````
+
+y sustitúyelo por
+
+````python
+    celdas = publicados["celdas"]
+    assert p["replicas"] == simulacion.B_REPLICAS == 1000
+    assert len(celdas) == 25
+````
+
+13. Busca
+
+````python
+    for clave in ("rotulo", "titulo", "advertencia", "insumos", "imagen_sola"):
+        _comparar(publicados[clave], hoy[clave], clave)
+    _comparar({k: v for k, v in publicados["parametros"].items() if k != "replicas"},
+              {k: v for k, v in hoy["parametros"].items() if k != "replicas"}, "parametros")
+    assert [c["nombre"] for c in hoy["celdas"]] == [c["nombre"] for c in publicados["celdas"]]
+    for publicada, recalculada in zip(publicados["celdas"], hoy["celdas"]):
+        assert not set(recalculada) & set(DEL_BOOTSTRAP), publicada["nombre"]
+        _comparar(_sin_bootstrap(publicada), recalculada, publicada["nombre"])
+````
+
+y sustitúyelo por
+
+````python
+    assert {"rotulo", "titulo", "advertencia", "insumos", "imagen_sola"} <= (
+        set(publicados) - set(APARTE))
+    try:
+        for clave in sorted(set(publicados) - set(APARTE)):
+            _comparar(publicados[clave], hoy[clave], clave)
+        _comparar({k: v for k, v in publicados["parametros"].items() if k != "replicas"},
+                  {k: v for k, v in hoy["parametros"].items() if k != "replicas"},
+                  "parametros")
+        assert [c["nombre"] for c in hoy["celdas"]] == [
+            c["nombre"] for c in publicados["celdas"]]
+        for publicada, recalculada in zip(publicados["celdas"], hoy["celdas"]):
+            assert not set(recalculada) & set(DEL_BOOTSTRAP), publicada["nombre"]
+            _comparar(_sin_bootstrap(publicada), recalculada, publicada["nombre"])
+    except AssertionError as error:
+        nota = _otra_pila(publicados, hoy)
+        if not nota:
+            raise
+        raise AssertionError(f"{error}{nota}") from error
+````
+
+14. Busca
+
+````python
+    assert total > 300
+
+````
+
+y sustitúyelo por
+
+````python
+    assert total > 300
+    # y estan todos: cada celda con bootstrap lleva los mismos que las demas
+    rutas = [sorted(c["intervalos"]) for c in publicados["celdas"] if "intervalos" in c]
+    assert len(rutas) == 7 and all(r == rutas[0] for r in rutas)
+
+````
+
+15. Busca
+
+````python
+def test_las_figuras_publicadas_son_las_de_las_celdas_del_json(publicados, validar):
+    esperadas = sorted(
+````
+
+y sustitúyelo por
+
+````python
+def test_las_figuras_publicadas_son_las_de_las_celdas_del_json(publicados, validar):
+    con_figura = [c for c in publicados["celdas"] if c["nombre"] == "0A" or c["destacada"]]
+    esperadas = sorted(
+````
+
+16. Busca
+
+````python
+        [f"fiabilidad_{validar.slug_de_celda(c)}.png" for c in publicados["celdas"]
+         if c["nombre"] == "0A" or c["destacada"]]
+````
+
+y sustitúyelo por
+
+````python
+        [f"fiabilidad_{validar.slug_de_celda(c)}.png" for c in con_figura]
+````
+
+17. Busca
+
+````python
+    from PIL import Image
+    for ruta in presentes:
+````
+
+y sustitúyelo por
+
+````python
+    from PIL import Image
+    titulos = {}
+    for ruta in presentes:
+````
+
+18. Busca
+
+````python
+            assert ROTULO in imagen.info["Title"], ruta.name
+
+````
+
+y sustitúyelo por
+
+````python
+            assert ROTULO in imagen.info["Title"], ruta.name
+            assert re.fullmatch(r"matplotlib \d+(\.\w+)+", imagen.info["Software"]), ruta.name
+            assert "http" not in " ".join(str(v) for v in imagen.info.values()), ruta.name
+            titulos[ruta.name] = imagen.info["Title"]
+    # cada figura de fiabilidad es la de SU celda
+    for celda in con_figura:
+        titulo = titulos[f"fiabilidad_{validar.slug_de_celda(celda)}.png"]
+        assert f"celda {celda['nombre']} —" in titulo, titulo
+    assert len(set(titulos.values())) == 10
+    # y todas salen de ESTE JSON: llevan su huella
+    assert validar.figuras_ajenas(publicados, presentes) == []
+
+````
+
+19. Busca
+
+````python
+    esperado = informe.redactar(publicados, enlaces)
+````
+
+y sustitúyelo por
+
+````python
+    esperado = informe.redactar(publicados, enlaces,
+                                validar.figuras_ajenas(publicados, figuras))
+````
+
+20. Busca
+
+````python
+    assert "validacion-semisintetica/fiabilidad_0a.png" in versionado
+````
+
+y sustitúyelo por
+
+````python
+    assert "validacion-semisintetica/fiabilidad_0a.png" in versionado
+    assert ("Las 10 figuras enlazadas llevan la huella de los resultados de este documento."
+            ) in versionado
+    assert "**Aviso:" not in versionado
+````
+
+**Sustituciones: `tests/test_simulacion.py`**
+
+17, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+métrica: con dependencia nula el oráculo no puede salirse de la horquilla."""
+import numpy as np
+````
+
+y sustitúyelo por
+
+````python
+métrica: con dependencia nula el oráculo no puede salirse de la horquilla."""
+import inspect
+
+import numpy as np
+````
+
+2. Busca
+
+````python
+
+def test_medir_sobre_filas_repetidas_es_medir_ese_remuestreo(conjunto, escenario_0a):
+````
+
+y sustitúyelo por
+
+````python
+
+def test_el_sesgo_es_sistema_menos_oraculo_y_el_rango_lleva_la_tolerancia(
+        conjunto, medida_0a):
+    """Cifras con su signo: con los argumentos intercambiados, o con el
+    oráculo menos el sistema, cambian de signo; sin la tolerancia, cambia la
+    contención del asma desconocida."""
+    assert medida_0a["no_se"]["punto_medio"]["sesgo_mediano"] == pytest.approx(
+        -0.3381, abs=5e-4)
+    _, _, salidas, l_or = _escenario(conjunto, 0.6, 0.0)
+    m = simulacion.medir(conjunto, salidas, l_or)
+    assert m["discordantes"]["sesgo_mediano"] == pytest.approx(0.3958, abs=5e-4)
+    assert m["no_se"]["punto_medio"]["sesgo_mediano"] == pytest.approx(-0.8047, abs=5e-4)
+    assert m["no_se"]["contencion"] == pytest.approx(0.2514, abs=5e-4)
+    ns = ~salidas["conocida"]
+    sin = metricas.contencion_en_rango(l_or[ns], salidas["l_minima"][ns],
+                                       salidas["l_maxima"][ns], epsilon=0.0)
+    assert sin["contencion"] < m["no_se"]["contencion"]
+
+
+def test_medir_sobre_filas_repetidas_es_medir_ese_remuestreo(conjunto, escenario_0a):
+````
+
+3. Busca
+
+````python
+def test_el_bootstrap_es_pareado_reproducible_y_por_percentiles(conjunto):
+    modelo = oraculo.ajustar(conjunto.q, conjunto.y, 0.3, 0.3)
+    a = simulacion.bootstrap(conjunto, modelo, replicas=4)
+    assert a == simulacion.bootstrap(conjunto, modelo, replicas=4)
+````
+
+y sustitúyelo por
+
+````python
+@pytest.fixture(scope="module")
+def escenario_simetrico(conjunto):
+    return _escenario(conjunto, 0.3, 0.3)
+
+
+def test_el_bootstrap_es_pareado_reproducible_y_por_percentiles(conjunto, escenario_simetrico):
+    _, _, salidas, l_or = escenario_simetrico
+    a = simulacion.bootstrap(conjunto, salidas, l_or, replicas=4)
+    assert a == simulacion.bootstrap(conjunto, salidas, l_or, replicas=4)
+````
+
+4. Busca
+
+````python
+    # cada replica sortea su clinica y sus placas
+    r0, r1 = (simulacion.replica(conjunto, modelo, b) for b in (0, 1))
+    assert r0 != r1 and r0 == simulacion.replica(conjunto, modelo, 0)
+````
+
+y sustitúyelo por
+
+````python
+    # cada replica remuestrea sus casos
+    r0, r1 = (simulacion.replica(conjunto, salidas, l_or, b) for b in (0, 1))
+    assert r0 != r1 and r0 == simulacion.replica(conjunto, salidas, l_or, 0)
+````
+
+5. Busca
+
+````python
+    corridas = [simulacion.replica(conjunto, modelo, b) for b in range(4)]
+````
+
+y sustitúyelo por
+
+````python
+    corridas = [simulacion.replica(conjunto, salidas, l_or, b) for b in range(4)]
+````
+
+6. Busca
+
+````python
+def test_cada_replica_remuestrea_placas_y_vuelve_a_sortear_la_clinica(conjunto, monkeypatch):
+    """Las dos mitades del bootstrap, fijadas: si una réplica dejara de
+    remuestrear las placas, o midiera siempre la clínica de la estimación
+    puntual, los intervalos se estrecharían sin que nada más lo notara."""
+    modelo = oraculo.ajustar(conjunto.q, conjunto.y, 0.3, 0.3)
+    semillas, filas = [], []
+    generar, medir = generador.generar, simulacion.medir
+````
+
+y sustitúyelo por
+
+````python
+def test_cada_replica_remuestrea_los_casos_de_la_estimacion_y_no_vuelve_a_sortear(
+        conjunto, escenario_simetrico, monkeypatch):
+    """Una réplica remuestrea las parejas (placa, clínica) de la estimación
+    puntual. Si además volviera a sortear la clínica, el ruido del sorteo
+    se contaría dos veces y los intervalos saldrían más anchos de lo que
+    dicen; si dejara de remuestrear, se estrecharían."""
+    _, _, salidas, l_or = escenario_simetrico
+    medidas = []
+    medir = simulacion.medir
+````
+
+7. Busca
+
+````python
+    def generar_espia(m, semilla):
+        semillas.append(semilla)
+        return generar(m, semilla)
+````
+
+y sustitúyelo por
+
+````python
+    # El espía no fija CÓMO se llama a `medir`: lee cada argumento por su
+    # nombre en la firma de verdad, vaya por posición o por palabra clave.
+    def medir_espia(*a, **k):
+        medidas.append(inspect.signature(medir).bind(*a, **k).arguments)
+        return medir(*a, **k)
+````
+
+8. Busca
+
+````python
+    def medir_espia(c, salidas, l_oraculo, f=None):
+        filas.append(f)
+        return medir(c, salidas, l_oraculo, f)
+````
+
+y sustitúyelo por
+
+````python
+    def prohibido(*a, **k):
+        raise AssertionError("una réplica ni sortea la clínica ni llama al sistema")
+````
+
+9. Busca
+
+````python
+    monkeypatch.setattr(generador, "generar", generar_espia)
+````
+
+y sustitúyelo por
+
+````python
+````
+
+10. Busca
+
+````python
+    corridas = [simulacion.replica(conjunto, modelo, b) for b in (0, 1, 2)]
+    assert semillas == [simulacion.SEMILLA_CLINICA + b for b in (0, 1, 2)]
+    assert simulacion.SEMILLA_PUNTUAL not in semillas
+````
+
+y sustitúyelo por
+
+````python
+    for modulo, nombre in ((generador, "generar"), (simulacion, "salidas_del_sistema"),
+                           (simulacion, "oraculo_de_los_casos"), (oraculo, "ajustar")):
+        monkeypatch.setattr(modulo, nombre, prohibido)
+    corridas = [simulacion.replica(conjunto, salidas, l_or, b) for b in (0, 1, 2)]
+````
+
+11. Busca
+
+````python
+    for b, f in enumerate(filas):
+````
+
+y sustitúyelo por
+
+````python
+    filas = [m["filas"] for m in medidas]
+    for b, (f, medida) in enumerate(zip(filas, medidas)):
+        # los casos son los de la estimación: las mismas placas, lo que el
+        # sistema dio para ellas y su oráculo
+        assert medida["conjunto"] is conjunto and medida["salidas"] is salidas
+        assert medida["l_oraculo"] is l_or
+````
+
+12. Busca
+
+````python
+    assert not np.array_equal(filas[0], filas[1])
+    # pareado: la diferencia entre modelos es la de ESA réplica
+````
+
+y sustitúyelo por
+
+````python
+    assert not np.array_equal(filas[0], filas[1])
+    assert not hasattr(simulacion, "SEMILLA_CLINICA")
+    # pareado: la diferencia entre modelos es la de ESA réplica
+````
+
+13. Busca
+
+````python
+def test_un_intervalo_no_se_calcula_sobre_menos_replicas_de_las_que_dice(conjunto, monkeypatch):
+    modelo = oraculo.ajustar(conjunto.q, conjunto.y, 0.3, 0.3)
+    monkeypatch.setattr(simulacion, "replica", lambda c, m, b: (
+        {"a.auc": 0.9, "a.ece": 0.01} if b != 2 else {"a.auc": 0.9}))
+    assert simulacion.bootstrap(conjunto, modelo, replicas=2) == {
+        "a.auc": [0.9, 0.9], "a.ece": [0.01, 0.01]}
+    with pytest.raises(ArithmeticError, match="a.ece"):
+        simulacion.bootstrap(conjunto, modelo, replicas=3)
+````
+
+y sustitúyelo por
+
+````python
+def test_las_replicas_se_centran_en_la_estimacion_que_se_publica(conjunto):
+    """Lo que separa este bootstrap de uno que vuelve a sortear la clínica:
+    en (0,6; 0) la pendiente del extremo conservador de la estimación es
+    1,13, y la media sobre otras clínicas, 1,08. Las réplicas tienen que
+    rodear a la primera: el intervalo es de la cifra que se publica."""
+    _, _, salidas, l_or = _escenario(conjunto, 0.6, 0.0)
+    ruta = "modelos.conservador.pendiente"
+    puntual = simulacion.aplanar(simulacion.medir(conjunto, salidas, l_or))[ruta]
+    assert puntual == pytest.approx(1.13, abs=5e-3)
+    replicas = np.array([simulacion.replica(conjunto, salidas, l_or, b)[ruta]
+                         for b in range(200)])
+    assert abs(replicas.mean() - puntual) < 0.25 * replicas.std(ddof=1)
+    lo, hi = np.percentile(replicas, [2.5, 97.5])
+    assert lo < puntual < hi and lo > 1.0
+````
+
+14. Busca
+
+````python
+def test_las_replicas_no_reajustan_el_generador(conjunto, monkeypatch):
+    """z_y, los umbrales y el calibrador quedan fijos: una réplica no vuelve
+    a llamar a `oraculo.ajustar` (spec §4.6)."""
+    modelo = oraculo.ajustar(conjunto.q, conjunto.y, 0.3, 0.3)
+````
+
+y sustitúyelo por
+
+````python
+def test_un_intervalo_no_se_calcula_sobre_menos_replicas_de_las_que_dice(
+        conjunto, escenario_simetrico, monkeypatch):
+    _, _, salidas, l_or = escenario_simetrico
+    monkeypatch.setattr(simulacion, "replica", lambda c, s, l, b: (
+        {"a.auc": 0.9, "a.ece": 0.01} if b != 2 else {"a.auc": 0.9}))
+    assert simulacion.bootstrap(conjunto, salidas, l_or, replicas=2) == {
+        "a.auc": [0.9, 0.9], "a.ece": [0.01, 0.01]}
+    with pytest.raises(ArithmeticError, match=r"a\.ece"):
+        simulacion.bootstrap(conjunto, salidas, l_or, replicas=3)
+    # ni sobre una replica que dio algo que no es un numero
+    monkeypatch.setattr(simulacion, "replica", lambda c, s, l, b: (
+        {"a.auc": 0.9, "a.ece": 0.01 if b != 1 else float("nan")}))
+    assert simulacion.bootstrap(conjunto, salidas, l_or, replicas=1) == {
+        "a.auc": [0.9, 0.9], "a.ece": [0.01, 0.01]}
+    with pytest.raises(ArithmeticError,
+                       match=r"a\.ece: 1 de las 3 réplicas no dan un número"):
+        simulacion.bootstrap(conjunto, salidas, l_or, replicas=3)
+````
+
+15. Busca
+
+````python
+    def prohibido(*a, **k):
+        raise AssertionError("una réplica no reajusta el modelo")
+````
+
+y sustitúyelo por
+
+````python
+````
+
+16. Busca
+
+````python
+    monkeypatch.setattr(oraculo, "ajustar", prohibido)
+    assert simulacion.bootstrap(conjunto, modelo, replicas=1)
+````
+
+y sustitúyelo por
+
+````python
+def test_el_bootstrap_de_una_celda_es_el_de_su_estimacion(conjunto, monkeypatch):
+    """`evaluar_celda` le da al bootstrap lo que acaba de medir: los
+    intervalos son de ESA estimación, con esa clínica."""
+    recibido = []
+    firma = inspect.signature(simulacion.bootstrap)
+
+    def bootstrap_espia(*a, **k):
+        recibido.append(firma.bind(*a, **k).arguments)
+        return {"modelos.imagen.auc": [0.0, 1.0]}
+
+    celda_sin = simulacion.evaluar_celda(conjunto, 0.3, 0.0)
+    monkeypatch.setattr(simulacion, "bootstrap", bootstrap_espia)
+    celda = simulacion.evaluar_celda(conjunto, 0.3, 0.0, replicas=3)
+    assert celda["replicas"] == 3 and celda["intervalos"] == {"modelos.imagen.auc": [0.0, 1.0]}
+    (llamada,) = recibido
+    assert llamada["conjunto"] is conjunto and llamada["replicas"] == 3
+    clinica = generador.generar(oraculo.ajustar(conjunto.q, conjunto.y, 0.3, 0.0),
+                                simulacion.SEMILLA_PUNTUAL)
+    esperadas = simulacion.salidas_del_sistema(conjunto.prevalencia, clinica, conjunto.rv)
+    for clave in ("independencia", "conservador", "l_minima", "l_maxima"):
+        assert np.array_equal(llamada["salidas"][clave], esperadas[clave], equal_nan=True)
+    assert llamada["l_oraculo"].shape == (conjunto.y.size,)
+    # y la estimación puntual no depende de que haya bootstrap
+    assert {k: v for k, v in celda.items() if k not in ("replicas", "intervalos")} == celda_sin
+````
+
+17. Busca
+
+````python
+    assert c["correlacion_teorica"]["con_neumonia"] == pytest.approx(0.2860, abs=5e-4)
+    assert c["correlacion_teorica"]["sin_neumonia"] == pytest.approx(0.2751, abs=5e-4)
+````
+
+y sustitúyelo por
+
+````python
+    assert c["correlacion_teorica"]["con_opacidad"] == pytest.approx(0.2860, abs=5e-4)
+    assert c["correlacion_teorica"]["sin_opacidad"] == pytest.approx(0.2751, abs=5e-4)
+    assert set(c["correlacion_teorica"]) == {"con_opacidad", "sin_opacidad"}
+````
+
+**Sustituciones: `tests/test_validacion_0a.py`**
+
+2, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+from copiloto_triaje.validacion import datos, generador, metricas, oraculo
+````
+
+y sustitúyelo por
+
+````python
+from copiloto_triaje.validacion import datos, generador, metricas, oraculo, simulacion
+````
+
+2. Busca
+
+````python
+SEMILLA = 1
+````
+
+y sustitúyelo por
+
+````python
+# La clínica de la estimación puntual que se publica, no la de un literal.
+SEMILLA = simulacion.SEMILLA_PUNTUAL
+````
+
+**Sustituciones: `tests/test_validar_combinacion.py`**
+
+12, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+import json
+
+````
+
+y sustitúyelo por
+
+````python
+import json
+import re
+
+````
+
+2. Busca
+
+````python
+    assert p["rejilla"] == [0.0, 0.3] and p["destacadas"] == [[0.3, 0.3]]
+
+````
+
+y sustitúyelo por
+
+````python
+    assert p["rejilla"] == [0.0, 0.3] and p["destacadas"] == [[0.3, 0.3]]
+    assert list(r) == ["rotulo", "titulo", "advertencia", "insumos", "parametros",
+                       "entorno", "imagen_sola", "celdas"]
+
+
+def test_los_resultados_dicen_con_que_versiones_se_calcularon(validar, resultados_minimos):
+    import platform
+
+    import numpy
+    import pandas
+    import scipy
+    import sklearn
+    assert resultados_minimos["entorno"] == validar.entorno() == {
+        "python": platform.python_version(), "numpy": numpy.__version__,
+        "scipy": scipy.__version__, "pandas": pandas.__version__,
+        "scikit-learn": sklearn.__version__}
+    assert list(validar.entorno()) == ["python", "numpy", "scipy", "pandas", "scikit-learn"]
+    # versiones y nada mas: ni la maquina, ni el usuario, ni la ruta del interprete
+    for version in validar.entorno().values():
+        assert re.fullmatch(r"\d+(\.\w+)+", version), version
+
+
+def test_las_destacadas_repetidas_salen_una_vez(validar, monkeypatch):
+    monkeypatch.setattr(simulacion, "evaluar_tarea", lambda tarea: {})
+    r = validar.calcular(replicas=2, procesos=1, rejilla=(0.0, 0.3, 0.6),
+                         destacadas=[[0.6, 0.3], (0.3, 0.3), (0.6, 0.3), [0.3, 0.3]])
+    assert r["parametros"]["destacadas"] == [[0.6, 0.3], [0.3, 0.3]]
+    assert [c["destacada"] for c in r["celdas"]].count(True) == 2
+    assert len(r["celdas"]) == 9
+
+````
+
+3. Busca
+
+````python
+        validar.escribir_resultados({"cifra": float("nan")}, tmp_path / "r.json")
+
+````
+
+y sustitúyelo por
+
+````python
+        validar.escribir_resultados({"cifra": float("nan")}, tmp_path / "r.json")
+    assert not (tmp_path / "r.json").exists()
+
+
+def test_si_no_se_puede_escribir_lo_anterior_sigue_entero(
+        validar, resultados_minimos, tmp_path, monkeypatch):
+    ruta = validar.escribir_resultados({"cifra": 1.5}, tmp_path / "r.json")
+    antes = ruta.read_bytes()
+    with pytest.raises(ValueError):
+        validar.escribir_resultados({"cifra": float("nan")}, ruta)
+    assert ruta.read_bytes() == antes
+    # y el documento, lo mismo: se redacta antes de abrir
+    analisis = validar.escribir_analisis(resultados_minimos, [], tmp_path / "a.md")
+    antes = analisis.read_bytes()
+    sin_entorno = {k: v for k, v in resultados_minimos.items() if k != "entorno"}
+    with pytest.raises(KeyError):
+        validar.escribir_analisis(sin_entorno, [], analisis)
+    assert analisis.read_bytes() == antes and len(antes) > 1000
+    with pytest.raises(KeyError):
+        validar.escribir_analisis(sin_entorno, [], tmp_path / "sub" / "no.md")
+    assert not (tmp_path / "sub").exists()
+
+````
+
+4. Busca
+
+````python
+            assert "simulación semisintética" in imagen.info["Title"]
+    titulos = {}
+````
+
+y sustitúyelo por
+
+````python
+            assert "simulación semisintética" in imagen.info["Title"]
+            # la version con que se dibujo, sin direccion web
+            import matplotlib
+            assert imagen.info["Software"] == f"matplotlib {matplotlib.__version__}"
+            assert "http" not in " ".join(str(v) for v in imagen.info.values())
+            assert sorted(k for k in imagen.info if k != "dpi") == [
+                "Description", "Software", "Title"]
+    # cada una dice de que resultados sale
+    huella = validar.huella_de_resultados(resultados_minimos)
+    assert re.fullmatch(r"[0-9a-f]{64}", huella)
+    for ruta in rutas:
+        with Image.open(ruta) as imagen:
+            assert imagen.info["Description"] == (
+                "dibujada de resultados_simulacion.json; sha256 de su contenido: " + huella)
+        assert validar.huella_de_figura(ruta) == huella
+    assert validar.figuras_ajenas(resultados_minimos, rutas) == []
+    otro = copy.deepcopy(resultados_minimos)
+    otro["imagen_sola"]["auc"] += 1e-9
+    assert validar.figuras_ajenas(otro, rutas) == sorted(r.stem for r in rutas)
+    titulos = {}
+````
+
+5. Busca
+
+````python
+    assert destino.stat().st_size > 10_000
+    with pytest.raises(ValueError, match="contencion"):
+````
+
+y sustitúyelo por
+
+````python
+    assert destino.stat().st_size > 10_000
+    # dibujada suelta no lleva huella, salvo que se le de
+    assert validar.huella_de_figura(destino) is None
+    assert validar.figuras_ajenas(resultados_minimos, [destino]) == ["una"]
+    for n, dibujar in enumerate((
+            lambda d: validar.figura_fiabilidad(celda, d, "ab" * 32),
+            lambda d: validar.figura_horquilla(resultados_minimos, d, "ab" * 32),
+            lambda d: validar.figura_rejilla(resultados_minimos, d, "pendiente", "ab" * 32))):
+        assert validar.huella_de_figura(dibujar(tmp_path / f"con_huella_{n}.png")) == "ab" * 32
+    with pytest.raises(ValueError, match="contencion"):
+````
+
+6. Busca
+
+````python
+    assert not (tmp_path / "cinco.png").exists()
+
+````
+
+y sustitúyelo por
+
+````python
+    assert not (tmp_path / "cinco.png").exists()
+
+
+def test_la_huella_es_del_contenido_y_no_del_fichero(validar, resultados_minimos, tmp_path):
+    huella = validar.huella_de_resultados(resultados_minimos)
+    al_reves = dict(reversed(list(resultados_minimos.items())))
+    assert list(al_reves) != list(resultados_minimos)
+    assert validar.huella_de_resultados(al_reves) == huella
+    ruta = validar.escribir_resultados(resultados_minimos, tmp_path / "r.json")
+    assert validar.huella_de_resultados(validar.leer_resultados(ruta)) == huella
+    con_crlf = tmp_path / "crlf.json"
+    con_crlf.write_bytes(ruta.read_bytes().replace(b"\n", b"\r\n"))
+    assert validar.huella_de_resultados(validar.leer_resultados(con_crlf)) == huella
+    otro = copy.deepcopy(resultados_minimos)
+    otro["celdas"][3]["horquilla"]["todos"]["contencion"] += 1e-12
+    assert validar.huella_de_resultados(otro) != huella
+    # lo que no es un PNG con huella, no la tiene
+    (tmp_path / "no_es.png").write_bytes(b"de una corrida anterior")
+    assert validar.huella_de_figura(tmp_path / "no_es.png") is None
+    assert validar.huella_de_figura(tmp_path / "no_existe.png") is None
+    from PIL import Image
+    Image.new("RGB", (4, 4)).save(tmp_path / "sin_metadatos.png")
+    assert validar.huella_de_figura(tmp_path / "sin_metadatos.png") is None
+
+
+def test_un_lado_sin_casos_se_rotula_en_la_figura_de_la_horquilla(
+        validar, resultados_minimos, tmp_path, monkeypatch):
+    pytest.importorskip("matplotlib")
+    from matplotlib.axes import Axes
+    escritos = []
+    escribir = Axes.text
+
+    def escribir_espia(self, x, y, texto, **kwargs):
+        escritos.append((x, y, texto, kwargs.get("color")))
+        return escribir(self, x, y, texto, **kwargs)
+
+    monkeypatch.setattr(Axes, "text", escribir_espia)
+    validar.figura_horquilla(resultados_minimos, tmp_path / "con_casos.png")
+    assert escritos and not [e for e in escritos if "n/d" in e[2]]
+    escritos.clear()
+    vacio = copy.deepcopy(resultados_minimos)
+    vacio["celdas"][3]["horquilla"]["en_contra"].update(
+        n=0, bajo=None, contencion=None, sobre=None)
+    validar.figura_horquilla(vacio, tmp_path / "sin_casos.png")
+    # la celda (0,3; 0,3) es la segunda barra (la primera es 0A)
+    assert [e for e in escritos if "n/d" in e[2]] == [
+        (50.0, 1, "n/d (sin casos)", validar.TINTA)]
+
+````
+
+7. Busca
+
+````python
+    assert ("25 %", validar.TINTA) in escritos and ("50 %", validar.TINTA) in escritos
+````
+
+y sustitúyelo por
+
+````python
+    assert ("25,0 %", validar.TINTA) in escritos and ("50,0 %", validar.TINTA) in escritos
+    assert not [texto for texto, _ in escritos if "," not in texto]
+````
+
+8. Busca
+
+````python
+    assert [clave for clave, _, _ in validar.TRAMOS] == ["bajo", "contencion", "sobre"]
+
+````
+
+y sustitúyelo por
+
+````python
+    assert [clave for clave, _, _ in validar.TRAMOS] == ["bajo", "contencion", "sobre"]
+    # las colas llevan la tolerancia: no son «λ < 0» y «λ > 1» a secas
+    assert [rotulo for _, rotulo, _ in validar.TRAMOS] == [
+        "más allá del extremo conservador, en más de ε", "dentro de la horquilla",
+        "más allá de la independencia, en más de ε"]
+
+
+def test_las_figuras_nombran_los_modelos_y_las_clases_como_el_documento(
+        validar, resultados_minimos, tmp_path, monkeypatch):
+    from copiloto_triaje.validacion import informe
+    assert validar.NOMBRE_MODELO == dict(informe.MODELOS)
+    assert list(validar.NOMBRE_MODELO) == list(simulacion.MODELOS)
+    pytest.importorskip("matplotlib")
+    from matplotlib.axes import Axes
+    ejes = []
+    for cual in ("set_xlabel", "set_ylabel"):
+        poner = getattr(Axes, cual)
+
+        def espia(self, texto, *a, _poner=poner, **k):
+            ejes.append(texto)
+            return _poner(self, texto, *a, **k)
+
+        monkeypatch.setattr(Axes, cual, espia)
+    for que in validar.REJILLAS:
+        validar.figura_rejilla(resultados_minimos, tmp_path / f"{que}.png", que)
+    assert "ρ0 (dependencia entre los casos sin opacidad)" in ejes
+    assert "ρ1 (dependencia entre los casos con opacidad)" in ejes
+    assert not [e for e in ejes if "neumon" in e]
+
+````
+
+9. Busca
+
+````python
+    """La unica prueba que corre la rejilla entera (25 celdas, sin bootstrap)."""
+````
+
+y sustitúyelo por
+
+````python
+    """Corre la rejilla entera (25 celdas, sin bootstrap) por la línea de
+    órdenes; `tests/test_resultados_publicados.py` la corre también, por
+    `calcular`."""
+````
+
+10. Busca
+
+````python
+    assert "\\" not in texto and str(tmp_path) not in texto
+    sin = validar.escribir_analisis(resultados_minimos, [], tmp_path / "sin.md")
+````
+
+y sustitúyelo por
+
+````python
+    assert "\\" not in texto and str(tmp_path) not in texto
+    # esas dos figuras no existen: no llevan la huella, y el documento lo avisa
+    assert ("**Aviso: ninguna de las 2 figuras enlazadas lleva la huella de los "
+            "resultados de este documento** (`fiabilidad_0a` y `contencion_rejilla`)"
+            ) in texto
+    sin = validar.escribir_analisis(resultados_minimos, [], tmp_path / "sin.md")
+````
+
+11. Busca
+
+````python
+    assert not analisis_fuera_del_repo.exists()
+    # sin --analisis va al de por defecto (aqui, desviado a una carpeta temporal)
+````
+
+y sustitúyelo por
+
+````python
+    assert not analisis_fuera_del_repo.exists()
+    # recien dibujadas de estos resultados: todas llevan su huella
+    assert ("Las 5 figuras enlazadas llevan la huella de los resultados de este "
+            "documento.") in texto
+    assert "Aviso" not in texto
+    # sin --analisis va al de por defecto (aqui, desviado a una carpeta temporal)
+````
+
+12. Busca
+
+````python
+    assert "](fiabilidad_0a.png)" in texto                    # las figuras que hubiera
+    assert ajena.read_bytes() == b"de una corrida anterior"
+````
+
+y sustitúyelo por
+
+````python
+    assert "](fiabilidad_0a.png)" in texto                    # las figuras que hubiera
+    assert ("**Aviso: la única figura enlazada no lleva la huella de los resultados de "
+            "este documento** (`fiabilidad_0a`)") in texto
+    assert ajena.read_bytes() == b"de una corrida anterior"
+````
+
+
+#### Grupo 2 — El código y los documentos
+
+**Sustituciones: `docs/sp5-sesion.md`**
+
+5, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````markdown
+corre sin bots y no mide nada.
+````
+
+y sustitúyelo por
+
+````markdown
+corre sin bots y no mide nada. Cómo se abre el túnel a la base y cómo se
+escribe el DSN está en `docs/sp3-operacion.md` §3; cómo se levanta el copiloto
+que contesta al arnés (`COPILOTO_URL`), en su §2, «El arnés». **Ese copiloto
+tiene que ser la misma imagen que la desplegada:** el arnés confirma cada
+consulta con una lectura propia, y si la imagen es otra las lecturas no
+coinciden y todas las consultas se descartan como `no_coincide`.
+````
+
+2. Busca
+
+````markdown
+- un chat dado de alta como profesional (`pruebas/profesionales.py --alta`);
+````
+
+y sustitúyelo por
+
+````markdown
+- un chat dado de alta como profesional (`pruebas/profesionales.py --alta`;
+  cómo se hace y de dónde sale el identificador del chat, en
+  `docs/sp3-operacion.md` §1);
+````
+
+3. Busca
+
+````markdown
+  consultas: el código no es de un solo uso y vale 7 días (spec de SP3 §5.2),
+  y cada uso queda en `consultas`. Un cuestionario nuevo cuenta contra el
+  límite de 5 por chat y día (spec de SP3 §4.2);
+- cinco placas del conjunto de prueba, en DICOM.
+````
+
+y sustitúyelo por
+
+````markdown
+  consultas: el código no es de un solo uso (spec de SP3 §5.2) y vale 7 días
+  (§5.4), y cada uso queda en `consultas`. Un cuestionario nuevo cuenta
+  contra el límite de 5 por chat y día (spec de SP3 §4.2);
+- cinco placas del conjunto de prueba, en DICOM. Valen cinco de las que usó
+  el arnés: sus `patientId` están en `latencias.json`, y el fichero de cada
+  una es `<RSNA_RAIZ>/crudo/stage_2_train_images/<patientId>.dcm`.
+````
+
+4. Busca
+
+````markdown
+En el bot del profesional cada consulta es: el código, los cuatro signos
+(temperatura, frecuencia cardiaca, crepitantes y murmullo) y la placa, enviada
+como **documento** (como foto, Telegram la recomprime a JPEG y deja de ser un
+DICOM). El cronómetro se pone en marcha al enviar la placa y se para cuando
+````
+
+y sustitúyelo por
+
+````markdown
+En el bot del profesional cada consulta empieza con un mensaje cualquiera
+(p. ej. `/start`): el bot contesta pidiendo el código, y un código enviado
+como primer mensaje no se lee como código. Después van el código, los cuatro
+signos (temperatura, frecuencia cardiaca, crepitantes y murmullo) y la placa,
+enviada como **documento** (como foto, Telegram la recomprime a JPEG y deja
+de ser un DICOM). El cronómetro se pone en marcha al enviar la placa y se para cuando
+````
+
+5. Busca
+
+````markdown
+orden que él mismo imprime.
+````
+
+y sustitúyelo por
+
+````markdown
+sentencia que él mismo imprime (`DELETE FROM consultas WHERE chat_id = …`).
+Se ejecuta desde cualquier cliente de PostgreSQL, con el mismo túnel abierto
+(`docs/sp3-operacion.md` §3).
+
+La etiqueta del KPI («cumplido con cambio», «no cumplido» o «no medido») se
+decide con la regla del spec de SP5 §6.2. `latencia.json` la lleva escrita
+(`veredicto.regla`) y aplicada (`veredicto.etiqueta`), y la orden la imprime.
+````
+
+**Sustituciones: `docs/superpowers/specs/2026-09-27-sp5-validacion-y-cierre-design.md`**
+
+5, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````markdown
+réplica remuestrea con reemplazo las 3 811 placas (una por paciente, así que es
+un bootstrap por paciente) y vuelve a sortear la clínica con la semilla `b`.
+`z_y`, los umbrales `τ` y el calibrador **quedan fijos**, calculados una vez
+sobre el conjunto completo: solo se remuestrean placas y se resortea la
+clínica, para que el generador sea el mismo en todas las réplicas. Intervalos
+del 95 % por percentiles. Las diferencias entre modelos se calculan **dentro
+de cada réplica** (pareadas). El oráculo cerrado hace que todo cueste segundos;
+el bootstrap completo se corre en las seis celdas destacadas (§4.5) y en 0A;
+el resto de la rejilla se publica sin intervalos.
+````
+
+y sustitúyelo por
+
+````markdown
+réplica remuestrea con reemplazo los 3 811 **casos de la estimación puntual**,
+cada placa con la clínica que se le sorteó (una placa por paciente, así que es
+un bootstrap por paciente). `z_y`, los umbrales `τ` y el calibrador **quedan
+fijos**, calculados una vez sobre el conjunto completo. Intervalos del 95 %
+por percentiles. Las diferencias entre modelos se calculan **dentro de cada
+réplica** (pareadas). El bootstrap completo se corre en las seis celdas
+destacadas (§4.5) y en 0A; el resto de la rejilla se publica sin intervalos.
+
+> **Corregido el 28-sep, en la revisión final de SP5-B1.** Este párrafo decía
+> que cada réplica, además de remuestrear las placas, **volvía a sortear la
+> clínica**. Eso cuenta dos veces el ruido del sorteo —el remuestreo de los
+> casos ya lo lleva—: medido sobre la simulación, la varianza de las réplicas
+> salía × 1,57 en mediana y un «IC 95 %» cubría más del 99 %. Remuestrear
+> primero y sortear después quita la doble cuenta, pero centra las réplicas en
+> la media sobre la clínica y no en la estimación que se publica, y el
+> intervalo por percentiles sigue cubriendo más del 99 %. El bootstrap de los
+> casos de la estimación es el que da el 95 %. Las estimaciones puntuales no
+> cambian; los intervalos se estrechan.
+````
+
+2. Busca
+
+````markdown
+  debajo de 0,4, se dice.»*
+````
+
+y sustitúyelo por
+
+````markdown
+  debajo de 0,4, se dice.»* El acta y el informe lo citan como lo que es, lo
+  **declarado antes de la sesión**, y a continuación dan lo **observado**: los
+  límites y la anchura del intervalo del kappa ponderado por los dos métodos, y
+  si 0,4 y 0,6 quedan dentro. Así el texto no afirma en presente una anchura
+  que las cifras de la sesión puedan desmentir (con un kappa de 0,9 el
+  intervalo es mucho más estrecho).
+````
+
+3. Busca
+
+````markdown
+  100 acotados a 0,5 y 99,5 antes del logit (y contando cuántas veces ocurre);
+````
+
+y sustitúyelo por
+
+````markdown
+  100 acotados a 0,5 y 99,5 antes del logit (y contando cuántas veces ocurre, y
+  en cuántos casos el punto medio del sistema queda fuera de esa cota: en ellos
+  la diferencia no puede ser cero);
+````
+
+4. Busca
+
+````markdown
+| Latencia de extremo a extremo (8 s / 3 s) | cumplido con cambio (provisional) | se mide `ms_extremo`, el tramo n8n → respuesta, no la subida a Telegram ni la entrega (§6.3): es una cota inferior. La etiqueta se decide con el p95 frente al mínimo de 8 s (el p50 y el objetivo de 3 s se reportan al lado): si no lo cumple, «no cumplido»; si lo cumple, «cumplido con cambio», diciendo el tramo que no ve y lo cronometrado a mano. Lo cronometrado a mano pesa en contra: si su mediana supera los 8 s, «no cumplido». Si no hay corrida con bots antes del 16-oct, «no medido» con la causa |
+````
+
+y sustitúyelo por
+
+````markdown
+| Latencia de extremo a extremo (8 s / 3 s) | cumplido con cambio (provisional) | se mide `ms_extremo`, el tramo n8n → respuesta, no la subida a Telegram ni la entrega (§6.3): es una cota inferior. La etiqueta se decide con el p95 frente al mínimo de 8 s (`veredicto.p95_cumple_el_minimo` de `latencia.json`; el p50 y el objetivo de 3 s se reportan al lado): si no lo cumple, «no cumplido»; si lo cumple, «cumplido con cambio», diciendo el tramo que no ve y lo cronometrado a mano. Lo cronometrado a mano pesa en contra: si su mediana, sin redondear, supera los 8 s (`veredicto.a_mano_supera_el_minimo`), «no cumplido»; si no se cronometró, «cumplido con cambio» diciendo que no se cronometró. `latencia.json` lleva la regla y la etiqueta que sale de ella (`veredicto`). Si antes del 16-oct no hay una corrida con bots con al menos 30 consultas válidas, «no medido» con la causa |
+````
+
+5. Busca
+
+````markdown
+  0,05, y de que sí lo hace con 0,02 (el umbral analítico).
+````
+
+y sustitúyelo por
+
+````markdown
+  0,05, y de que sí lo hace por debajo del umbral analítico (≈ 3,3 %, §5.3):
+  con 0,02 y con 0,032, y no con 0,034.
+````
+
+**Sustituciones: `docs/validacion-semisintetica/README.md`**
+
+6, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````markdown
+**Todo lo que hay en esta carpeta, salvo `crudas_prueba.csv`,
+`crudas_prueba.sha256` y `latencia.json`, es resultado de una simulación
+semisintética** (spec de SP5, §4): las placas y sus etiquetas son reales
+(conjunto de prueba de RSNA), la clínica se sortea con la distribución
+publicada de la puntuación de Heckerling, y la dependencia entre clínica e
+imagen es un supuesto declarado. Nada de aquí mide exactitud clínica en
+pacientes. Cada tabla, figura y JSON de resultados lleva ese rótulo en su
+título.
+````
+
+y sustitúyelo por
+
+````markdown
+**`resultados_simulacion.json` y las figuras de esta carpeta son resultado
+de una simulación semisintética** (spec de SP5, §4): las placas y sus
+etiquetas son reales (conjunto de prueba de RSNA), la clínica se sortea con
+la distribución publicada de la puntuación de Heckerling, y la dependencia
+entre clínica e imagen es un supuesto declarado. Nada de eso mide exactitud
+clínica en pacientes. Cada figura y el JSON de resultados llevan ese rótulo
+en su título; las tablas están en el análisis, que lo lleva en el suyo.
+
+Lo demás **no** es simulación, y cada sección de abajo dice qué es: las
+puntuaciones crudas congeladas (`crudas_prueba.csv` y su `.sha256`), la
+medición de la latencia (`latencia.json`) y lo de la sesión con el médico
+(`acta-h7-plantilla.md` y, cuando la sesión se haga, `sesion.json` y
+`acta-h7.md`).
+````
+
+2. Busca
+
+````markdown
+cálculo 0C. No lleva fecha: dos corridas dan el mismo fichero.
+````
+
+y sustitúyelo por
+
+````markdown
+cálculo 0C. Lleva también las versiones de Python, NumPy, SciPy, pandas y
+scikit-learn con que se calculó (`entorno`). No lleva fecha: dos corridas
+con las mismas versiones dan el mismo fichero; con otras, las cifras pueden
+cambiar (NumPy no garantiza el mismo flujo de números aleatorios de una
+versión a otra).
+````
+
+3. Busca
+
+````markdown
+`Title` del PNG.
+````
+
+y sustitúyelo por
+
+````markdown
+`Title` del PNG; en `Software` va la versión de matplotlib con que se dibujó.
+En el metadato `Description` lleva la huella (sha256) del contenido de los
+resultados de los que sale: así se sabe si una figura es de estos resultados
+o de otra corrida, y el análisis avisa si enlaza alguna que no lo sea.
+````
+
+4. Busca
+
+````markdown
+Sin los pesos, sin red y sin contenedores; de 3 a 5 minutos. Con
+````
+
+y sustitúyelo por
+
+````markdown
+Sin los pesos, sin red y sin contenedores; en torno a un minuto. Con
+````
+
+5. Busca
+
+````markdown
+también regenera el análisis desde el JSON y lo compara con el versionado.
+**No** repite el bootstrap ni compara el contenido de las figuras: de los
+intervalos solo comprueba la forma, y de las figuras, el nombre, la
+resolución y el título. Si se toca algo que cambie el bootstrap o el dibujo,
+hay que volver a correr el guion, porque ninguna prueba lo va a pedir.
+````
+
+y sustitúyelo por
+
+````markdown
+también regenera el análisis desde el JSON y lo compara con el versionado,
+y comprueba que cada figura lleva la huella de ese JSON.
+**No** repite el bootstrap ni compara los píxeles de las figuras. De los
+intervalos comprueba que están todos y bien formados; sus cifras solo
+quedan vigiladas de rebote, las que el análisis imprime y con los decimales
+con que las imprime. De las figuras comprueba el nombre, la resolución, la
+huella y que el título lleva el rótulo y, en las de fiabilidad, el nombre
+de su celda. Si se toca algo que cambie el bootstrap o el dibujo, hay que
+volver a correr el guion, porque ninguna prueba lo va a pedir. Si la prueba
+falla en una máquina con otras versiones de las librerías, lo dice: la
+diferencia puede venir de la librería y no del código.
+````
+
+6. Busca
+
+````markdown
+completas (`total_a_mano`: el tiempo total, que no se suma al p50). Los casos
+````
+
+y sustitúyelo por
+
+````markdown
+completas (`total_a_mano`: el tiempo total, que no se suma al p50). El JSON
+lleva la fecha de la corrida (`corrida_del`), la regla con que se decide la
+etiqueta del KPI y la etiqueta (`veredicto`), y un `glosario` de sus claves
+y de los motivos de descarte. Los casos
+````
+
+**Sustituciones: `docs/validacion-semisintetica/acta-h7-plantilla.md`**
+
+2, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````markdown
+  la horquilla en el {{dentro_horquilla}} % de los casos
+  ({{horquillas_anchura_cero}} de {{n}} horquillas son un solo porcentaje: en
+  ellas solo cuenta el valor exacto); porcentajes de 0 o 100 acotados:
+  {{acotados}}.
+````
+
+y sustitúyelo por
+
+````markdown
+  la horquilla en {{dentro_horquilla}}
+  ({{horquillas_anchura_cero}} de {{n}} horquillas son un solo valor impreso,
+  y {{horquillas_cota}} de ellas una cota, «< 1 %» o «> 99 %»: en ellas solo
+  cuenta ese entero, y una «< 1 %» solo la cumple un 0 y una «> 99 %», un
+  100; en un rango, «menos de 1 %» admite desde el 0 y «más de 99 %», hasta
+  el 100); porcentajes de 0 o 100 acotados: {{acotados}}; puntos medios del
+  sistema por debajo de 0,5 % o por encima de 99,5 %: {{sistema_fuera}} (en
+  ellos la diferencia no puede ser cero: lo que conteste el médico se acota a
+  0,5 % y 99,5 %, y el sistema no).
+````
+
+2. Busca
+
+````markdown
+{{texto_fijado}}
+````
+
+y sustitúyelo por
+
+````markdown
+**Declarado antes de la sesión** (spec de SP5 §5.5): «{{texto_fijado}}»
+
+**Observado en esta sesión:** {{anchura_observada}}
+````
+
+**Sustituciones: `pruebas/reproducir_casos.py`**
+
+2, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+    guardo en esa fila de `consultas` (un `copiloto_no_responde` o una
+    `descarga_fallida` solo nacen alli), `coincide` dice si esa consulta y la
+    lectura de este arnes cuentan lo mismo, y `ms_modelo` es lo que el
+    servidor dijo que tardo el modelo EN ESA consulta.
+````
+
+y sustitúyelo por
+
+````python
+    guardo en esa fila de `consultas` (un `copiloto_no_responde` DEL FLUJO o
+    una `descarga_fallida`, que solo nace alli), `coincide` dice si esa
+    consulta y la lectura de este arnes cuentan lo mismo, y `ms_modelo` es lo
+    que el servidor dijo que tardo el modelo EN ESA consulta.
+````
+
+2. Busca
+
+````python
+    y no dice nada de la latencia de extremo a extremo. Sin bots no hay
+````
+
+y sustitúyelo por
+
+````python
+    y no dice nada de la latencia de extremo a extremo. Puede llevar el
+    mismo codigo (`copiloto_no_responde`, si esa llamada no llega): es el de
+    la otra llamada, y no descarta la medida por `error`. Sin bots no hay
+````
+
+**Sustituciones: `scripts/analizar_sesion.py`**
+
+5, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+import json
+import pathlib
+````
+
+y sustitúyelo por
+
+````python
+import json
+import math
+import pathlib
+````
+
+2. Busca
+
+````python
+CARPETA = REPO / "docs" / "validacion-semisintetica"
+
+````
+
+y sustitúyelo por
+
+````python
+CARPETA = REPO / "docs" / "validacion-semisintetica"
+
+
+def sin_nan(x):
+    """Lo mismo, con `None` donde habia un NaN o un infinito: «NaN» no es
+    JSON, y un lector estricto no abriria sesion.json."""
+    if isinstance(x, dict):
+        return {clave: sin_nan(valor) for clave, valor in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [sin_nan(valor) for valor in x]
+    if isinstance(x, float) and not math.isfinite(x):
+        return None
+    return x
+
+````
+
+3. Busca
+
+````python
+
+    salida = pathlib.Path(args.salida)
+````
+
+y sustitúyelo por
+
+````python
+
+    # Lo que se escribe y lo que rellena el acta es lo mismo: el resultado sin
+    # NaN. Se serializa ANTES de abrir: si falla, el fichero anterior sigue.
+    escrito = sin_nan(resultado)
+    texto = json.dumps(escrito, ensure_ascii=False, indent=1, allow_nan=False)
+    salida = pathlib.Path(args.salida)
+````
+
+4. Busca
+
+````python
+    salida.write_text(json.dumps(resultado, ensure_ascii=False, indent=1), encoding="utf-8")
+````
+
+y sustitúyelo por
+
+````python
+    salida.write_text(texto, encoding="utf-8")
+````
+
+5. Busca
+
+````python
+    acta = cc.rellenar_acta(plantilla, cc.valores_para_acta(resultado, clave))
+````
+
+y sustitúyelo por
+
+````python
+    acta = cc.rellenar_acta(plantilla, cc.valores_para_acta(escrito, clave))
+````
+
+**Sustituciones: `scripts/medir_latencia.py`**
+
+14, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+import argparse
+import json
+````
+
+y sustitúyelo por
+
+````python
+import argparse
+import datetime
+import json
+````
+
+2. Busca
+
+````python
+NO_MEDIDO = "no medido"
+# Los motivos de descarte, en el orden en que se miran: cada fila cuenta en
+````
+
+y sustitúyelo por
+
+````python
+NO_MEDIDO = "no medido"
+# La regla del spec de SP5 §6.2, escrita en el JSON para que nadie tenga que
+# deducir la etiqueta de cuatro booleanos.
+REGLA = (f"La etiqueta del KPI se decide con el p95 de `ms_extremo` frente al "
+         f"mínimo de {UMBRALES_S['minimo']} s: si no lo cumple, «no cumplido»; si lo "
+         f"cumple, «cumplido con cambio», porque `ms_extremo` no ve todo el "
+         f"tramo. Lo cronometrado a mano pesa en contra: si su mediana supera "
+         f"los {UMBRALES_S['minimo']} s, «no cumplido»; si no se cronometró, no pesa. "
+         f"El p50 y el objetivo de {UMBRALES_S['objetivo']} s se reportan al lado y no "
+         f"deciden (spec de SP5 §6.2).")
+CUMPLIDO, NO_CUMPLIDO = "cumplido con cambio", "no cumplido"
+# La fecha de la corrida es el dia en la hora de Ecuador continental (UTC−5).
+ZONA = datetime.timezone(datetime.timedelta(hours=-5))
+GLOSARIO = {
+    "n": ("las consultas que cuentan: pasaron por los bots, llegaron al final, "
+          "tenían que dar un pre-informe, no dieron error, las confirma la "
+          "lectura propia del arnés y llevan `ms_extremo`"),
+    "menor_ms y mayor_ms": ("la medida más pequeña y la más grande de "
+                            "`ms_extremo_ordenados`; no son umbrales"),
+    "modelo_p50_ms": ("la mediana de lo que el servidor dijo que tardó el modelo en "
+                      "esas mismas consultas; es una parte de `ms_extremo`"),
+    "corrida_del": ("el día, en la hora de Ecuador continental (UTC−5), en que el "
+                    "arnés escribió la corrida que aquí se resume"),
+    "descartadas": {
+        "sin_bots": "la fila no pasó por los bots, y no tiene `ms_extremo`",
+        "rechazo_previsto": ("un caso que el sistema tiene que rechazar (perfiles 05 "
+                             "a 09 del arnés): no da un pre-informe que medir"),
+        "fallo": "la conversación con los bots no llegó al final",
+        "error": "la consulta medida acabó en error",
+        "no_coincide": ("la lectura propia del arnés no dio lo mismo que el bot, o "
+                        "no se pudo hacer"),
+        "sin_ms_extremo": "la fila no lleva una medida válida",
+    },
+}
+# Los motivos de descarte, en el orden en que se miran: cada fila cuenta en
+````
+
+3. Busca
+
+````python
+def resumir(filas, minimo=MINIMO, manual=None) -> dict:
+````
+
+y sustitúyelo por
+
+````python
+def veredicto(p95_ms, manual) -> dict:
+    """La etiqueta del KPI segun `REGLA`. Se decide con el percentil y con la
+    mediana de lo cronometrado SIN redondear: 8,004 s se escribe «8,0» y
+    supera los 8 s."""
+    minimo_ms = UMBRALES_S["minimo"] * 1000
+    cumple = bool(p95_ms <= minimo_ms)
+    supera = bool(statistics.median(manual) * 1000 > minimo_ms) if manual else None
+    return {"regla": REGLA, "p95_cumple_el_minimo": cumple,
+            "a_mano_supera_el_minimo": supera,
+            "etiqueta": CUMPLIDO if cumple and not supera else NO_CUMPLIDO}
+
+
+def fecha_de(ruta) -> str:
+    """El dia (UTC−5) en que se escribio el fichero de la corrida."""
+    escrito = pathlib.Path(ruta).stat().st_mtime
+    return datetime.datetime.fromtimestamp(escrito, tz=ZONA).date().isoformat()
+
+
+def resumir(filas, minimo=MINIMO, manual=None, corrida_del=None) -> dict:
+````
+
+4. Busca
+
+````python
+    medido». Con menos de `minimo` consultas validas sale con `SystemExit`:
+    no hay cifra que dar.
+````
+
+y sustitúyelo por
+
+````python
+    medido». `corrida_del` es el dia de la corrida (`fecha_de`). Con menos de
+    `minimo` consultas validas sale con `SystemExit`: no hay cifra que dar.
+````
+
+5. Busca
+
+````python
+    if len(validas) < minimo:
+        raise SystemExit(
+````
+
+y sustitúyelo por
+
+````python
+    if len(validas) < minimo:
+        # lo que mas descarta entre las consultas que tenian que contar
+        imprevistos = {m: descartadas[m] for m in MOTIVOS if m != "rechazo_previsto"}
+        if descartadas["no_coincide"] and descartadas["no_coincide"] == max(
+                imprevistos.values()):
+            consejo = ("Lo que más descarta es `no_coincide`: el copiloto que contesta "
+                       "al arnés (COPILOTO_URL) no da la misma lectura que el "
+                       "desplegado. Comprueba que es la misma imagen y vuelve a "
+                       "correr el arnés")
+        else:
+            consejo = "Vuelve a correr el arnés con un --por-perfil mayor"
+        raise SystemExit(
+````
+
+6. Busca
+
+````python
+            f"no se escribe nada (descartadas: {descartadas}). Vuelve a correr "
+            f"el arnés con un --por-perfil mayor o, si no se puede, lleva "
+            f"esta causa al informe")
+````
+
+y sustitúyelo por
+
+````python
+            f"no se escribe nada (descartadas: {descartadas}). {consejo} o, si "
+            f"no se puede, lleva esta causa al informe")
+````
+
+7. Busca
+
+````python
+        "lectura": LECTURA,
+        "n": len(validas),
+````
+
+y sustitúyelo por
+
+````python
+        "lectura": LECTURA,
+        "corrida_del": corrida_del,
+        "n": len(validas),
+````
+
+8. Busca
+
+````python
+        "minimo_ms": round(float(ms.min()), 1),
+        "maximo_ms": round(float(ms.max()), 1),
+````
+
+y sustitúyelo por
+
+````python
+        "menor_ms": round(float(ms.min()), 1),
+        "mayor_ms": round(float(ms.max()), 1),
+````
+
+9. Busca
+
+````python
+                          "minimo_s": min(manual), "maximo_s": max(manual)}
+````
+
+y sustitúyelo por
+
+````python
+                          "menor_s": min(manual), "mayor_s": max(manual)}
+````
+
+10. Busca
+
+````python
+                         if manual else NO_MEDIDO),
+        "descartadas": descartadas,
+````
+
+y sustitúyelo por
+
+````python
+                         if manual else NO_MEDIDO),
+        "veredicto": veredicto(p95, manual),
+        "descartadas": descartadas,
+````
+
+11. Busca
+
+````python
+        "descartadas": descartadas,
+    }
+````
+
+y sustitúyelo por
+
+````python
+        "descartadas": descartadas,
+        "glosario": GLOSARIO,
+    }
+````
+
+12. Busca
+
+````python
+    resultado = resumir(leer_corrida(args.corrida), manual=manual)
+````
+
+y sustitúyelo por
+
+````python
+    filas = leer_corrida(args.corrida)
+    resultado = resumir(filas, manual=manual, corrida_del=fecha_de(args.corrida))
+````
+
+13. Busca
+
+````python
+          f"({resultado['descartadas']['total']} descartadas); {salida}")
+````
+
+y sustitúyelo por
+
+````python
+          f"({resultado['descartadas']['total']} descartadas); corrida del "
+          f"{resultado['corrida_del']}; etiqueta del KPI: "
+          f"«{resultado['veredicto']['etiqueta']}»; {salida}")
+````
+
+14. Busca
+
+````python
+if __name__ == "__main__":
+    sys.exit(main())
+````
+
+y sustitúyelo por
+
+````python
+if __name__ == "__main__":
+    # Los mensajes llevan tildes y «», y el de «no medida» sale por stderr: en
+    # una consola que no es UTF-8 saldrian rotos.
+    for flujo in (sys.stdout, sys.stderr):
+        if hasattr(flujo, "reconfigure"):
+            flujo.reconfigure(encoding="utf-8", errors="replace")
+    sys.exit(main())
+````
+
+**Sustituciones: `scripts/validar_combinacion.py`**
+
+38, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+    python scripts/validar_combinacion.py --replicas 50 --sin-figuras     (ensayo rapido)
+````
+
+y sustitúyelo por
+
+````python
+    python scripts/validar_combinacion.py --replicas 50 --sin-figuras
+        --salida CARPETA --analisis FICHERO.md                            (ensayo rapido)
+````
+
+2. Busca
+
+````python
+figuras a 300 DPI, y en docs/validacion-semisintetica-sp5.md el analisis.
+Ninguna cifra del analisis se teclea: el documento y las figuras se generan
+````
+
+y sustitúyelo por
+
+````python
+figuras a 300 DPI, y en docs/validacion-semisintetica-sp5.md el analisis.
+Eso es lo PUBLICADO: un ensayo lleva siempre --salida y --analisis, o lo pisa.
+Ninguna cifra del analisis se teclea: el documento y las figuras se generan
+````
+
+3. Busca
+
+````python
+import argparse
+import json
+````
+
+y sustitúyelo por
+
+````python
+import argparse
+import hashlib
+import json
+````
+
+4. Busca
+
+````python
+TITULO = "Validación de la combinación de clínica e imagen: simulación semisintética (SP5 §4)"
+````
+
+y sustitúyelo por
+
+````python
+TITULO = informe.TITULO            # el del documento: escrito una sola vez
+````
+
+5. Busca
+
+````python
+
+def calcular(replicas: int = simulacion.B_REPLICAS, procesos: int = 1,
+````
+
+y sustitúyelo por
+
+````python
+
+def entorno() -> dict:
+    """Las versiones con que se calcula. El resultado las lleva porque las
+    cifras dependen de ellas: NumPy no promete el mismo flujo de numeros
+    aleatorios de una version a otra."""
+    import platform
+
+    import numpy
+    import pandas
+    import scipy
+    import sklearn
+    return {"python": platform.python_version(), "numpy": numpy.__version__,
+            "scipy": scipy.__version__, "pandas": pandas.__version__,
+            "scikit-learn": sklearn.__version__}
+
+
+def calcular(replicas: int = simulacion.B_REPLICAS, procesos: int = 1,
+````
+
+6. Busca
+
+````python
+            "semilla_clinica": simulacion.SEMILLA_CLINICA,
+````
+
+y sustitúyelo por
+
+````python
+````
+
+7. Busca
+
+````python
+            "destacadas": [[float(a), float(b)] for a, b in destacadas],
+````
+
+y sustitúyelo por
+
+````python
+            # sin repetidas y en el orden en que se dieron
+            "destacadas": [list(d) for d in dict.fromkeys(
+                (float(a), float(b)) for a, b in destacadas)],
+````
+
+8. Busca
+
+````python
+        },
+        "imagen_sola": simulacion.imagen_sola(conjunto),
+````
+
+y sustitúyelo por
+
+````python
+        },
+        "entorno": entorno(),
+        "imagen_sola": simulacion.imagen_sola(conjunto),
+````
+
+9. Busca
+
+````python
+def escribir_resultados(resultados: dict, ruta) -> Path:
+    ruta = Path(ruta)
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    with ruta.open("w", encoding="utf-8", newline="\n") as f:
+````
+
+y sustitúyelo por
+
+````python
+def escribir_resultados(resultados: dict, ruta) -> Path:
+    ruta = Path(ruta)
+    # allow_nan=False: «NaN» no es JSON, y un tercero no podria leerlo. Se
+    # serializa ANTES de abrir: si falla, el fichero anterior sigue entero.
+    texto = json.dumps(resultados, ensure_ascii=False, indent=1, allow_nan=False) + "\n"
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    with ruta.open("w", encoding="utf-8", newline="\n") as f:
+````
+
+10. Busca
+
+````python
+        # allow_nan=False: «NaN» no es JSON, y un tercero no podria leerlo.
+        f.write(json.dumps(resultados, ensure_ascii=False, indent=1, allow_nan=False) + "\n")
+````
+
+y sustitúyelo por
+
+````python
+        f.write(texto)
+````
+
+11. Busca
+
+````python
+    return json.loads(Path(ruta).read_text(encoding="utf-8"))
+
+````
+
+y sustitúyelo por
+
+````python
+    return json.loads(Path(ruta).read_text(encoding="utf-8"))
+
+
+def huella_de_resultados(resultados: dict) -> str:
+    """El sha256 del CONTENIDO de unos resultados, con las claves ordenadas.
+    Cada figura lo lleva en sus metadatos: dice de que resultados sale el
+    dibujo. Es del contenido y no del fichero, para que no dependa de los
+    finales de linea ni del sangrado."""
+    texto = json.dumps(resultados, ensure_ascii=False, allow_nan=False, sort_keys=True,
+                       separators=(",", ":"))
+    return hashlib.sha256(texto.encode("utf-8")).hexdigest()
+
+````
+
+12. Busca
+
+````python
+NOMBRE_MODELO = {"imagen": "imagen sola", "clinica": "clínica sola",
+                 "independencia": "combinación por independencia",
+                 "conservador": "combinación conservadora"}
+````
+
+y sustitúyelo por
+
+````python
+# Los nombres de los modelos son los del documento (`informe.MODELOS`).
+NOMBRE_MODELO = dict(informe.MODELOS)
+````
+
+13. Busca
+
+````python
+TRAMOS = (("bajo", "por el lado conservador (λ < 0)", "#e34948"),
+````
+
+y sustitúyelo por
+
+````python
+# «En más de ε»: las colas no son λ < 0 y λ > 1 a secas, llevan la tolerancia.
+TRAMOS = (("bajo", "más allá del extremo conservador, en más de ε", "#e34948"),
+````
+
+14. Busca
+
+````python
+          ("sobre", "más allá de la independencia (λ > 1)", "#2a78d6"))
+````
+
+y sustitúyelo por
+
+````python
+          ("sobre", "más allá de la independencia, en más de ε", "#2a78d6"))
+````
+
+15. Busca
+
+````python
+FIGURAS_GLOBALES = ("horquilla_por_celda", "contencion_rejilla", "pendiente_rejilla")
+PREFIJO_FIABILIDAD = "fiabilidad_"
+````
+
+y sustitúyelo por
+
+````python
+# Los nombres de las figuras y de las celdas son los del documento.
+FIGURAS_GLOBALES = tuple(clave for clave, _ in informe.FIGURAS_GLOBALES)
+# El metadato del PNG que dice de que resultados sale, y como empieza.
+CLAVE_DE_LA_HUELLA = "Description"
+PREFIJO_DE_LA_HUELLA = f"dibujada de {NOMBRE_RESULTADOS}; sha256 de su contenido: "
+PREFIJO_FIABILIDAD = informe.PREFIJO_FIABILIDAD
+````
+
+16. Busca
+
+````python
+def _rho(valor) -> str:
+    return f"{valor:g}".replace(".", ",")
+````
+
+y sustitúyelo por
+
+````python
+_rho = informe.rho
+````
+
+17. Busca
+
+````python
+def _guardar(plt, fig, destino, titulo) -> Path:
+    """300 DPI, y el titulo -con su rotulo- tambien en los metadatos del PNG."""
+````
+
+y sustitúyelo por
+
+````python
+def _guardar(plt, fig, destino, titulo, huella=None) -> Path:
+    """300 DPI. En los metadatos del PNG van el titulo -con su rotulo-, la
+    version de matplotlib con que se dibujo (sin la direccion web que pone
+    por defecto) y, si se da, la huella de los resultados de los que sale."""
+    import matplotlib
+````
+
+18. Busca
+
+````python
+    fig.savefig(destino, dpi=DPI, metadata={"Title": titulo})
+````
+
+y sustitúyelo por
+
+````python
+    metadatos = {"Title": titulo, "Software": f"matplotlib {matplotlib.__version__}"}
+    if huella is not None:
+        metadatos[CLAVE_DE_LA_HUELLA] = PREFIJO_DE_LA_HUELLA + huella
+    fig.savefig(destino, dpi=DPI, metadata=metadatos)
+````
+
+19. Busca
+
+````python
+def slug_de_celda(celda: dict) -> str:
+    """`0a` para 0A; `r1-030_r0-000` para el resto (ρ × 100, tres cifras)."""
+    if celda["nombre"] == "0A":
+        return "0a"
+    return f"r1-{round(celda['rho1'] * 100):03d}_r0-{round(celda['rho0'] * 100):03d}"
+````
+
+y sustitúyelo por
+
+````python
+def huella_de_figura(ruta):
+    """La huella de los resultados de los que salio un PNG, leida de sus
+    metadatos; None si no la lleva o si no se puede leer."""
+    from PIL import Image
+    try:
+        with Image.open(ruta) as imagen:
+            texto = imagen.info.get(CLAVE_DE_LA_HUELLA)
+    except OSError:
+        return None
+    if not isinstance(texto, str) or not texto.startswith(PREFIJO_DE_LA_HUELLA):
+        return None
+    return texto[len(PREFIJO_DE_LA_HUELLA):]
+````
+
+20. Busca
+
+````python
+def celdas_con_figura(resultados: dict) -> list:
+    """0A y las destacadas, en el orden de la rejilla."""
+    return [c for c in resultados["celdas"] if c["nombre"] == "0A" or c["destacada"]]
+````
+
+y sustitúyelo por
+
+````python
+def figuras_ajenas(resultados: dict, figuras) -> list:
+    """Los nombres, sin extension, de las figuras que NO salen de estos
+    resultados: las que no llevan su huella."""
+    huella = huella_de_resultados(resultados)
+    return sorted(Path(f).stem for f in figuras if huella_de_figura(f) != huella)
+````
+
+21. Busca
+
+````python
+def figura_fiabilidad(celda: dict, destino) -> Path:
+````
+
+y sustitúyelo por
+
+````python
+slug_de_celda = informe.slug_de_celda
+celdas_con_figura = informe.celdas_completas
+
+
+def figura_fiabilidad(celda: dict, destino, huella=None) -> Path:
+````
+
+22. Busca
+
+````python
+    ax.legend(fontsize=9, loc="upper left")
+    fig.tight_layout()
+    return _guardar(plt, fig, destino, titulo)
+
+
+````
+
+y sustitúyelo por
+
+````python
+    ax.legend(fontsize=9, loc="upper left")
+    fig.tight_layout()
+    return _guardar(plt, fig, destino, titulo, huella)
+
+
+````
+
+23. Busca
+
+````python
+def figura_horquilla(resultados: dict, destino) -> Path:
+````
+
+y sustitúyelo por
+
+````python
+def figura_horquilla(resultados: dict, destino, huella=None) -> Path:
+````
+
+24. Busca
+
+````python
+    tres fracciones de los casos concordantes. No es una cobertura."""
+````
+
+y sustitúyelo por
+
+````python
+    tres fracciones de los casos concordantes. No es una cobertura. Un lado
+    sin casos no tiene fracciones: se rotula «n/d», para que la barra vacia
+    no se lea como un 0 %."""
+````
+
+25. Busca
+
+````python
+                    ax.text(x0 + ancho / 2, y, f"{_coma(ancho, 0)} %", ha="center",
+````
+
+y sustitúyelo por
+
+````python
+                    ax.text(x0 + ancho / 2, y, f"{_coma(ancho, 1)} %", ha="center",
+````
+
+26. Busca
+
+````python
+            izquierda = [a + b for a, b in zip(izquierda, anchos)]
+        _ejes(ax, rotulo, "% de los casos concordantes", "")
+````
+
+y sustitúyelo por
+
+````python
+            izquierda = [a + b for a, b in zip(izquierda, anchos)]
+        for y, c in enumerate(celdas):
+            if all(c["horquilla"][lado][clave] is None for clave, _, _ in TRAMOS):
+                ax.text(50.0, y, "n/d (sin casos)", ha="center", va="center",
+                        fontsize=8, color=TINTA)
+        _ejes(ax, rotulo, "% de los casos concordantes", "")
+````
+
+27. Busca
+
+````python
+    fig.tight_layout(rect=(0, 0.06, 1, 1))
+    return _guardar(plt, fig, destino, titulo)
+
+````
+
+y sustitúyelo por
+
+````python
+    fig.tight_layout(rect=(0, 0.06, 1, 1))
+    return _guardar(plt, fig, destino, titulo, huella)
+
+````
+
+28. Busca
+
+````python
+def figura_rejilla(resultados: dict, destino, que: str) -> Path:
+````
+
+y sustitúyelo por
+
+````python
+def figura_rejilla(resultados: dict, destino, que: str, huella=None) -> Path:
+````
+
+29. Busca
+
+````python
+    _ejes(ax, titulo, "ρ0 (dependencia entre los casos sin neumonía)",
+          "ρ1 (dependencia entre los casos con neumonía)")
+````
+
+y sustitúyelo por
+
+````python
+    _ejes(ax, titulo, "ρ0 (dependencia entre los casos sin opacidad)",
+          "ρ1 (dependencia entre los casos con opacidad)")
+````
+
+30. Busca
+
+````python
+    return _guardar(plt, fig, destino, titulo)
+````
+
+y sustitúyelo por
+
+````python
+    return _guardar(plt, fig, destino, titulo, huella)
+````
+
+31. Busca
+
+````python
+    que ya no son las del JSON. Sin matplotlib sale ANTES de borrar nada."""
+````
+
+y sustitúyelo por
+
+````python
+    que ya no son las del JSON. Sin matplotlib sale ANTES de borrar nada.
+    Cada una lleva en sus metadatos la huella de `resultados`."""
+````
+
+32. Busca
+
+````python
+    rutas = [figura_fiabilidad(c, carpeta / f"{PREFIJO_FIABILIDAD}{slug_de_celda(c)}.png")
+````
+
+y sustitúyelo por
+
+````python
+    huella = huella_de_resultados(resultados)
+    rutas = [figura_fiabilidad(c, carpeta / f"{PREFIJO_FIABILIDAD}{slug_de_celda(c)}.png",
+                               huella)
+````
+
+33. Busca
+
+````python
+    rutas.append(figura_horquilla(resultados, carpeta / "horquilla_por_celda.png"))
+    rutas.append(figura_rejilla(resultados, carpeta / "contencion_rejilla.png", "contencion"))
+    rutas.append(figura_rejilla(resultados, carpeta / "pendiente_rejilla.png", "pendiente"))
+````
+
+y sustitúyelo por
+
+````python
+    rutas.append(figura_horquilla(resultados, carpeta / "horquilla_por_celda.png", huella))
+    rutas.append(figura_rejilla(resultados, carpeta / "contencion_rejilla.png", "contencion",
+                                huella))
+    rutas.append(figura_rejilla(resultados, carpeta / "pendiente_rejilla.png", "pendiente",
+                                huella))
+````
+
+34. Busca
+
+````python
+    `informe.redactar` LEYENDO `resultados`."""
+````
+
+y sustitúyelo por
+
+````python
+    `informe.redactar` LEYENDO `resultados`, y dice cuales de esas figuras no
+    llevan la huella de estos resultados. Se redacta ANTES de abrir: si
+    falla, el documento anterior sigue entero."""
+````
+
+35. Busca
+
+````python
+    ruta = Path(ruta)
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+````
+
+y sustitúyelo por
+
+````python
+    ruta = Path(ruta)
+    enlaces = {Path(f).stem: _enlace(Path(f), ruta.parent) for f in figuras}
+    texto = informe.redactar(resultados, enlaces, figuras_ajenas(resultados, figuras))
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+````
+
+36. Busca
+
+````python
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    enlaces = {Path(f).stem: _enlace(Path(f), ruta.parent) for f in figuras}
+    with ruta.open("w", encoding="utf-8", newline="\n") as f:
+````
+
+y sustitúyelo por
+
+````python
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    with ruta.open("w", encoding="utf-8", newline="\n") as f:
+````
+
+37. Busca
+
+````python
+        f.write(informe.redactar(resultados, enlaces))
+````
+
+y sustitúyelo por
+
+````python
+        f.write(texto)
+````
+
+38. Busca
+
+````python
+if __name__ == "__main__":
+    raise SystemExit(main())
+````
+
+y sustitúyelo por
+
+````python
+if __name__ == "__main__":
+    # «análisis:» lleva tilde: en una consola que no es UTF-8 saldria rota
+    for flujo in (sys.stdout, sys.stderr):
+        if hasattr(flujo, "reconfigure"):
+            flujo.reconfigure(encoding="utf-8", errors="replace")
+    raise SystemExit(main())
+````
+
+**Sustituciones: `src/copiloto_triaje/validacion/categoria.py`**
+
+1, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+horquilla cruza a la vez el 20 % y el 70 % (prueba): el cociente de odds de
+los dos extremos vale min(RV_clinica, RV_imagen) ≤ 17,5, y cruzar los dos
+exige ademas odds_previas × max(RV) < 0,25, que solo ocurre con prevalencia
+declarada por debajo de ≈ 3,3 %. El caso limite es el asma `no_se` con
+puntuacion [4, 5], donde la minima sale de la RV de 4 puntos (7,18) y la
+maxima de la de 5 (17,5) por la de la imagen; la prueba lo fija con 0,032
+(cruza) y 0,034 (no cruza).
+````
+
+y sustitúyelo por
+
+````python
+horquilla cruza a la vez el 20 % y el 70 % (prueba). La cuenta esta en el
+spec §5.3. Con UNA puntuacion, el cociente de odds de los dos extremos vale
+min(RV_clinica, RV_imagen) ≤ 17,5 y tiene que pasar de 9,33: solo puede con
+la RV de 5 puntos (17,5), y entonces odds_previas × 17,5 < 0,25, es decir,
+una prevalencia declarada por debajo de ≈ 1,4 %. El umbral de verdad, ≈ 3,3 %,
+sale del asma `no_se` con puntuacion [4, 5], donde la minima sale de la RV de
+4 puntos (7,18) y la maxima de la de 5 (17,5) por la de la imagen:
+0,25/7,18 da 3,36 %, y con el porcentaje entero, 3,26 %. La prueba lo fija
+con 0,032 (cruza) y 0,034 (no cruza).
+````
+
+**Sustituciones: `src/copiloto_triaje/validacion/concordancia.py`**
+
+12, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+ZONA_DE_LA_SESION = datetime.timezone(datetime.timedelta(hours=-5))
+
+````
+
+y sustitúyelo por
+
+````python
+ZONA_DE_LA_SESION = datetime.timezone(datetime.timedelta(hours=-5))
+# Bland-Altman acota el porcentaje del medico antes del logit (spec §5.5): un
+# 0 % es 0,5 % y un 100 %, 99,5 %.
+COTA_DEL_MEDICO = (0.005, 0.995)
+
+````
+
+2. Busca
+
+````python
+
+    «Dentro» compara el porcentaje entero del medico, SIN acotar, con la
+````
+
+y sustitúyelo por
+
+````python
+
+    Se acota al medico y no al sistema (spec §5.5). Donde el punto medio del
+    sistema queda fuera de la cota, la diferencia no puede ser cero ni
+    contestando lo mismo: esos casos se cuentan, para que el acta lo diga.
+
+    «Dentro» compara el porcentaje entero del medico, SIN acotar, con la
+````
+
+3. Busca
+
+````python
+    pm = np.clip(pct, 0.5, 99.5) / 100.0
+````
+
+y sustitúyelo por
+
+````python
+    pm = np.clip(pct / 100.0, *COTA_DEL_MEDICO)
+````
+
+4. Busca
+
+````python
+              "acotados_0_o_100": acotados}
+````
+
+y sustitúyelo por
+
+````python
+              "acotados_0_o_100": acotados,
+              "sistema_fuera_de_la_cota": int(np.sum(
+                  (p < COTA_DEL_MEDICO[0]) | (p > COTA_DEL_MEDICO[1])))}
+````
+
+5. Busca
+
+````python
+        dentro = (pct >= lo) & (pct <= hi)
+        salida["fraccion_dentro_de_la_horquilla"] = float(dentro.mean())
+````
+
+y sustitúyelo por
+
+````python
+        dentro = (pct >= lo) & (pct <= hi)
+        salida["dentro_de_la_horquilla"] = int(dentro.sum())
+        salida["fraccion_dentro_de_la_horquilla"] = float(dentro.mean())
+````
+
+6. Busca
+
+````python
+        salida["horquillas_de_anchura_cero"] = int(np.sum(lo == hi))
+    return salida
+````
+
+y sustitúyelo por
+
+````python
+        salida["horquillas_de_anchura_cero"] = int(np.sum(lo == hi))
+        # de las de un solo valor, las que el bot imprime como una cota
+        salida["horquillas_que_son_una_cota"] = int(np.sum(
+            (lo == hi) & ((lo == 0) | (lo == 100))))
+    return salida
+````
+
+7. Busca
+
+````python
+    return f"{x:.{decimales}f}".replace(".", ",")
+````
+
+y sustitúyelo por
+
+````python
+    texto = f"{x:.{decimales}f}"
+    if float(texto) == 0:
+        # un cero con residuo de coma flotante (−5e-16) no es «-0,00»
+        texto = texto.lstrip("-")
+    return texto.replace(".", ",")
+````
+
+8. Busca
+
+````python
+        limite = f"queda por encima de 0,4 con los dos métodos (analítico {la}; BCa {lb})"
+````
+
+y sustitúyelo por
+
+````python
+        # «no queda por debajo», y no «queda por encima»: un limite que ES
+        # 0,4 llega aqui, y por encima no esta
+        limite = (f"no queda por debajo de 0,4 con ninguno de los dos métodos "
+                  f"(analítico {la}; BCa {lb})")
+````
+
+9. Busca
+
+````python
+            f"el límite inferior del intervalo {limite}.")
+
+````
+
+y sustitúyelo por
+
+````python
+            f"el límite inferior del intervalo {limite}.")
+
+
+METODOS = (("ic95", "el método analítico"), ("ic95_bca", "el BCa"))
+
+
+def _anchura_observada(k: dict) -> str:
+    """Lo que el intervalo del kappa ponderado dio EN ESTA SESION, para
+    ponerlo al lado del texto declarado antes de ella: sus limites y su
+    anchura por los dos metodos, y si 0,4 y 0,6 quedan dentro. Todo, con
+    los limites tal como se imprimen."""
+    if k.get("frente_a_umbrales") is None:
+        return "el kappa ponderado no es calculable con estas lecturas, y su intervalo tampoco."
+    limites = {nombre: [round(x, 2) + 0.0 for x in k[clave]] for clave, nombre in METODOS}
+    va = " y ".join(f"de {_f(li)} a {_f(ls)} con {nombre} (anchura {_f(ls - li)})"
+                    for nombre, (li, ls) in limites.items())
+
+    def dentro(umbral):
+        return [nombre for nombre, (li, ls) in limites.items() if li <= umbral <= ls]
+
+    def frase(umbrales):
+        sujeto = " y ".join(f"el {_f(u, 1)}" for u in umbrales)
+        queda = "queda" if len(umbrales) == 1 else "quedan"
+        con = dentro(umbrales[0])
+        sin = [nombre for nombre in limites if nombre not in con]
+        if not sin:
+            return f"{sujeto} {queda} dentro con los dos métodos"
+        if not con:
+            return f"{sujeto} {queda} fuera con los dos métodos"
+        return f"{sujeto} {queda} dentro con {con[0]} y fuera con {sin[0]}"
+
+    bajo, alto = UMBRALES_KAPPA
+    lectura = (frase((bajo, alto)) if dentro(bajo) == dentro(alto)
+               else f"{frase((bajo,))} y {frase((alto,))}")
+    return f"el intervalo del 95 % del kappa ponderado va {va}; {lectura}."
+
+
+def _dentro_de_la_horquilla(a: dict) -> str:
+    """«7 de 24 casos (29 %)»: el recuento, y el porcentaje con la regla del
+    bot (el ,5 hacia arriba), como el resto del acta."""
+    if "dentro_de_la_horquilla" not in a or not a["n"]:
+        return "—"
+    dentro, n = a["dentro_de_la_horquilla"], a["n"]
+    return f"{dentro} de {_plural(n, 'caso', 'casos')} ({porcentaje_entero(dentro / n)} %)"
+
+````
+
+10. Busca
+
+````python
+        "dentro_horquilla": _f(a.get("fraccion_dentro_de_la_horquilla", float("nan")) * 100, 0),
+````
+
+y sustitúyelo por
+
+````python
+        "dentro_horquilla": _dentro_de_la_horquilla(a),
+````
+
+11. Busca
+
+````python
+        "horquillas_anchura_cero": str(a.get("horquillas_de_anchura_cero", "—")),
+        "acotados": str(a["acotados_0_o_100"]),
+````
+
+y sustitúyelo por
+
+````python
+        "horquillas_anchura_cero": str(a.get("horquillas_de_anchura_cero", "—")),
+        "horquillas_cota": str(a.get("horquillas_que_son_una_cota", "—")),
+        "acotados": str(a["acotados_0_o_100"]),
+````
+
+12. Busca
+
+````python
+        "acotados": str(a["acotados_0_o_100"]),
+        "influencia": influencia, "utilidad": utilidad, "tiempo": tiempo,
+````
+
+y sustitúyelo por
+
+````python
+        "acotados": str(a["acotados_0_o_100"]),
+        "sistema_fuera": str(a["sistema_fuera_de_la_cota"]),
+        "anchura_observada": _anchura_observada(k["ponderado_lineal"]),
+        "influencia": influencia, "utilidad": utilidad, "tiempo": tiempo,
+````
+
+**Sustituciones: `src/copiloto_triaje/validacion/informe.py`**
+
+41, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+PRUEBA_0A = "tests/test_validacion_0a.py"
+SIN_CIFRA = "n/d"
+````
+
+y sustitúyelo por
+
+````python
+PRUEBA_0A = "tests/test_validacion_0a.py"
+# Como se escribe cada libreria de `entorno`, en el orden en que se citan.
+LIBRERIAS = (("python", "Python"), ("numpy", "NumPy"), ("scipy", "SciPy"),
+             ("pandas", "pandas"), ("scikit-learn", "scikit-learn"))
+SIN_CIFRA = "n/d"
+````
+
+2. Busca
+
+````python
+# Los nombres de las figuras son los que les pone el script (tarea 5).
+````
+
+y sustitúyelo por
+
+````python
+# Los nombres de las figuras, de las celdas y el titulo se escriben aqui y
+# solo aqui: el guion los toma de este modulo.
+````
+
+3. Busca
+
+````python
+def _slug(celda: dict) -> str:
+    """El de `slug_de_celda` del script: `0a`, `r1-030_r0-000`."""
+````
+
+y sustitúyelo por
+
+````python
+def slug_de_celda(celda: dict) -> str:
+    """El nombre de una celda en sus ficheros: `0a` para 0A; `r1-030_r0-000`
+    para el resto (ρ × 100, tres cifras)."""
+````
+
+4. Busca
+
+````python
+def _completas(resultados: dict) -> list:
+    """0A y las destacadas, en el orden de la rejilla."""
+````
+
+y sustitúyelo por
+
+````python
+def celdas_completas(resultados: dict) -> list:
+    """0A y las destacadas, en el orden de la rejilla: las que llevan
+    intervalos y figura de fiabilidad."""
+````
+
+5. Busca
+
+````python
+        return ("**No se puede comprobar: no hay casos concordantes con horquilla, y las "
+                "tablas de la horquilla de este documento no se pueden leer.**")
+````
+
+y sustitúyelo por
+
+````python
+        return ("**No se puede comprobar: no hay casos concordantes con horquilla. Las "
+                "tablas de la horquilla de este documento quedan sin la comprobación de "
+                "0A.**")
+````
+
+6. Busca
+
+````python
+                f"réplica remuestrea las placas con reemplazo (una placa por paciente, así "
+                f"que es un bootstrap por paciente) y vuelve a sortear la clínica. El "
+                f"generador queda fijo en todas. Intervalos del 95 % por percentiles; las "
+````
+
+y sustitúyelo por
+
+````python
+                f"réplica remuestrea con reemplazo los casos de la estimación puntual, "
+                f"cada placa con la clínica que se le sorteó (una placa por paciente, así "
+                f"que es un bootstrap por paciente). La clínica no se vuelve a sortear: "
+                f"el remuestreo de los casos ya lleva el ruido del sorteo, y sortearla "
+                f"otra vez lo contaría dos veces. Intervalos del 95 % por percentiles; las "
+````
+
+7. Busca
+
+````python
+        "",
+        "Con qué se calculó:",
+````
+
+y sustitúyelo por
+
+````python
+        "",
+        "Los términos que se repiten:",
+        "",
+        "- **RV:** razón de verosimilitud. La RV de recuentos de una puntuación sale de "
+        "las frecuencias publicadas de esa puntuación en cada clase; la RV de la imagen, "
+        "de la probabilidad calibrada de la placa.",
+        "- **Oráculo:** la probabilidad posterior que da el propio generador de la "
+        "simulación con la misma información que ve el sistema: la imagen y la "
+        "puntuación (con el asma desconocida, la puntuación de los otros cuatro "
+        "hallazgos). Es la verdad de la simulación, no la de un paciente.",
+        "- **Modelos puntuales:** la imagen sola (la probabilidad calibrada de la placa); "
+        "la clínica sola (el previo con la RV de la puntuación, sin imagen); la "
+        "combinación por independencia (el previo con las dos RV); y el extremo "
+        "conservador de la combinación (dependencia total: solo cuenta la evidencia más "
+        "informativa; en los casos discordantes es el mismo número que la "
+        "independencia).",
+        "- **Clases:** «con opacidad» y «sin opacidad» son las dos clases de la etiqueta "
+        "de RSNA, que en la simulación hace de desenlace.",
+        "",
+        "Con qué se calculó:",
+````
+
+8. Busca
+
+````python
+        f"- Semillas: clínica de la estimación puntual, {_semilla(p['semilla_puntual'])}; "
+        f"clínica de la réplica b, {_semilla(p['semilla_clinica'])} + b; placas de la "
+        f"réplica b, {_semilla(p['semilla_indices'])} + b.",
+````
+
+y sustitúyelo por
+
+````python
+        f"- Semillas: clínica, {_semilla(p['semilla_puntual'])}; casos de la réplica b, "
+        f"{_semilla(p['semilla_indices'])} + b.",
+````
+
+9. Busca
+
+````python
+    cifras = [(_cifra(celda, f"modelos.{clave}.{metrica}", decimales) if con_intervalos
+               else numero(m[metrica], decimales))
+````
+
+y sustitúyelo por
+
+````python
+    # la ECE va siempre sin intervalo: se lee al lado de su suelo
+    cifras = [(_cifra(celda, f"modelos.{clave}.{metrica}", decimales)
+               if con_intervalos and metrica != "ece" else numero(m[metrica], decimales))
+````
+
+10. Busca
+
+````python
+        f"La ECE de la combinación por independencia "
+````
+
+y sustitúyelo por
+
+````python
+        f"La ECE va sin intervalo: se lee al lado de su suelo. La de la combinación por "
+        f"independencia "
+````
+
+11. Busca
+
+````python
+    p = r["parametros"]
+    celdas = _completas(r)
+    mayor = max(p["rejilla"])
+````
+
+y sustitúyelo por
+
+````python
+    p = r["parametros"]
+    celdas = celdas_completas(r)
+    mayor = max(p["rejilla"])
+````
+
+12. Busca
+
+````python
+        "casos con neumonía, entre lo que la puntuación mide y lo que la imagen mide; "
+        "**ρ0**, la misma entre los casos sin neumonía. Temperatura, pulso y asma diluyen "
+````
+
+y sustitúyelo por
+
+````python
+        "casos con opacidad, entre lo que la puntuación mide y lo que la imagen mide; "
+        "**ρ0**, la misma entre los casos sin opacidad. Temperatura, pulso y asma diluyen "
+````
+
+13. Busca
+
+````python
+        *_tabla(["celda", "ρ1", "ρ0", "correlación con neumonía", "correlación sin neumonía"],
+````
+
+y sustitúyelo por
+
+````python
+        *_tabla(["celda", "ρ1", "ρ0", "correlación con opacidad", "correlación sin opacidad"],
+````
+
+14. Busca
+
+````python
+                  numero(c["correlacion_teorica"]["con_neumonia"], 3),
+                  numero(c["correlacion_teorica"]["sin_neumonia"], 3)] for c in celdas]),
+        "Los cuatro modelos puntuales por celda (casos con el asma conocida). La pendiente "
+        "lleva su intervalo; la ECE va al lado de su suelo:",
+````
+
+y sustitúyelo por
+
+````python
+                  numero(c["correlacion_teorica"]["con_opacidad"], 3),
+                  numero(c["correlacion_teorica"]["sin_opacidad"], 3)] for c in celdas]),
+        "Los cuatro modelos puntuales por celda (casos con el asma conocida). "
+        + ("La pendiente lleva su intervalo; la ECE va al lado de su suelo:"
+           if any(_par(c, "modelos.independencia.pendiente") for c in celdas)
+           else "La ECE va al lado de su suelo:"),
+````
+
+15. Busca
+
+````python
+                      "suelo de la ECE (media)", "suelo de la ECE (p95)"], filas, izquierdas=2)
+    lineas += ["Diferencias pareadas de cada combinación frente a la imagen sola (combinación "
+````
+
+y sustitúyelo por
+
+````python
+                      "suelo de la ECE (media)", "suelo de la ECE (p95)"], filas, izquierdas=2)
+    lineas += ["La fila de la imagen sola cambia de una celda a otra aunque el modelo de "
+               "imagen es el mismo: cada celda sortea su clínica, y con ella qué casos "
+               "quedan con el asma desconocida, así que los casos con el asma conocida no "
+               "son los mismos en todas. Por eso su ECE puede superar el percentil 95 de "
+               "su suelo en una celda y no en otra sin que la imagen cambie.", ""]
+    lineas += ["Diferencias pareadas de cada combinación frente a la imagen sola (combinación "
+````
+
+16. Busca
+
+````python
+    celdas = _completas(r)
+````
+
+y sustitúyelo por
+
+````python
+    celdas = celdas_completas(r)
+````
+
+17. Busca
+
+````python
+               f"alcanza un umbral del {umbral} %); el campo `se_sostiene` del fichero de "
+               "resultados se calcula sin redondear:", ""]
+````
+
+y sustitúyelo por
+
+````python
+               f"alcanza un umbral del {umbral} %). El campo `se_sostiene` del fichero de "
+               "resultados mira solo la estimación, sin su intervalo y sin redondear, y "
+               "puede no coincidir con esta columna:", ""]
+````
+
+18. Busca
+
+````python
+               "misma ε, y el error del punto medio del rango en log-odds:", ""]
+````
+
+y sustitúyelo por
+
+````python
+               "misma ε, y el error, en log-odds, de la media de las dos posteriores de "
+               "independencia (una por puntuación posible). Esa media no es el centro del "
+               "rango cuando clínica e imagen son concordantes, porque entonces el rango "
+               "incluye además los extremos conservadores; tampoco es el punto medio con "
+               "que se decide la categoría del sistema, que sí es el del rango:", ""]
+````
+
+19. Busca
+
+````python
+         "punto medio: error absoluto mediano", "punto medio: sesgo mediano"],
+````
+
+y sustitúyelo por
+
+````python
+         "media de las independencias: error absoluto mediano",
+         "media de las independencias: sesgo mediano"],
+````
+
+20. Busca
+
+````python
+                [[str(f["k"]), numero(f["ln_rv_recuentos"], 2, signo=True),
+````
+
+y sustitúyelo por
+
+````python
+                [[str(f["k"]), numero(f["ln_rv_recuentos"], 3, signo=True),
+````
+
+21. Busca
+
+````python
+        f"con {principal}. Las bandas son < 20 %, 20-70 % y > 70 %:",
+````
+
+y sustitúyelo por
+
+````python
+        f"con {principal}. Las bandas son baja (< 20 %), intermedia (20-70 %) y alta "
+        f"(> 70 %): una convención del equipo, no un estándar publicado:",
+````
+
+22. Busca
+
+````python
+    lineas += ["La categoría que el sistema imprime (todos los casos, también los del asma "
+               "desconocida):", ""]
+````
+
+y sustitúyelo por
+
+````python
+    lineas += ["La categoría del sistema (todos los casos, también los del asma "
+               "desconocida). El sistema no imprime ninguna categoría: entrega un rango, "
+               "[mínima, máxima]. La categoría es una regla de este análisis: la banda "
+               "del punto medio, en log-odds, de ese rango:", ""]
+````
+
+23. Busca
+
+````python
+        return "no hay casos con horquilla"
+````
+
+y sustitúyelo por
+
+````python
+        return "no hay casos que medir"
+````
+
+24. Busca
+
+````python
+    if _a_la_vista(100.0 * bajo, 1) == _a_la_vista(100.0 * sobre, 1):
+        return f"{dentro}; las dos colas pesan lo mismo ({porcentaje(bajo)} cada una)"
+````
+
+y sustitúyelo por
+
+````python
+    if _a_la_vista(100.0 * bajo, 1) == _a_la_vista(100.0 * sobre, 1):
+        if _a_la_vista(100.0 * bajo, 1) == 0:
+            # se imprimen «0,0 %» y alguna tiene casos: se dice cual
+            con_casos = ("las dos tienen casos" if bajo > 0 and sobre > 0 else
+                         "la del lado conservador tiene casos" if bajo > 0 else
+                         "la de más allá de la independencia tiene casos")
+            return (f"{dentro}; las dos colas se imprimen «{porcentaje(0.0)}», pero "
+                    f"{con_casos}")
+        return f"{dentro}; las dos colas pesan lo mismo ({porcentaje(bajo)} cada una)"
+````
+
+25. Busca
+
+````python
+        "Dependencia solo entre los casos con neumonía (ρ0 = 0)",
+        "Dependencia solo entre los casos sin neumonía (ρ1 = 0)",
+````
+
+y sustitúyelo por
+
+````python
+        "Dependencia solo entre los casos con opacidad (ρ0 = 0)",
+        "Dependencia solo entre los casos sin opacidad (ρ1 = 0)",
+````
+
+26. Busca
+
+````python
+    compara SIN redondear: casi ninguno de esos intervalos se imprime, y la
+    frase lo dice."""
+````
+
+y sustitúyelo por
+
+````python
+    compara el valor crudo con los extremos crudos, SIN redondear (con una
+    holgura de 1e-9 para el ruido de coma flotante), y la frase lo dice: es
+    una cuenta sobre el fichero de resultados, no sobre lo impreso."""
+````
+
+27. Busca
+
+````python
+            f"Con intervalo, celdas en las que se sostiene: "
+````
+
+y sustitúyelo por
+
+````python
+            f"Con dependencia y con intervalo, celdas en las que se sostiene: "
+````
+
+28. Busca
+
+````python
+            f"Con intervalo, celdas en las que no se sostiene: "
+````
+
+y sustitúyelo por
+
+````python
+            f"Con dependencia y con intervalo, celdas en las que no se sostiene: "
+````
+
+29. Busca
+
+````python
+            f"Con intervalo, celdas en las que no se puede decir, porque la estimación y su "
+            f"intervalo no quedan enteros a un lado del umbral: "
+````
+
+y sustitúyelo por
+
+````python
+            f"Con dependencia y con intervalo, celdas en las que no se puede decir, porque "
+            f"la estimación y su intervalo no quedan enteros a un lado del umbral: "
+````
+
+30. Busca
+
+````python
+    if cifras:
+        lineas.append(
+````
+
+y sustitúyelo por
+
+````python
+    if cifras:
+        if fuera == 0:
+            cuenta = (f"no queda fuera de su intervalo ninguna de las {entero(cifras)} "
+                      f"cifras que lo llevan")
+        else:
+            cuenta = (f"{'queda' if fuera == 1 else 'quedan'} fuera de su intervalo "
+                      f"{entero(fuera)} de las {entero(cifras)} cifras que lo llevan")
+        lineas.append(
+````
+
+31. Busca
+
+````python
+            f"cada réplica remuestrea las placas y sortea otra clínica. El intervalo son los "
+            f"percentiles de las réplicas y no está centrado en la estimación puntual: en "
+            f"esta corrida, de {entero(r['parametros']['replicas'])} réplicas, quedan fuera "
+            f"de su intervalo {entero(fuera)} de las {entero(cifras)} cifras que lo "
+            f"llevan (comparadas sin redondear).")
+````
+
+y sustitúyelo por
+
+````python
+            f"cada réplica remuestrea esos mismos casos, cada placa con su clínica. El "
+            f"intervalo son los percentiles de las réplicas: en "
+            f"esta corrida, de {entero(r['parametros']['replicas'])} réplicas, {cuenta} "
+            f"(comparadas sin redondear). El intervalo de la ECE está desplazado hacia "
+            f"arriba por construcción: la ECE de un remuestreo suma el ruido del "
+            f"remuestreo al de la muestra. Por eso la ECE se lee al lado de su suelo y "
+            f"no contra su intervalo, que no se imprime.")
+````
+
+32. Busca
+
+````python
+            if nombre == PREFIJO_FIABILIDAD + _slug(c):
+````
+
+y sustitúyelo por
+
+````python
+            if nombre == PREFIJO_FIABILIDAD + slug_de_celda(c):
+````
+
+33. Busca
+
+````python
+def _figuras(r: dict, figuras: dict) -> list:
+````
+
+y sustitúyelo por
+
+````python
+def _figuras(r: dict, figuras: dict, ajenas=()) -> list:
+    """`ajenas`: los nombres de las figuras enlazadas que NO llevan la huella
+    de estos resultados. El documento lo dice de esas, y solo de esas."""
+````
+
+34. Busca
+
+````python
+    orden = [PREFIJO_FIABILIDAD + _slug(c) for c in r["celdas"]]
+````
+
+y sustitúyelo por
+
+````python
+    orden = [PREFIJO_FIABILIDAD + slug_de_celda(c) for c in r["celdas"]]
+````
+
+35. Busca
+
+````python
+    orden = [n for n in orden if n in figuras] + sorted(n for n in figuras if n not in orden)
+    lineas += ["El guion las dibuja leyendo el mismo fichero de resultados que este "
+````
+
+y sustitúyelo por
+
+````python
+    orden = [n for n in orden if n in figuras] + sorted(n for n in figuras if n not in orden)
+    ajenas = [n for n in orden if n in set(ajenas)]
+    lineas += ["El guion las dibuja leyendo el mismo fichero de resultados que este "
+````
+
+36. Busca
+
+````python
+               "documento. Con `--sin-figuras` no se redibujan: se enlazan las que ya "
+               "hubiera en la carpeta, que pueden ser de una corrida anterior.", ""]
+````
+
+y sustitúyelo por
+
+````python
+               "documento, y escribe en los metadatos de cada una la huella de los "
+               "resultados de los que sale."]
+    enlazadas, sin_huella = len(orden), len(ajenas)
+    if not ajenas:
+        lineas[-1] += (" La única figura enlazada lleva" if enlazadas == 1 else
+                       f" Las {entero(enlazadas)} figuras enlazadas llevan")
+        lineas[-1] += " la huella de los resultados de este documento."
+    else:
+        una = sin_huella == 1
+        if enlazadas == 1:
+            cuantas = "la única figura enlazada no lleva"
+        elif sin_huella == enlazadas:
+            cuantas = f"ninguna de las {entero(enlazadas)} figuras enlazadas lleva"
+        else:
+            cuantas = (f"{entero(sin_huella)} de las {entero(enlazadas)} figuras enlazadas "
+                       f"no {'lleva' if una else 'llevan'}")
+        lineas += ["", f"**Aviso: {cuantas} la huella de los resultados de este "
+                       f"documento** ({_lista(f'`{n}`' for n in ajenas)}): "
+                       f"{'es' if una else 'son'} de otra corrida, o no "
+                       f"{'la' if una else 'las'} dibujó este guion. "
+                       f"{'Se redibuja' if una else 'Se redibujan'} con "
+                       f"`python {GUION} --solo-documento`."]
+    lineas += [""]
+````
+
+37. Busca
+
+````python
+        lineas += [f"![{_titulo_de_figura(nombre, r)}]({figuras[nombre]})", ""]
+    return lineas
+
+
+````
+
+y sustitúyelo por
+
+````python
+        lineas += [f"![{_titulo_de_figura(nombre, r)}]({figuras[nombre]})", ""]
+    return lineas
+
+
+def _entorno(entorno: dict) -> str:
+    """«`Python 3.13.1`, `NumPy 2.3.0` y …»: las versiones van entre acentos
+    graves porque se copian tal cual (y llevan punto, no coma decimal)."""
+    citadas = [f"`{nombre} {entorno[clave]}`" for clave, nombre in LIBRERIAS
+               if clave in entorno]
+    citadas += [f"`{clave} {entorno[clave]}`" for clave in sorted(entorno)
+                if clave not in dict(LIBRERIAS)]
+    return _lista(citadas)
+
+
+````
+
+38. Busca
+
+````python
+        f"`figuras` del paquete; con `--sin-figuras` no se dibujan.",
+````
+
+y sustitúyelo por
+
+````python
+        f"`figuras` del paquete; con `--sin-figuras` no se dibujan, y el documento "
+        f"enlaza las que hubiera en la carpeta.",
+        "",
+        f"Estos resultados se calcularon con {_entorno(r['entorno'])}. Con otras "
+        f"versiones las cifras pueden no ser las mismas: NumPy no garantiza el mismo "
+        f"flujo de números aleatorios de una versión a otra.",
+````
+
+39. Busca
+
+````python
+def redactar(resultados: dict, figuras: dict | None = None) -> str:
+````
+
+y sustitúyelo por
+
+````python
+def redactar(resultados: dict, figuras: dict | None = None, ajenas=()) -> str:
+````
+
+40. Busca
+
+````python
+    las figuras que no esten en el diccionario no se enlazan."""
+````
+
+y sustitúyelo por
+
+````python
+    las figuras que no esten en el diccionario no se enlazan. `ajenas` son
+    los nombres de las enlazadas que no llevan la huella de `resultados`:
+    lo sabe quien llama, que es quien puede abrir los PNG."""
+````
+
+41. Busca
+
+````python
+              + _figuras(r, dict(figuras or {})) + _reproducir(r))
+````
+
+y sustitúyelo por
+
+````python
+              + _figuras(r, dict(figuras or {}), ajenas) + _reproducir(r))
+````
+
+**Sustituciones: `src/copiloto_triaje/validacion/metricas.py`**
+
+3, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+    """El intervalo por percentiles de las replicas, ignorando las que no
+    se pudieron calcular (nan)."""
+````
+
+y sustitúyelo por
+
+````python
+    """El intervalo por percentiles de las replicas. Cuentan TODAS: si
+    alguna no es un numero se detiene, porque un intervalo no se calcula
+    sobre menos replicas de las que el resultado dice que hubo."""
+````
+
+2. Busca
+
+````python
+    v = v[np.isfinite(v)]
+````
+
+y sustitúyelo por
+
+````python
+````
+
+3. Busca
+
+````python
+        return [None, None]
+    lo, hi = np.percentile(v, [100 * alfa / 2, 100 * (1 - alfa / 2)])
+````
+
+y sustitúyelo por
+
+````python
+        return [None, None]
+    if not np.all(np.isfinite(v)):
+        raise ArithmeticError(f"{int((~np.isfinite(v)).sum())} de las {v.size} réplicas "
+                              "no dan un número")
+    lo, hi = np.percentile(v, [100 * alfa / 2, 100 * (1 - alfa / 2)])
+````
+
+**Sustituciones: `src/copiloto_triaje/validacion/simulacion.py`**
+
+9, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+con `SEMILLA_PUNTUAL` sobre las 3 811 placas. Su bootstrap remuestrea placas
+con reemplazo y vuelve a sortear la clínica en cada réplica, con `z_y`, los
+umbrales y el calibrador FIJOS: el generador es el mismo en todas.
+````
+
+y sustitúyelo por
+
+````python
+con `SEMILLA_PUNTUAL` sobre las 3 811 placas. Su bootstrap remuestrea con
+reemplazo esos mismos casos, cada placa con la clínica que se le sorteó: la
+clínica NO se vuelve a sortear (ver `replica`).
+````
+
+2. Busca
+
+````python
+SEMILLA_CLINICA = 10_000     # replica b: generar(modelo, SEMILLA_CLINICA + b)
+````
+
+y sustitúyelo por
+
+````python
+````
+
+3. Busca
+
+````python
+def replica(conjunto: Conjunto, modelo: oraculo.Modelo, b: int) -> dict:
+    clinica = generador.generar(modelo, SEMILLA_CLINICA + b)
+    salidas = salidas_del_sistema(conjunto.prevalencia, clinica, conjunto.rv)
+    l_or = oraculo_de_los_casos(modelo, conjunto.q, clinica)
+````
+
+y sustitúyelo por
+
+````python
+def replica(conjunto: Conjunto, salidas: dict, l_oraculo, b: int) -> dict:
+    """Una replica del bootstrap: los casos de la estimacion puntual -cada
+    placa CON la clinica que se le sorteo, lo que el sistema dio y su
+    oraculo-, remuestreados con reemplazo.
+
+    La clinica NO se vuelve a sortear. El remuestreo de las parejas ya
+    lleva el ruido del sorteo: sorteando otra vez en cada replica ese ruido
+    se cuenta dos veces (medido en esta simulacion: la varianza sale × 1,57
+    en mediana, y un «IC 95 %» cubre mas del 99 %). Remuestrear primero y
+    sortear despues quita la doble cuenta, pero centra las replicas en la
+    media sobre la clinica y no en la estimacion que se publica, y el
+    intervalo por percentiles sigue cubriendo mas del 99 %."""
+````
+
+4. Busca
+
+````python
+    return aplanar(medir(conjunto, salidas, l_or, filas))
+````
+
+y sustitúyelo por
+
+````python
+    return aplanar(medir(conjunto, salidas, l_oraculo, filas))
+````
+
+5. Busca
+
+````python
+def bootstrap(conjunto: Conjunto, modelo: oraculo.Modelo, replicas: int = B_REPLICAS) -> dict:
+````
+
+y sustitúyelo por
+
+````python
+def bootstrap(conjunto: Conjunto, salidas: dict, l_oraculo,
+              replicas: int = B_REPLICAS) -> dict:
+````
+
+6. Busca
+
+````python
+    todos los modelos sobre las mismas placas y la misma clinica."""
+    corridas = [replica(conjunto, modelo, b) for b in range(replicas)]
+````
+
+y sustitúyelo por
+
+````python
+    todos los modelos sobre los mismos casos. `salidas` y `l_oraculo` son
+    los de la estimacion puntual."""
+    corridas = [replica(conjunto, salidas, l_oraculo, b) for b in range(replicas)]
+````
+
+7. Busca
+
+````python
+    return {r: metricas.percentiles([c[r] for c in corridas]) for r in rutas}
+````
+
+y sustitúyelo por
+
+````python
+    intervalos = {}
+    for r in rutas:
+        try:
+            intervalos[r] = metricas.percentiles([c[r] for c in corridas])
+        except ArithmeticError as error:
+            # tampoco sobre las que dieron algo que no es un numero
+            raise ArithmeticError(f"{r}: {error}") from None
+    return intervalos
+````
+
+8. Busca
+
+````python
+             "correlacion_teorica": {"con_neumonia": oraculo.correlacion_teorica(modelo, 1),
+                                     "sin_neumonia": oraculo.correlacion_teorica(modelo, 0)}}
+````
+
+y sustitúyelo por
+
+````python
+             "correlacion_teorica": {"con_opacidad": oraculo.correlacion_teorica(modelo, 1),
+                                     "sin_opacidad": oraculo.correlacion_teorica(modelo, 0)}}
+````
+
+9. Busca
+
+````python
+        celda["intervalos"] = bootstrap(conjunto, modelo, replicas)
+````
+
+y sustitúyelo por
+
+````python
+        celda["intervalos"] = bootstrap(conjunto, salidas, l_or, replicas)
+````
+
+---
+
+### Tarea 12: El cierre de la revisión final
+
+La tarea 11 pasó su re-revisión, en dos partes: todo lo que pedía la revisión
+final quedó atendido, sin nada crítico ni importante. Esta tarea recoge lo que
+esa re-revisión dejó: **menores, todos de texto y de pruebas. No cambia
+ninguna cifra, y el JSON de resultados no se toca.**
+
+1. **El acta no puede contradecirse sobre el 0,4.** La frase «Observado en
+   esta sesión», que añadió la tarea 11, decidía si 0,4 y 0,6 quedan dentro
+   del intervalo con los límites redondeados a dos decimales; la frase del
+   criterio, dos líneas más arriba, imprime el mismo límite con los decimales
+   que hagan falta. Con un límite de 0,4027 una decía «no queda por debajo de
+   0,4 (0,403)» y la otra «el 0,4 queda dentro». Pasaba en torno al 1 % de las
+   sesiones. Ahora las dos usan los mismos límites.
+2. **El documento dice lo que un intervalo no recoge** (el generador queda
+   fijo: ni el calibrador, ni los umbrales, ni las RV publicadas, ni ρ) y
+   cuenta los intervalos de anchura cero y los que tienen la estimación en un
+   extremo, con su porqué.
+3. **La prueba de lo publicado vuelve a calcular el bootstrap de una celda**,
+   (0,6; 0), con sus 1 000 réplicas —ahora cuesta unos 18 segundos—, y
+   comprueba que cada cifra medida lleva su intervalo. Antes decía «están
+   todos» sin comprobarlo.
+4. **Lo que el guion tecleaba de las figuras** (tres títulos) sale de
+   `informe`.
+5. **La latencia y su runbook:** la regla escrita dice que se compara sin
+   redondear; `corrida_del` dice de dónde sale; cada consulta a mano empieza
+   con `/reiniciar`; las cinco placas son de consultas que dan pre-informe.
+6. **La nota del spec §4.6** sobre el bootstrap da las coberturas medidas en
+   vez de generalizar.
+
+**Ficheros:**
+
+- Modificar: `docs/sp5-sesion.md`
+- Modificar: `docs/superpowers/specs/2026-09-27-sp5-validacion-y-cierre-design.md`
+- Modificar: `docs/validacion-semisintetica/README.md`
+- Modificar: `scripts/medir_latencia.py`
+- Modificar: `scripts/validar_combinacion.py`
+- Modificar: `src/copiloto_triaje/validacion/concordancia.py`
+- Modificar: `src/copiloto_triaje/validacion/informe.py`
+- Modificar: `src/copiloto_triaje/validacion/simulacion.py`
+- Modificar: `tests/test_concordancia.py`
+- Modificar: `tests/test_informe.py`
+- Modificar: `tests/test_medir_latencia.py`
+- Modificar: `tests/test_resultados_publicados.py`
+- Modificar: `tests/test_simulacion.py`
+- Modificar: `tests/test_validar_combinacion.py`
+
+Y, **regenerado** por el guion (no se edita): `docs/validacion-semisintetica-sp5.md`.
+El JSON y los diez PNG no cambian.
+
+**Interfaces:**
+
+- Nuevo en `informe`: `TITULO_FIABILIDAD`, `_en_el_borde(celdas)` y
+  `_lo_del_borde(celdas)`.
+- Nuevo en el guion: `TITULO_DE_FIGURA` y `HORQUILLA`.
+- Cambia `concordancia._anchura_observada`: imprime los límites con
+  `_f_frente_a_umbral` y los compara a seis decimales.
+- Nada más cambia de nombre ni de firma.
+
+- [ ] **Paso 1: las pruebas, y verlas fallar**
+
+Aplica las sustituciones del **grupo 1** (solo ficheros de `tests/`).
+
+```bash
+C:/venv-copiloto/Scripts/python.exe -m pytest -q tests/test_concordancia.py tests/test_simulacion.py tests/test_informe.py tests/test_validar_combinacion.py tests/test_reproducir_casos.py tests/test_medir_latencia.py tests/test_sesion.py tests/test_metricas.py tests/test_validacion_0a.py tests/test_resultados_publicados.py tests/test_categoria.py tests/test_generador.py tests/test_validacion_datos.py
+```
+
+Esperado: `6 failed, 325 passed`.
+
+- [ ] **Paso 2: el código y los documentos**
+
+Aplica las sustituciones del **grupo 2**.
+
+- [ ] **Paso 3: regenerar el documento**
+
+```bash
+C:/venv-copiloto/Scripts/python.exe scripts/validar_combinacion.py --solo-documento
+git status --short docs/validacion-semisintetica docs/validacion-semisintetica-sp5.md
+```
+
+Unos segundos. Esperado en el `git status`: **solo** `docs/validacion-semisintetica-sp5.md`
+y `docs/validacion-semisintetica/README.md` (que cambió en el paso 2). Ni el
+JSON ni ningún PNG: las figuras se redibujan, pero salen idénticas byte a
+byte. Si aparece alguno, para y dilo.
+
+- [ ] **Paso 4: el verde**
+
+```bash
+C:/venv-copiloto/Scripts/python.exe -m pytest -q tests/test_concordancia.py tests/test_simulacion.py tests/test_informe.py tests/test_validar_combinacion.py tests/test_reproducir_casos.py tests/test_medir_latencia.py tests/test_sesion.py tests/test_metricas.py tests/test_validacion_0a.py tests/test_resultados_publicados.py tests/test_categoria.py tests/test_generador.py tests/test_validacion_datos.py
+```
+
+Esperado: `331 passed`. Y la suite entera y el formulario:
+
+```bash
+C:/venv-copiloto/Scripts/python.exe -m pytest -q
+node tests/formulario.mjs
+```
+
+Esperado: ningún fallo y `16 OK`.
+
+- [ ] **Paso 5: commit**
+
+```bash
+git add docs/sp5-sesion.md docs/superpowers/specs/2026-09-27-sp5-validacion-y-cierre-design.md docs/validacion-semisintetica/README.md scripts/medir_latencia.py scripts/validar_combinacion.py src/copiloto_triaje/validacion/concordancia.py src/copiloto_triaje/validacion/informe.py src/copiloto_triaje/validacion/simulacion.py tests/test_concordancia.py tests/test_informe.py tests/test_medir_latencia.py tests/test_resultados_publicados.py tests/test_simulacion.py tests/test_validar_combinacion.py docs/validacion-semisintetica-sp5.md
+git commit -m "fix(validacion): el acta no se contradice sobre el 0,4, y el documento dice lo que un intervalo no recoge" -m "Cierre de la revisión final. «Observado en esta sesión» decide con los mismos límites que imprime el criterio. El documento dice qué incertidumbre no recoge un intervalo y cuenta los de anchura cero. La prueba de lo publicado vuelve a calcular el bootstrap de una celda. Los títulos de las figuras salen de informe. La regla de la latencia dice que se compara sin redondear. No cambia ninguna cifra." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+#### Grupo 1 — Las pruebas
+
+**Sustituciones: `tests/test_concordancia.py`**
+
+4, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+    # los límites, tal como se imprimen: 0,3996 se imprime «0,40» y contiene el 0,4
+````
+
+y sustitúyelo por
+
+````python
+    # pegado a un umbral, el límite se imprime con los decimales que lo
+    # distinguen, como en la frase del criterio, y con esos se decide
+````
+
+2. Busca
+
+````python
+        "el intervalo del 95 % del kappa ponderado va de 0,40 a 0,95 con el método "
+````
+
+y sustitúyelo por
+
+````python
+        "el intervalo del 95 % del kappa ponderado va de 0,3996 a 0,95 con el método "
+````
+
+3. Busca
+
+````python
+        "dos métodos.")
+    assert "de 0,00 a 0,00 con el método analítico (anchura 0,00)" in cc._anchura_observada(
+````
+
+y sustitúyelo por
+
+````python
+        "dos métodos.")
+    # el caso que se contradecía: a dos decimales 0,4027 es «0,40» y contendría
+    # el 0,4, mientras el criterio dice que el límite (0,403) no queda por debajo
+    sesion = k(0.674, (0.4027, 0.9457), (0.36, 0.93))
+    observado = cc._anchura_observada(sesion)
+    assert observado == (
+        "el intervalo del 95 % del kappa ponderado va de 0,403 a 0,95 con el método "
+        "analítico (anchura 0,55) y de 0,36 a 0,93 con el BCa (anchura 0,57); el 0,4 queda "
+        "dentro con el BCa y fuera con el método analítico y el 0,6 queda dentro con los "
+        "dos métodos.")
+    criterio = cc._criterio("El kappa ponderado", sesion)
+    assert "con el BCa (0,36) y no con el método analítico (0,403)" in criterio
+    # lo que a seis decimales ES el umbral queda dentro, y se imprime como el umbral
+    assert "va de 0,40 a 0,95 con el método analítico" in cc._anchura_observada(
+        k(0.7, (0.3999999999999999, 0.95), (0.4000004, 0.95)))
+    assert "el 0,4 y el 0,6 quedan dentro con los dos métodos" in cc._anchura_observada(
+        k(0.7, (0.3999999999999999, 0.95), (0.4000004, 0.95)))
+    assert "de 0,00 a 0,00 con el método analítico (anchura 0,00)" in cc._anchura_observada(
+````
+
+4. Busca
+
+````python
+            "el kappa ponderado no es calculable con estas lecturas, y su intervalo tampoco.")
+
+````
+
+y sustitúyelo por
+
+````python
+            "el kappa ponderado no es calculable con estas lecturas, y su intervalo tampoco.")
+
+
+def test_lo_observado_y_el_criterio_no_se_contradicen_sobre_el_0_4():
+    """Un barrido de límites inferiores alrededor de 0,4: si el criterio dice
+    que el límite queda por debajo de 0,4 con un método, «Observado» tiene
+    el 0,4 dentro con ese método; si dice que no, lo tiene fuera o el límite
+    es el propio umbral. Y cada frase cuadra con los límites que imprime."""
+    import re
+    candidatos = [0.4 + d for d in (-0.3, -0.05, -0.0051, -0.005, -0.0049, -0.0004,
+                                    -4e-7, -1e-16, 0.0, 1e-16, 4e-7, 0.0004, 0.0027,
+                                    0.0049, 0.005, 0.0051, 0.05)]
+    for li_a in candidatos:
+        for li_b in candidatos:
+            r = {"kappa": 0.7, "ic95": [li_a, 0.95], "ic95_bca": [li_b, 0.93], "n": 24}
+            r["frente_a_umbrales"] = cc.frente_a_umbrales(r)
+            observado = cc._anchura_observada(r)
+            # lo que dice del 0,4 (los límites superiores dejan el 0,6 dentro)
+            del_0_4 = re.search(
+                r"; el 0,4(?: y el 0,6)? quedan? (dentro con los dos métodos|fuera con "
+                r"los dos métodos|dentro con (el método analítico|el BCa) y fuera con)",
+                observado)
+            assert del_0_4, observado
+            for li, metodo, clave in ((li_a, "el método analítico", "li_analitico_lt_0_4"),
+                                      (li_b, "el BCa", "li_bca_lt_0_4")):
+                debajo = r["frente_a_umbrales"][clave]
+                impreso = re.search(rf"de (-?[\d,]+) a [\d,]+ con {metodo}", observado)
+                inferior = float(impreso.group(1).replace(",", "."))
+                dentro = (del_0_4.group(1) == "dentro con los dos métodos"
+                          or del_0_4.group(2) == metodo)
+                # lo que dice del 0,4 cuadra con el límite que imprime...
+                assert dentro == (inferior <= 0.4), (li, observado)
+                # ...y con lo que dice el criterio de ese mismo límite
+                if debajo:
+                    assert dentro, (li, observado)
+                else:
+                    assert not dentro or inferior == 0.4, (li, observado)
+
+````
+
+**Sustituciones: `tests/test_informe.py`**
+
+3, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+    assert validar._rho(0.15) == informe.rho(0.15) == "0,15"
+
+````
+
+y sustitúyelo por
+
+````python
+    assert validar._rho(0.15) == informe.rho(0.15) == "0,15"
+    # ni los títulos de las figuras; y los nombres que el guion dice son los de aquí
+    assert validar.TITULO_DE_FIGURA == dict(informe.FIGURAS_GLOBALES)
+    assert [validar.HORQUILLA] + [f"{que}_rejilla" for que in validar.REJILLAS] == list(
+        validar.FIGURAS_GLOBALES)
+    guion = pathlib.Path(validar.__file__).read_text(encoding="utf-8")
+    for tecleado in ([titulo for _, titulo in informe.FIGURAS_GLOBALES]
+                     + [informe.TITULO_FIABILIDAD, informe.TITULO, "contencion_rejilla",
+                        "pendiente_rejilla"]):
+        assert tecleado not in guion, tecleado
+
+````
+
+2. Busca
+
+````python
+    `import matplotlib` en `src/` pasaría aquí y rompería el contenedor."""
+````
+
+y sustitúyelo por
+
+````python
+    `import matplotlib` en `src/` pasaría aquí, que lo tiene instalado, e
+    incumpliría la restricción; en un módulo de los que el servidor importa,
+    además, rompería el contenedor."""
+````
+
+3. Busca
+
+````python
+
+def test_el_documento_dice_que_bootstrap_es(texto):
+````
+
+y sustitúyelo por
+
+````python
+
+def test_el_documento_dice_lo_que_un_intervalo_no_recoge(texto, resultados_minimos):
+    lectura = _seccion(texto, "Lectura de los resultados")
+    assert ("**Un intervalo recoge solo el muestreo de los casos —la placa y su clínica— "
+            "bajo este generador.** No recoge la incertidumbre del calibrador ni la de "
+            "los umbrales del generador, que se ajustan una vez sobre estas mismas "
+            "placas, ni la de las RV publicadas, que se toman como exactas, ni la de ρ, "
+            "que es el supuesto de cada celda.") in lectura
+    # sin bootstrap no hay intervalos de los que hablar
+    otro = copy.deepcopy(resultados_minimos)
+    for celda in otro["celdas"]:
+        celda.pop("intervalos", None)
+    assert "Un intervalo recoge" not in informe.redactar(otro)
+
+
+def test_los_intervalos_sin_anchura_o_con_la_estimacion_en_un_extremo_se_cuentan(
+        resultados_minimos):
+    def celda(valor, intervalo):
+        return {"modelos": {"imagen": {"auc": valor}},
+                "intervalos": {"modelos.imagen.auc": list(intervalo)}}
+    assert informe._en_el_borde([celda(0.5, (0.4, 0.6))]) == (0, 0)
+    assert informe._en_el_borde([celda(1.0, (1.0, 1.0))]) == (1, 0)
+    assert informe._en_el_borde([celda(0.4, (0.4, 0.6)), celda(0.6, (0.4, 0.6))]) == (0, 2)
+    # sin redondear: 0,4001 no es el extremo 0,4, aunque se impriman igual
+    assert informe._en_el_borde([celda(0.4001, (0.4, 0.6))]) == (0, 0)
+    assert informe._en_el_borde([celda(None, (0.4, 0.6)), {"modelos": {}}]) == (0, 0)
+    assert informe._lo_del_borde([celda(0.5, (0.4, 0.6))]) == ""
+    assert informe._lo_del_borde([celda(1.0, (1.0, 1.0))]).startswith(
+        " De esos intervalos, 1 tiene anchura cero: pasa con las fracciones")
+    assert informe._lo_del_borde([celda(0.4, (0.4, 0.6))] * 2).startswith(
+        " De esos intervalos, en 2 la estimación coincide con un extremo: pasa")
+    tres = [celda(1.0, (1.0, 1.0)), celda(0.0, (0.0, 0.0)), celda(0.4, (0.4, 0.6))]
+    assert informe._lo_del_borde(tres) == (
+        " De esos intervalos, 2 tienen anchura cero y en 1 más la estimación coincide "
+        "con un extremo: pasa con las fracciones que valen exactamente 0 o 1 y con las "
+        "medianas y los cuartiles de cifras que se repiten, donde muchas réplicas dan el "
+        "mismo valor.")
+    # en el documento va detrás de la cuenta de las que quedan fuera
+    lectura = _seccion(informe.redactar(resultados_minimos), "Lectura de los resultados")
+    sin_anchura, en_un_extremo = informe._en_el_borde(resultados_minimos["celdas"])
+    assert sin_anchura > 0
+    assert f"(comparadas sin redondear). De esos intervalos, {sin_anchura} tienen " in lectura
+
+
+def test_el_documento_dice_que_bootstrap_es(texto):
+````
+
+**Sustituciones: `tests/test_medir_latencia.py`**
+
+2, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+                  "spec de SP5 §6.2"):
+````
+
+y sustitúyelo por
+
+````python
+                  "spec de SP5 §6.2", "El p95 y la mediana se comparan sin redondear"):
+````
+
+2. Busca
+
+````python
+    assert medir.resumir(_validas(30))["corrida_del"] is None
+
+````
+
+y sustitúyelo por
+
+````python
+    assert medir.resumir(_validas(30))["corrida_del"] is None
+    # el JSON dice de dónde sale la fecha, y cuándo deja de valer
+    glosa = medir.GLOSARIO["corrida_del"]
+    assert "la fecha de modificación del fichero de la corrida" in glosa
+    assert "si el fichero no se ha copiado ni editado después" in glosa
+
+
+def test_los_mensajes_con_tilde_salen_bien_por_los_dos_canales(tmp_path):
+    """El de «no medida» sale por stderr: en una consola que no es UTF-8
+    saldría roto si el guion no reconfigurara también ese canal."""
+    import os
+    import subprocess
+    import sys
+    corrida = tmp_path / "latencias.json"
+    entorno = {k: v for k, v in os.environ.items()
+               if k not in ("PYTHONIOENCODING", "PYTHONUTF8")}
+    entorno["PYTHONUTF8"] = "0"
+    guion = str(REPO / "scripts" / "medir_latencia.py")
+    corrida.write_text(json.dumps(_validas(2)), encoding="utf-8")
+    corta = subprocess.run([sys.executable, guion, "--corrida", str(corrida),
+                            "--salida", str(tmp_path / "no.json")],
+                           capture_output=True, env=entorno)
+    assert corta.returncode == 1 and not (tmp_path / "no.json").exists()
+    dicho = corta.stderr.decode("utf-8")               # si no es UTF-8, aquí falla
+    assert "el arnés" in dicho and "«no medida»" in dicho
+    corrida.write_text(json.dumps(_validas(30)), encoding="utf-8")
+    buena = subprocess.run([sys.executable, guion, "--corrida", str(corrida),
+                            "--salida", str(tmp_path / "si.json")],
+                           capture_output=True, env=entorno)
+    assert buena.returncode == 0, buena.stderr
+    assert "etiqueta del KPI: «cumplido con cambio»" in buena.stdout.decode("utf-8")
+
+````
+
+**Sustituciones: `tests/test_resultados_publicados.py`**
+
+5, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+QUÉ NO VIGILA. Los intervalos del bootstrap no se vuelven a calcular (son
+minutos): se comprueba que están todos, donde tienen que estar y bien
+````
+
+y sustitúyelo por
+
+````python
+Del bootstrap se vuelven a calcular, con sus 1 000 réplicas, los intervalos
+de UNA celda, (0,6; 0), que es asimétrica: si cambia el método del bootstrap,
+una semilla o una métrica, esto falla.
+
+QUÉ NO VIGILA. Los intervalos de las otras seis celdas no se vuelven a
+calcular: se comprueba que cada cifra medida lleva el suyo y que están bien
+````
+
+2. Busca
+
+````python
+DEL_BOOTSTRAP = ("intervalos", "replicas")     # lo unico de una celda que no se recalcula
+# Las claves de primer nivel que NO se comparan con `_comparar`, y por que:
+````
+
+y sustitúyelo por
+
+````python
+DEL_BOOTSTRAP = ("intervalos", "replicas")     # lo unico de una celda que no se recalcula
+RECALCULADA = (0.6, 0.0)                       # la celda cuyo bootstrap si se repite
+# Lo que mide `simulacion.medir`, que es lo que lleva intervalo.
+MEDIDO = ("modelos", "pareadas", "horquilla", "discordantes", "no_se")
+SIN_INTERVALO = ("suelo", "fiabilidad")        # de cada modelo: solo en la estimacion
+# Las claves de primer nivel que NO se comparan con `_comparar`, y por que:
+````
+
+3. Busca
+
+````python
+
+def test_cada_intervalo_publicado_esta_bien_formado(publicados):
+````
+
+y sustitúyelo por
+
+````python
+
+def _rutas_medidas(celda) -> list:
+    """Las rutas de las cifras `float` que mide `medir` en una celda: las que
+    tienen que llevar intervalo."""
+    medido = {clave: celda[clave] for clave in MEDIDO}
+    medido["modelos"] = {
+        modelo: {k: v for k, v in cifras.items() if k not in SIN_INTERVALO}
+        for modelo, cifras in celda["modelos"].items()}
+    return sorted(simulacion.aplanar(medido))
+
+
+def test_el_bootstrap_de_una_celda_se_repite_y_da_lo_publicado(publicados):
+    """Una celda asimétrica, entera: las 1 000 réplicas y los 51 intervalos."""
+    rho1, rho0 = RECALCULADA
+    publicada = next(c for c in publicados["celdas"]
+                     if (c["rho1"], c["rho0"]) == RECALCULADA)
+    assert publicada["destacada"] and publicada["replicas"] == simulacion.B_REPLICAS
+    hoy = simulacion.evaluar_celda(simulacion.cargar_conjunto(), rho1, rho0,
+                                   replicas=simulacion.B_REPLICAS)
+    assert sorted(hoy["intervalos"]) == sorted(publicada["intervalos"])
+    assert len(hoy["intervalos"]) == 51
+    for ruta, (li, ls) in publicada["intervalos"].items():
+        assert hoy["intervalos"][ruta] == pytest.approx([li, ls], abs=1e-9), ruta
+
+
+def test_cada_intervalo_publicado_esta_bien_formado(publicados):
+````
+
+4. Busca
+
+````python
+    """El bootstrap no se repite aqui: se comprueba su forma, no sus cifras."""
+````
+
+y sustitúyelo por
+
+````python
+    """El bootstrap de las demás celdas no se repite aquí: se comprueba su
+    forma, y que cada cifra medida lleva su intervalo."""
+````
+
+5. Busca
+
+````python
+    # y estan todos: cada celda con bootstrap lleva los mismos que las demas
+    rutas = [sorted(c["intervalos"]) for c in publicados["celdas"] if "intervalos" in c]
+    assert len(rutas) == 7 and all(r == rutas[0] for r in rutas)
+````
+
+y sustitúyelo por
+
+````python
+    # y estan todos: cada cifra que se mide en la celda lleva el suyo
+    con_bootstrap = [c for c in publicados["celdas"] if "intervalos" in c]
+    assert len(con_bootstrap) == 7
+    for celda in con_bootstrap:
+        assert sorted(celda["intervalos"]) == _rutas_medidas(celda), celda["nombre"]
+        assert len(celda["intervalos"]) == 51, celda["nombre"]
+````
+
+**Sustituciones: `tests/test_simulacion.py`**
+
+3, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+    1,13, y la media sobre otras clínicas, 1,08. Las réplicas tienen que
+````
+
+y sustitúyelo por
+
+````python
+    1,13, y la media sobre otras clínicas, 1,09. Las réplicas tienen que
+````
+
+2. Busca
+
+````python
+    clinica = generador.generar(oraculo.ajustar(conjunto.q, conjunto.y, 0.3, 0.0),
+                                simulacion.SEMILLA_PUNTUAL)
+````
+
+y sustitúyelo por
+
+````python
+    modelo = oraculo.ajustar(conjunto.q, conjunto.y, 0.3, 0.0)
+    clinica = generador.generar(modelo, simulacion.SEMILLA_PUNTUAL)
+````
+
+3. Busca
+
+````python
+    for clave in ("independencia", "conservador", "l_minima", "l_maxima"):
+        assert np.array_equal(llamada["salidas"][clave], esperadas[clave], equal_nan=True)
+    assert llamada["l_oraculo"].shape == (conjunto.y.size,)
+````
+
+y sustitúyelo por
+
+````python
+    assert set(llamada["salidas"]) == set(esperadas)
+    for clave, esperado in esperadas.items():
+        if esperado.dtype == object:
+            assert list(llamada["salidas"][clave]) == list(esperado), clave
+        else:
+            assert np.array_equal(llamada["salidas"][clave], esperado, equal_nan=True), clave
+    # y el oráculo es el de esos mismos casos, no el de otra clínica
+    assert np.array_equal(llamada["l_oraculo"], simulacion.oraculo_de_los_casos(
+        modelo, conjunto.q, clinica))
+    otra = generador.generar(modelo, simulacion.SEMILLA_PUNTUAL + 1)
+    assert not np.array_equal(llamada["l_oraculo"], simulacion.oraculo_de_los_casos(
+        modelo, conjunto.q, otra))
+````
+
+**Sustituciones: `tests/test_validar_combinacion.py`**
+
+1, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+    assert "0A" in titulos["fiabilidad_0a.png"]
+    assert "(0,3; 0,3)" in titulos["fiabilidad_r1-030_r0-030.png"]
+````
+
+y sustitúyelo por
+
+````python
+    assert titulos == {
+        "fiabilidad_0a.png": "Fiabilidad por deciles — celda 0A — simulación semisintética",
+        "fiabilidad_r1-030_r0-030.png":
+            "Fiabilidad por deciles — celda (0,3; 0,3) — simulación semisintética",
+        "horquilla_por_celda.png":
+            "El oráculo frente a la horquilla, por celda y lado — simulación semisintética",
+        "contencion_rejilla.png":
+            "Contención del oráculo en la horquilla, por celda — simulación semisintética",
+        "pendiente_rejilla.png":
+            "Pendiente de la independencia, por celda — simulación semisintética"}
+````
+
+
+#### Grupo 2 — El código y los documentos
+
+**Sustituciones: `docs/sp5-sesion.md`**
+
+3, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````markdown
+consulta con una lectura propia, y si la imagen es otra las lecturas no
+coinciden y todas las consultas se descartan como `no_coincide`.
+````
+
+y sustitúyelo por
+
+````markdown
+consulta con una lectura propia, y si la otra imagen da otra probabilidad
+las lecturas no coinciden y las consultas se descartan como `no_coincide`.
+````
+
+2. Busca
+
+````markdown
+- cinco placas del conjunto de prueba, en DICOM. Valen cinco de las que usó
+  el arnés: sus `patientId` están en `latencias.json`, y el fichero de cada
+  una es `<RSNA_RAIZ>/crudo/stage_2_train_images/<patientId>.dcm`.
+````
+
+y sustitúyelo por
+
+````markdown
+- cinco placas del conjunto de prueba, en DICOM, de las que dan pre-informe.
+  Valen cinco de las que usó el arnés en consultas que no son un rechazo
+  previsto: en `latencias.json`, las filas con `rechazo_previsto` en `false`
+  llevan el `patientId`, y el fichero de cada una es
+  `<RSNA_RAIZ>/crudo/stage_2_train_images/<patientId>.dcm`.
+````
+
+3. Busca
+
+````markdown
+En el bot del profesional cada consulta empieza con un mensaje cualquiera
+(p. ej. `/start`): el bot contesta pidiendo el código, y un código enviado
+como primer mensaje no se lee como código. Después van el código, los cuatro
+````
+
+y sustitúyelo por
+
+````markdown
+En el bot del profesional cada consulta empieza con `/reiniciar` (es lo que
+envía el arnés): el bot contesta pidiendo el código, también si de la
+consulta anterior quedó una conversación a medias. Sin conversación abierta
+vale cualquier mensaje, pero un código enviado como primer mensaje no se lee
+como código. Después van el código, los cuatro
+````
+
+**Sustituciones: `docs/superpowers/specs/2026-09-27-sp5-validacion-y-cierre-design.md`**
+
+1, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````markdown
+> salía × 1,57 en mediana y un «IC 95 %» cubría más del 99 %. Remuestrear
+> primero y sortear después quita la doble cuenta, pero centra las réplicas en
+> la media sobre la clínica y no en la estimación que se publica, y el
+> intervalo por percentiles sigue cubriendo más del 99 %. El bootstrap de los
+> casos de la estimación es el que da el 95 %. Las estimaciones puntuales no
+> cambian; los intervalos se estrechan.
+````
+
+y sustitúyelo por
+
+````markdown
+> salía × 1,57 en mediana, y el «IC 95 %» de una cifra que depende de la
+> clínica cubría bastante más del 95 % (entre el 97 y el 100 %, según la
+> cifra, en un ensayo con la misma estructura; el de la imagen sola, que no
+> depende de la clínica, no cambiaba). Remuestrear primero y sortear después
+> quita la doble cuenta, pero centra las réplicas en la media sobre la clínica
+> y no en la estimación que se publica, y el intervalo por percentiles sigue
+> cubriendo de más (entre el 96 y el 100 % en el mismo ensayo). El bootstrap
+> de los casos de la estimación cubre entre el 92 y el 95 %. Las estimaciones puntuales no cambian; de los
+> 328 intervalos con anchura, 292 se estrechan y 13 se ensanchan (la anchura
+> mediana pasa a 0,83 de la anterior).
+>
+> Un intervalo así recoge solo el muestreo de los casos bajo este generador:
+> no la incertidumbre del calibrador, ni la de `z_y` y `τ`, ni la de las RV
+> publicadas, ni la de `ρ`. El documento lo dice.
+````
+
+**Sustituciones: `docs/validacion-semisintetica/README.md`**
+
+2, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````markdown
+**No** repite el bootstrap ni compara los píxeles de las figuras. De los
+intervalos comprueba que están todos y bien formados; sus cifras solo
+quedan vigiladas de rebote, las que el análisis imprime y con los decimales
+con que las imprime. De las figuras comprueba el nombre, la resolución, la
+````
+
+y sustitúyelo por
+
+````markdown
+Del bootstrap vuelve a calcular los intervalos de **una** celda, (0,6; 0),
+con sus 1 000 réplicas, y los compara con los publicados. **No** repite el
+de las otras seis ni compara los píxeles de las figuras: de esos intervalos
+comprueba que están los de todas las cifras medidas y que están bien
+formados; sus cifras solo quedan vigiladas de rebote, las que el análisis
+imprime y con los decimales con que las imprime. De las figuras comprueba el nombre, la resolución, la
+````
+
+2. Busca
+
+````markdown
+lleva la fecha de la corrida (`corrida_del`), la regla con que se decide la
+````
+
+y sustitúyelo por
+
+````markdown
+lleva la fecha de la corrida (`corrida_del`: la de modificación de
+`latencias.json`, que es la de la medición si el fichero no se copia ni se
+edita después), la regla con que se decide la
+````
+
+**Sustituciones: `scripts/medir_latencia.py`**
+
+3, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+         f"los {UMBRALES_S['minimo']} s, «no cumplido»; si no se cronometró, no pesa. "
+         f"El p50 y el objetivo de {UMBRALES_S['objetivo']} s se reportan al lado y no "
+````
+
+y sustitúyelo por
+
+````python
+         f"los {UMBRALES_S['minimo']} s, «no cumplido»; si no se cronometró, no pesa. "
+         f"El p95 y la mediana se comparan sin redondear, no como quedan "
+         f"escritos (8,004 s se escribe «8.0» y supera los 8 s). "
+         f"El p50 y el objetivo de {UMBRALES_S['objetivo']} s se reportan al lado y no "
+````
+
+2. Busca
+
+````python
+    "corrida_del": ("el día, en la hora de Ecuador continental (UTC−5), en que el "
+                    "arnés escribió la corrida que aquí se resume"),
+````
+
+y sustitúyelo por
+
+````python
+    "corrida_del": ("la fecha de modificación del fichero de la corrida "
+                    "(`latencias.json`), en la hora de Ecuador continental (UTC−5). "
+                    "Es el día en que el arnés la escribió solo si el fichero no "
+                    "se ha copiado ni editado después"),
+````
+
+3. Busca
+
+````python
+    """El dia (UTC−5) en que se escribio el fichero de la corrida."""
+````
+
+y sustitúyelo por
+
+````python
+    """El dia (UTC−5) de la ultima modificacion del fichero de la corrida:
+    el dia de la medicion, si nadie lo ha copiado ni editado despues. El
+    glosario del JSON lo dice."""
+````
+
+**Sustituciones: `scripts/validar_combinacion.py`**
+
+7, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+REJILLAS = ("contencion", "pendiente")
+````
+
+y sustitúyelo por
+
+````python
+TITULO_DE_FIGURA = dict(informe.FIGURAS_GLOBALES)     # nombre -> titulo
+HORQUILLA = "horquilla_por_celda"
+REJILLAS = ("contencion", "pendiente")                # su figura es `<que>_rejilla`
+````
+
+2. Busca
+
+````python
+    titulo = f"Fiabilidad por deciles — celda {celda['nombre']} — {ROTULO}"
+````
+
+y sustitúyelo por
+
+````python
+    titulo = f"{informe.TITULO_FIABILIDAD} — celda {celda['nombre']} — {ROTULO}"
+````
+
+3. Busca
+
+````python
+    titulo = f"El oráculo frente a la horquilla, por celda y lado — {ROTULO}"
+````
+
+y sustitúyelo por
+
+````python
+    titulo = f"{TITULO_DE_FIGURA[HORQUILLA]} — {ROTULO}"
+````
+
+4. Busca
+
+````python
+        titulo = f"Contención del oráculo en la horquilla, por celda — {ROTULO}"
+````
+
+y sustitúyelo por
+
+````python
+````
+
+5. Busca
+
+````python
+        titulo = f"Pendiente de la independencia, por celda — {ROTULO}"
+````
+
+y sustitúyelo por
+
+````python
+````
+
+6. Busca
+
+````python
+        barra = "pendiente de calibración (< 1 exagera; > 1 se queda corta)"
+    mapa = mapa.with_extremes(bad="#f0efec")
+````
+
+y sustitúyelo por
+
+````python
+        barra = "pendiente de calibración (< 1 exagera; > 1 se queda corta)"
+    titulo = f"{TITULO_DE_FIGURA[f'{que}_rejilla']} — {ROTULO}"
+    mapa = mapa.with_extremes(bad="#f0efec")
+````
+
+7. Busca
+
+````python
+    rutas.append(figura_horquilla(resultados, carpeta / "horquilla_por_celda.png", huella))
+    rutas.append(figura_rejilla(resultados, carpeta / "contencion_rejilla.png", "contencion",
+                                huella))
+    rutas.append(figura_rejilla(resultados, carpeta / "pendiente_rejilla.png", "pendiente",
+                                huella))
+````
+
+y sustitúyelo por
+
+````python
+    rutas.append(figura_horquilla(resultados, carpeta / f"{HORQUILLA}.png", huella))
+    rutas += [figura_rejilla(resultados, carpeta / f"{que}_rejilla.png", que, huella)
+              for que in REJILLAS]
+````
+
+**Sustituciones: `src/copiloto_triaje/validacion/concordancia.py`**
+
+3, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+remuestreo de casos. Con 24 casos el intervalo mide 0,5-0,6 y el texto que lo
+dice esta fijado aqui, antes de la sesion.
+````
+
+y sustitúyelo por
+
+````python
+remuestreo de casos. El texto que se declaro antes de la sesion (con 24 casos,
+un intervalo de 0,5 a 0,6 de anchura) esta fijado aqui; el acta lo cita como
+lo declarado y da detras lo observado.
+````
+
+2. Busca
+
+````python
+    anchura por los dos metodos, y si 0,4 y 0,6 quedan dentro. Todo, con
+    los limites tal como se imprimen."""
+````
+
+y sustitúyelo por
+
+````python
+    anchura por los dos metodos, y si 0,4 y 0,6 quedan dentro.
+
+    Los limites van como en la frase del criterio, que esta dos lineas mas
+    arriba en el acta: con `_f_frente_a_umbral` (los decimales que hagan
+    falta si quedan pegados a un umbral) y comparados a seis decimales, como
+    `frente_a_umbrales`. Asi las dos frases no pueden decir cosas distintas
+    del 0,4. La anchura es la de los limites tal como se imprimen."""
+````
+
+3. Busca
+
+````python
+    limites = {nombre: [round(x, 2) + 0.0 for x in k[clave]] for clave, nombre in METODOS}
+    va = " y ".join(f"de {_f(li)} a {_f(ls)} con {nombre} (anchura {_f(ls - li)})"
+                    for nombre, (li, ls) in limites.items())
+````
+
+y sustitúyelo por
+
+````python
+    limites = {nombre: [_a_seis(x) for x in k[clave]] for clave, nombre in METODOS}
+
+    def impreso(x) -> float:
+        return float(_f_frente_a_umbral(x).replace(",", "."))
+
+    va = " y ".join(
+        f"de {_f_frente_a_umbral(li)} a {_f_frente_a_umbral(ls)} con {nombre} "
+        f"(anchura {_f(impreso(ls) - impreso(li))})"
+        for nombre, (li, ls) in limites.items())
+````
+
+**Sustituciones: `src/copiloto_triaje/validacion/informe.py`**
+
+6, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+# Los nombres de las figuras, de las celdas y el titulo se escriben aqui y
+# solo aqui: el guion los toma de este modulo.
+````
+
+y sustitúyelo por
+
+````python
+# Los titulos de las figuras, los nombres de las celdas y el titulo del
+# documento se escriben aqui y solo aqui: el guion los toma de este modulo.
+# Los nombres de las figuras los dice tambien el guion, que es quien sabe
+# que funcion dibuja cada una; una prueba ata las dos listas.
+````
+
+2. Busca
+
+````python
+PREFIJO_FIABILIDAD = "fiabilidad_"
+FIGURAS_GLOBALES = (
+````
+
+y sustitúyelo por
+
+````python
+PREFIJO_FIABILIDAD = "fiabilidad_"
+TITULO_FIABILIDAD = "Fiabilidad por deciles"
+FIGURAS_GLOBALES = (
+````
+
+3. Busca
+
+````python
+
+def _del_lado(celdas, clave: str, debajo: bool) -> tuple:
+````
+
+y sustitúyelo por
+
+````python
+
+def _en_el_borde(celdas) -> tuple:
+    """(cuantos intervalos tienen anchura cero, en cuantos mas la estimacion
+    coincide con un extremo). Sin redondear."""
+    sin_anchura = en_un_extremo = 0
+    for celda in celdas:
+        for ruta, par in (celda.get("intervalos") or {}).items():
+            valor = _valor(celda, ruta)
+            if _falta(valor) or _falta(par[0]) or _falta(par[1]):
+                continue
+            if par[0] == par[1]:
+                sin_anchura += 1
+            elif valor in (par[0], par[1]):
+                en_un_extremo += 1
+    return sin_anchura, en_un_extremo
+
+
+def _lo_del_borde(celdas) -> str:
+    """La frase de los intervalos sin anchura o con la estimacion en un
+    extremo; nada si no hay ninguno."""
+    sin_anchura, en_un_extremo = _en_el_borde(celdas)
+    if not sin_anchura and not en_un_extremo:
+        return ""
+    partes = []
+    if sin_anchura:
+        partes.append(f"{entero(sin_anchura)} {'tiene' if sin_anchura == 1 else 'tienen'} "
+                      f"anchura cero")
+    if en_un_extremo:
+        partes.append(f"en {entero(en_un_extremo)}{' más' if sin_anchura else ''} la "
+                      f"estimación coincide con un extremo")
+    return (f" De esos intervalos, {_lista(partes)}: pasa con las fracciones que valen "
+            f"exactamente 0 o 1 y con las medianas y los cuartiles de cifras que se "
+            f"repiten, donde muchas réplicas dan el mismo valor.")
+
+
+def _del_lado(celdas, clave: str, debajo: bool) -> tuple:
+````
+
+4. Busca
+
+````python
+            f"(comparadas sin redondear). El intervalo de la ECE está desplazado hacia "
+````
+
+y sustitúyelo por
+
+````python
+            f"(comparadas sin redondear).{_lo_del_borde(r['celdas'])} El "
+            f"intervalo de la ECE está desplazado hacia "
+````
+
+5. Busca
+
+````python
+            f"no contra su intervalo, que no se imprime.")
+````
+
+y sustitúyelo por
+
+````python
+            f"no contra su intervalo, que no se imprime. **Un intervalo recoge solo el "
+            f"muestreo de los casos —la placa y su clínica— bajo este generador.** No "
+            f"recoge la incertidumbre del calibrador ni la de los umbrales del "
+            f"generador, que se ajustan una vez sobre estas mismas placas, ni la de las "
+            f"RV publicadas, que se toman como exactas, ni la de ρ, que es el supuesto "
+            f"de cada celda.")
+````
+
+6. Busca
+
+````python
+                return f"Fiabilidad por deciles, celda {c['nombre']} ({rotulo})"
+````
+
+y sustitúyelo por
+
+````python
+                return f"{TITULO_FIABILIDAD}, celda {c['nombre']} ({rotulo})"
+````
+
+**Sustituciones: `src/copiloto_triaje/validacion/simulacion.py`**
+
+1, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````python
+    en mediana, y un «IC 95 %» cubre mas del 99 %). Remuestrear primero y
+    sortear despues quita la doble cuenta, pero centra las replicas en la
+    media sobre la clinica y no en la estimacion que se publica, y el
+    intervalo por percentiles sigue cubriendo mas del 99 %."""
+````
+
+y sustitúyelo por
+
+````python
+    en mediana, y el «IC 95 %» de una cifra que depende de la clinica cubre
+    bastante mas del 95 %). Remuestrear primero y sortear despues quita la
+    doble cuenta, pero centra las replicas en la media sobre la clinica y
+    no en la estimacion que se publica, y el intervalo por percentiles
+    sigue cubriendo de mas."""
+````
+
+---
+
 ## Autorrevisión del plan (hecha al escribirlo)
 
 **Cobertura del spec.**
@@ -9156,7 +15161,7 @@ git commit -m "docs(sp5): el README dice dónde está la validación semisintét
 | §4.4 0C, cálculo | 3, 6 |
 | §4.4 0B | recortado: el artículo no está en manos del equipo (spec §6.6, orden de recorte) |
 | §4.5 escala legible por lado de la imagen, «poco informativa» en k = 2 y 3 | 3, 6 |
-| §4.6 bootstrap B = 1 000, pareado, generador fijo, percentiles | 3, 4, 7 |
+| §4.6 bootstrap B = 1 000, pareado, generador fijo, percentiles | 3, 4, 7; corregido en la 11 |
 | §4.6 cuatro modelos puntuales y sus métricas; ECE con suelo; fiabilidad | 1, 2, 3, 5 |
 | §4.6 horquilla: posición, colas con ε, contención; fila 0A en 0 / 0 / 100 % | 1, 2, 7 |
 | §4.6 discordantes y `no_se` en filas aparte; recuentos por tipo | 2, 6 |
@@ -9168,6 +15173,7 @@ git commit -m "docs(sp5): el README dice dónde está la validación semisintét
 | §8 pruebas de métricas y casos de borde de la horquilla | 1 |
 | §11.2 y §11.3 | 7 |
 | Residuos de la revisión final de SP5-A | 9 |
+| Lo que pidió la revisión final de esta rama | 11, 12 |
 
 **Lo que este plan no cierra y queda dicho:** la corrida con bots contra el
 VPS para `latencia.json` (la hace el equipo con sus secretos, siguiendo
@@ -9176,6 +15182,29 @@ documentos del curso (plan SP5-C).
 
 **Huecos.** Ningún paso dice «por determinar»; todo el código y todas las
 pruebas están escritos y han corrido antes de escribirse aquí.
+
+**Lo que la autorrevisión no vio y la revisión final sí.** El bootstrap de
+las tareas 3 a 7 seguía la letra del spec y contaba dos veces el ruido del
+sorteo de la clínica. Ninguna prueba podía notarlo: todas comprobaban que el
+código hacía lo que el plan decía. Lo encontró una revisión que recalculó
+los intervalos por otro camino y midió su cobertura. La tarea 11 lo corrige
+y enmienda el spec; desde la tarea 12, una prueba vuelve a calcular el
+bootstrap de una celda y lo compara con lo publicado.
+
+**Lo que la re-revisión del cierre dejó abierto.** Cinco menores; ninguno
+cambia una cifra ni lo que el acta dice del 0,4 y del 0,6. (1) «Observado en
+esta sesión» puede imprimir un límite del kappa con otra cifra que la frase
+del criterio cuando el límite cae junto a una mitad (0,575 sale «0,58» en
+una y «0,57» en la otra): pasa en el 0,2 % de las sesiones simuladas. (2) La
+prueba que barre límites alrededor del 0,4 no detecta el fallo que dice
+vigilar; lo vigila el ejemplo fijo de la prueba de al lado. (3) La línea del
+kappa va a dos decimales y puede leerse «a 0,40» junto a «el 0,4 queda
+fuera». (4) El README de `docs/validacion-semisintetica/` y el docstring de
+`tests/test_resultados_publicados.py` aún dicen que ninguna prueba pide el
+bootstrap, y desde la tarea 12 una lo pide. (5) La nota del spec §4.6 llama
+«anchura mediana» a la mediana del cociente entre anchuras. Se arreglan
+aparte y antes de escribir el acta de la sesión; no en esta rama, que ya
+tuvo su tanda y su cierre.
 
 **Consistencia de nombres.** `metricas.EPSILON` es la única tolerancia;
 `simulacion.evaluar_tarea` es el trabajador de los procesos; `resultados` es
