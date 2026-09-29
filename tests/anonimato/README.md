@@ -58,7 +58,9 @@ Repite la búsqueda de huellas sobre cualquier árbol y añade:
   y quien lo confirma: una firma lleva el identificador de la clave de quien
   firma, así que el commit único se hace con `git commit --no-gpg-sign`;
 - que el árbol que se publica **no lleve ninguna huella de la lista**: su
-  `huellas.txt` lleva solo la del centinela.
+  `huellas.txt` lleva solo la del centinela. La huella se busca entera y
+  suelta, como cualquier token: pegada a otras letras o cifras, o escrita
+  de otra forma, no se ve.
 
       python scripts/verificar_anonimato.py --raiz <árbol> --huellas <huellas> --un-solo-commit
 
@@ -139,7 +141,11 @@ o acaba en `_KEY` en mayúsculas (o, en minúsculas, en una de unas pocas:
 `contrasena`, `pwd` o `auth` no se mira. Y solo salta si el valor tiene forma
 de secreto: ocho o más caracteres, con letras y cifras. Una contraseña corta,
 o sin cifras, o sin letras, no salta. Un valor escrito sin comillas que lleva
-paréntesis, corchetes o llaves se toma por una expresión, no por un literal.
+paréntesis, corchetes o llaves se toma por una expresión, no por un literal; y
+entre comillas, el que lleva `{{`, `${` o `$(`, o empieza por `=`: un secreto
+de verdad con esa forma no salta. Detrás de un subíndice o de una coma
+(`entorno["CLAVE"] = valor`, `poner("CLAVE", valor)`), un valor sin comillas
+se toma por una variable y no se mira.
 
 **No mira la carpeta `.git`.** La dirección del remoto, el historial de
 referencias y los commits que ya no alcanza ninguna rama viven ahí. El
