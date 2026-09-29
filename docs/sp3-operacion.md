@@ -471,18 +471,22 @@ Se decidió esto y no dos variables de entorno en el n8n del cliente: reiniciar
 **su** n8n por una comprobación nuestra no compensa mientras H5 esté abierto.
 
 **Una vez**, en una consola de PowerShell del usuario que vaya a correrla —las
-cuatro variables quedan en su perfil, no en el repositorio—:
+cinco variables quedan en su perfil, no en el repositorio—:
 
 ```powershell
+setx N8N_URL (Read-Host 'dirección base de n8n, con https://')
 setx TELEGRAM_TOKEN_PACIENTE (Read-Host 'token del bot del paciente')
 setx TELEGRAM_TOKEN_PROFESIONAL (Read-Host 'token del bot del profesional')
 setx TELEGRAM_TOKEN_AVISOS (Read-Host 'token del bot de pruebas y avisos')
 setx COPILOTO_CHAT_EQUIPO (Read-Host 'chat_id del equipo')
 ```
 
-**Son cuatro y hacen dos cosas distintas**, que conviene no confundir cuando
+**Son cinco y hacen tres cosas distintas**, que conviene no confundir cuando
 una falte:
 
+- `N8N_URL` es la dirección con la que el script compara la de cada
+  webhook. El repositorio ya no la lleva escrita: sin ella el script **no
+  comprueba nada**, lo dice, avisa por el canal si lo tiene, y devuelve 1.
 - `TELEGRAM_TOKEN_PACIENTE` y `TELEGRAM_TOKEN_PROFESIONAL` son lo que el script
   comprueba. Si no están, los **pide por teclado** — y una tarea programada no
   tiene teclado: sin ellas la tarea no comprueba ese bot y lo cuenta como
@@ -682,3 +686,43 @@ los bots en BotFather.
 (baja el proyecto del directorio donde estés, que puede ser el del cliente),
 `docker network rm <RED_N8N>`, `docker network prune`, y
 `git clean -xfd` en `/opt/copiloto`.
+
+---
+
+## 9. Después de la anonimización: lo que hay que hacer una vez
+
+El repositorio dejó de llevar escritos la dirección de n8n, el nombre de la
+red y los identificadores de las credenciales. Lo desplegado **sigue
+funcionando como está**; estos pasos hacen falta la próxima vez que se
+despliegue o se opere desde el repositorio, y se hacen fuera de las fechas
+de la sesión con el médico.
+
+1. **En el servidor, antes del próximo despliegue:** `RED_N8N` en
+   `servidor/.env`, y el primer redespliegue, que vuelve a crear los dos
+   contenedores (la clave de la red cambió de nombre en el compose) sin tocar
+   el volumen de la base. El procedimiento, orden a orden, está en
+   `docs/sp2-despliegue.md`, apartado «El primer redespliegue con `RED_N8N`
+   obligatoria»: se sigue ese, no se improvisa otro.
+
+2. **En la máquina de desarrollo:** la tarea programada diaria que corre
+   `pruebas/verificar_webhooks.py` necesita `N8N_URL` en su entorno (§5,
+   «Paso 2»). Sin ella el script no comprueba nada: lo dice, avisa por el
+   canal de avisos si lo tiene configurado, y devuelve un código de error.
+
+3. **En la máquina de desarrollo:** `n8n/valores.local.json`, con los valores
+   reales de cada marcador. Si no existe, se crea a partir de
+   `n8n/valores.ejemplo.json`. Está ignorado por git y no sale de la
+   máquina. Cómo se usa, en el §7 de este manual, «Los marcadores: del
+   repositorio a n8n, y de n8n al repositorio».
+
+4. **La primera vez que se importe un workflow desde el repositorio**, empezar
+   por el de mantenimiento, que no atiende a nadie, y mirar en n8n, nodo a
+   nodo, que cada workflow usa la credencial de SU bot antes de activarlo: un
+   valor cruzado en `valores.local.json` haría contestar a un bot con la
+   cuenta de otro.
+
+5. **Para correr la suite completa**, `RSNA_RAIZ` (y `N8N_URL`, con los
+   secretos de siempre, para las pruebas conducidas). Un salto se ve verde:
+   conviene correr con `-rs` y leer qué se saltó.
+
+       setx RSNA_RAIZ "<RSNA_RAIZ>"
