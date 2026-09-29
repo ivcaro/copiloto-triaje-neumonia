@@ -35,6 +35,13 @@ Uso:
 
 Devuelve 0 si los dos webhooks estan como deben, y 1 si hay algo que arreglar.
 
+`N8N_URL` ES OBLIGATORIA y no tiene valor por defecto: es la URL base del n8n
+que sirve a los dos bots (por ejemplo `https://n8n.ejemplo.test`), y con ella se
+calcula donde tendria que estar entregando Telegram. El repositorio no lleva la
+de ningun despliegue. Sin ella el script no pide ningun token ni comprueba nada:
+dice que falta, lo manda por Telegram si el canal de avisos esta puesto, y
+devuelve 1.
+
 PARA LA TAREA PROGRAMADA DIARIA (§5 del manual de operacion) hacen falta dos
 variables mas: `COPILOTO_CHAT_EQUIPO` y `TELEGRAM_TOKEN_AVISOS` -el token del bot
 que ya usa el workflow de mantenimiento, para que el aviso caiga en el MISMO hilo
@@ -51,7 +58,17 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-BASE_N8N = os.environ.get("N8N_URL", "https://n8n.[retirado].com").rstrip("/")
+# Sin valor por defecto, y sin fallar al importar: `tests/test_mantenimiento.py`
+# importa este modulo para probar el diagnostico, y tiene que poder hacerlo en
+# una maquina que no sabe de ningun n8n. Quien se niega a seguir es `main()`.
+BASE_N8N = os.environ.get("N8N_URL", "").strip().rstrip("/")
+
+SIN_N8N_URL = (
+    "Falta N8N_URL: sin ella no se sabe en qué URL tendría que estar "
+    "entregando Telegram, y no se ha comprobado ningún webhook.\n"
+    "   Qué hacer: pon en N8N_URL la URL base del n8n que sirve a los dos bots "
+    "(por ejemplo https://n8n.ejemplo.test), en el entorno de quien corre el "
+    "script; si lo corre la tarea programada, en la tarea.")
 
 BOTS = [
     ("paciente", "TELEGRAM_TOKEN_PACIENTE", "copiloto-paciente",
@@ -212,7 +229,28 @@ def avisar_por_telegram(token, chat_id, texto):
         return False, str(e)
 
 
+def avisar_al_equipo(problemas):
+    """El canal de la tarea programada: sin esto, lo que se imprime acaba en un
+    log que nadie abre. Hacen falta las dos variables; con una sola se dice."""
+    chat = os.environ.get("COPILOTO_CHAT_EQUIPO", "").strip()
+    token_avisos = os.environ.get("TELEGRAM_TOKEN_AVISOS", "").strip()
+    if problemas and chat and token_avisos:
+        enviado, detalle = avisar_por_telegram(
+            token_avisos, chat, mensaje_para_telegram(problemas))
+        print("\naviso por Telegram: "
+              + ("enviado." if enviado else f"NO se pudo enviar ({detalle})."))
+    elif problemas and (chat or token_avisos):
+        print("\naviso por Telegram: no se manda, faltan COPILOTO_CHAT_EQUIPO o "
+              "TELEGRAM_TOKEN_AVISOS (hacen falta las dos).")
+
+
 def main() -> int:
+    if not BASE_N8N:
+        # Antes de pedir ningun token y de tocar la memoria: sin la base no hay
+        # con que comparar, y una lectura a medias borraria la de ayer.
+        print(SIN_N8N_URL)
+        avisar_al_equipo([SIN_N8N_URL])
+        return 1
     memoria = _memoria_leer()
     nueva = {}
     problemas_todos = []
@@ -245,19 +283,7 @@ def main() -> int:
         else:
             print(f"   bien: Telegram entrega en {info['url']}, sin errores.")
     _memoria_escribir(nueva)
-
-    # El canal de la tarea programada: sin esto, lo de arriba acaba en un log
-    # que nadie abre.
-    chat = os.environ.get("COPILOTO_CHAT_EQUIPO", "").strip()
-    token_avisos = os.environ.get("TELEGRAM_TOKEN_AVISOS", "").strip()
-    if problemas_todos and chat and token_avisos:
-        enviado, detalle = avisar_por_telegram(
-            token_avisos, chat, mensaje_para_telegram(problemas_todos))
-        print("\naviso por Telegram: "
-              + ("enviado." if enviado else f"NO se pudo enviar ({detalle})."))
-    elif problemas_todos and (chat or token_avisos):
-        print("\naviso por Telegram: no se manda, faltan COPILOTO_CHAT_EQUIPO o "
-              "TELEGRAM_TOKEN_AVISOS (hacen falta las dos).")
+    avisar_al_equipo(problemas_todos)
 
     if problemas_totales:
         print(f"\n{problemas_totales} cosas que arreglar.")

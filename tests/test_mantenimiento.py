@@ -498,8 +498,21 @@ import sys  # noqa: E402
 sys.path.insert(0, str(RAIZ / "pruebas"))
 import verificar_webhooks as vw  # noqa: E402
 
-BIEN = {"url": "https://n8n.[retirado].com/webhook/copiloto-paciente",
+# La base de n8n de estas pruebas es un marcador, y la fija la prueba: el script
+# ya no trae ninguna por defecto (`N8N_URL` es obligatoria para correrlo), y el
+# diagnostico no puede depender de lo que haya en el entorno de quien corre la
+# suite.
+BASE = "https://n8n.ejemplo.test"
+BIEN = {"url": f"{BASE}/webhook/copiloto-paciente",
         "pending_update_count": 0}
+
+
+@pytest.fixture(autouse=True)
+def _base_de_n8n_fija(monkeypatch):
+    """`BASE_N8N` se calcula al importar el script, con el `N8N_URL` de ese
+    momento. Aqui se pisa en cada prueba del fichero, y al acabar vuelve a ser
+    la que era."""
+    monkeypatch.setattr(vw, "BASE_N8N", BASE)
 
 
 def diagnosticar(info, anterior=None):
@@ -520,7 +533,7 @@ def test_sin_webhook_registrado_lo_dice_y_manda_al_manual():
 def test_el_webhook_del_otro_bot_es_el_error_silencioso_del_manual():
     """Pegar la ruta del otro bot: Telegram contesta «Webhook was set» igual y el
     bot queda mudo. Es el fallo que ya paso una vez."""
-    p = diagnosticar({"url": "https://n8n.[retirado].com/webhook/copiloto-profesional",
+    p = diagnosticar({"url": f"{BASE}/webhook/copiloto-profesional",
                       "pending_update_count": 0})
     assert len(p) == 1
     assert "copiloto-paciente" in p[0] and "el OTRO bot" in p[0]
@@ -604,3 +617,107 @@ def test_un_token_revocado_se_distingue_de_un_problema_de_url(monkeypatch):
     assert ok is False and "revocado" in mensaje and "BotFather" in mensaje
     ok, mensaje = vw.pedir_api("otro", "getWebhookInfo")
     assert ok is False and "no es la URL, es el token" in mensaje
+
+
+# --------------------------------------------------------------------------
+# `N8N_URL` no tiene valor por defecto
+# --------------------------------------------------------------------------
+# El script no trae la URL de ningun n8n: la pone quien lo corre. Pero este
+# fichero lo importa entero, asi que sin la variable tiene que seguir
+# importandose; el que se niega a trabajar sin ella es `main()`.
+def _script_recien_importado():
+    """El script cargado otra vez, con el entorno de AHORA. `vw` se importo al
+    coleccionar, con el entorno de entonces."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "verificar_webhooks_recien_importado",
+        RAIZ / "pruebas" / "verificar_webhooks.py")
+    modulo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modulo)
+    return modulo
+
+
+def _main_que_no_toca_nada(monkeypatch):
+    """Deja `main()` sin teclado, sin red y sin memoria: si los busca antes de
+    mirar `N8N_URL`, la prueba falla en vez de quedarse esperando un token."""
+    def no_se_llama(*a, **k):
+        raise AssertionError("main() siguió adelante sin N8N_URL")
+
+    monkeypatch.setattr(vw.getpass, "getpass", no_se_llama)
+    monkeypatch.setattr(vw, "pedir_api", no_se_llama)
+    monkeypatch.setattr(vw, "_memoria_escribir", no_se_llama)
+    for variable in ("TELEGRAM_TOKEN_PACIENTE", "TELEGRAM_TOKEN_PROFESIONAL",
+                     "COPILOTO_CHAT_EQUIPO", "TELEGRAM_TOKEN_AVISOS"):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setattr(vw, "BASE_N8N", "")
+
+
+def test_el_script_se_importa_sin_N8N_URL_y_no_trae_ninguna_por_defecto(monkeypatch):
+    monkeypatch.delenv("N8N_URL", raising=False)
+    assert _script_recien_importado().BASE_N8N == ""
+
+
+def test_el_script_toma_la_base_de_N8N_URL_sin_la_barra_final(monkeypatch):
+    monkeypatch.setenv("N8N_URL", "https://otro.ejemplo.test/")
+    assert _script_recien_importado().BASE_N8N == "https://otro.ejemplo.test"
+
+
+def test_el_diagnostico_no_vuelve_a_mirar_el_entorno(monkeypatch):
+    """Con `N8N_URL` apuntando a otro sitio, el diagnostico sigue comparando con
+    la base del modulo. Es lo que deja correr este fichero en la maquina que
+    tiene la variable puesta para las pruebas conducidas."""
+    monkeypatch.setenv("N8N_URL", "https://otro.ejemplo.test")
+    assert diagnosticar(BIEN) == []
+    p = diagnosticar({"url": "https://otro.ejemplo.test/webhook/copiloto-paciente",
+                      "pending_update_count": 0})
+    assert len(p) == 1 and f"{BASE}/webhook/copiloto-paciente" in p[0]
+
+
+def test_sin_N8N_URL_main_sale_con_un_mensaje_y_no_pide_ningun_token(
+        monkeypatch, capsys):
+    _main_que_no_toca_nada(monkeypatch)
+    monkeypatch.setattr(vw.urllib.request, "urlopen",
+                        lambda *a, **k: pytest.fail("no había a quién avisar"))
+
+    assert vw.main() == 1
+
+    salida = capsys.readouterr().out
+    assert "N8N_URL" in salida and "Qué hacer" in salida
+    assert "están como deben" not in salida
+
+
+def test_sin_N8N_URL_la_tarea_programada_avisa_por_telegram(monkeypatch, capsys):
+    """La tarea programada que se quede sin la variable no puede callar: es el
+    silencio que el script existe para romper. Con el canal de avisos puesto, el
+    motivo llega al mismo hilo que los demas."""
+    import urllib.parse
+
+    _main_que_no_toca_nada(monkeypatch)
+    monkeypatch.setenv("COPILOTO_CHAT_EQUIPO", "987")
+    monkeypatch.setenv("TELEGRAM_TOKEN_AVISOS", "T0K3N")
+    enviados = {}
+
+    def falso(pet, timeout=0):
+        enviados["url"] = pet.full_url
+        enviados["cuerpo"] = dict(urllib.parse.parse_qsl(pet.data.decode()))
+
+        class R:
+            def read(self_inner):
+                return b'{"ok":true,"result":{}}'
+
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *a):
+                return False
+        return R()
+
+    monkeypatch.setattr(vw.urllib.request, "urlopen", falso)
+
+    assert vw.main() == 1
+
+    assert enviados["cuerpo"]["chat_id"] == "987"
+    assert "N8N_URL" in enviados["cuerpo"]["text"]
+    assert "T0K3N" not in enviados["cuerpo"]["text"]
+    assert "aviso por Telegram: enviado." in capsys.readouterr().out
