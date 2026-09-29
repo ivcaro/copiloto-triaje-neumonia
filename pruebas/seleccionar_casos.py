@@ -15,16 +15,22 @@ import pandas as pd
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(REPO / "src"))
 
+from copiloto_triaje.config import raiz_rsna  # noqa: E402
 from pruebas.puntuaciones import puntuaciones_de_prueba  # noqa: E402
 
-RAIZ = pathlib.Path(r"C:\Users\[retirado]\datasets\rsna-pneumonia\trabajo")
-CRUDO = RAIZ / "crudo" / "stage_2_train_images"
 UMBRAL = 0.4258
 CRUCE_RV = 0.5786          # donde la RV cruza 1,0; ver §3 del spec
 
 
 def seleccionar(n_por_perfil: int = 10) -> dict:
+    """Los casos de cada perfil, con la ruta de su DICOM bajo `RSNA_RAIZ`.
+
+    La variable se lee aqui y no al importar: este modulo lo importan, solo
+    por `UMBRAL` o de paso, ficheros que corren sin dataset.
+    """
+    crudo = raiz_rsna() / "crudo" / "stage_2_train_images"
     df = puntuaciones_de_prueba()
     meta = pd.read_csv(REPO / "docs" / "eda" / "metadatos_eda.csv")
     edades = dict(zip(meta.patientId, meta.edad_num))
@@ -55,7 +61,7 @@ def seleccionar(n_por_perfil: int = 10) -> dict:
         sub = sub.sort_values("patientId").head(n_por_perfil)
         salida[nombre] = [
             {"patientId": f.patientId,
-             "ruta_dcm": str(CRUDO / f"{f.patientId}.dcm"),
+             "ruta_dcm": str(crudo / f"{f.patientId}.dcm"),
              "cruda": None if pd.isna(f.cruda) else float(f.cruda),
              "etiqueta": int(f.etiqueta),
              "edad": int(f.edad_num if "edad_num" in sub.columns else f.edad)}

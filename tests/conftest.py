@@ -128,3 +128,70 @@ def resultados_minimos(validar):
     r = validar.calcular(replicas=2, procesos=1, rejilla=(0.0, 0.3),
                          destacadas=((0.3, 0.3),))
     return json.loads(json.dumps(r, ensure_ascii=False))
+
+
+# --------------------------------------------------------------------------
+# Lo que vive fuera del repositorio: el dataset de RSNA y los pesos desplegados
+# --------------------------------------------------------------------------
+def raiz_rsna_o_salta():
+    """La raiz del dataset preparado (`RSNA_RAIZ`), o un skip que dice que se
+    queda sin verificar y como verificarlo.
+
+    No hay valor por defecto (spec de SP5 §6.1): una ruta por defecto seria la
+    de una maquina concreta. La variable la lee `copiloto_triaje.config`, el
+    unico lector que hay; aqui solo se convierte su `SystemExit` en un skip.
+    Si la variable esta puesta pero la carpeta no tiene el dataset, NO se
+    salta: las pruebas fallan con la ruta que no encuentran, que es lo que
+    hace falta ver cuando la variable esta mal escrita.
+    """
+    from copiloto_triaje.config import raiz_rsna
+    try:
+        return raiz_rsna()
+    except SystemExit:
+        pytest.skip(
+            "PRUEBAS CON RADIOGRAFÍAS REALES SIN VERIFICAR: falta RSNA_RAIZ, la"
+            " raíz del dataset de RSNA preparado, que no tiene valor por"
+            " defecto. Se quedan sin comprobar la selección de casos sobre los"
+            " ficheros reales, el contrato con copiloto-mcp cuando recibe un"
+            " DICOM y las consultas conducidas del bot del profesional que"
+            " suben una placa. Para verificarlo, define RSNA_RAIZ con la"
+            " carpeta que tiene dentro manifiestos/, png/ y"
+            " crudo/stage_2_train_images/, y repite.")
+
+
+def pesos_desplegados_o_salta():
+    """La ruta de los pesos desplegados, o un skip si el fichero no esta.
+
+    Los pesos no se versionan (16 MB binarios; `.gitignore`), y sin ellos no
+    se puede ni inferir ni saber si la cache de puntuaciones es la del modelo
+    desplegado: `pruebas/puntuaciones.py` compara su sha256 con el guardado.
+    """
+    import pathlib
+    import sys
+    repo = str(pathlib.Path(__file__).resolve().parents[1])
+    if repo not in sys.path:
+        sys.path.insert(0, repo)
+    from pruebas import puntuaciones
+    if not puntuaciones.PESOS.is_file():
+        pytest.skip(
+            "PRUEBAS CON LAS PUNTUACIONES DEL MODELO SIN VERIFICAR: faltan los"
+            " pesos desplegados, servidor/pesos_modelo_cpu.pt, que no se"
+            " versionan. Sin ellos no se puede inferir ni validar la caché de"
+            " puntuaciones del conjunto de prueba, así que se quedan sin"
+            " comprobar la selección de casos y las dos pruebas del recorte de"
+            " la razón de verosimilitud. Para verificarlo, copia los pesos a"
+            " esa ruta y repite; la primera vez, sin caché, infiere sobre las"
+            " 3 811 imágenes de prueba y tarda minutos.")
+    return puntuaciones.PESOS
+
+
+@pytest.fixture(scope="module")
+def rsna_raiz():
+    """La raiz del dataset de RSNA. Sin `RSNA_RAIZ`, la prueba se salta."""
+    return raiz_rsna_o_salta()
+
+
+@pytest.fixture(scope="module")
+def pesos_desplegados():
+    """Los pesos desplegados. Sin el fichero, la prueba se salta."""
+    return pesos_desplegados_o_salta()

@@ -112,7 +112,9 @@ SINTOMAS_PRUEBA = {"fiebre": "si", "tos": "con_flema", "dias_evolucion": "3_a_7"
                    "texto_libre": None}
 
 # Las TRES pruebas que suben una placa. Las otras cinco de la clase no suben nada
-# y no dependen de esto.
+# y no dependen de esto. La placa es una radiografia real de RSNA, elegida con
+# `seleccionar`: las tres piden ademas `rsna_raiz` y `pesos_desplegados`, y sin
+# `RSNA_RAIZ` o sin los pesos se saltan diciendo cual falta.
 necesita_subida = pytest.mark.skipif(
     not SUBIDA,
     reason="sin CHAT_SUBIDA_PLACAS no hay chat real donde subir la placa, y sin "
@@ -327,8 +329,8 @@ class TestConducido:
             " LIMIT 1", (AUTORIZADO,)).fetchone()[0] is None
 
     @necesita_subida
-    def test_un_menor_de_edad_se_rechaza_sin_ninguna_cifra(self, webhook_n8n,
-                                                           bd_sp3):
+    def test_un_menor_de_edad_se_rechaza_sin_ninguna_cifra(
+            self, webhook_n8n, bd_sp3, rsna_raiz, pesos_desplegados):
         """Criterio 7. Se usa una placa de un nino REAL, de los 1 276 de RSNA."""
         from pruebas.seleccionar_casos import seleccionar
         caso = seleccionar(n_por_perfil=1)["menor_edad"][0]
@@ -344,7 +346,8 @@ class TestConducido:
             (AUTORIZADO,)).fetchone()[0] == 0, "§9: el rechazo por edad TERMINA"
 
     @necesita_subida
-    def test_la_banda_contradictoria_lleva_su_aviso(self, webhook_n8n, bd_sp3):
+    def test_la_banda_contradictoria_lleva_su_aviso(self, webhook_n8n, bd_sp3,
+                                                    rsna_raiz, pesos_desplegados):
         """Criterio 6. Pasa una de cada cuatro veces que hay un positivo (§3)."""
         from pruebas.seleccionar_casos import seleccionar
         caso = seleccionar(n_por_perfil=1)["banda_contradictoria"][0]
@@ -411,7 +414,8 @@ class TestConducido:
             bd_sp3.execute("DELETE FROM profesionales WHERE chat_id = %s", (OTRO,))
 
     @necesita_subida
-    def test_los_sintomas_se_copian_a_consultas(self, webhook_n8n, bd_sp3):
+    def test_los_sintomas_se_copian_a_consultas(self, webhook_n8n, bd_sp3,
+                                                rsna_raiz, pesos_desplegados):
         """D12: sin la copia, H7 se queda sin nada que validar porque
         `cuestionarios` se borra a los 7 dias."""
         from pruebas.seleccionar_casos import seleccionar

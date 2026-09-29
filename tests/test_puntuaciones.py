@@ -92,3 +92,41 @@ def test_pesos_cambiados_invalida_la_cache_existente(entorno_aislado):
 
     pesos.write_bytes(b"pesos de mentira, version 2 (reentrenado)")
     assert puntuaciones._cache_valida() is False
+
+
+def test_con_la_cache_valida_no_se_pide_rsna_raiz(entorno_aislado, monkeypatch):
+    """Con la cache al dia no se toca el dataset, asi que tampoco se pide
+    donde esta: quien solo quiere las puntuaciones no necesita RSNA."""
+    pesos, cache, cache_hash = entorno_aislado
+    cache.write_text("patientId,cruda\nabc,0.42\n", encoding="utf-8")
+    cache_hash.write_text(puntuaciones._sha256(pesos), encoding="utf-8")
+    monkeypatch.delenv("RSNA_RAIZ", raising=False)
+    df = puntuaciones.puntuaciones_de_prueba()
+    assert df.to_dict("records") == [{"patientId": "abc", "cruda": 0.42}]
+
+
+def test_con_la_cache_fria_y_sin_rsna_raiz_se_detiene_nombrandola(
+        entorno_aislado, monkeypatch):
+    """Sin cache hay que inferir, y para inferir hace falta el dataset. Sin
+    la variable se dice cual falta, antes de leer nada."""
+    _, cache, cache_hash = entorno_aislado
+    monkeypatch.delenv("RSNA_RAIZ", raising=False)
+    with pytest.raises(SystemExit, match="RSNA_RAIZ"):
+        puntuaciones.puntuaciones_de_prueba()
+    assert not cache.exists() and not cache_hash.exists()
+
+
+def test_con_la_cache_fria_el_manifiesto_se_busca_bajo_rsna_raiz(
+        entorno_aislado, tmp_path, monkeypatch):
+    """La raiz es la de la variable y ninguna otra: con una carpeta vacia, lo
+    que falta es SU manifiesto."""
+    raiz = tmp_path / "rsna"
+    raiz.mkdir()
+    monkeypatch.setenv("RSNA_RAIZ", str(raiz))
+    with pytest.raises(FileNotFoundError) as error:
+        puntuaciones.puntuaciones_de_prueba()
+    assert error.value.filename == str(raiz / "manifiestos" / "test.csv")
+
+
+def test_el_modulo_no_guarda_ninguna_ruta_del_dataset():
+    assert not hasattr(puntuaciones, "RAIZ")
