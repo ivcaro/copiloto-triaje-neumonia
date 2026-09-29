@@ -348,10 +348,13 @@ spec— y eso implica registrarlo a mano.
 `copiloto-profesional: secret_token…`, campo **Value**. El nombre de la
 cabecera (`X-Telegram-Bot-Api-Secret-Token`) no se toca.
 
-**3. Registrarlo.** No hay nada que sustituir: pregunta las dos cosas.
+**3. Registrarlo.** No hay nada que sustituir: pregunta las tres cosas. La URL
+base es la pública de la instancia de n8n (la misma que va en
+`n8n/valores.local.json`, §7); en el repositorio solo figura su marcador,
+`https://n8n.ejemplo.test`.
 
 ```powershell
-$t = Read-Host 'token del bot'; $s = Read-Host 'secret_token'; Invoke-RestMethod -Uri "https://api.telegram.org/bot$t/setWebhook" -Method Post -Body @{url='https://n8n.[retirado].com/webhook/copiloto-paciente'; secret_token=$s}
+$u = (Read-Host 'URL base de n8n, con https://').TrimEnd('/'); $t = Read-Host 'token del bot'; $s = Read-Host 'secret_token'; Invoke-RestMethod -Uri "https://api.telegram.org/bot$t/setWebhook" -Method Post -Body @{url="$u/webhook/copiloto-paciente"; secret_token=$s}
 ```
 
 La ruta es `copiloto-paciente` o `copiloto-profesional` según el bot. **Si
@@ -567,6 +570,61 @@ apuntarle un flujo nuestro lo dejaría mudo sin ningún error visible.
 
 Los tres workflows llevan el prefijo `🩺 Copiloto Triaje:`. Cualquier otro de
 esa instancia es del cliente y **no se modifica**.
+
+### Los marcadores: del repositorio a n8n, y de n8n al repositorio
+
+Los tres exports de `n8n/` se versionan con **marcadores** en lugar de los
+valores de la instancia donde corren. Por eso **un export del repositorio ya
+no es idéntico byte a byte al workflow desplegado**: se diferencian en estas
+cadenas, y solo en ellas.
+
+| Marcador | Qué es en la instancia |
+| :--- | :--- |
+| `https://n8n.ejemplo.test` | la URL base pública de n8n, con esquema y sin barra final (las dos sondas del mantenimiento y las notas de los webhooks) |
+| `CRED_TELEGRAM_PACIENTE`, `bot-paciente` | el `id` y el nombre de la credencial de Telegram del bot del paciente |
+| `CRED_TELEGRAM_PROFESIONAL`, `bot-profesional` | los de la credencial del bot del profesional |
+| `CRED_TELEGRAM_AVISOS`, `bot-avisos` | los de la credencial del bot de pruebas y avisos |
+| `CRED_POSTGRES_COPILOTO` | el `id` de la credencial `copiloto-bd` |
+| `CRED_SECRETO_PACIENTE`, `CRED_SECRETO_PROFESIONAL` | los `id` de las dos credenciales de cabecera con el `secret_token` |
+
+El `id` de una credencial se lee en n8n en la URL de la propia credencial al
+abrirla, o en un export del workflow que ya la usa. **Ninguno es un secreto**
+—el token y la contraseña viven dentro de la credencial y no salen en ningún
+export—, pero identifican la instancia, y por eso no se versionan.
+
+**Una sola vez por máquina:** copiar `n8n/valores.ejemplo.json` a
+`n8n/valores.local.json` y cambiar cada valor de ejemplo por el real. Ese
+fichero está en `.gitignore`: no se versiona ni se comparte.
+
+**Poner los valores reales, ANTES de importar o desplegar un workflow desde el
+repositorio.** La salida va a una carpeta temporal fuera del repositorio, y es
+ese fichero —no el de `n8n/`— el que se importa:
+
+```powershell
+C:\venv-copiloto\Scripts\python.exe scripts/marcadores_n8n.py --entrada n8n/copiloto-mantenimiento.json --salida $env:TEMP\n8n-real\copiloto-mantenimiento.json
+```
+
+Si se importa el export tal como está en el repositorio, con los marcadores,
+el workflow no funciona: sus nodos apuntan a credenciales que no existen en la
+instancia, y las dos sondas del mantenimiento preguntan a un dominio que no
+existe.
+
+**Quitar los valores reales, ANTES de versionar un export.** El workflow se
+descarga de n8n a la carpeta temporal y se deja en `n8n/` ya con marcadores:
+
+```powershell
+C:\venv-copiloto\Scripts\python.exe scripts/marcadores_n8n.py --retirar --entrada $env:TEMP\n8n-real\export.json --salida n8n/copiloto-mantenimiento.json
+```
+
+Después, `git diff n8n/` tiene que enseñar solo lo que se cambió a propósito
+en el workflow, y `C:\venv-copiloto\Scripts\python.exe -m pytest tests/test_marcadores_n8n.py`
+tiene que pasar. Al terminar se borra la carpeta temporal.
+
+El script se niega —sin escribir nada— si en `valores.local.json` falta un
+marcador, si dos marcadores comparten valor, si al poner los valores la salida
+es el propio fichero de entrada, o si tras retirar queda algún valor real
+escrito de otra forma (en mayúsculas, o el dominio sin el `https://`); en ese
+último caso dice la línea, y se corrige a mano.
 
 ---
 
