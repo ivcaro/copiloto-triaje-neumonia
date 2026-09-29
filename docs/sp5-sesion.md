@@ -167,8 +167,8 @@ corre sin bots y no mide nada. Cómo se abre el túnel a la base y cómo se
 escribe el DSN está en `docs/sp3-operacion.md` §3; cómo se levanta el copiloto
 que contesta al arnés (`COPILOTO_URL`), en su §2, «El arnés». **Ese copiloto
 tiene que ser la misma imagen que la desplegada:** el arnés confirma cada
-consulta con una lectura propia, y si la imagen es otra las lecturas no
-coinciden y todas las consultas se descartan como `no_coincide`.
+consulta con una lectura propia, y si la otra imagen da otra probabilidad
+las lecturas no coinciden y las consultas se descartan como `no_coincide`.
 
     C:/venv-copiloto/Scripts/python.exe pruebas/reproducir_casos.py --por-perfil 12 --salida pruebas/corpus/latencia
 
@@ -218,13 +218,17 @@ Telegram solo enseña horas y minutos. Hace falta:
   consultas: el código no es de un solo uso (spec de SP3 §5.2) y vale 7 días
   (§5.4), y cada uso queda en `consultas`. Un cuestionario nuevo cuenta
   contra el límite de 5 por chat y día (spec de SP3 §4.2);
-- cinco placas del conjunto de prueba, en DICOM. Valen cinco de las que usó
-  el arnés: sus `patientId` están en `latencias.json`, y el fichero de cada
-  una es `<RSNA_RAIZ>/crudo/stage_2_train_images/<patientId>.dcm`.
+- cinco placas del conjunto de prueba, en DICOM, de las que dan pre-informe.
+  Valen cinco de las que usó el arnés en consultas que no son un rechazo
+  previsto: en `latencias.json`, las filas con `rechazo_previsto` en `false`
+  llevan el `patientId`, y el fichero de cada una es
+  `<RSNA_RAIZ>/crudo/stage_2_train_images/<patientId>.dcm`.
 
-En el bot del profesional cada consulta empieza con un mensaje cualquiera
-(p. ej. `/start`): el bot contesta pidiendo el código, y un código enviado
-como primer mensaje no se lee como código. Después van el código, los cuatro
+En el bot del profesional cada consulta empieza con `/reiniciar` (es lo que
+envía el arnés): el bot contesta pidiendo el código, también si de la
+consulta anterior quedó una conversación a medias. Sin conversación abierta
+vale cualquier mensaje, pero un código enviado como primer mensaje no se lee
+como código. Después van el código, los cuatro
 signos (temperatura, frecuencia cardiaca, crepitantes y murmullo) y la placa,
 enviada como **documento** (como foto, Telegram la recomprime a JPEG y deja
 de ser un DICOM). El cronómetro se pone en marcha al enviar la placa y se para cuando

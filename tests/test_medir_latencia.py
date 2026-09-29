@@ -141,7 +141,7 @@ def test_el_json_lleva_la_regla_y_la_etiqueta_que_sale_de_ella(medir):
     assert v(8000.04)["etiqueta"] == "no cumplido"
     for trozo in ("p95 de `ms_extremo` frente al mínimo de 8 s", "«cumplido con cambio»",
                   "Lo cronometrado a mano pesa en contra", "objetivo de 3 s",
-                  "spec de SP5 §6.2"):
+                  "spec de SP5 §6.2", "El p95 y la mediana se comparan sin redondear"):
         assert trozo in medir.REGLA, trozo
 
 
@@ -162,6 +162,36 @@ def test_la_corrida_lleva_su_fecha_en_la_hora_de_ecuador(medir, tmp_path):
     assert medir.main(["--corrida", str(corrida), "--salida", str(salida)]) == 0
     assert json.loads(salida.read_text(encoding="utf-8"))["corrida_del"] == "2026-10-07"
     assert medir.resumir(_validas(30))["corrida_del"] is None
+    # el JSON dice de dónde sale la fecha, y cuándo deja de valer
+    glosa = medir.GLOSARIO["corrida_del"]
+    assert "la fecha de modificación del fichero de la corrida" in glosa
+    assert "si el fichero no se ha copiado ni editado después" in glosa
+
+
+def test_los_mensajes_con_tilde_salen_bien_por_los_dos_canales(tmp_path):
+    """El de «no medida» sale por stderr: en una consola que no es UTF-8
+    saldría roto si el guion no reconfigurara también ese canal."""
+    import os
+    import subprocess
+    import sys
+    corrida = tmp_path / "latencias.json"
+    entorno = {k: v for k, v in os.environ.items()
+               if k not in ("PYTHONIOENCODING", "PYTHONUTF8")}
+    entorno["PYTHONUTF8"] = "0"
+    guion = str(REPO / "scripts" / "medir_latencia.py")
+    corrida.write_text(json.dumps(_validas(2)), encoding="utf-8")
+    corta = subprocess.run([sys.executable, guion, "--corrida", str(corrida),
+                            "--salida", str(tmp_path / "no.json")],
+                           capture_output=True, env=entorno)
+    assert corta.returncode == 1 and not (tmp_path / "no.json").exists()
+    dicho = corta.stderr.decode("utf-8")               # si no es UTF-8, aquí falla
+    assert "el arnés" in dicho and "«no medida»" in dicho
+    corrida.write_text(json.dumps(_validas(30)), encoding="utf-8")
+    buena = subprocess.run([sys.executable, guion, "--corrida", str(corrida),
+                            "--salida", str(tmp_path / "si.json")],
+                           capture_output=True, env=entorno)
+    assert buena.returncode == 0, buena.stderr
+    assert "etiqueta del KPI: «cumplido con cambio»" in buena.stdout.decode("utf-8")
 
 
 def test_cuenta_la_consulta_medida_y_no_la_llamada_del_arnes(medir):

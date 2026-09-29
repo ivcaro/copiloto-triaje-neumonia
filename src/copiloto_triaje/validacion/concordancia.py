@@ -5,8 +5,9 @@ medico (spec de SP5 §5.4-§5.5, §11.4; plan SP5-A D9).
 Primario: kappa ponderado lineal sobre las 24 lecturas SIN copiloto. Tambien
 el de Cohen sin ponderar (el prometido literalmente) y el binario en «alta».
 Dos intervalos: el analitico de Fleiss, Cohen y Everitt (1969) y el BCa por
-remuestreo de casos. Con 24 casos el intervalo mide 0,5-0,6 y el texto que lo
-dice esta fijado aqui, antes de la sesion.
+remuestreo de casos. El texto que se declaro antes de la sesion (con 24 casos,
+un intervalo de 0,5 a 0,6 de anchura) esta fijado aqui; el acta lo cita como
+lo declarado y da detras lo observado.
 """
 from __future__ import annotations
 
@@ -566,13 +567,24 @@ METODOS = (("ic95", "el método analítico"), ("ic95_bca", "el BCa"))
 def _anchura_observada(k: dict) -> str:
     """Lo que el intervalo del kappa ponderado dio EN ESTA SESION, para
     ponerlo al lado del texto declarado antes de ella: sus limites y su
-    anchura por los dos metodos, y si 0,4 y 0,6 quedan dentro. Todo, con
-    los limites tal como se imprimen."""
+    anchura por los dos metodos, y si 0,4 y 0,6 quedan dentro.
+
+    Los limites van como en la frase del criterio, que esta dos lineas mas
+    arriba en el acta: con `_f_frente_a_umbral` (los decimales que hagan
+    falta si quedan pegados a un umbral) y comparados a seis decimales, como
+    `frente_a_umbrales`. Asi las dos frases no pueden decir cosas distintas
+    del 0,4. La anchura es la de los limites tal como se imprimen."""
     if k.get("frente_a_umbrales") is None:
         return "el kappa ponderado no es calculable con estas lecturas, y su intervalo tampoco."
-    limites = {nombre: [round(x, 2) + 0.0 for x in k[clave]] for clave, nombre in METODOS}
-    va = " y ".join(f"de {_f(li)} a {_f(ls)} con {nombre} (anchura {_f(ls - li)})"
-                    for nombre, (li, ls) in limites.items())
+    limites = {nombre: [_a_seis(x) for x in k[clave]] for clave, nombre in METODOS}
+
+    def impreso(x) -> float:
+        return float(_f_frente_a_umbral(x).replace(",", "."))
+
+    va = " y ".join(
+        f"de {_f_frente_a_umbral(li)} a {_f_frente_a_umbral(ls)} con {nombre} "
+        f"(anchura {_f(impreso(ls) - impreso(li))})"
+        for nombre, (li, ls) in limites.items())
 
     def dentro(umbral):
         return [nombre for nombre, (li, ls) in limites.items() if li <= umbral <= ls]

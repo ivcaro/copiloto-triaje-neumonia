@@ -47,9 +47,12 @@ LADOS_DE_LA_IMAGEN = (("a_favor", "con la imagen a favor"),
 METRICAS = (("auc", "AUC", 3), ("brier", "Brier", 3), ("pendiente", "pendiente", 2),
             ("intercepto", "intercepto", 3), ("ece", "ECE", 3))
 PAREADAS = (("auc", "ΔAUC", 3), ("brier", "ΔBrier", 3), ("pendiente", "Δpendiente", 2))
-# Los nombres de las figuras, de las celdas y el titulo se escriben aqui y
-# solo aqui: el guion los toma de este modulo.
+# Los titulos de las figuras, los nombres de las celdas y el titulo del
+# documento se escriben aqui y solo aqui: el guion los toma de este modulo.
+# Los nombres de las figuras los dice tambien el guion, que es quien sabe
+# que funcion dibuja cada una; una prueba ata las dos listas.
 PREFIJO_FIABILIDAD = "fiabilidad_"
+TITULO_FIABILIDAD = "Fiabilidad por deciles"
 FIGURAS_GLOBALES = (
     ("horquilla_por_celda", "El oráculo frente a la horquilla, por celda y lado"),
     ("contencion_rejilla", "Contención del oráculo en la horquilla, por celda"),
@@ -890,6 +893,40 @@ def _fuera_de_su_intervalo(celdas) -> tuple:
     return fuera, total
 
 
+def _en_el_borde(celdas) -> tuple:
+    """(cuantos intervalos tienen anchura cero, en cuantos mas la estimacion
+    coincide con un extremo). Sin redondear."""
+    sin_anchura = en_un_extremo = 0
+    for celda in celdas:
+        for ruta, par in (celda.get("intervalos") or {}).items():
+            valor = _valor(celda, ruta)
+            if _falta(valor) or _falta(par[0]) or _falta(par[1]):
+                continue
+            if par[0] == par[1]:
+                sin_anchura += 1
+            elif valor in (par[0], par[1]):
+                en_un_extremo += 1
+    return sin_anchura, en_un_extremo
+
+
+def _lo_del_borde(celdas) -> str:
+    """La frase de los intervalos sin anchura o con la estimacion en un
+    extremo; nada si no hay ninguno."""
+    sin_anchura, en_un_extremo = _en_el_borde(celdas)
+    if not sin_anchura and not en_un_extremo:
+        return ""
+    partes = []
+    if sin_anchura:
+        partes.append(f"{entero(sin_anchura)} {'tiene' if sin_anchura == 1 else 'tienen'} "
+                      f"anchura cero")
+    if en_un_extremo:
+        partes.append(f"en {entero(en_un_extremo)}{' más' if sin_anchura else ''} la "
+                      f"estimación coincide con un extremo")
+    return (f" De esos intervalos, {_lista(partes)}: pasa con las fracciones que valen "
+            f"exactamente 0 o 1 y con las medianas y los cuartiles de cifras que se "
+            f"repiten, donde muchas réplicas dan el mismo valor.")
+
+
 def _del_lado(celdas, clave: str, debajo: bool) -> tuple:
     """Las celdas cuya pendiente de `clave` queda por debajo (o por encima) de
     1, las que de ellas llevan intervalo, y las que lo tienen ENTERO de ese
@@ -1044,10 +1081,16 @@ def _lectura(r: dict) -> list:
             f"cada réplica remuestrea esos mismos casos, cada placa con su clínica. El "
             f"intervalo son los percentiles de las réplicas: en "
             f"esta corrida, de {entero(r['parametros']['replicas'])} réplicas, {cuenta} "
-            f"(comparadas sin redondear). El intervalo de la ECE está desplazado hacia "
+            f"(comparadas sin redondear).{_lo_del_borde(r['celdas'])} El "
+            f"intervalo de la ECE está desplazado hacia "
             f"arriba por construcción: la ECE de un remuestreo suma el ruido del "
             f"remuestreo al de la muestra. Por eso la ECE se lee al lado de su suelo y "
-            f"no contra su intervalo, que no se imprime.")
+            f"no contra su intervalo, que no se imprime. **Un intervalo recoge solo el "
+            f"muestreo de los casos —la placa y su clínica— bajo este generador.** No "
+            f"recoge la incertidumbre del calibrador ni la de los umbrales del "
+            f"generador, que se ajustan una vez sobre estas mismas placas, ni la de las "
+            f"RV publicadas, que se toman como exactas, ni la de ρ, que es el supuesto "
+            f"de cada celda.")
     if destacadas:
         lineas += ["", "Hacia qué lado cae el oráculo, por eje y por lado de la imagen "
                        "(estimaciones puntuales):", ""]
@@ -1115,7 +1158,7 @@ def _titulo_de_figura(nombre: str, r: dict) -> str:
     if nombre.startswith(PREFIJO_FIABILIDAD):
         for c in r["celdas"]:
             if nombre == PREFIJO_FIABILIDAD + slug_de_celda(c):
-                return f"Fiabilidad por deciles, celda {c['nombre']} ({rotulo})"
+                return f"{TITULO_FIABILIDAD}, celda {c['nombre']} ({rotulo})"
     return f"{nombre} ({rotulo})"
 
 

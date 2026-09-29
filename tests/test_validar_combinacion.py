@@ -242,8 +242,16 @@ def test_las_figuras_salen_con_su_nombre_a_300_dpi_y_con_el_rotulo(
     for ruta in rutas:
         with Image.open(ruta) as imagen:
             titulos[ruta.name] = imagen.info["Title"]
-    assert "0A" in titulos["fiabilidad_0a.png"]
-    assert "(0,3; 0,3)" in titulos["fiabilidad_r1-030_r0-030.png"]
+    assert titulos == {
+        "fiabilidad_0a.png": "Fiabilidad por deciles — celda 0A — simulación semisintética",
+        "fiabilidad_r1-030_r0-030.png":
+            "Fiabilidad por deciles — celda (0,3; 0,3) — simulación semisintética",
+        "horquilla_por_celda.png":
+            "El oráculo frente a la horquilla, por celda y lado — simulación semisintética",
+        "contencion_rejilla.png":
+            "Contención del oráculo en la horquilla, por celda — simulación semisintética",
+        "pendiente_rejilla.png":
+            "Pendiente de la independencia, por celda — simulación semisintética"}
     assert validar.figuras_presentes(tmp_path / "figuras") == sorted(rutas)
 
 

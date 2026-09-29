@@ -380,12 +380,20 @@ destacadas (§4.5) y en 0A; el resto de la rejilla se publica sin intervalos.
 > que cada réplica, además de remuestrear las placas, **volvía a sortear la
 > clínica**. Eso cuenta dos veces el ruido del sorteo —el remuestreo de los
 > casos ya lo lleva—: medido sobre la simulación, la varianza de las réplicas
-> salía × 1,57 en mediana y un «IC 95 %» cubría más del 99 %. Remuestrear
-> primero y sortear después quita la doble cuenta, pero centra las réplicas en
-> la media sobre la clínica y no en la estimación que se publica, y el
-> intervalo por percentiles sigue cubriendo más del 99 %. El bootstrap de los
-> casos de la estimación es el que da el 95 %. Las estimaciones puntuales no
-> cambian; los intervalos se estrechan.
+> salía × 1,57 en mediana, y el «IC 95 %» de una cifra que depende de la
+> clínica cubría bastante más del 95 % (entre el 97 y el 100 %, según la
+> cifra, en un ensayo con la misma estructura; el de la imagen sola, que no
+> depende de la clínica, no cambiaba). Remuestrear primero y sortear después
+> quita la doble cuenta, pero centra las réplicas en la media sobre la clínica
+> y no en la estimación que se publica, y el intervalo por percentiles sigue
+> cubriendo de más (entre el 96 y el 100 % en el mismo ensayo). El bootstrap
+> de los casos de la estimación cubre entre el 92 y el 95 %. Las estimaciones puntuales no cambian; de los
+> 328 intervalos con anchura, 292 se estrechan y 13 se ensanchan (la anchura
+> mediana pasa a 0,83 de la anterior).
+>
+> Un intervalo así recoge solo el muestreo de los casos bajo este generador:
+> no la incertidumbre del calibrador, ni la de `z_y` y `τ`, ni la de las RV
+> publicadas, ni la de `ρ`. El documento lo dice.
 
 **Cuatro modelos puntuales** (casos con asma conocida; los `no_se` van aparte):
 

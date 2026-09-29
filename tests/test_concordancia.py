@@ -538,12 +538,29 @@ def test_lo_observado_va_al_lado_de_lo_declarado_y_no_lo_contradice():
         "el intervalo del 95 % del kappa ponderado va de 0,28 a 0,82 con el método "
         "analítico (anchura 0,54) y de 0,25 a 0,79 con el BCa (anchura 0,54); el 0,4 y el "
         "0,6 quedan dentro con los dos métodos.")
-    # los límites, tal como se imprimen: 0,3996 se imprime «0,40» y contiene el 0,4
+    # pegado a un umbral, el límite se imprime con los decimales que lo
+    # distinguen, como en la frase del criterio, y con esos se decide
     assert cc._anchura_observada(k(0.7, (0.3996, 0.95), (0.41, 0.95))) == (
-        "el intervalo del 95 % del kappa ponderado va de 0,40 a 0,95 con el método "
+        "el intervalo del 95 % del kappa ponderado va de 0,3996 a 0,95 con el método "
         "analítico (anchura 0,55) y de 0,41 a 0,95 con el BCa (anchura 0,54); el 0,4 queda "
         "dentro con el método analítico y fuera con el BCa y el 0,6 queda dentro con los "
         "dos métodos.")
+    # el caso que se contradecía: a dos decimales 0,4027 es «0,40» y contendría
+    # el 0,4, mientras el criterio dice que el límite (0,403) no queda por debajo
+    sesion = k(0.674, (0.4027, 0.9457), (0.36, 0.93))
+    observado = cc._anchura_observada(sesion)
+    assert observado == (
+        "el intervalo del 95 % del kappa ponderado va de 0,403 a 0,95 con el método "
+        "analítico (anchura 0,55) y de 0,36 a 0,93 con el BCa (anchura 0,57); el 0,4 queda "
+        "dentro con el BCa y fuera con el método analítico y el 0,6 queda dentro con los "
+        "dos métodos.")
+    criterio = cc._criterio("El kappa ponderado", sesion)
+    assert "con el BCa (0,36) y no con el método analítico (0,403)" in criterio
+    # lo que a seis decimales ES el umbral queda dentro, y se imprime como el umbral
+    assert "va de 0,40 a 0,95 con el método analítico" in cc._anchura_observada(
+        k(0.7, (0.3999999999999999, 0.95), (0.4000004, 0.95)))
+    assert "el 0,4 y el 0,6 quedan dentro con los dos métodos" in cc._anchura_observada(
+        k(0.7, (0.3999999999999999, 0.95), (0.4000004, 0.95)))
     assert "de 0,00 a 0,00 con el método analítico (anchura 0,00)" in cc._anchura_observada(
         k(0.0, (-5.3e-16, 0.0), (0.0, 0.0)))
     nan = float("nan")
@@ -553,6 +570,42 @@ def test_lo_observado_va_al_lado_de_lo_declarado_y_no_lo_contradice():
                        "frente_a_umbrales": None}):
         assert cc._anchura_observada(sin_kappa) == (
             "el kappa ponderado no es calculable con estas lecturas, y su intervalo tampoco.")
+
+
+def test_lo_observado_y_el_criterio_no_se_contradicen_sobre_el_0_4():
+    """Un barrido de límites inferiores alrededor de 0,4: si el criterio dice
+    que el límite queda por debajo de 0,4 con un método, «Observado» tiene
+    el 0,4 dentro con ese método; si dice que no, lo tiene fuera o el límite
+    es el propio umbral. Y cada frase cuadra con los límites que imprime."""
+    import re
+    candidatos = [0.4 + d for d in (-0.3, -0.05, -0.0051, -0.005, -0.0049, -0.0004,
+                                    -4e-7, -1e-16, 0.0, 1e-16, 4e-7, 0.0004, 0.0027,
+                                    0.0049, 0.005, 0.0051, 0.05)]
+    for li_a in candidatos:
+        for li_b in candidatos:
+            r = {"kappa": 0.7, "ic95": [li_a, 0.95], "ic95_bca": [li_b, 0.93], "n": 24}
+            r["frente_a_umbrales"] = cc.frente_a_umbrales(r)
+            observado = cc._anchura_observada(r)
+            # lo que dice del 0,4 (los límites superiores dejan el 0,6 dentro)
+            del_0_4 = re.search(
+                r"; el 0,4(?: y el 0,6)? quedan? (dentro con los dos métodos|fuera con "
+                r"los dos métodos|dentro con (el método analítico|el BCa) y fuera con)",
+                observado)
+            assert del_0_4, observado
+            for li, metodo, clave in ((li_a, "el método analítico", "li_analitico_lt_0_4"),
+                                      (li_b, "el BCa", "li_bca_lt_0_4")):
+                debajo = r["frente_a_umbrales"][clave]
+                impreso = re.search(rf"de (-?[\d,]+) a [\d,]+ con {metodo}", observado)
+                inferior = float(impreso.group(1).replace(",", "."))
+                dentro = (del_0_4.group(1) == "dentro con los dos métodos"
+                          or del_0_4.group(2) == metodo)
+                # lo que dice del 0,4 cuadra con el límite que imprime...
+                assert dentro == (inferior <= 0.4), (li, observado)
+                # ...y con lo que dice el criterio de ese mismo límite
+                if debajo:
+                    assert dentro, (li, observado)
+                else:
+                    assert not dentro or inferior == 0.4, (li, observado)
 
 
 def test_dentro_de_la_horquilla_da_el_recuento_y_redondea_como_el_bot():

@@ -183,10 +183,11 @@ def replica(conjunto: Conjunto, salidas: dict, l_oraculo, b: int) -> dict:
     La clinica NO se vuelve a sortear. El remuestreo de las parejas ya
     lleva el ruido del sorteo: sorteando otra vez en cada replica ese ruido
     se cuenta dos veces (medido en esta simulacion: la varianza sale × 1,57
-    en mediana, y un «IC 95 %» cubre mas del 99 %). Remuestrear primero y
-    sortear despues quita la doble cuenta, pero centra las replicas en la
-    media sobre la clinica y no en la estimacion que se publica, y el
-    intervalo por percentiles sigue cubriendo mas del 99 %."""
+    en mediana, y el «IC 95 %» de una cifra que depende de la clinica cubre
+    bastante mas del 95 %). Remuestrear primero y sortear despues quita la
+    doble cuenta, pero centra las replicas en la media sobre la clinica y
+    no en la estimacion que se publica, y el intervalo por percentiles
+    sigue cubriendo de mas."""
     n = conjunto.y.size
     filas = np.random.default_rng(SEMILLA_INDICES + b).integers(0, n, n)
     return aplanar(medir(conjunto, salidas, l_oraculo, filas))

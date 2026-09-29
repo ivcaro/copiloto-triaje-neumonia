@@ -58,10 +58,12 @@ bootstrap (las 25 celdas, la imagen sola, los insumos y los parámetros) y
 falla si lo versionado deja de corresponder a los insumos o al código;
 también regenera el análisis desde el JSON y lo compara con el versionado,
 y comprueba que cada figura lleva la huella de ese JSON.
-**No** repite el bootstrap ni compara los píxeles de las figuras. De los
-intervalos comprueba que están todos y bien formados; sus cifras solo
-quedan vigiladas de rebote, las que el análisis imprime y con los decimales
-con que las imprime. De las figuras comprueba el nombre, la resolución, la
+Del bootstrap vuelve a calcular los intervalos de **una** celda, (0,6; 0),
+con sus 1 000 réplicas, y los compara con los publicados. **No** repite el
+de las otras seis ni compara los píxeles de las figuras: de esos intervalos
+comprueba que están los de todas las cifras medidas y que están bien
+formados; sus cifras solo quedan vigiladas de rebote, las que el análisis
+imprime y con los decimales con que las imprime. De las figuras comprueba el nombre, la resolución, la
 huella y que el título lleva el rótulo y, en las de fiabilidad, el nombre
 de su celda. Si se toca algo que cambie el bootstrap o el dibujo, hay que
 volver a correr el guion, porque ninguna prueba lo va a pedir. Si la prueba
@@ -102,7 +104,9 @@ de `Responder` quedan fuera. Es, por tanto, una **cota inferior** de la
 latencia de extremo a extremo: cumplir un umbral aquí es necesario, no
 suficiente. Lo que queda fuera se acota cronometrando a mano 5 consultas
 completas (`total_a_mano`: el tiempo total, que no se suma al p50). El JSON
-lleva la fecha de la corrida (`corrida_del`), la regla con que se decide la
+lleva la fecha de la corrida (`corrida_del`: la de modificación de
+`latencias.json`, que es la de la medición si el fichero no se copia ni se
+edita después), la regla con que se decide la
 etiqueta del KPI y la etiqueta (`veredicto`), y un `glosario` de sus claves
 y de los motivos de descarte. Los casos
 son placas de RSNA con clínica inventada: no hay usuarios ni pacientes. Si el

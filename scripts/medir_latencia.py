@@ -72,6 +72,8 @@ REGLA = (f"La etiqueta del KPI se decide con el p95 de `ms_extremo` frente al "
          f"cumple, «cumplido con cambio», porque `ms_extremo` no ve todo el "
          f"tramo. Lo cronometrado a mano pesa en contra: si su mediana supera "
          f"los {UMBRALES_S['minimo']} s, «no cumplido»; si no se cronometró, no pesa. "
+         f"El p95 y la mediana se comparan sin redondear, no como quedan "
+         f"escritos (8,004 s se escribe «8.0» y supera los 8 s). "
          f"El p50 y el objetivo de {UMBRALES_S['objetivo']} s se reportan al lado y no "
          f"deciden (spec de SP5 §6.2).")
 CUMPLIDO, NO_CUMPLIDO = "cumplido con cambio", "no cumplido"
@@ -85,8 +87,10 @@ GLOSARIO = {
                             "`ms_extremo_ordenados`; no son umbrales"),
     "modelo_p50_ms": ("la mediana de lo que el servidor dijo que tardó el modelo en "
                       "esas mismas consultas; es una parte de `ms_extremo`"),
-    "corrida_del": ("el día, en la hora de Ecuador continental (UTC−5), en que el "
-                    "arnés escribió la corrida que aquí se resume"),
+    "corrida_del": ("la fecha de modificación del fichero de la corrida "
+                    "(`latencias.json`), en la hora de Ecuador continental (UTC−5). "
+                    "Es el día en que el arnés la escribió solo si el fichero no "
+                    "se ha copiado ni editado después"),
     "descartadas": {
         "sin_bots": "la fila no pasó por los bots, y no tiene `ms_extremo`",
         "rechazo_previsto": ("un caso que el sistema tiene que rechazar (perfiles 05 "
@@ -160,7 +164,9 @@ def veredicto(p95_ms, manual) -> dict:
 
 
 def fecha_de(ruta) -> str:
-    """El dia (UTC−5) en que se escribio el fichero de la corrida."""
+    """El dia (UTC−5) de la ultima modificacion del fichero de la corrida:
+    el dia de la medicion, si nadie lo ha copiado ni editado despues. El
+    glosario del JSON lo dice."""
     escrito = pathlib.Path(ruta).stat().st_mtime
     return datetime.datetime.fromtimestamp(escrito, tz=ZONA).date().isoformat()
 

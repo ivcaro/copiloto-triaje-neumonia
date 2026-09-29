@@ -587,11 +587,22 @@ def test_los_nombres_de_las_figuras_son_los_del_guion(validar):
     assert validar.TITULO == informe.TITULO and validar.ROTULO in informe.TITULO
     assert validar.NOMBRE_MODELO == dict(informe.MODELOS)
     assert validar._rho(0.15) == informe.rho(0.15) == "0,15"
+    # ni los títulos de las figuras; y los nombres que el guion dice son los de aquí
+    assert validar.TITULO_DE_FIGURA == dict(informe.FIGURAS_GLOBALES)
+    assert [validar.HORQUILLA] + [f"{que}_rejilla" for que in validar.REJILLAS] == list(
+        validar.FIGURAS_GLOBALES)
+    guion = pathlib.Path(validar.__file__).read_text(encoding="utf-8")
+    for tecleado in ([titulo for _, titulo in informe.FIGURAS_GLOBALES]
+                     + [informe.TITULO_FIABILIDAD, informe.TITULO, "contencion_rejilla",
+                        "pendiente_rejilla"]):
+        assert tecleado not in guion, tecleado
 
 
 def test_nada_del_paquete_importa_matplotlib():
     """El Dockerfile instala el paquete entero, sin el extra `figuras`: un
-    `import matplotlib` en `src/` pasaría aquí y rompería el contenedor."""
+    `import matplotlib` en `src/` pasaría aquí, que lo tiene instalado, e
+    incumpliría la restricción; en un módulo de los que el servidor importa,
+    además, rompería el contenedor."""
     raiz = pathlib.Path(informe.__file__).resolve().parents[2]
     assert raiz.name == "src"
     fuentes = sorted(raiz.rglob("*.py"))
@@ -1014,6 +1025,49 @@ def test_la_ece_va_sin_intervalo_y_el_documento_dice_por_que(texto, resultados_m
             "ECE de un remuestreo suma el ruido del remuestreo al de la muestra. Por eso "
             "la ECE se lee al lado de su suelo y no contra su intervalo, que no se "
             "imprime.") in lectura
+
+
+def test_el_documento_dice_lo_que_un_intervalo_no_recoge(texto, resultados_minimos):
+    lectura = _seccion(texto, "Lectura de los resultados")
+    assert ("**Un intervalo recoge solo el muestreo de los casos —la placa y su clínica— "
+            "bajo este generador.** No recoge la incertidumbre del calibrador ni la de "
+            "los umbrales del generador, que se ajustan una vez sobre estas mismas "
+            "placas, ni la de las RV publicadas, que se toman como exactas, ni la de ρ, "
+            "que es el supuesto de cada celda.") in lectura
+    # sin bootstrap no hay intervalos de los que hablar
+    otro = copy.deepcopy(resultados_minimos)
+    for celda in otro["celdas"]:
+        celda.pop("intervalos", None)
+    assert "Un intervalo recoge" not in informe.redactar(otro)
+
+
+def test_los_intervalos_sin_anchura_o_con_la_estimacion_en_un_extremo_se_cuentan(
+        resultados_minimos):
+    def celda(valor, intervalo):
+        return {"modelos": {"imagen": {"auc": valor}},
+                "intervalos": {"modelos.imagen.auc": list(intervalo)}}
+    assert informe._en_el_borde([celda(0.5, (0.4, 0.6))]) == (0, 0)
+    assert informe._en_el_borde([celda(1.0, (1.0, 1.0))]) == (1, 0)
+    assert informe._en_el_borde([celda(0.4, (0.4, 0.6)), celda(0.6, (0.4, 0.6))]) == (0, 2)
+    # sin redondear: 0,4001 no es el extremo 0,4, aunque se impriman igual
+    assert informe._en_el_borde([celda(0.4001, (0.4, 0.6))]) == (0, 0)
+    assert informe._en_el_borde([celda(None, (0.4, 0.6)), {"modelos": {}}]) == (0, 0)
+    assert informe._lo_del_borde([celda(0.5, (0.4, 0.6))]) == ""
+    assert informe._lo_del_borde([celda(1.0, (1.0, 1.0))]).startswith(
+        " De esos intervalos, 1 tiene anchura cero: pasa con las fracciones")
+    assert informe._lo_del_borde([celda(0.4, (0.4, 0.6))] * 2).startswith(
+        " De esos intervalos, en 2 la estimación coincide con un extremo: pasa")
+    tres = [celda(1.0, (1.0, 1.0)), celda(0.0, (0.0, 0.0)), celda(0.4, (0.4, 0.6))]
+    assert informe._lo_del_borde(tres) == (
+        " De esos intervalos, 2 tienen anchura cero y en 1 más la estimación coincide "
+        "con un extremo: pasa con las fracciones que valen exactamente 0 o 1 y con las "
+        "medianas y los cuartiles de cifras que se repiten, donde muchas réplicas dan el "
+        "mismo valor.")
+    # en el documento va detrás de la cuenta de las que quedan fuera
+    lectura = _seccion(informe.redactar(resultados_minimos), "Lectura de los resultados")
+    sin_anchura, en_un_extremo = informe._en_el_borde(resultados_minimos["celdas"])
+    assert sin_anchura > 0
+    assert f"(comparadas sin redondear). De esos intervalos, {sin_anchura} tienen " in lectura
 
 
 def test_el_documento_dice_que_bootstrap_es(texto):

@@ -12,8 +12,12 @@ cambia las crudas, el calibrador, el generador, el oráculo, las métricas, una
 semilla, un umbral o el documento sin volver a correr
 `scripts/validar_combinacion.py`, esto falla.
 
-QUÉ NO VIGILA. Los intervalos del bootstrap no se vuelven a calcular (son
-minutos): se comprueba que están todos, donde tienen que estar y bien
+Del bootstrap se vuelven a calcular, con sus 1 000 réplicas, los intervalos
+de UNA celda, (0,6; 0), que es asimétrica: si cambia el método del bootstrap,
+una semilla o una métrica, esto falla.
+
+QUÉ NO VIGILA. Los intervalos de las otras seis celdas no se vuelven a
+calcular: se comprueba que cada cifra medida lleva el suyo y que están bien
 formados. Sus cifras solo quedan vigiladas de rebote: las que el documento
 imprime, y con los decimales con que las imprime, porque el documento se
 regenera y se compara. Tampoco se comparan los píxeles de las figuras: solo
@@ -39,6 +43,10 @@ RESULTADOS = datos.CARPETA / "resultados_simulacion.json"
 ANALISIS = datos.REPO / "docs" / "validacion-semisintetica-sp5.md"
 ROTULO = "simulación semisintética"
 DEL_BOOTSTRAP = ("intervalos", "replicas")     # lo unico de una celda que no se recalcula
+RECALCULADA = (0.6, 0.0)                       # la celda cuyo bootstrap si se repite
+# Lo que mide `simulacion.medir`, que es lo que lleva intervalo.
+MEDIDO = ("modelos", "pareadas", "horquilla", "discordantes", "no_se")
+SIN_INTERVALO = ("suelo", "fiabilidad")        # de cada modelo: solo en la estimacion
 # Las claves de primer nivel que NO se comparan con `_comparar`, y por que:
 # `parametros` lleva las replicas, que son del bootstrap (se compara sin ellas);
 # `celdas` se compara celda a celda, sin lo del bootstrap; `entorno` es de la
@@ -206,8 +214,33 @@ def test_el_codigo_de_hoy_reproduce_todo_lo_publicado_salvo_el_bootstrap(publica
                 "hipotesis", "escala_legible", "correlacion_teorica"} <= set(celda)
 
 
+def _rutas_medidas(celda) -> list:
+    """Las rutas de las cifras `float` que mide `medir` en una celda: las que
+    tienen que llevar intervalo."""
+    medido = {clave: celda[clave] for clave in MEDIDO}
+    medido["modelos"] = {
+        modelo: {k: v for k, v in cifras.items() if k not in SIN_INTERVALO}
+        for modelo, cifras in celda["modelos"].items()}
+    return sorted(simulacion.aplanar(medido))
+
+
+def test_el_bootstrap_de_una_celda_se_repite_y_da_lo_publicado(publicados):
+    """Una celda asimétrica, entera: las 1 000 réplicas y los 51 intervalos."""
+    rho1, rho0 = RECALCULADA
+    publicada = next(c for c in publicados["celdas"]
+                     if (c["rho1"], c["rho0"]) == RECALCULADA)
+    assert publicada["destacada"] and publicada["replicas"] == simulacion.B_REPLICAS
+    hoy = simulacion.evaluar_celda(simulacion.cargar_conjunto(), rho1, rho0,
+                                   replicas=simulacion.B_REPLICAS)
+    assert sorted(hoy["intervalos"]) == sorted(publicada["intervalos"])
+    assert len(hoy["intervalos"]) == 51
+    for ruta, (li, ls) in publicada["intervalos"].items():
+        assert hoy["intervalos"][ruta] == pytest.approx([li, ls], abs=1e-9), ruta
+
+
 def test_cada_intervalo_publicado_esta_bien_formado(publicados):
-    """El bootstrap no se repite aqui: se comprueba su forma, no sus cifras."""
+    """El bootstrap de las demás celdas no se repite aquí: se comprueba su
+    forma, y que cada cifra medida lleva su intervalo."""
     total = 0
     for celda in publicados["celdas"]:
         for ruta, (li, ls) in celda.get("intervalos", {}).items():
@@ -218,9 +251,12 @@ def test_cada_intervalo_publicado_esta_bien_formado(publicados):
             assert isinstance(valor, (int, float)), (celda["nombre"], ruta)
             total += 1
     assert total > 300
-    # y estan todos: cada celda con bootstrap lleva los mismos que las demas
-    rutas = [sorted(c["intervalos"]) for c in publicados["celdas"] if "intervalos" in c]
-    assert len(rutas) == 7 and all(r == rutas[0] for r in rutas)
+    # y estan todos: cada cifra que se mide en la celda lleva el suyo
+    con_bootstrap = [c for c in publicados["celdas"] if "intervalos" in c]
+    assert len(con_bootstrap) == 7
+    for celda in con_bootstrap:
+        assert sorted(celda["intervalos"]) == _rutas_medidas(celda), celda["nombre"]
+        assert len(celda["intervalos"]) == 51, celda["nombre"]
 
 
 def test_las_figuras_publicadas_son_las_de_las_celdas_del_json(publicados, validar):

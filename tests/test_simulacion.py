@@ -329,7 +329,7 @@ def test_cada_replica_remuestrea_los_casos_de_la_estimacion_y_no_vuelve_a_sortea
 def test_las_replicas_se_centran_en_la_estimacion_que_se_publica(conjunto):
     """Lo que separa este bootstrap de uno que vuelve a sortear la clínica:
     en (0,6; 0) la pendiente del extremo conservador de la estimación es
-    1,13, y la media sobre otras clínicas, 1,08. Las réplicas tienen que
+    1,13, y la media sobre otras clínicas, 1,09. Las réplicas tienen que
     rodear a la primera: el intervalo es de la cifra que se publica."""
     _, _, salidas, l_or = _escenario(conjunto, 0.6, 0.0)
     ruta = "modelos.conservador.pendiente"
@@ -377,12 +377,21 @@ def test_el_bootstrap_de_una_celda_es_el_de_su_estimacion(conjunto, monkeypatch)
     assert celda["replicas"] == 3 and celda["intervalos"] == {"modelos.imagen.auc": [0.0, 1.0]}
     (llamada,) = recibido
     assert llamada["conjunto"] is conjunto and llamada["replicas"] == 3
-    clinica = generador.generar(oraculo.ajustar(conjunto.q, conjunto.y, 0.3, 0.0),
-                                simulacion.SEMILLA_PUNTUAL)
+    modelo = oraculo.ajustar(conjunto.q, conjunto.y, 0.3, 0.0)
+    clinica = generador.generar(modelo, simulacion.SEMILLA_PUNTUAL)
     esperadas = simulacion.salidas_del_sistema(conjunto.prevalencia, clinica, conjunto.rv)
-    for clave in ("independencia", "conservador", "l_minima", "l_maxima"):
-        assert np.array_equal(llamada["salidas"][clave], esperadas[clave], equal_nan=True)
-    assert llamada["l_oraculo"].shape == (conjunto.y.size,)
+    assert set(llamada["salidas"]) == set(esperadas)
+    for clave, esperado in esperadas.items():
+        if esperado.dtype == object:
+            assert list(llamada["salidas"][clave]) == list(esperado), clave
+        else:
+            assert np.array_equal(llamada["salidas"][clave], esperado, equal_nan=True), clave
+    # y el oráculo es el de esos mismos casos, no el de otra clínica
+    assert np.array_equal(llamada["l_oraculo"], simulacion.oraculo_de_los_casos(
+        modelo, conjunto.q, clinica))
+    otra = generador.generar(modelo, simulacion.SEMILLA_PUNTUAL + 1)
+    assert not np.array_equal(llamada["l_oraculo"], simulacion.oraculo_de_los_casos(
+        modelo, conjunto.q, otra))
     # y la estimación puntual no depende de que haya bootstrap
     assert {k: v for k, v in celda.items() if k not in ("replicas", "intervalos")} == celda_sin
 

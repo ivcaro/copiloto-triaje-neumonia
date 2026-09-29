@@ -214,7 +214,9 @@ FIGURAS_GLOBALES = tuple(clave for clave, _ in informe.FIGURAS_GLOBALES)
 CLAVE_DE_LA_HUELLA = "Description"
 PREFIJO_DE_LA_HUELLA = f"dibujada de {NOMBRE_RESULTADOS}; sha256 de su contenido: "
 PREFIJO_FIABILIDAD = informe.PREFIJO_FIABILIDAD
-REJILLAS = ("contencion", "pendiente")
+TITULO_DE_FIGURA = dict(informe.FIGURAS_GLOBALES)     # nombre -> titulo
+HORQUILLA = "horquilla_por_celda"
+REJILLAS = ("contencion", "pendiente")                # su figura es `<que>_rejilla`
 
 
 def _pyplot():
@@ -331,7 +333,7 @@ def figura_fiabilidad(celda: dict, destino, huella=None) -> Path:
     ax.set_ylim(-0.02, 1.02)
     for eje in (ax.xaxis, ax.yaxis):
         eje.set_major_formatter(FuncFormatter(lambda v, _: _coma(v, 1)))
-    titulo = f"Fiabilidad por deciles — celda {celda['nombre']} — {ROTULO}"
+    titulo = f"{informe.TITULO_FIABILIDAD} — celda {celda['nombre']} — {ROTULO}"
     _ejes(ax, titulo, "probabilidad predicha (media del decil)", "frecuencia observada")
     ax.legend(fontsize=9, loc="upper left")
     fig.tight_layout()
@@ -373,7 +375,7 @@ def figura_horquilla(resultados: dict, destino, huella=None) -> Path:
     paneles[0].set_yticklabels([c["nombre"] for c in celdas], fontsize=9)
     paneles[0].set_ylabel("celda (ρ1; ρ0)", fontsize=10)
     paneles[0].invert_yaxis()
-    titulo = f"El oráculo frente a la horquilla, por celda y lado — {ROTULO}"
+    titulo = f"{TITULO_DE_FIGURA[HORQUILLA]} — {ROTULO}"
     fig.suptitle(titulo, fontsize=12, fontweight="bold")
     fig.legend(handles=[Patch(facecolor=color, label=nombre) for _, nombre, color in TRAMOS],
                loc="lower center", ncol=3, fontsize=9, frameon=False)
@@ -405,7 +407,6 @@ def figura_rejilla(resultados: dict, destino, que: str, huella=None) -> Path:
         mapa = LinearSegmentedColormap.from_list("azul", RAMPA_AZUL)
         norma = Normalize(vmin=0.0, vmax=100.0)
         decimales, unidad = 1, " %"
-        titulo = f"Contención del oráculo en la horquilla, por celda — {ROTULO}"
         barra = "contención (% de los casos concordantes)"
     else:
         presentes = [v for fila in numeros for v in fila if v == v]
@@ -413,8 +414,8 @@ def figura_rejilla(resultados: dict, destino, que: str, huella=None) -> Path:
         mapa = LinearSegmentedColormap.from_list("divergente", RAMPA_DIVERGENTE)
         norma = TwoSlopeNorm(vcenter=1.0, vmin=1.0 - desvio, vmax=1.0 + desvio)
         decimales, unidad = 2, ""
-        titulo = f"Pendiente de la independencia, por celda — {ROTULO}"
         barra = "pendiente de calibración (< 1 exagera; > 1 se queda corta)"
+    titulo = f"{TITULO_DE_FIGURA[f'{que}_rejilla']} — {ROTULO}"
     mapa = mapa.with_extremes(bad="#f0efec")
     fig, ax = plt.subplots(figsize=(9, 5.5))
     imagen = ax.imshow(numeros, cmap=mapa, norm=norma, origin="lower", aspect="auto")
@@ -464,11 +465,9 @@ def figuras(resultados: dict, carpeta) -> list[Path]:
     rutas = [figura_fiabilidad(c, carpeta / f"{PREFIJO_FIABILIDAD}{slug_de_celda(c)}.png",
                                huella)
              for c in celdas_con_figura(resultados)]
-    rutas.append(figura_horquilla(resultados, carpeta / "horquilla_por_celda.png", huella))
-    rutas.append(figura_rejilla(resultados, carpeta / "contencion_rejilla.png", "contencion",
-                                huella))
-    rutas.append(figura_rejilla(resultados, carpeta / "pendiente_rejilla.png", "pendiente",
-                                huella))
+    rutas.append(figura_horquilla(resultados, carpeta / f"{HORQUILLA}.png", huella))
+    rutas += [figura_rejilla(resultados, carpeta / f"{que}_rejilla.png", que, huella)
+              for que in REJILLAS]
     return rutas
 
 
