@@ -432,19 +432,27 @@ def test_ningun_secreto_viaja_en_el_JSON_exportado():
     """El §12 del spec: ninguno va al repositorio. Las credenciales se
     referencian por id y nombre; sus valores se quedan en n8n."""
     flujo = _flujo()
+    # Si algo falla se dice el nodo o lo que se busco, nunca lo que se
+    # encontro: cada comprobacion se reduce ANTES a un booleano, porque pytest
+    # enseña lo que compara, y lo que imprime una prueba tambien se puede
+    # publicar.
     # Las credenciales se referencian por id y nombre y nada mas: sus valores
     # viven en n8n.
-    for nodo in flujo["nodes"]:
-        for tipo, cred in (nodo.get("credentials") or {}).items():
-            assert set(cred) <= {"id", "name"}, (nodo["name"], tipo, cred)
+    con_de_mas = [f"{nodo['name']} ({tipo})"
+                  for nodo in flujo["nodes"]
+                  for tipo, cred in (nodo.get("credentials") or {}).items()
+                  if not set(cred) <= {"id", "name"}]
+    solo_id_y_nombre = not con_de_mas
+    assert solo_id_y_nombre, f"credenciales con algo mas que id y nombre: {con_de_mas}"
     texto = json.dumps(flujo)
     # Un token de bot de Telegram tiene forma reconocible: <id>:<35 chars>. Se
     # busca la FORMA y no la palabra «token», que aparece legitimamente en los
     # comentarios del flujo al explicar el secret_token del §4.2.
-    assert not re.search(r"\b\d{8,10}:[A-Za-z0-9_-]{35}\b", texto), \
-        "algo con la forma de un token de bot de Telegram"
-    for sospechoso in ("accessToken", "\"password\""):
-        assert sospechoso not in texto, sospechoso
+    parece_un_token = re.search(r"\b\d{8,10}:[A-Za-z0-9_-]{35}\b", texto) is not None
+    assert not parece_un_token, "algo con la forma de un token de bot de Telegram"
+    presentes = [s for s in ("accessToken", "\"password\"") if s in texto]
+    ninguno = not presentes
+    assert ninguno, f"el JSON lleva {presentes}"
 
 
 def test_solo_se_usa_la_credencial_del_bot_del_paciente():

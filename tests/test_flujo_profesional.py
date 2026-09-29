@@ -495,23 +495,31 @@ def test_solo_se_usa_la_credencial_del_bot_del_profesional():
                 for n in _flujo(FLUJO_PACIENTE)["nodes"]
                 for t, c in (n.get("credentials") or {}).items()
                 if t == "telegramApi"}
-    assert not (usadas & paciente), \
+    # sobre un booleano: pytest enseñaria los id de la interseccion
+    comparten = bool(usadas & paciente)
+    assert not comparten, \
         "los dos bots no pueden compartir credencial: un token, un webhook"
 
 
 def test_ningun_secreto_viaja_en_el_JSON_exportado():
     """§12: ninguno va al repositorio. Las credenciales se referencian por id y
-    nombre; sus valores se quedan en n8n."""
+    nombre; sus valores se quedan en n8n. Si algo falla se dice el nodo o lo
+    que se busco, nunca lo que se encontro: cada comprobacion se reduce ANTES
+    a un booleano, porque pytest enseña lo que compara."""
     flujo = _flujo()
-    for nodo in flujo["nodes"]:
-        for tipo, cred in (nodo.get("credentials") or {}).items():
-            assert set(cred) <= {"id", "name"}, (nodo["name"], tipo, cred)
+    con_de_mas = [f"{nodo['name']} ({tipo})"
+                  for nodo in flujo["nodes"]
+                  for tipo, cred in (nodo.get("credentials") or {}).items()
+                  if not set(cred) <= {"id", "name"}]
+    solo_id_y_nombre = not con_de_mas
+    assert solo_id_y_nombre, f"credenciales con algo mas que id y nombre: {con_de_mas}"
     texto = json.dumps(flujo)
-    assert not re.search(r"\b\d{8,10}:[A-Za-z0-9_-]{35}\b", texto), \
-        "algo con la forma de un token de bot de Telegram"
-    for sospechoso in ("accessToken", "\"password\"", "api.telegram.org/bot1",
-                       "Bearer "):
-        assert sospechoso not in texto, sospechoso
+    parece_un_token = re.search(r"\b\d{8,10}:[A-Za-z0-9_-]{35}\b", texto) is not None
+    assert not parece_un_token, "algo con la forma de un token de bot de Telegram"
+    presentes = [s for s in ("accessToken", "\"password\"", "api.telegram.org/bot1",
+                             "Bearer ") if s in texto]
+    ninguno = not presentes
+    assert ninguno, f"el JSON lleva {presentes}"
 
 
 def test_el_workflow_no_guarda_los_datos_de_ejecucion():
