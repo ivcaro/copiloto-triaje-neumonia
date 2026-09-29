@@ -1,0 +1,12 @@
+{
+  "https://n8n.ejemplo.test": "https://automatizacion.ejemplo.test",
+  "CRED_TELEGRAM_PACIENTE": "id-de-ejemplo-telegram-paciente",
+  "CRED_TELEGRAM_PROFESIONAL": "id-de-ejemplo-telegram-profesional",
+  "CRED_TELEGRAM_AVISOS": "id-de-ejemplo-telegram-avisos",
+  "CRED_POSTGRES_COPILOTO": "id-de-ejemplo-postgres",
+  "CRED_SECRETO_PACIENTE": "id-de-ejemplo-secreto-paciente",
+  "CRED_SECRETO_PROFESIONAL": "id-de-ejemplo-secreto-profesional",
+  "bot-paciente": "BotDeEjemploPaciente",
+  "bot-profesional": "BotDeEjemploProfesional",
+  "bot-avisos": "BotDeEjemploAvisos"
+}
