@@ -1993,9 +1993,10 @@ y gana el aviso del redespliegue.
 **Ficheros:**
 - Modificar: `servidor/docker-compose.yml` (líneas 72-73, 82, 120, 123 y 128)
 - Modificar: `servidor/.env.ejemplo` (gana `RED_N8N`)
-- Modificar: `docs/sp2-despliegue.md` (18 ediciones, todas las de la red)
+- Modificar: `docs/sp2-despliegue.md` (18 ediciones, todas las de la red, y las que
+  ponen al día lo que la guía decía de un solo contenedor sin estado)
 - Modificar: `docs/sp3-operacion.md` (línea 586)
-- Prueba: `tests/test_arrancar.py` (cuatro pruebas nuevas al final, y `import re`)
+- Prueba: `tests/test_arrancar.py` (cinco pruebas nuevas al final, y `import re`)
 
 **Interfaces:**
 - Consume: nada de las otras tareas del plan. No depende de ninguna y ninguna
@@ -2098,7 +2099,9 @@ def test_el_compose_exige_RED_N8N_y_no_le_pone_valor_por_defecto():
 
 
 def test_los_dos_servicios_van_a_la_red_externa_red_n8n():
-    yaml = pytest.importorskip("yaml")
+    yaml = pytest.importorskip(
+        "yaml", reason="sin PyYAML no se lee el compose: se queda sin verificar que "
+                       "los dos servicios van a la red externa `red_n8n`")
     compose = yaml.safe_load(
         (RAIZ / "servidor" / "docker-compose.yml").read_text(encoding="utf-8"))
     # Una sola red, con clave neutra, externa, y con el nombre por entorno.
@@ -2116,10 +2119,84 @@ def test_el_env_de_ejemplo_declara_RED_N8N_con_un_valor_de_ejemplo():
 
 def test_la_guia_de_despliegue_no_promete_un_valor_por_defecto_para_la_red():
     guia = (RAIZ / "docs" / "sp2-despliegue.md").read_text(encoding="utf-8")
-    assert "${RED_N8N:-" not in guia
+    assert "${RED_N8N:-" not in guia and "${RED_N8N-" not in guia
     assert "${RED_N8N:?" in guia
     # La fila de la tabla de variables (paso 10) lo dice con todas las letras.
     assert "| `RED_N8N` | **ninguno: es obligatoria** |" in guia
+
+
+PARAN_O_BORRAN = {"down", "stop", "kill", "rm", "restart", "pause", "prune"}
+
+
+def _las_que_paran(bloque):
+    """Las ordenes de docker de un bloque de shell que paran o borran algo.
+    El bloque se parte por `&&`, `||`, `;`, `|` y saltos de linea."""
+    paran = []
+    for orden in re.split(r"&&|\|\||;|\||\n", bloque):
+        if "docker" not in orden:
+            continue
+        palabras = orden[orden.index("docker"):].split()
+        if PARAN_O_BORRAN & set(palabras):
+            paran.append(" ".join(palabras))
+    return paran
+
+
+def test_el_primer_redespliegue_no_baja_el_servicio_antes_de_construir():
+    """El apartado lo sigue una persona en un servidor que comparte con otros
+    servicios. Las ordenes que redespliegan construyen y recrean sin parar
+    nada antes, y esperan a los dos contenedores; la unica orden que para algo
+    es la bajada de reserva, que va por nombre de proyecto, sin volumenes y
+    DESPUES de construir; la base y los contenedores se apuntan antes y se
+    comparan despues; hay copia de la base; y la vuelta atras restaura el
+    `.env` antes de levantar."""
+    guia = (RAIZ / "docs" / "sp2-despliegue.md").read_text(encoding="utf-8")
+    inicio = guia.index("### El primer redespliegue con `RED_N8N` obligatoria")
+    apartado = guia[inicio:guia.index("\n## 7. ", inicio)]
+    bloques = re.findall(r"```bash\n(.*?)```", apartado, flags=re.S)
+    # en todo el apartado, dentro o fuera de un bloque, nadie baja con los volumenes
+    assert not re.search(r"down\s+(-v\b|--volumes)", apartado)
+
+    # las dos ordenes que redespliegan: la del punto 5 y la de la vuelta atras
+    redespliegues = [b for b in bloques if "up -d --build" in b]
+    assert len(redespliegues) == 2
+    for orden in redespliegues:
+        assert _las_que_paran(orden) == [], "no para ni borra nada antes de construir"
+        assert ("docker compose -f servidor/docker-compose.yml up -d --build && "
+                "for c in copiloto-bd copiloto-mcp") in orden, (
+            "no nombra un servicio, y espera a los dos contenedores")
+
+    # la unica orden del apartado que para algo es la bajada de reserva
+    con_parada = [b for b in bloques if _las_que_paran(b)]
+    assert len(con_parada) == 1
+    reserva = con_parada[0]
+    assert _las_que_paran(reserva) == ["docker compose -p copiloto-mcp down"]
+    construir = "docker compose -f servidor/docker-compose.yml build"
+    levantar = "docker compose -f servidor/docker-compose.yml up -d"
+    assert reserva.index(construir) < reserva.index(" down") < reserva.index(levantar)
+    assert "for c in copiloto-bd copiloto-mcp" in reserva
+
+    # como estan la base y los contenedores, antes (punto 3) y despues (punto 6)
+    assert apartado.count("'volumen creado: {{.CreatedAt}}'") == 2
+    assert apartado.count("'{{.Name}} creado: {{.Created}}'") == 2
+    assert apartado.count("-tAc 'select count(*) from consultas'") == 3, (
+        "antes, despues y tras restaurar la copia")
+
+    # la copia de la base: antes de redesplegar, y un fallo no pasa por bueno
+    copias = [b for b in bloques if "pg_dump" in b]
+    assert len(copias) == 1
+    assert "set -o pipefail" in copias[0] and "umask 077" in copias[0]
+    assert apartado.index("pg_dump") < apartado.index("up -d --build")
+
+    # el .env se guarda antes de tocarlo, la linea se ANADE, y la vuelta
+    # atras lo restaura antes de levantar el commit anterior
+    guardar = "cp -p servidor/.env ~/copiloto.env.antes-de-red_n8n"
+    restaurar = "cp -p ~/copiloto.env.antes-de-red_n8n servidor/.env"
+    assert apartado.index(guardar) < apartado.index(">> /opt/copiloto/servidor/.env")
+    assert not re.search(r"[^>]> /opt/copiloto/servidor/\.env", apartado)
+    vuelta = [b for b in redespliegues if "git checkout --detach <commit del punto 1>" in b]
+    assert len(vuelta) == 1
+    assert (vuelta[0].index(restaurar) < vuelta[0].index("git checkout --detach")
+            < vuelta[0].index("up -d --build"))
 ```
 
 - [ ] **Paso 3: Correrlas y verlas fallar**
@@ -2128,7 +2205,7 @@ def test_la_guia_de_despliegue_no_promete_un_valor_por_defecto_para_la_red():
 C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_arrancar.py
 ```
 
-Esperado: `4 failed, 5 passed`. Fallan las cuatro nuevas, cada una por lo
+Esperado: `5 failed, 5 passed`. Fallan las cinco nuevas, cada una por lo
 suyo:
 
 | Prueba | Falla en | Porque |
@@ -2136,9 +2213,10 @@ suyo:
 | `test_el_compose_exige_RED_N8N_y_no_le_pone_valor_por_defecto` | `assert all(uso.startswith("${RED_N8N:?") …)` | el único uso de la variable es de la forma `${RED_N8N:-…}`, con un nombre por defecto |
 | `test_los_dos_servicios_van_a_la_red_externa_red_n8n` | `assert compose["networks"] == {…}` | la clave de la red es otra y su `name` lleva valor por defecto |
 | `test_el_env_de_ejemplo_declara_RED_N8N_con_un_valor_de_ejemplo` | `assert "RED_N8N=cambiar-esto" in lineas` | la plantilla no tiene esa línea |
-| `test_la_guia_de_despliegue_no_promete_un_valor_por_defecto_para_la_red` | `assert "${RED_N8N:-" not in guia` | la guía copia el bloque viejo del compose |
+| `test_la_guia_de_despliegue_no_promete_un_valor_por_defecto_para_la_red` | `assert "${RED_N8N:-" not in guia …` | la guía copia el bloque viejo del compose |
+| `test_el_primer_redespliegue_no_baja_el_servicio_antes_de_construir` | `guia.index("### El primer redespliegue…")` | la guía todavía no tiene ese apartado |
 
-Si alguna de las cuatro pasa ya, para: el árbol no es el del commit
+Si alguna de las cinco pasa ya, para: el árbol no es el del commit
 `1f328da` en estos ficheros.
 
 - [ ] **Paso 4: El compose y la plantilla del entorno**
@@ -2242,9 +2320,10 @@ RED_N8N=cambiar-esto
 C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_arrancar.py
 ```
 
-Esperado: `1 failed, 8 passed`. La que falla es
+Esperado: `2 failed, 8 passed`. Las que fallan son las dos que leen la guía:
 `test_la_guia_de_despliegue_no_promete_un_valor_por_defecto_para_la_red`, en
-su primera aserción.
+su primera aserción, y
+`test_el_primer_redespliegue_no_baja_el_servicio_antes_de_construir`.
 
 Y la salida del `grep` que la guía va a citar como literal:
 
@@ -2351,72 +2430,199 @@ docker compose up -d
 
 ### El primer redespliegue con `RED_N8N` obligatoria: volver a crear los contenedores
 
-Hasta SP5 el compose traía escrito el nombre de la red. Desde que `RED_N8N` es
-obligatoria, **la clave de la red cambió en el compose** (ahora es `red_n8n`)
-y el nombre ya no viene en el fichero. Una instalación levantada con el
-compose anterior necesita, **una sola vez**, que los dos contenedores se
-vuelvan a crear. La base de datos **no se toca**: sus datos viven en el volumen
-`copiloto_bd_datos`, que sobrevive al `down` siempre que no lleve `-v`.
+Hasta SP5 el compose traía escrito el nombre de la red, como valor por defecto
+de `RED_N8N`. Desde que la variable es obligatoria, **la clave de la red
+cambió en el compose** (ahora es `red_n8n`) y el nombre ya no viene en el
+fichero. Una instalación levantada con el compose anterior necesita, **una
+sola vez**, que los dos contenedores se vuelvan a crear. **No hace falta
+bajarlos antes:** Compose ve que la configuración cambió y los recrea él, y lo
+hace **después** de construir la imagen y de comprobar que la red existe. Si
+algo de eso falla, los contenedores de antes siguen en marcha. La base de
+datos **no se toca**: sus datos viven en el volumen `copiloto_bd_datos`, que
+sobrevive a que el contenedor se recree.
 
-Mientras dura, unos dos minutos, n8n no alcanza al copiloto ni a la base: los
-bots contestan con su mensaje de error. Hazlo cuando no haya consultas en curso.
+Esto se ensayó el 28-sep-2026 con un proyecto de prueba de la misma forma (dos
+servicios, una red externa, un volumen con nombre) y Compose v5.2.0: con la
+variable ausente, con una errata en el nombre de la red y con una construcción
+que falla, `up` se detiene **sin tocar** los contenedores que había; con todo
+bien, los recrea, y el volumen es el mismo y conserva sus datos. También se
+ensayaron la vuelta atrás y la copia de la base con su restauración. **No se
+ha ensayado en el servidor**, donde la versión de Compose puede ser otra: por
+eso los puntos 1 y 3 apuntan de dónde se parte y guardan una copia, y al final
+está escrito cómo volver.
 
-**1. Antes del `git pull`, declarar la variable.** El nombre es el de la red
-donde está hoy el contenedor; pregúntaselo a él:
+Es para una instalación que es un clon de git (el camino A del paso 3.1). Con
+el camino B el código se trae como la primera vez, y del punto 1 vale solo la
+copia del `.env`.
+
+Mientras Compose recrea los contenedores y el copiloto vuelve a estar
+`healthy` —alrededor de un minuto— n8n no alcanza ni al copiloto ni a la base:
+los bots contestan con su mensaje de error. Hazlo cuando no haya consultas en
+curso.
+
+**1. Apuntar de dónde se parte y guardar el `.env`.** El `.env` es el fichero
+que tiene la contraseña de la base: se guarda una copia **fuera** del
+repositorio antes de tocarlo. Y una `RED_N8N` exportada en la sesión manda
+sobre la del `.env`, así que se retira:
+
+```bash
+cd /opt/copiloto && unset RED_N8N && git rev-parse HEAD && cp -p servidor/.env ~/copiloto.env.antes-de-red_n8n && echo "copia hecha"
+```
+
+Apunta el commit que imprime: es al que se vuelve si algo sale mal.
+
+**2. Declarar la variable, antes del `git pull`.** Mira primero si ya está:
+
+```bash
+grep -c '^RED_N8N=' /opt/copiloto/servidor/.env
+```
+
+Si da `1`, ya está declarada: **no añadas nada**, y pasa a comprobar, más
+abajo, que su valor es el nombre de la red. Si da `0`, el nombre es el de la
+red donde está hoy el contenedor; pregúntaselo a él:
 
 ```bash
 docker inspect copiloto-mcp --format '{{range $red, $c := .NetworkSettings.Networks}}{{println $red}}{{end}}'
 ```
 
-Añade a `/opt/copiloto/servidor/.env` la línea `RED_N8N=` seguida de ese
-nombre, y comprueba que quedó:
+Tiene que salir **un solo nombre**. Añádelo al final del `.env` con esta
+orden, cambiando `<RED_N8N>` por ese nombre. Lleva `>>`, que añade; con un
+solo `>` se borraría el fichero, contraseña incluida:
 
 ```bash
-grep -c '^RED_N8N=.' /opt/copiloto/servidor/.env
+printf '\nRED_N8N=%s\n' '<RED_N8N>' >> /opt/copiloto/servidor/.env
 ```
 
-Esperado: `1`.
-
-**2. Apuntar el volumen de la base**, para compararlo al final:
+Comprueba que quedó, una sola vez y con el nombre de la red, y que la
+contraseña sigue ahí:
 
 ```bash
-docker volume ls --filter name=copiloto_bd_datos
+grep -c '^RED_N8N=.' /opt/copiloto/servidor/.env; grep -c '^COPILOTO_BD_PASSWORD=.' /opt/copiloto/servidor/.env; grep '^RED_N8N=' /opt/copiloto/servidor/.env
 ```
 
-**3. Traer el código y comprobar que el compose nuevo se deja leer**, sin
-levantar nada:
+Esperado: `1`, `1` y la línea `RED_N8N=` con el nombre. **Si no sale eso**
+—la línea quedó dos veces, lleva todavía el marcador, o falta la contraseña—
+no repitas el `printf` encima: restaura la copia y vuelve a empezar este
+punto.
 
 ```bash
-cd /opt/copiloto && git pull --ff-only && docker compose -f servidor/docker-compose.yml config --quiet && echo "el compose se deja leer"
+cp -p ~/copiloto.env.antes-de-red_n8n /opt/copiloto/servidor/.env
 ```
 
-Si en vez de la frase sale `required variable RED_N8N is missing a value`,
-vuelve al punto 1: **no sigas**.
-
-**4. Bajar por nombre de proyecto y volver a levantar.** El `down` va **sin
-`-v` ni `--volumes`**: con cualquiera de los dos se borra la base.
+**3. Apuntar cómo están la base y los contenedores, y sacar una copia de la
+base.** Primero lo que se va a comparar al final: cuándo se creó el volumen,
+cuántas consultas guarda la base y cuándo se crearon los dos contenedores.
 
 ```bash
-docker compose -p copiloto-mcp down
-cd /opt/copiloto && docker compose -f servidor/docker-compose.yml up -d --build
+docker volume inspect "$(docker inspect copiloto-bd --format '{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}}{{end}}{{end}}')" --format 'volumen creado: {{.CreatedAt}}'
+docker exec copiloto-bd psql -U copiloto -d copiloto -tAc 'select count(*) from consultas'
+docker inspect copiloto-mcp copiloto-bd --format '{{.Name}} creado: {{.Created}}'
 ```
 
-**5. Comprobar** que el volumen es el mismo del punto 2, que los dos
-contenedores están `healthy` y que siguen en la red de n8n:
+Y la copia, que es con lo que se repara la base si al final no es la que
+había. Se queda fuera del repositorio y solo la puede leer quien la hace:
 
 ```bash
-docker volume ls --filter name=copiloto_bd_datos
-docker compose -f servidor/docker-compose.yml ps
+(umask 077; set -o pipefail; docker exec copiloto-bd pg_dump --clean --if-exists -U copiloto -d copiloto | gzip > ~/copiloto-bd.antes-de-red_n8n.sql.gz) && ls -l ~/copiloto-bd.antes-de-red_n8n.sql.gz
+```
+
+Tiene que terminar enseñando el fichero. Si en su lugar sale un error de
+`pg_dump`, no hay copia: no sigas.
+
+**4. Traer el código y comprobar, sin levantar nada,** que el compose nuevo se
+deja leer y que la red que dice el `.env` existe:
+
+```bash
+cd /opt/copiloto && git pull --ff-only && docker compose -f servidor/docker-compose.yml config --quiet && docker network inspect "$(sed -n 's/^RED_N8N=//p' servidor/.env)" --format 'la red existe: {{.Name}}'
+```
+
+Tiene que terminar con `la red existe:` y el nombre del punto 2. **Si no
+termina así, sea cual sea el error, no sigas:** hasta aquí no se ha tocado
+ningún contenedor y el servicio sigue como estaba. Si el mensaje es `required
+variable RED_N8N is missing a value`, vuelve al punto 2.
+
+**5. Redesplegar.** Es la orden de siempre, pero **sin nombrar el servicio**,
+para que Compose recree los dos contenedores, y esperando a los dos:
+
+```bash
+cd /opt/copiloto && docker compose -f servidor/docker-compose.yml up -d --build && for c in copiloto-bd copiloto-mcp; do for i in $(seq 1 30); do e=$(docker inspect -f '{{.State.Health.Status}}' $c 2>/dev/null || echo ausente); [ "$e" = healthy ] && break; sleep 5; done; echo "$c: $e"; done
+```
+
+Primero construye la imagen —minutos, con el servicio todavía en marcha— y
+después recrea. Lo que Compose va pintando mientras tanto depende de la
+terminal (líneas sueltas, o una lista que se actualiza en su sitio): no te
+guíes por eso. Lo que cuenta es cómo termina, `copiloto-bd: healthy` y
+`copiloto-mcp: healthy`, y el punto 6.
+
+**6. Comprobar**, con las mismas órdenes del punto 3 y una más:
+
+```bash
+docker inspect copiloto-mcp copiloto-bd --format '{{.Name}} creado: {{.Created}}'
+docker volume inspect "$(docker inspect copiloto-bd --format '{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}}{{end}}{{end}}')" --format 'volumen creado: {{.CreatedAt}}'
+docker exec copiloto-bd psql -U copiloto -d copiloto -tAc 'select count(*) from consultas'
 docker inspect copiloto-mcp copiloto-bd --format '{{.Name}}: {{range $red, $c := .NetworkSettings.Networks}}{{$red}} {{end}}'
 ```
 
-Y termina con la sonda de salud del paso 6 y con una consulta de prueba por el
-bot: que la base conserva lo que tenía se ve en que el historial sigue ahí
-(`docs/sp3-operacion.md`).
+- los dos contenedores tienen una fecha de creación **posterior** a la del
+  punto 3: Compose los recreó;
+- el volumen tiene **la misma** fecha de creación que en el punto 3;
+- la base guarda, como poco, las mismas consultas;
+- los dos contenedores están en la red del punto 2.
+
+Si todo cuadra, termina con la sonda de salud del paso 6 y con una consulta de
+prueba por el bot.
+
+**Si algo falla.**
+
+- **La orden del punto 5 termina con un error y los dos contenedores
+  conservan la fecha de creación del punto 3** (la construcción, la red): no
+  se ha tocado nada y el servicio sigue con los contenedores de antes. Se
+  corrige la causa y se repite desde el punto 4.
+- **Los contenedores se recrearon y alguno no llega a `healthy`:** mira por
+  qué, con `docker logs --tail 50 copiloto-mcp` o `docker logs --tail 50
+  copiloto-bd`. Para volver a la versión anterior se restaura **antes** el
+  `.env` —el compose anterior también lee `RED_N8N`, y con el `.env` de antes
+  vuelve a la red en la que estaba— y se levanta el commit del punto 1:
+
+  ```bash
+  cd /opt/copiloto && cp -p ~/copiloto.env.antes-de-red_n8n servidor/.env && git checkout --detach <commit del punto 1> && docker compose -f servidor/docker-compose.yml up -d --build && for c in copiloto-bd copiloto-mcp; do for i in $(seq 1 30); do e=$(docker inspect -f '{{.State.Health.Status}}' $c 2>/dev/null || echo ausente); [ "$e" = healthy ] && break; sleep 5; done; echo "$c: $e"; done
+  ```
+
+  Después, las comprobaciones del punto 6. Para volver a intentarlo otro día:
+  `git switch main`, y otra vez desde el punto 1.
+- **`up` se niega a recrear y pide bajar antes el proyecto** (una versión
+  antigua de Compose puede hacerlo cuando cambia la clave de la red):
+  entonces sí, y en este orden, para que el servicio esté caído lo menos
+  posible: construir, bajar **por nombre de proyecto y sin `-v` ni
+  `--volumes`** —con cualquiera de los dos se borra la base—, levantar y
+  esperar:
+
+  ```bash
+  cd /opt/copiloto && docker compose -f servidor/docker-compose.yml build && docker compose -p copiloto-mcp down && docker compose -f servidor/docker-compose.yml up -d && for c in copiloto-bd copiloto-mcp; do for i in $(seq 1 30); do e=$(docker inspect -f '{{.State.Health.Status}}' $c 2>/dev/null || echo ausente); [ "$e" = healthy ] && break; sleep 5; done; echo "$c: $e"; done
+  ```
+
+  El `down` nombra solo a `copiloto-mcp` y a `copiloto-bd`; si nombra
+  cualquier otro contenedor, `Ctrl+C`. Después, las comprobaciones del punto 6.
+- **El volumen tiene otra fecha de creación, o la base guarda menos
+  consultas:** la base no es la que había. Para, y no sigas operando sobre
+  ella. La copia del punto 3 la devuelve a como estaba:
+
+  ```bash
+  gunzip -c ~/copiloto-bd.antes-de-red_n8n.sql.gz | docker exec -i copiloto-bd psql -U copiloto -d copiloto -q -v ON_ERROR_STOP=1 && docker exec copiloto-bd psql -U copiloto -d copiloto -tAc 'select count(*) from consultas'
+  ```
+
+  Tiene que terminar con el recuento del punto 3.
+
+Las dos copias —la del `.env`, que lleva la contraseña, y la de la base, que
+lleva las consultas— se borran cuando todo esté comprobado, y también si se
+abandona el redespliegue:
+
+```bash
+rm ~/copiloto.env.antes-de-red_n8n ~/copiloto-bd.antes-de-red_n8n.sql.gz
+```
 
 A partir de aquí los redespliegues vuelven a ser la orden de una línea de
 arriba.
-
 ````
 
 **G9. Línea 764**: la última línea de la cuarta viñeta («perfecto**, porque el compose no publica puertos a propósito.»): se conserva y gana detrás una quinta viñeta. Texto nuevo:
@@ -2642,6 +2848,236 @@ red, que **no está escrito en el fichero**: lo pone quien despliega, en
 | El compose define **dos servicios**, `copiloto-mcp` y, desde SP3, su base `copiloto-bd`; ninguno es de otro stack | `servidor/docker-compose.yml` |
 ````
 
+**Además, lo que la guía decía de un solo contenedor sin estado.** Desde SP3 el
+proyecto son dos contenedores y un volumen, y la guía la sigue una persona en
+producción: con el texto de antes, el `down` de la vuelta atrás nombraba
+siempre a `copiloto-bd`, y la guía mandaba pulsar `Ctrl+C` al verlo. Estas
+sustituciones se localizan por su texto, que no lleva nada de la lista, y se
+hacen DESPUÉS de las dieciocho de arriba, en este orden. Cada texto que se
+busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+14, en este orden. Cada texto que se busca aparece UNA vez en el fichero tal como está cuando le toca.
+
+1. Busca
+
+````markdown
+| aparece un contenedor nuevo, `copiloto-mcp` | los contenedores que ya corrían |
+| aparece una imagen nueva, `copiloto-mcp:0.1.0` (~2 GB en disco) | las imágenes de los demás stacks |
+| ese contenedor se **une** a la red externa de n8n, la que nombra `RED_N8N` | la red en sí: no se crea, ni se altera, ni se borra |
+````
+
+y sustitúyelo por
+
+````markdown
+| aparecen dos contenedores nuevos, `copiloto-mcp` y, desde SP3, su base `copiloto-bd` | los contenedores que ya corrían |
+| aparecen dos imágenes: la nuestra, `copiloto-mcp:0.1.0` (~2 GB en disco), y, desde SP3, la de PostgreSQL de la base | las imágenes de los demás stacks |
+| los dos contenedores se **unen** a la red externa de n8n, la que nombra `RED_N8N` | la red en sí: no se crea, ni se altera, ni se borra |
+````
+
+2. Busca
+
+````markdown
+| — | volúmenes y datos: este servicio no tiene estado |
+````
+
+y sustitúyelo por
+
+````markdown
+| aparece un volumen con nombre, `copiloto_bd_datos`, con la base del copiloto (desde SP3) | los volúmenes y los datos de los demás stacks |
+````
+
+3. Busca
+
+````markdown
+Los comandos de **solo lectura** del paso 2, como `docker network inspect`, sí
+llevan el nombre literal, y eso es a propósito: ahí lo que se teclea es el nombre
+real que acabas de leer en `docker network ls`.
+````
+
+y sustitúyelo por
+
+````markdown
+Los comandos de **solo lectura** del paso 2, como `docker network inspect`,
+llevan el marcador `<RED_N8N>`, y eso es a propósito: ahí lo que se teclea, en
+su lugar, es el nombre real que acabas de leer en `docker network ls`.
+````
+
+4. Busca
+
+````markdown
+Todo lo que hay que deshacer es un contenedor. No hay migraciones, ni
+volúmenes, ni configuración del sistema que revertir.
+````
+
+y sustitúyelo por
+
+````markdown
+Todo lo que hay que deshacer son dos contenedores: `copiloto-mcp` y, desde
+SP3, su base `copiloto-bd`. No hay migraciones ni configuración del sistema
+que revertir. El volumen de la base, `copiloto_bd_datos`, se queda donde está:
+bajar el servicio no lo borra.
+````
+
+5. Busca
+
+````markdown
+copiloto-mcp   running(1)   /opt/copiloto/servidor/docker-compose.yml
+````
+
+y sustitúyelo por
+
+````markdown
+copiloto-mcp   running(2)   /opt/copiloto/servidor/docker-compose.yml
+````
+
+6. Busca
+
+````markdown
+`running(1)`: un solo contenedor. Si ves cualquier otro proyecto en esa línea,
+no es el nuestro.
+````
+
+y sustitúyelo por
+
+````markdown
+`running(2)`: los dos contenedores del proyecto. Si ves cualquier otro proyecto
+en esa línea, no es el nuestro.
+````
+
+7. Busca
+
+````markdown
+lado, borra los datos del cliente.
+
+Salida literal:
+
+```
+````
+
+y sustitúyelo por
+
+````markdown
+lado, borra los datos del cliente.
+
+Salida (el orden entre los dos contenedores puede variar):
+
+```
+````
+
+8. Busca
+
+````markdown
+ Container copiloto-mcp Removed
+```
+````
+
+y sustitúyelo por
+
+````markdown
+ Container copiloto-mcp Removed
+ Container copiloto-bd Stopping
+ Container copiloto-bd Stopped
+ Container copiloto-bd Removing
+ Container copiloto-bd Removed
+```
+````
+
+9. Busca
+
+````markdown
+Cuatro líneas, las cuatro sobre `copiloto-mcp`. Si aparece el nombre de
+cualquier otro contenedor, para: `Ctrl+C` y vuelve al `docker compose ls`.
+````
+
+y sustitúyelo por
+
+````markdown
+Ocho líneas, cuatro sobre `copiloto-mcp` y cuatro sobre `copiloto-bd`. Según
+la terminal, Compose las pinta así, sueltas, o como una lista que se actualiza
+en su sitio; en los dos casos nombra solo a esos dos contenedores. Si aparece
+el nombre de cualquier otro, para: `Ctrl+C` y vuelve al `docker compose ls`.
+````
+
+10. Busca
+
+````markdown
+lo corres con el copiloto aún arriba, la única diferencia debe ser una línea
+`> copiloto-mcp`, y ninguna más.)
+````
+
+y sustitúyelo por
+
+````markdown
+lo corres con el copiloto aún arriba, las únicas diferencias deben ser dos
+líneas, `> copiloto-bd` y `> copiloto-mcp`, y ninguna más.)
+````
+
+11. Busca
+
+````markdown
+docker compose stop     # se para, se queda creado
+docker compose start    # vuelve en ~10 s
+````
+
+y sustitúyelo por
+
+````markdown
+docker compose -p copiloto-mcp stop     # se para, se queda creado
+docker compose -p copiloto-mcp start    # vuelve en ~10 s
+````
+
+12. Busca
+
+````markdown
+docker compose -p copiloto-mcp start    # vuelve en ~10 s
+```
+
+El servicio lleva `restart: unless-stopped`, así que un contenedor parado a
+````
+
+y sustitúyelo por
+
+````markdown
+docker compose -p copiloto-mcp start    # vuelve en ~10 s
+```
+
+Por nombre de proyecto, como el `down`: así da igual en qué carpeta estés.
+
+El servicio lleva `restart: unless-stopped`, así que un contenedor parado a
+````
+
+13. Busca
+
+````markdown
+```bash
+docker compose up -d
+```
+````
+
+y sustitúyelo por
+
+````markdown
+```bash
+cd /opt/copiloto && docker compose -f servidor/docker-compose.yml up -d
+```
+````
+
+14. Busca
+
+````markdown
+Los pesos y el calibrador viajan dentro de la imagen, así que no se pierde nada
+y el servicio vuelve a estar `healthy` en unos 30 segundos.
+````
+
+y sustitúyelo por
+
+````markdown
+Los pesos y el calibrador viajan dentro de la imagen y la base conserva sus
+datos en el volumen, así que no se pierde nada, y el servicio vuelve a estar
+`healthy` en unos 30 segundos.
+````
+
+
 En `docs/sp3-operacion.md`, **línea 586**: la línea de la lista «Lo que no hay que teclear nunca en ese VPS» que lleva el `docker network rm`. Pasa a:
 
 ```markdown
@@ -2656,8 +3092,8 @@ grep -n -i "_network" servidor/docker-compose.yml servidor/.env.ejemplo docs/sp2
 grep -c "RED_N8N" docs/sp2-despliegue.md
 ```
 
-Esperado: `1374` en la primera; **ninguna línea** en la segunda (el
-nombre de la red, en cualquiera de sus formas, terminaba así); `39` en
+Esperado: `1513` en la primera; **ninguna línea** en la segunda (el
+nombre de la red, en cualquiera de sus formas, terminaba así); `47` en
 la tercera.
 
 Lo que queda en la guía con identificadores es de la tarea 6, y son **diez
@@ -2675,7 +3111,7 @@ tarea:
 | 366 | 376 | ídem |
 | 467 | 477 | cuenta del remoto (URL del clon con el alias) |
 | 716 | 773 | pila de mensajería ajena |
-| 866 | 995 | pila de mensajería ajena |
+| 866 | 1123 | pila de mensajería ajena |
 
 En `docs/sp3-operacion.md` quedan trece líneas, ninguna de la red: son de las
 tareas 4 y 6.
@@ -2686,7 +3122,7 @@ tareas 4 y 6.
 C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_arrancar.py tests/test_sesion.py
 ```
 
-Esperado: `38 passed`.
+Esperado: `39 passed`.
 
 Y la suite entera, para comprobar que nada que pasara ha pasado a fallar:
 
@@ -2694,14 +3130,16 @@ Y la suite entera, para comprobar que nada que pasara ha pasado a fallar:
 C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q
 ```
 
-Esperado: **cuatro aprobadas más que antes de la tarea y ningún fallo ni
+Esperado: **cinco aprobadas más que antes de la tarea y ningún fallo ni
 error nuevo**. En la copia donde se verificó esta tarea (sin los ficheros que git ignora: la caché de puntuaciones, los pesos y el `.env`; y antes de fusionar SP5-B1: con SP5-B1, esa copia da de partida `699 passed, 18 skipped, 7 errors`) la suite pasó de `543 passed, 18 skipped, 7 errors` a `547 passed, 18 skipped, 7 errors`: los 7 errores ya estaban antes de tocar nada (5 son de `tests/test_seleccion_casos.py`, por los ficheros que faltan en la copia) y son los mismos después. En el repo de desarrollo, que sí tiene esos ficheros, y con las tareas anteriores del plan aplicadas, las cifras de partida son otras: apúntalas antes de empezar; lo que tiene que cumplirse es la diferencia.
 
-- [ ] **Paso 8: Verificación en el VPS (la hace el usuario; aquí no hay Docker)**
+- [ ] **Paso 8: Verificación en el VPS (la hace el usuario)**
 
-Este paso **no lo ejecuta quien aplica el plan**: no se arranca Docker en la
-máquina de desarrollo y el redespliegue en producción lo decide el usuario.
-Se deja escrito para él. No bloquea el commit.
+Este paso **no lo ejecuta quien aplica el plan**: el redespliegue en
+producción lo decide el usuario. Se deja escrito para él. No bloquea el
+commit. En la máquina de desarrollo se comprobó con `docker compose config`,
+que solo lee, y con un proyecto de prueba de la misma forma (Compose v5.2.0):
+lo que sigue se cumple allí. En el servidor la versión puede ser otra.
 
 Sin tocar nada en marcha, con el código nuevo en una carpeta aparte o tras el
 `git pull` del redespliegue:
@@ -2714,7 +3152,7 @@ RED_N8N=cambiar-esto docker compose config | grep -A3 '^networks:'
 
 Y, desde la raíz del repositorio, que Compose lee la variable del `.env` que
 está junto al compose aunque se le llame con `-f` desde otra carpeta (es en
-lo que descansa la decisión D3.1, y aquí no se pudo comprobar):
+lo que descansa la decisión D3.1):
 
 ```bash
 cd ..
@@ -2735,9 +3173,12 @@ paso 4 y en la tabla del paso 11 («required variable RED_N8N is missing a
 value: …»), se corrige la cita de la guía con el texto real.
 
 El redespliegue en sí es el apartado nuevo de la guía, «El primer redespliegue
-con `RED_N8N` obligatoria»: declarar la variable en `servidor/.env` **antes**
-del `git pull`, `down` por nombre de proyecto **sin `-v`**, `up -d --build`, y
-comprobar que el volumen `copiloto_bd_datos` sigue ahí.
+con `RED_N8N` obligatoria»: guardar el `.env`, declarar la variable **antes**
+del `git pull`, apuntar cómo está la base y sacar una copia, comprobar que la
+red existe, `up -d --build` **sin bajar nada antes**, y comparar la base y
+los contenedores con lo apuntado. La revisión de esta tarea encontró que la
+primera versión del apartado bajaba el servicio antes de construir; se ensayó
+y no hacía falta.
 
 - [ ] **Paso 9: Commit**
 
@@ -2785,7 +3226,13 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
   - `marcadores_de(texto) -> set` (los marcadores conocidos presentes);
   - `aplicar(texto, valores) -> str` (marcador → valor real) y `retirar(texto, valores) -> str` (valor real → marcador);
   - `leer(ruta) -> str` (UTF-8, con CRLF normalizado a LF), `escribir(ruta, texto)` (en LF), `leer_valores(ruta) -> dict`;
-  - `convertir(entrada, salida, valores, quitar=False) -> dict` (`{marcador: veces}`);
+  - `CLAVES_DEL_WORKFLOW` (`name`, `active`, `nodes`, `connections`, `settings`: lo que se
+    versiona de un workflow, y en ese orden) y `como_se_versiona(datos) -> (texto, claves
+    quitadas)`: el workflow solo con esas claves y escrito como los de `n8n/`; de lo que no
+    tiene `nodes` devuelve `(None, [])`;
+  - `convertir(entrada, salida, valores, quitar=False) -> dict` (`{marcador: veces}`; al
+    retirar, además, `"claves quitadas"`). Al poner los valores, la salida no puede ser la
+    entrada ni caer dentro del repositorio; al retirar un workflow, lo deja como se versiona;
   - `main(argv=None) -> int`, con `--entrada`, `--salida`, `--valores` (por defecto `n8n/valores.local.json`) y `--retirar`; devuelve 0, o 1 con `ERROR: …` en la salida de errores.
 - Produce, en los tres workflows: `credentials.*.id` con el marcador de la tabla del contrato; `credentials.telegramApi.name` con `bot-paciente`, `bot-profesional` o `bot-avisos`; las dos sondas del mantenimiento con `https://n8n.ejemplo.test/webhook/<ruta>`. Los nombres de las credenciales de PostgreSQL y de cabecera, los `webhookId`, los nombres de los nodos y el huso horario NO cambian.
 
@@ -2979,6 +3426,24 @@ def test_un_marcador_desconocido_en_los_valores_es_un_error(mn, valores):
         mn.aplicar(TEXTO, valores)
 
 
+def test_con_los_valores_al_reves_el_error_no_imprime_ninguno(mn, valores):
+    """El despiste natural es escribir {valor real: marcador}, que es el
+    sentido en que trabaja `retirar`. El error no puede repetir las claves:
+    serian todos los valores reales, en la consola de quien despliega."""
+    al_reves = {v: m for m, v in valores.items()}
+    for funcion in (mn.aplicar, mn.retirar):
+        with pytest.raises(mn.ErrorDeMarcadores, match="al reves") as e:
+            funcion(TEXTO, al_reves)
+        for valor in valores.values():
+            assert valor not in str(e.value)
+        assert f"{len(valores)} claves que no son marcadores" in str(e.value)
+    # una errata entre valores reales: se dice la errata, y de lo demas, cuantas
+    mezcla = dict(al_reves, CRED_TELEGRAM_PACIENT="errata")
+    with pytest.raises(mn.ErrorDeMarcadores, match="CRED_TELEGRAM_PACIENT") as e:
+        mn.aplicar(TEXTO, mezcla)
+    assert all(valor not in str(e.value) for valor in valores.values())
+
+
 @pytest.mark.parametrize("url", [
     "https://flujos.inventado.test/", "flujos.inventado.test", "ftp://x.test"])
 def test_la_url_va_con_esquema_y_sin_barra_final(mn, valores, url):
@@ -3036,6 +3501,30 @@ def test_la_cli_no_pone_valores_reales_encima_de_la_entrada(mn, carpeta, capsys)
     assert (carpeta / "entrada.json").read_bytes() == antes
 
 
+def test_la_cli_no_pone_valores_reales_dentro_del_repositorio(
+        mn, carpeta, monkeypatch, capsys):
+    """Ni encima de otro export ni en un fichero nuevo: lo que se escribe
+    dentro del repositorio esta a un `git add` de distancia. El repositorio
+    de esta prueba es una carpeta temporal: si la guarda faltara, la prueba
+    escribiria ahi y no en el de verdad."""
+    repositorio = carpeta / "repositorio"
+    (repositorio / "n8n").mkdir(parents=True)
+    (repositorio / "n8n" / "otro-export.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(mn, "REPO", repositorio)
+    for destino in (repositorio / "n8n" / "otro-export.json",
+                    repositorio / "n8n" / "nuevo.json", repositorio / "nuevo.json"):
+        antes = destino.read_bytes() if destino.exists() else None
+        assert mn.main(["--valores", str(carpeta / "valores.json"),
+                        "--entrada", str(carpeta / "entrada.json"),
+                        "--salida", str(destino)]) == 1
+        assert "FUERA del repositorio" in capsys.readouterr().err
+        assert (destino.read_bytes() if destino.exists() else None) == antes
+    # fuera del repositorio, si
+    assert mn.main(["--valores", str(carpeta / "valores.json"),
+                    "--entrada", str(carpeta / "entrada.json"),
+                    "--salida", str(carpeta / "fuera.json")]) == 0
+
+
 def test_la_cli_retira_encima_de_la_entrada(mn, carpeta, valores):
     (carpeta / "export.json").write_text(mn.aplicar(TEXTO, valores), encoding="utf-8")
     assert mn.main(["--valores", str(carpeta / "valores.json"), "--retirar",
@@ -3069,6 +3558,17 @@ def test_la_cli_no_escribe_nada_si_hay_un_error(mn, carpeta, valores, capsys):
     assert "no es un JSON valido" in capsys.readouterr().err
 
 
+def test_la_cli_dice_el_error_si_un_fichero_no_se_puede_leer(mn, carpeta, capsys):
+    argumentos = ["--valores", str(carpeta / "valores.json"),
+                  "--salida", str(carpeta / "salida.json")]
+    assert mn.main(argumentos + ["--entrada", str(carpeta / "no-existe.json")]) == 1
+    assert capsys.readouterr().err.startswith("ERROR: FileNotFoundError")
+    (carpeta / "latin1.json").write_bytes('{"nota": "señal"}'.encode("latin-1"))
+    assert mn.main(argumentos + ["--entrada", str(carpeta / "latin1.json")]) == 1
+    assert capsys.readouterr().err.startswith("ERROR: UnicodeDecodeError")
+    assert not (carpeta / "salida.json").exists()
+
+
 def test_los_valores_por_defecto_son_los_locales_y_git_los_ignora(mn):
     assert mn.VALORES_LOCALES == N8N / "valores.local.json"
     ignorados = (RAIZ / ".gitignore").read_text(encoding="utf-8").splitlines()
@@ -3085,7 +3585,7 @@ def test_los_valores_de_ejemplo_son_validos_y_cubren_todos_los_marcadores(mn):
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_marcadores_n8n.py`
 
-Esperado: `29 errors`. Todas por lo mismo: la fixture `mn` no puede cargar el script
+Esperado: `32 errors`. Todas por lo mismo: la fixture `mn` no puede cargar el script
 (`FileNotFoundError: … scripts\marcadores_n8n.py`).
 
 - [ ] **Paso 3: Escribir la herramienta, los valores de ejemplo y el `.gitignore`**
@@ -3112,8 +3612,13 @@ Los valores salen de `n8n/valores.local.json` (ignorado por git: marcador ->
 valor real), que se crea copiando `n8n/valores.ejemplo.json` y cambiando los
 valores de ejemplo por los de la instancia. Con `--valores` se lee otro.
 
-No reformatea: sustituye texto y deja lo demas como estaba, con los finales de
-linea en LF. No usa la red ni habla con n8n.
+Al poner los valores no reformatea: sustituye texto y deja lo demas como
+estaba, con los finales de linea en LF. Al retirarlos de un workflow, ademas,
+lo deja como se versiona: solo con las cinco claves que se versionan (`name`,
+`active`, `nodes`, `connections`, `settings`) y escrito como los de `n8n/`.
+Una descarga de n8n trae tambien el `id` del workflow, su `versionId`, la
+huella de la instancia (`meta`), datos de ejecuciones (`pinData`) y etiquetas:
+identifican la instancia y no se versionan. No usa la red ni habla con n8n.
 """
 from __future__ import annotations
 
@@ -3142,8 +3647,17 @@ MARCADORES = (
     "bot-avisos",
 )
 
+# Lo que se versiona de un workflow, y en este orden. Lo demas que trae una
+# descarga de n8n es de la instancia.
+CLAVES_DEL_WORKFLOW = ("name", "active", "nodes", "connections", "settings")
+
 # Un valor con alguno de estos caracteres romperia el JSON al sustituirlo.
 _PROHIBIDOS = re.compile(r'["\\\x00-\x1f]')
+
+# La forma de un marcador. Una clave de los valores que NO la tiene no se
+# repite en ningun mensaje: puede ser un valor real.
+_FORMA_DE_MARCADOR = re.compile(
+    r"CRED_[A-Z0-9_]+|bot-[a-z]+|https?://[A-Za-z0-9.-]*ejemplo\.test")
 
 
 class ErrorDeMarcadores(ValueError):
@@ -3165,8 +3679,20 @@ def _validar(valores: dict) -> None:
                                 "{marcador: valor}")
     desconocidos = set(valores) - set(MARCADORES)
     if desconocidos:
-        raise ErrorDeMarcadores(
-            f"marcadores desconocidos en los valores: {_nombres(desconocidos)}")
+        # Solo se repiten las claves con forma de marcador (una errata). Las
+        # demas pueden ser valores reales: con el fichero escrito al reves,
+        # {valor real: marcador}, el mensaje los imprimiria todos.
+        erratas = {d for d in desconocidos
+                   if isinstance(d, str) and _FORMA_DE_MARCADOR.fullmatch(d)}
+        mensaje = "marcadores desconocidos en los valores: "
+        mensaje += _nombres(erratas) if erratas else "ninguno tiene forma de marcador"
+        otras = len(desconocidos) - len(erratas)
+        if otras:
+            mensaje += (f" ({otras} claves que no son marcadores y no se "
+                        "repiten aqui: las claves son los marcadores y los "
+                        "valores, los de la instancia; ¿esta el fichero al "
+                        "reves?)")
+        raise ErrorDeMarcadores(mensaje)
     for marcador, valor in valores.items():
         if not isinstance(valor, str) or not valor.strip():
             raise ErrorDeMarcadores(f"el valor de {marcador} esta vacio")
@@ -3286,22 +3812,51 @@ def leer_valores(ruta) -> dict:
         raise ErrorDeMarcadores(f"{ruta} no es un JSON valido: {e}") from e
 
 
+def como_se_versiona(datos) -> tuple:
+    """(texto, claves quitadas) de un workflow tal como se versiona: solo con
+    `CLAVES_DEL_WORKFLOW`, en ese orden, y escrito como los de `n8n/`. Lo que
+    no es un workflow (no tiene `nodes`) no se toca: devuelve (None, [])."""
+    if not isinstance(datos, dict) or "nodes" not in datos:
+        return None, []
+    sobran = sorted(set(datos) - set(CLAVES_DEL_WORKFLOW))
+    limpio = {c: datos[c] for c in CLAVES_DEL_WORKFLOW if c in datos}
+    return json.dumps(limpio, ensure_ascii=False, indent=2) + "\n", sobran
+
+
+def _dentro_del_repositorio(ruta: Path) -> bool:
+    try:
+        ruta.resolve().relative_to(REPO)
+    except ValueError:
+        return False
+    return True
+
+
 def convertir(entrada, salida, valores: dict, quitar: bool = False) -> dict:
     """Lee `entrada`, pone o quita los valores y escribe `salida`. Devuelve
-    {marcador: veces} de lo sustituido."""
+    {marcador: veces} de lo sustituido; al retirar, ademas, en la clave
+    `"claves quitadas"`, las del nivel superior que no se versionan."""
     entrada, salida = Path(entrada), Path(salida)
     if not quitar and entrada.resolve() == salida.resolve():
         raise ErrorDeMarcadores(
             "la salida no puede ser la entrada al poner los valores reales: "
             "el export versionado se quedaria con ellos")
+    if not quitar and _dentro_del_repositorio(salida):
+        raise ErrorDeMarcadores(
+            "al poner los valores reales la salida tiene que quedar FUERA del "
+            "repositorio (una carpeta temporal): dentro estaria a un `git "
+            "add` de distancia")
     texto = leer(entrada)
     try:
-        json.loads(texto)
+        datos = json.loads(texto)
     except json.JSONDecodeError as e:
         raise ErrorDeMarcadores(f"{entrada} no es un JSON valido: {e}") from e
     if quitar:
+        versionable, quitadas = como_se_versiona(datos)
+        if versionable is not None:
+            texto = versionable
         resultado = retirar(texto, valores)
         veces = {m: texto.count(v) for m, v in valores.items() if v in texto}
+        veces["claves quitadas"] = quitadas
     else:
         resultado = aplicar(texto, valores)
         veces = {m: texto.count(m) for m in marcadores_de(texto)}
@@ -3328,10 +3883,18 @@ def main(argv=None) -> int:
     except ErrorDeMarcadores as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
+    except (OSError, UnicodeDecodeError) as e:
+        # un fichero que no existe, que no se puede escribir o que no es UTF-8
+        print(f"ERROR: {type(e).__name__}: {e}", file=sys.stderr)
+        return 1
+    quitadas = veces.pop("claves quitadas", [])
     verbo = "retirados" if a.retirar else "puestos"
     for marcador in MARCADORES:
         if marcador in veces:
             print(f"{marcador}: {veces[marcador]}")
+    if quitadas:
+        print("claves de la instancia que no se versionan, quitadas: "
+              + ", ".join(quitadas))
     print(f"valores {verbo}: {sum(veces.values())} sustituciones -> {a.salida}")
     return 0
 
@@ -3382,7 +3945,7 @@ Por qué la herramienta es más estricta de lo que pide el enunciado, para que n
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_marcadores_n8n.py`
 
-Esperado: `29 passed`.
+Esperado: `32 passed`.
 
 - [ ] **Paso 5: Commit**
 
@@ -3440,6 +4003,21 @@ CREDENCIALES = {
     },
 }
 
+# Cuantas veces aparece cada marcador en cada workflow. Un marcador de mas es
+# una cadena nueva que `aplicar` sustituiria sin avisar al desplegar: si cae
+# en el `jsCode` de un nodo, cambia el programa del bot.
+VECES = {
+    "copiloto-paciente.json": {
+        "https://n8n.ejemplo.test": 1, "CRED_TELEGRAM_PACIENTE": 12,
+        "CRED_POSTGRES_COPILOTO": 5, "CRED_SECRETO_PACIENTE": 1, "bot-paciente": 12},
+    "copiloto-profesional.json": {
+        "https://n8n.ejemplo.test": 1, "CRED_TELEGRAM_PROFESIONAL": 9,
+        "CRED_POSTGRES_COPILOTO": 5, "CRED_SECRETO_PROFESIONAL": 1, "bot-profesional": 9},
+    "copiloto-mantenimiento.json": {
+        "https://n8n.ejemplo.test": 2, "CRED_TELEGRAM_AVISOS": 1,
+        "CRED_POSTGRES_COPILOTO": 4, "bot-avisos": 2},
+}
+
 # Lo que no es de la instancia y por eso se queda como esta: el copiloto se
 # llama por el nombre de su servicio en la red de Docker.
 URL_INTERNA = "http://copiloto-mcp:8000/"
@@ -3451,16 +4029,38 @@ def _nodos(fichero):
 
 @pytest.mark.parametrize("fichero", FLUJOS)
 def test_las_credenciales_de_los_workflows_son_marcadores(mn, fichero):
+    # Si falla se dice el nodo, y no la credencial que lleva: lo que imprime
+    # una prueba tambien se puede publicar.
     vistas = {}
     for n in _nodos(fichero):
         for tipo, c in (n.get("credentials") or {}).items():
-            assert set(c) == {"id", "name"}, (n["name"], c)
-            vistas.setdefault(tipo, []).append((c["id"], c["name"]))
+            assert set(c) == {"id", "name"}, (n["name"], sorted(c))
+            vistas.setdefault(tipo, []).append((n["name"], c["id"], c["name"]))
     esperadas = CREDENCIALES[fichero]
     assert set(vistas) == set(esperadas)
     for tipo, (ident, nombre, cuantos) in esperadas.items():
-        assert vistas[tipo] == [(ident, nombre)] * cuantos, (fichero, tipo)
+        con_otra = [nodo for nodo, i, nm in vistas[tipo] if (i, nm) != (ident, nombre)]
+        assert con_otra == [], (fichero, tipo)
+        nodos = len(vistas[tipo])
+        assert nodos == cuantos, (fichero, tipo)
         assert ident in mn.MARCADORES
+
+
+@pytest.mark.parametrize("fichero", FLUJOS)
+def test_cada_marcador_aparece_las_veces_previstas(mn, fichero):
+    texto = mn.leer(N8N / fichero)
+    assert {m: texto.count(m) for m in mn.marcadores_de(texto)} == VECES[fichero]
+
+
+@pytest.mark.parametrize("fichero", FLUJOS)
+def test_los_workflows_se_versionan_solo_con_sus_cinco_claves(mn, fichero):
+    """Una descarga de n8n trae ademas el `id` del workflow, su `versionId`,
+    la huella de la instancia (`meta`), `pinData` y `tags`: son de la
+    instancia, como el dominio. Y lo versionado esta escrito de una sola
+    manera, la de `como_se_versiona`."""
+    texto = mn.leer(N8N / fichero)
+    assert tuple(json.loads(texto)) == mn.CLAVES_DEL_WORKFLOW
+    assert mn.como_se_versiona(json.loads(texto)) == (texto, [])
 
 
 @pytest.mark.parametrize("fichero", FLUJOS)
@@ -3469,8 +4069,9 @@ def test_las_url_de_los_nodos_http_son_el_marcador_o_la_interna(mn, fichero):
         if n["type"] != "n8n-nodes-base.httpRequest":
             continue
         url = n["parameters"]["url"]
-        assert (url.startswith(mn.URL_N8N + "/webhook/")
-                or url.startswith(URL_INTERNA)), (fichero, n["name"], url)
+        conocida = (url.startswith(mn.URL_N8N + "/webhook/")
+                    or url.startswith(URL_INTERNA))
+        assert conocida, (fichero, n["name"])
 
 
 def test_las_dos_sondas_apuntan_al_marcador(mn):
@@ -3478,10 +4079,13 @@ def test_las_dos_sondas_apuntan_al_marcador(mn):
               for n in _nodos("copiloto-mantenimiento.json")
               if n["type"] == "n8n-nodes-base.httpRequest"
               and "/webhook/" in n["parameters"]["url"]}
-    assert sondas == {
+    esperadas = {
         "Webhook del paciente": "https://n8n.ejemplo.test/webhook/copiloto-paciente",
         "Webhook del profesional": "https://n8n.ejemplo.test/webhook/copiloto-profesional",
     }
+    assert sorted(sondas) == sorted(esperadas)
+    a_otro_sitio = [nombre for nombre in esperadas if sondas[nombre] != esperadas[nombre]]
+    assert a_otro_sitio == []
 
 
 @pytest.mark.parametrize("fichero, ruta, token", [
@@ -3492,8 +4096,9 @@ def test_las_dos_sondas_apuntan_al_marcador(mn):
 def test_la_nota_del_webhook_registra_con_el_marcador(fichero, ruta, token):
     (nota,) = [n["notes"] for n in _nodos(fichero)
                if n["type"] == "n8n-nodes-base.webhook"]
-    assert (f'"https://api.telegram.org/bot{token}/setWebhook" '
-            f"-d url=https://n8n.ejemplo.test/webhook/{ruta} ") in nota
+    con_el_marcador = (f'"https://api.telegram.org/bot{token}/setWebhook" '
+                       f"-d url=https://n8n.ejemplo.test/webhook/{ruta} ") in nota
+    assert con_el_marcador, fichero
 
 
 def test_cada_marcador_aparece_en_algun_workflow_y_al_reves(mn):
@@ -3520,6 +4125,43 @@ def test_ida_y_vuelta_con_los_valores_de_ejemplo(mn, fichero):
     assert mn.marcadores_de(puesto) == set()
     assert len(json.loads(puesto)["nodes"]) == len(json.loads(texto)["nodes"])
     assert mn.retirar(puesto, ejemplo) == texto
+
+
+@pytest.mark.parametrize("fichero", FLUJOS)
+def test_retirar_una_descarga_de_n8n_quita_lo_que_es_de_la_instancia(
+        mn, fichero, tmp_path, capsys):
+    """Como lo descarga n8n: con su id, su version, la huella de la instancia,
+    datos de una ejecucion y etiquetas; con las claves en otro orden y con
+    otra sangria. Lo que sale es, letra por letra, lo versionado."""
+    ejemplo = mn.leer_valores(EJEMPLO)
+    versionado = mn.leer(N8N / fichero)
+    desplegado = json.loads(mn.aplicar(versionado, ejemplo))
+    descarga = {"id": "wf-de-la-instancia", "versionId": "version-de-la-instancia",
+                "meta": {"instanceId": "huella-de-la-instancia"},
+                "pinData": {"Un nodo": [{"json": {"dato": "de-una-ejecucion"}}]},
+                "tags": [{"id": "etiqueta-de-la-instancia", "name": "produccion"}]}
+    descarga.update({c: desplegado[c] for c in reversed(mn.CLAVES_DEL_WORKFLOW)})
+    (tmp_path / "descarga.json").write_text(
+        json.dumps(descarga, ensure_ascii=False, indent=4), encoding="utf-8")
+
+    assert mn.main(["--valores", str(EJEMPLO), "--retirar",
+                    "--entrada", str(tmp_path / "descarga.json"),
+                    "--salida", str(tmp_path / "versionable.json")]) == 0
+
+    assert mn.leer(tmp_path / "versionable.json") == versionado
+    dicho = capsys.readouterr().out
+    assert "quitadas: id, meta, pinData, tags, versionId" in dicho
+    for de_la_instancia in ("wf-de-la-instancia", "version-de-la-instancia",
+                            "huella-de-la-instancia", "de-una-ejecucion",
+                            "etiqueta-de-la-instancia"):
+        assert de_la_instancia not in dicho
+        assert de_la_instancia not in mn.leer(tmp_path / "versionable.json")
+
+
+def test_lo_que_no_es_un_workflow_se_retira_sin_reescribirlo(mn, carpeta, valores):
+    """Sin `nodes` no es un workflow: se sustituye texto y nada mas."""
+    assert mn.como_se_versiona(json.loads(TEXTO)) == (None, [])
+    assert mn.como_se_versiona(["una", "lista"]) == (None, [])
 
 
 @pytest.mark.parametrize("fichero", FLUJOS)
@@ -3573,18 +4215,37 @@ La línea 181, dentro de `test_las_sondas_de_webhook_no_llevan_el_secreto_ni_dis
 (`assert p["url"] == f"https://…/webhook/{ruta}"`, con el dominio real), pasa a ser:
 
 ```python
-        assert p["url"] == f"https://n8n.ejemplo.test/webhook/{ruta}"
+        # si falla se dice la sonda y no la URL que lleva
+        al_marcador = p["url"] == f"https://n8n.ejemplo.test/webhook/{ruta}"
+        assert al_marcador, nombre
 ```
 
 La línea 228 (`assert usadas == {"postgres": {CRED_BD}, "telegramApi": {CRED_AVISOS}}, usadas`)
-NO se toca: usa las constantes, y con ellas pasa a afirmar los marcadores.
-
-(c) En `tests/test_flujo_paciente.py`, la línea 457, última de
-`test_solo_se_usa_la_credencial_del_bot_del_paciente` (`assert usadas == {"…"}, usadas    # …`, con
-un id de 16 caracteres y el nombre del bot en el comentario), pasa a ser:
+afirma lo mismo —usa las constantes, y con ellas pasa a afirmar los marcadores—, pero si falla
+no imprime las credenciales que encontró: lo que imprime una prueba también se puede publicar.
+Pasa a ser:
 
 ```python
-    assert usadas == {"CRED_TELEGRAM_PACIENTE"}, usadas    # el marcador (SP5 §6.1)
+    # si falla se dicen los tipos de credencial y cuantas hay de cada uno, no cuales
+    las_de_sp3 = usadas == {"postgres": {CRED_BD}, "telegramApi": {CRED_AVISOS}}
+    assert las_de_sp3, {tipo: len(ids) for tipo, ids in usadas.items()}
+```
+
+(c) En `tests/test_flujo_paciente.py`, el cuerpo de
+`test_solo_se_usa_la_credencial_del_bot_del_paciente`: las cinco líneas que van de
+`usadas = {c["id"]` (línea 453) a la aserción de la 457 (`assert usadas == {"…"}, usadas    # …`,
+con un id de 16 caracteres y el nombre del bot en el comentario). Pasan a ser:
+
+```python
+    con_telegram = [(n["name"], c["id"])
+                    for n in _flujo()["nodes"]
+                    for t, c in (n.get("credentials") or {}).items()
+                    if t == "telegramApi"]
+    # El marcador (SP5 §6.1). Si falla se dicen los nodos y no la credencial
+    # que llevan: lo que imprime una prueba tambien se puede publicar.
+    con_otra = [nodo for nodo, c in con_telegram if c != "CRED_TELEGRAM_PACIENTE"]
+    solo_la_suya = bool(con_telegram) and not con_otra
+    assert solo_la_suya, con_otra
 ```
 
 (d) En `tests/test_flujo_profesional.py`, cinco líneas.
@@ -3614,7 +4275,10 @@ def test_solo_se_usa_la_credencial_del_bot_del_profesional():
               for n in _flujo()["nodes"]
               for t, c in (n.get("credentials") or {}).items()
               if t == "telegramApi"}
-    assert usadas == {"CRED_TELEGRAM_PROFESIONAL"}, usadas   # el marcador (SP5 §6.1)
+    # El marcador (SP5 §6.1). Si falla se dice cuantas credenciales distintas
+    # hay y no cuales: lo que imprime una prueba tambien se puede publicar.
+    solo_la_suya = usadas == {"CRED_TELEGRAM_PROFESIONAL"}
+    assert solo_la_suya, f"{len(usadas)} credenciales de Telegram distintas"
 ```
 
 Y la línea 790, en un docstring (empieza por `rotulaba «` y lleva el nombre del bot entre
@@ -3628,8 +4292,9 @@ comillas angulares), pasa a ser:
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_marcadores_n8n.py tests/test_mantenimiento.py tests/test_flujo_paciente.py tests/test_flujo_profesional.py`
 
-Esperado: `15 failed, 104 passed, 20 skipped`. Los quince:
-- once de `tests/test_marcadores_n8n.py`: `test_las_credenciales_de_los_workflows_son_marcadores` (los tres
+Esperado: `18 failed, 114 passed, 20 skipped`. Los dieciocho:
+- catorce de `tests/test_marcadores_n8n.py`: `test_cada_marcador_aparece_las_veces_previstas` (los tres
+  ficheros), `test_las_credenciales_de_los_workflows_son_marcadores` (los tres
   ficheros), `test_las_url_de_los_nodos_http_son_el_marcador_o_la_interna[copiloto-mantenimiento.json]`,
   `test_las_dos_sondas_apuntan_al_marcador`, `test_la_nota_del_webhook_registra_con_el_marcador` (los dos),
   `test_cada_marcador_aparece_en_algun_workflow_y_al_reves` y `test_ida_y_vuelta_con_los_valores_de_ejemplo`
@@ -3912,7 +4577,7 @@ filas con la misma cuenta puede variar), y ninguna fila más:
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_marcadores_n8n.py tests/test_mantenimiento.py tests/test_flujo_paciente.py tests/test_flujo_profesional.py tests/test_sql_de_los_nodos.py`
 
-Esperado: `121 passed, 20 skipped` (45 de ellas son las de `tests/test_marcadores_n8n.py`).
+Esperado: `134 passed, 20 skipped` (58 de ellas son las de `tests/test_marcadores_n8n.py`).
 
 - [ ] **Paso 10: Commit**
 
@@ -3968,7 +4633,7 @@ Esperado: código de salida 0. La última línea de `decidir.mjs`, `mantenimient
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_marcadores_n8n.py tests/test_mantenimiento.py tests/test_flujo_paciente.py tests/test_flujo_profesional.py tests/test_sql_de_los_nodos.py`
 
-Esperado: `121 passed, 20 skipped`.
+Esperado: `134 passed, 20 skipped`.
 
 - [ ] **Paso 13: Commit**
 
@@ -4052,6 +4717,15 @@ el workflow no funciona: sus nodos apuntan a credenciales que no existen en la
 instancia, y las dos sondas del mantenimiento preguntan a un dominio que no
 existe.
 
+**Después de importar, mirar en n8n que cada workflow usa SU bot.** El
+repositorio ya no puede vigilarlo: qué credencial real hay detrás de cada
+marcador lo dice `valores.local.json`, y si ahí se cruzan dos `id` —o se cuela
+el de una credencial que no es del proyecto— la herramienta los pone sin
+rechistar. Abre un nodo de Telegram de cada workflow y comprueba que la
+credencial es la del bot del paciente en el del paciente, la del profesional en
+el del profesional y la de pruebas y avisos en el de mantenimiento. La primera
+vez, empieza por el de mantenimiento, que no atiende a nadie.
+
 **Quitar los valores reales, ANTES de versionar un export.** El workflow se
 descarga de n8n a la carpeta temporal y se deja en `n8n/` ya con marcadores:
 
@@ -4059,15 +4733,39 @@ descarga de n8n a la carpeta temporal y se deja en `n8n/` ya con marcadores:
 C:\venv-copiloto\Scripts\python.exe scripts/marcadores_n8n.py --retirar --entrada $env:TEMP\n8n-real\export.json --salida n8n/copiloto-mantenimiento.json
 ```
 
+Una descarga de n8n trae más de lo que se versiona: el `id` del workflow, su
+`versionId`, la huella de la instancia (`meta`), datos de ejecuciones
+(`pinData`) y etiquetas. Identifican la instancia, como el dominio. Al retirar,
+la herramienta se queda con las cinco claves que se versionan (`name`,
+`active`, `nodes`, `connections` y `settings`), escribe el fichero como los de
+`n8n/` y dice qué claves quitó.
+
 Después, `git diff n8n/` tiene que enseñar solo lo que se cambió a propósito
-en el workflow, y `C:\venv-copiloto\Scripts\python.exe -m pytest tests/test_marcadores_n8n.py`
-tiene que pasar. Al terminar se borra la carpeta temporal.
+en el workflow, y estas dos pruebas tienen que pasar:
+
+```powershell
+C:\venv-copiloto\Scripts\python.exe -m pytest tests/test_marcadores_n8n.py tests/test_anonimato.py
+```
+
+La segunda mira el árbol entero contra las huellas: caza lo que la herramienta
+no conoce, como el dominio escrito con otro subdominio o el `id` de una
+credencial que se volvió a crear y no está en `valores.local.json`. Si el
+`git diff` enseña de más, no se versiona hasta entender por qué. Al terminar se
+borra la carpeta temporal.
+
+La primera vez que se exporte un workflow que no se ha desplegado todavía desde
+el repositorio, sus notas llevan aún el texto de antes de los marcadores. En el
+del profesional eso se ve en dos sitios —la nota del webhook y un comentario
+del nodo `Desenlace`—, donde el `git diff` enseñará un texto distinto del
+versionado: se corrige a mano con el del repositorio, o se despliega antes
+desde el repositorio y se exporta después.
 
 El script se niega —sin escribir nada— si en `valores.local.json` falta un
 marcador, si dos marcadores comparten valor, si al poner los valores la salida
-es el propio fichero de entrada, o si tras retirar queda algún valor real
-escrito de otra forma (en mayúsculas, o el dominio sin el `https://`); en ese
-último caso dice la línea, y se corrige a mano.
+es el propio fichero de entrada o cae dentro del repositorio, o si tras retirar
+queda algún valor real escrito de otra forma (en mayúsculas, o el dominio sin
+el `https://`); en ese último caso dice la línea, y se corrige a mano. Ningún
+mensaje suyo repite un valor real: dice el marcador y la línea.
 ````
 
 - [ ] **Paso 16: Comprobar el manual**
@@ -4100,8 +4798,8 @@ git commit -m "docs(anonimato): poner los valores reales antes de desplegar y qu
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_marcadores_n8n.py tests/test_mantenimiento.py tests/test_flujo_paciente.py tests/test_flujo_profesional.py tests/test_sql_de_los_nodos.py`
 
-Esperado: `121 passed, 20 skipped`. Antes de la tarea, esos mismos ficheros (sin el nuevo) daban
-`76 passed, 20 skipped`: las 45 de diferencia son las de `tests/test_marcadores_n8n.py`, y no hay
+Esperado: `134 passed, 20 skipped`. Antes de la tarea, esos mismos ficheros (sin el nuevo) daban
+`76 passed, 20 skipped`: las 58 de diferencia son las de `tests/test_marcadores_n8n.py`, y no hay
 ninguna prueba que pasara y haya dejado de pasar.
 
 Run: `node tests/decidir.mjs && node tests/formulario.mjs && node tests/mantenimiento.mjs && node tests/profesional.mjs`
@@ -5299,7 +5997,8 @@ añade a la suite la prueba que exige el árbol limpio.
 
 **Interfaces:**
 - Consume: `scripts/verificar_anonimato.py` (tarea 5): `buscar_huellas(raiz, huellas)`,
-  `buscar_secretos(raiz)`, `leer_huellas(ruta)`, y su CLI; la lista en claro
+  `buscar_secretos(raiz, huellas)`, `ficheros_versionados(raiz)`, `leer_huellas(ruta)`, y
+  su CLI; de `tests/test_anonimato.py`, `solo_el_centinela()` y `SIN_LA_LISTA`; la lista en claro
   (`ANONIMATO_LISTA`), secciones `[huellas]` y `[sustituciones]`.
 - Produce: el árbol sin ninguna huella; `test_el_arbol_esta_limpio` en la suite.
 
@@ -5537,10 +6236,16 @@ def _por_fichero(hallazgos, que):
     return lineas
 
 
+@pytest.mark.skipif(solo_el_centinela(), reason=SIN_LA_LISTA)
 def test_el_arbol_esta_limpio():
+    """En el repositorio que se publica `huellas.txt` lleva solo la del
+    centinela (D9) y esta prueba se salta diciendolo: alli no comprobaria
+    nada. Y un recorrido vacio no es un arbol limpio."""
     huellas = va.huellas_de_la_lista(va.leer_huellas(HUELLAS))
+    recorridos = len(va.ficheros_versionados(RAIZ))
+    assert recorridos > 100, "no se ha recorrido el arbol"
     de_huella = va.buscar_huellas(RAIZ, huellas)
-    de_secreto = va.buscar_secretos(RAIZ)
+    de_secreto = va.buscar_secretos(RAIZ, huellas)
     if de_huella or de_secreto:
         ficheros = len({h["fichero"] for h in de_huella})
         pytest.fail("\n".join(
@@ -5594,7 +6299,9 @@ FAILED tests/test_anonimato.py::test_el_arbol_esta_limpio - Failed: El arbol ...
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_anonimato.py -q`
 
-Esperado: `47 passed`. Si falla, la salida dice qué fichero y qué líneas.
+Esperado: `132 passed, 2 skipped` (las dos que se saltan son las de los enlaces
+simbólicos, que esta máquina no deja crear). Si falla, la salida dice qué
+fichero y qué líneas.
 **No se toca la lista, ni `huellas.txt`, ni la prueba**: se quita la cadena
 del fichero (pasos 3 a 5 de esta tarea) o, si el fichero es de código, se
 vuelve a la tarea que lo dejó a medias.
