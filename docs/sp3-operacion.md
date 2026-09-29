@@ -494,8 +494,10 @@ seguir.
 una falte:
 
 - `N8N_URL` es la dirección con la que el script compara la de cada
-  webhook. El repositorio ya no la lleva escrita: sin ella el script **no
-  comprueba nada**, lo dice, avisa por el canal si lo tiene, y devuelve 1.
+  webhook. El repositorio ya no la lleva escrita: sin ella, o con ella mal
+  puesta (sin `https://`, con una ruta detrás, entre comillas), el script
+  **no comprueba nada**, lo dice, avisa por el canal si lo tiene, y devuelve
+  1.
 - `TELEGRAM_TOKEN_PACIENTE` y `TELEGRAM_TOKEN_PROFESIONAL` son lo que el script
   comprueba. Si no están, los **pide por teclado** — y una tarea programada no
   tiene teclado: sin ellas la tarea no comprueba ese bot y lo cuenta como
@@ -529,7 +531,7 @@ que arreglar, y **eso es todo lo que dice**: el script devuelve 1 también cuand
 `TELEGRAM_TOKEN_AVISOS`, o porque falte el token de un bot y no lo haya podido
 comprobar— y cuando el envío por Telegram **falló**. Un 1 no garantiza que el
 aviso haya salido. Y devuelve 1 sin haber comprobado ningún webhook si falta
-`N8N_URL`.
+`N8N_URL` o está mal puesta.
 
 Lo que sí lo dice es la salida del script, no su código: la línea del final es
 «aviso por Telegram: enviado.» o «NO se pudo enviar (…)». Si la tarea lleva días

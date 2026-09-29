@@ -104,7 +104,11 @@ Varias pruebas de `tests/test_anonimato.py` atan esa revisión:
   versionado, y la prueba se salta diciéndolo.
 - `IMAGENES_DE_LOS_NOTEBOOKS` fija, por su SHA-256, las imágenes incrustadas
   en cada notebook: una imagen nueva, o una que cambie al volver a ejecutar
-  el notebook, hace fallar la suite hasta que se revisa.
+  el notebook, hace fallar la suite hasta que se revisa. Y como una imagen se
+  puede pegar de más maneras (dentro del texto de una celda, en una salida
+  HTML, en cualquier otro fichero), otra prueba exige que toda tirada de 120
+  o más caracteres de base64 de un fichero de texto que se publica sea una
+  de esas imágenes declaradas.
 - Las claves de los metadatos de los PNG y de las imágenes incrustadas
   tienen que estar en `METADATOS_PERMITIDOS`, y las de cada notebook y de sus
   celdas, en las de la tabla (con `colab.provenance` vacío): un notebook
@@ -116,6 +120,10 @@ Varias pruebas de `tests/test_anonimato.py` atan esa revisión:
 Cuando no hay hallazgos pero sí binarios, el script no dice «limpio» a secas:
 dice cuántos binarios quedan sin recorrer. Las imágenes incrustadas no las
 cuenta: para el script un notebook es texto.
+
+Fuera de un repositorio de git, las pruebas del árbol recorren la carpeta
+entera, también lo que git ignoraría: un `.env` que alguien haya creado en su
+copia las hace fallar. El mensaje del fallo lo dice.
 
 ## Lo que esto no protege
 

@@ -523,8 +523,9 @@ está junto al `docker-compose.yml`: vale igual si lanzas la orden desde
 llevar la variable delante**, y no hay forma de olvidarla en uno.
 
 Si `servidor/.env` no existe todavía, créalo copiando la plantilla
-(`cp servidor/.env.ejemplo servidor/.env`) y pon en él la contraseña de la
-base. La plantilla ya trae una línea `RED_N8N=` con un valor de ejemplo: **no
+(`cp -n servidor/.env.ejemplo servidor/.env`; con `-n` no pisa uno que ya
+exista, que lleva la contraseña) y pon en él la contraseña de la base. La
+plantilla ya trae una línea `RED_N8N=` con un valor de ejemplo: **no
 se añade otra, se sustituye su valor** por el nombre que apuntaste en el paso
 2.2. Tiene que quedar una sola:
 
@@ -900,11 +901,9 @@ una copia, y al final está escrito cómo volver.
 
 Es para una instalación que es un clon de git (el camino A del paso 3.1), y
 **no cubre el camino B**: las órdenes de los puntos 1 y 4 y la vuelta atrás
-son de git. Con el camino B, lo que cambia: antes de empezar se guarda el
-árbol entero, que es la vuelta atrás (`cp -a /opt/copiloto
-/opt/copiloto.antes-de-red_n8n`); del punto 1 se hace solo la copia del
-`.env`; el código nuevo se trae como la primera vez; y del punto 4, las dos
-comprobaciones sin el `git pull`.
+son de git, y pegadas en un árbol que no es un clon se cortan sin hacer nada.
+Para el camino B no hay procedimiento escrito ni ensayado: no lo improvises
+sobre este.
 
 Mientras Compose recrea los contenedores y el copiloto vuelve a estar
 `healthy` —alrededor de un minuto— n8n no alcanza ni al copiloto ni a la base:
@@ -921,9 +920,15 @@ grep -c 'RED_N8N:?' /opt/copiloto/servidor/docker-compose.yml
 Tiene que dar `0`: el compose del disco es el anterior, y el commit de ahora
 es al que se vuelve. **Si da `1`, el código nuevo ya está en el disco** —se
 lanzó antes el redespliegue de siempre, o este es un segundo intento— y el
-commit de vuelta **no es el de ahora**: es el que apuntaste la primera vez y,
-si no lo apuntaste, el anterior al `pull` en `git reflog`. Sigue con este
-punto, pero no apuntes el commit que imprime.
+commit de vuelta **no es el de ahora**: es el que apuntaste la primera vez. Si
+no lo apuntaste, es el que tenía `main` antes del `pull`, y lo dice esta
+orden (ensayada: lo da aunque después se haya cambiado de commit a mano):
+
+```bash
+git -C /opt/copiloto rev-parse 'main@{1}'
+```
+
+Sigue con este punto, pero no apuntes el commit que imprime su orden.
 
 El `.env` es el fichero que tiene la contraseña de la base: se guarda una
 copia **fuera** del repositorio antes de tocarlo. Y una `RED_N8N` exportada
@@ -943,7 +948,10 @@ donde está hoy el contenedor; pregúntaselo a él:
 docker inspect copiloto-mcp --format '{{range $red, $c := .NetworkSettings.Networks}}{{println $red}}{{end}}'
 ```
 
-Tiene que salir **un solo nombre**. Mira ahora si la variable ya está en el
+Tiene que salir **un solo nombre**. Si salen dos, para: la de `RED_N8N` es
+la que el contenedor comparte con n8n (la del paso 2.3); la otra no está en
+el compose y el contenedor la pierde al recrearse, así que averigua quién la
+conectó y para qué antes de seguir. Mira ahora si la variable ya está en el
 `.env`:
 
 ```bash
@@ -995,11 +1003,12 @@ Y la copia, que es con lo que se repara la base si al final no es la que
 había. Se queda fuera del repositorio y solo la puede leer quien la hace:
 
 ```bash
-(umask 077; set -o pipefail; docker exec copiloto-bd pg_dump --clean --if-exists -U copiloto -d copiloto | gzip > ~/copiloto-bd.antes-de-red_n8n.sql.gz) && ls -l ~/copiloto-bd.antes-de-red_n8n.sql.gz
+(umask 077; set -o pipefail; docker exec copiloto-bd pg_dump --clean --if-exists -U copiloto -d copiloto | gzip > ~/copiloto-bd.antes-de-red_n8n.sql.gz) && gunzip -t ~/copiloto-bd.antes-de-red_n8n.sql.gz && ls -l ~/copiloto-bd.antes-de-red_n8n.sql.gz
 ```
 
 Tiene que terminar enseñando el fichero. Si en su lugar sale un error de
-`pg_dump`, no hay copia: no sigas. Y si entre este punto y el 5 pasa un rato
+`pg_dump` o de `gunzip` (que comprueba que la copia está entera), no hay
+copia: no sigas. Y si entre este punto y el 5 pasa un rato
 en el que los bots han atendido consultas, repite este punto antes de
 redesplegar: la copia que sirve es la de justo antes.
 
@@ -1086,11 +1095,13 @@ prueba por el bot.
   consultas:** la base no es la que había. Para, y no sigas operando sobre
   ella. Si el volumen es otro, el de antes sigue en el disco (`docker volume
   ls`): **no lo borres**, que es donde están los datos. La copia del punto 3
-  devuelve la base a como estaba, en una sola transacción —si se interrumpe,
-  la base se queda como estaba antes de empezar—:
+  devuelve la base a como estaba, en una sola transacción —si una sentencia
+  falla, la base se queda como estaba antes de empezar—, y antes comprueba
+  que la copia está entera, porque una copia cortada no daría ningún error y
+  dejaría la base a medias:
 
   ```bash
-  gunzip -c ~/copiloto-bd.antes-de-red_n8n.sql.gz | docker exec -i copiloto-bd psql -U copiloto -d copiloto -q -1 -v ON_ERROR_STOP=1 && docker exec copiloto-bd psql -U copiloto -d copiloto -tAc 'select count(*) from consultas'
+  gunzip -t ~/copiloto-bd.antes-de-red_n8n.sql.gz && gunzip -c ~/copiloto-bd.antes-de-red_n8n.sql.gz | docker exec -i copiloto-bd psql -U copiloto -d copiloto -q -1 -v ON_ERROR_STOP=1 && docker exec copiloto-bd psql -U copiloto -d copiloto -tAc 'select count(*) from consultas'
   ```
 
   Tiene que terminar con el recuento del punto 3. Lo que se haya escrito en
@@ -1381,7 +1392,7 @@ el contenedor que responde ya es el de SP4.
 
 | Síntoma | Causa | Arreglo |
 | :--- | :--- | :--- |
-| `required variable RED_N8N is missing a value: define RED_N8N con el nombre de la red externa de n8n`, en **cualquier** `docker compose` | falta `RED_N8N` o está vacía: no está en `servidor/.env`, o el `.env` no está junto al compose | poner el nombre real en la línea `RED_N8N=` de `servidor/.env`, que tiene que ser una sola (paso 4). No tiene valor por defecto, a propósito |
+| `required variable RED_N8N is missing a value: define RED_N8N con el nombre de la red externa de n8n`, en **cualquier** `docker compose` | falta `RED_N8N` o está vacía: no está en `servidor/.env`, o el `.env` no está junto al compose | poner el nombre real en la línea `RED_N8N=` de `servidor/.env`, que tiene que ser una sola (paso 4). No tiene valor por defecto, a propósito. **Si el mensaje sale al redesplegar una instalación anterior a esta variable**, no repitas después la orden de una línea: el primer redespliegue es el del apartado «El primer redespliegue con `RED_N8N` obligatoria», que antes guarda una copia de la base |
 | `network <RED_N8N> declared as external, but could not be found` | el valor de `RED_N8N` no es el nombre de ninguna red que exista | **primero**: averigua el nombre real con `docker network ls` y corrige `RED_N8N` en `servidor/.env`. Ver el recuadro de abajo |
 | `"/servidor/pesos_modelo_cpu.pt": not found` al construir | no copiaste los pesos | ver el paso 3 |
 | `Conflict. The container name "/copiloto-mcp" is already in use` (o `"/copiloto-bd"`) | ya hay un contenedor con ese nombre | el paso 2.4 lo detecta antes. Averigua de quién es con `docker ps -a --filter name=copiloto-mcp` (o `name=copiloto-bd`) **antes** de borrarlo |
