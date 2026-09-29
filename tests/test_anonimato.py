@@ -13,6 +13,7 @@ fichero tambien se recorre, y un secreto de ejemplo escrito entero haria
 saltar la misma prueba que lo usa.
 """
 import base64
+import binascii
 import codecs
 import hashlib
 import importlib.util
@@ -225,8 +226,52 @@ SIN_LA_LISTA = {
 }
 
 
+def _lleva_el_centinela(ruta):
+    """Sobre un booleano, con mensaje: pytest enseñaria el conjunto de
+    huellas leido (C5)."""
+    leidas = va.leer_huellas(ruta)
+    con_el_centinela = va.huella(CENTINELA) in leidas
+    assert con_el_centinela, (f"{ruta.name} no lleva la huella del "
+                              f"centinela ({len(leidas)} huellas leídas)")
+
+
 def test_el_centinela_esta_en_huellas_txt():
-    assert va.huella(CENTINELA) in va.leer_huellas(HUELLAS)
+    _lleva_el_centinela(HUELLAS)
+
+
+def test_la_prueba_del_centinela_no_ensena_las_huellas(tmp_path):
+    # Como D-9: si falla, pytest enseñaria el conjunto de huellas leido.
+    ruta = tmp_path / "huellas.txt"
+    datos = sorted(va.huella(f"{OTRO}{n}") for n in range(30))
+    ruta.write_text("# cabecera\n" + "\n".join(datos) + "\n",
+                    encoding="utf-8")
+    with pytest.raises(AssertionError) as error:
+        _lleva_el_centinela(ruta)
+    assert "no lleva la huella del centinela" in str(error.value)
+    assert not any(una[:12] in str(error.value) for una in datos)
+
+
+def test_la_cabecera_de_huellas_txt_es_la_que_escribe_el_script():
+    # Quien mantiene la lista regenera huellas.txt y tiene que salir
+    # identico: la cabecera es, letra por letra, la del script (la del
+    # repositorio que se publica, si lleva solo la del centinela).
+    comentarios = [l for l in HUELLAS.read_text(encoding="utf-8-sig")
+                   .splitlines() if l.startswith("#")]
+    esperada = (va.CABECERA_SOLO_CENTINELA if solo_el_centinela()
+                else va.CABECERA)
+    assert comentarios == esperada.splitlines()
+
+
+def test_la_cabecera_dice_como_se_regenera_en_cualquier_consola():
+    # `VARIABLE=valor orden` es de bash: en PowerShell no funciona.
+    assert "--regenerar --lista <lista en claro>" in va.CABECERA
+    assert "ANONIMATO_LISTA=" not in va.CABECERA
+    publica = va.CABECERA_SOLO_CENTINELA
+    assert "repositorio que se publica" in publica
+    assert "a propósito" in publica
+    assert "--regenerar --solo-centinela" in publica
+    assert "huellas del repositorio de desarrollo" in publica
+    assert all(l.startswith("#") for l in publica.splitlines())
 
 
 def _cabecera_y_huellas_ordenadas(ruta):
@@ -279,8 +324,10 @@ def test_la_prueba_de_la_cabecera_no_ensena_las_huellas(tmp_path, estropeo):
 
 @pytest.mark.skipif(solo_el_centinela(), reason=SIN_LA_LISTA["huellas.txt"])
 def test_huellas_txt_lleva_mas_que_el_centinela():
-    # Antes era parte de la prueba de arriba («len(datos) > 1»).
-    assert len(va.leer_huellas(HUELLAS)) > 1, "falta regenerar"
+    # Antes era parte de la prueba de arriba («len(datos) > 1»). Sobre un
+    # booleano: pytest enseñaria el conjunto leido.
+    mas_que_el_centinela = len(va.leer_huellas(HUELLAS)) > 1
+    assert mas_que_el_centinela, "falta regenerar"
 
 
 def test_solo_el_centinela_reconoce_el_fichero_del_repositorio_publico(
@@ -376,7 +423,7 @@ def test_regenerar_escribe_las_huellas_ordenadas_y_la_del_centinela(tmp_path):
     texto = destino.read_text(encoding="utf-8")
     datos = [l for l in texto.splitlines() if l and not l.startswith("#")]
     assert datos == sorted(esperadas)
-    assert texto.startswith("#")
+    assert texto.startswith(va.CABECERA)
     assert "\r" not in destino.read_bytes().decode("utf-8")
     # Ningun token en claro, salvo el centinela, que es publico y la cabecera
     # lo nombra. (La huella de un token corto se adivina probando: en el
@@ -399,9 +446,18 @@ def _arbol_limpio(raiz):
     return raiz
 
 
+def _donde(hallazgos):
+    """Fichero y linea de cada hallazgo: lo que dice una asercion que falla
+    con las huellas de verdad (pytest enseñaria la huella entera, C5)."""
+    return f"{len(hallazgos)} hallazgos: " + ", ".join(
+        f"{h['fichero']}:{h['linea']}" for h in hallazgos)
+
+
 def test_un_arbol_limpio_no_da_hallazgos(tmp_path):
     raiz = _arbol_limpio(tmp_path / "arbol")
-    assert va.buscar_huellas(raiz, va.leer_huellas(HUELLAS)) == []
+    hallazgos = va.buscar_huellas(raiz, va.leer_huellas(HUELLAS))
+    limpio = hallazgos == []
+    assert limpio, _donde(hallazgos)
     assert va.buscar_secretos(raiz) == []
 
 
@@ -410,8 +466,10 @@ def test_detecta_el_centinela_dentro_del_recorrido(tmp_path):
     (raiz / "docs" / "nota.md").write_text(
         f"primera\nsegunda con {CENTINELA}.\n", encoding="utf-8")
     hallazgos = va.buscar_huellas(raiz, va.leer_huellas(HUELLAS))
-    assert hallazgos == [{"fichero": "docs/nota.md", "linea": 2,
-                          "huella": va.huella(CENTINELA), "origen": COPIA}]
+    solo_el_centinela_en_la_nota = hallazgos == [
+        {"fichero": "docs/nota.md", "linea": 2,
+         "huella": va.huella(CENTINELA), "origen": COPIA}]
+    assert solo_el_centinela_en_la_nota, _donde(hallazgos)
 
 
 def test_lo_detecta_con_mayusculas_tildes_y_pegado_a_separadores(tmp_path):
@@ -566,6 +624,10 @@ def _git(raiz, *argumentos, **entorno):
 def _repositorio(tmp_path):
     raiz = _arbol_limpio(tmp_path / "repo")
     _git(raiz, "init", "-q")
+    # Una carpeta temporal larga no hace fallar las pruebas de nombres largos
+    # (una rama con nombre de token, C2): git en Windows, sin esto, no pasa
+    # de 260 caracteres.
+    _git(raiz, "config", "core.longpaths", "true")
     _git(raiz, "add", "-A")
     return raiz
 
@@ -1612,17 +1674,68 @@ def test_un_solo_commit_no_publica_las_huellas_de_la_lista(tmp_path, capsys):
     (raiz / "docs" / "informe.md").write_text(
         f"# Informe\n\nla huella {va.huella(OTRO).upper()} y nada mas\n",
         encoding="utf-8")
-    (raiz / "docs" / f"{va.huella(OTRO_MAS)}.md").write_text(
-        "nada\n", encoding="utf-8")
+    # En la raiz y no en una carpeta: un nombre de 67 caracteres, con una
+    # carpeta temporal larga, pasaria de los 260 de Windows (C2).
+    (raiz / f"{va.huella(OTRO_MAS)}.md").write_text("nada\n",
+                                                    encoding="utf-8")
     _git(raiz, "add", "-A")
     _git(raiz, "commit", "-q", "--amend", "-m", "arbol")
     assert va.main(orden) == 1
     salida = capsys.readouterr().out
     assert "docs/informe.md:3: huella_publicada" in salida
-    assert "docs/<huella-publicada>.md:0: huella_publicada" in salida
+    assert "<huella-publicada>.md:0: huella_publicada" in salida.splitlines()
     assert "huellas publicadas: 2" in salida
     _sin_ninguna_huella(salida, todas)
     _sin_ninguna_huella(salida.lower(), todas)
+
+
+@hay_git
+def test_un_solo_commit_mira_las_huellas_del_mensaje_y_de_las_ramas(
+        tmp_path, capsys):
+    # C6: el mensaje del commit y los nombres de las ramas y de las
+    # etiquetas tambien se publican.
+    huellas = tmp_path / "huellas.txt"
+    va.regenerar([OTRO, OTRO_MAS], huellas)
+    todas = va.leer_huellas(huellas)
+    raiz = _repositorio(tmp_path)
+    _git(raiz, "commit", "-q", "-m", "arbol",
+         "-m", f"la huella {va.huella(OTRO)}")
+    _git(raiz, "branch", "-m", f"informe-{va.huella(OTRO_MAS)}")
+    _git(raiz, "tag", f"v-{va.huella(OTRO)}")
+    orden = ["--raiz", str(raiz), "--huellas", str(huellas)]
+
+    assert va.main(orden + ["--un-solo-commit"]) == 1
+    salida = capsys.readouterr().out
+    assert "commit HEAD: mensaje:3: huella_publicada" in salida
+    assert ("rama informe-<huella-publicada>: huella_publicada"
+            in salida.splitlines())
+    assert ("etiqueta v-<huella-publicada>: huella_publicada"
+            in salida.splitlines())
+    _sin_ninguna_huella(salida, todas)
+    # Con --commit a secas no se miran: el repositorio de desarrollo puede
+    # citar una huella en un commit o en una rama.
+    assert va.main(orden + ["--commit"]) == 0
+    salida = capsys.readouterr().out
+    assert "huella_publicada" not in salida
+    _sin_ninguna_huella(salida, todas)
+
+
+@hay_git
+def test_un_solo_commit_da_por_hallazgo_la_cabecera_parent(tmp_path, capsys):
+    # Por la linea de ordenes: `main` pasa --un-solo-commit a las cabeceras.
+    # En un clon superficial el recuento de commits da 1 y el padre es lo
+    # unico que avisa.
+    raiz = _repositorio(tmp_path)
+    huellas = str(_huellas_de_juguete(tmp_path))
+    _git(raiz, "commit", "-q", "-m", "uno")
+    _git(raiz, "commit", "-q", "--allow-empty", "-m", "dos")
+    assert va.main(["--raiz", str(raiz), "--huellas", huellas,
+                    "--un-solo-commit"]) == 1
+    salida = capsys.readouterr().out
+    assert "commit HEAD: parent: cabecera_del_commit" in salida.splitlines()
+    assert va.main(["--raiz", str(raiz), "--huellas", huellas,
+                    "--commit"]) == 0
+    assert "cabecera_del_commit" not in capsys.readouterr().out
 
 
 def test_la_cli_regenera_desde_la_variable_o_desde_lista(tmp_path, capsys,
@@ -1685,6 +1798,9 @@ def test_la_cli_escribe_el_huellas_txt_del_repositorio_que_se_publica(
     assert va.leer_huellas(destino) == {va.huella(CENTINELA)}
     assert solo_el_centinela(destino)
     _cabecera_y_huellas_ordenadas(destino)
+    # Con SU cabecera, que dice que lleva solo la del centinela a proposito.
+    assert destino.read_text(encoding="utf-8") == (
+        va.CABECERA_SOLO_CENTINELA + va.huella(CENTINELA) + "\n")
 
 
 def test_la_cli_con_solo_centinela_no_escribe_donde_no_se_le_dice(
@@ -1727,6 +1843,21 @@ def _por_fichero(hallazgos, que):
     return lineas
 
 
+NO_ES_UN_REPOSITORIO = "no es la raiz de un repositorio de git"
+
+
+def _fuera_de_git(raiz):
+    """La linea que añade el fallo de una prueba del arbol fuera de la raiz
+    de un repositorio (C4): alli se recorre la carpeta entera, tambien lo que
+    git ignoraria, y lo que salga puede no publicarse."""
+    if va._es_la_raiz_de_un_repositorio(raiz):
+        return []
+    return [f"Ojo: esta carpeta {NO_ES_UN_REPOSITORIO} (una copia descargada "
+            "en ZIP, o git fuera del PATH), asi que se ha recorrido entera, "
+            "tambien lo que git ignoraria (un .env de esta copia, por "
+            "ejemplo): lo que sale aqui puede no publicarse."]
+
+
 def _el_arbol_no_lleva_secretos(raiz, ruta_de_huellas, minimo=100):
     """La busqueda de secretos en el arbol. No necesita la lista, asi que
     corre siempre, tambien con solo la huella del centinela (V-3): las
@@ -1740,6 +1871,7 @@ def _el_arbol_no_lleva_secretos(raiz, ruta_de_huellas, minimo=100):
         pytest.fail("\n".join(
             [f"El arbol no se puede publicar: {len(de_secreto)} secretos. La "
              "linea 0 es el nombre del fichero."]
+            + _fuera_de_git(raiz)
             + _por_fichero(de_secreto, "clase")), pytrace=False)
 
 
@@ -1747,21 +1879,56 @@ def test_el_arbol_no_lleva_secretos():
     _el_arbol_no_lleva_secretos(RAIZ, HUELLAS)
 
 
-@pytest.mark.skipif(solo_el_centinela(), reason=SIN_LA_LISTA["arbol"])
-def test_el_arbol_no_lleva_huellas():
-    """En el repositorio que se publica `huellas.txt` lleva solo la del
-    centinela (D9) y esta prueba se salta diciendolo: alli no comprobaria
-    nada. Y un recorrido vacio no es un arbol limpio."""
-    huellas = va.huellas_de_la_lista(va.leer_huellas(HUELLAS))
-    recorridos = len(va.ficheros_versionados(RAIZ))
-    assert recorridos > 100, "no se ha recorrido el arbol"
-    de_huella = va.buscar_huellas(RAIZ, huellas)
+def test_la_busqueda_de_secretos_del_arbol_no_se_salta():
+    # C1: la prueba de V-3 vigila el ayudante; esta, la prueba del arbol. Un
+    # `skipif` encima (la forma exacta que tenia el defecto) la saltaria en
+    # el repositorio que se publica, y la suite seguiria en verde.
+    marcas = {m.name for m in
+              getattr(test_el_arbol_no_lleva_secretos, "pytestmark", [])}
+    assert not marcas & {"skip", "skipif", "xfail"}, sorted(marcas)
+
+
+def _el_arbol_no_lleva_huellas(raiz, ruta_de_huellas, minimo=100):
+    """La busqueda de huellas en el arbol: fichero, linea y el principio de
+    la huella (no el token). Un recorrido vacio no es un arbol limpio."""
+    huellas = va.huellas_de_la_lista(va.leer_huellas(ruta_de_huellas))
+    recorridos = len(va.ficheros_versionados(raiz))
+    assert recorridos > minimo, "no se ha recorrido el arbol"
+    de_huella = va.buscar_huellas(raiz, huellas)
     if de_huella:
         ficheros = len({h["fichero"] for h in de_huella})
         pytest.fail("\n".join(
             [f"El arbol no se puede publicar: {len(de_huella)} huellas en "
              f"{ficheros} ficheros. La linea 0 es el nombre del fichero."]
+            + _fuera_de_git(raiz)
             + _por_fichero(de_huella, "huella")), pytrace=False)
+
+
+@pytest.mark.skipif(solo_el_centinela(), reason=SIN_LA_LISTA["arbol"])
+def test_el_arbol_no_lleva_huellas():
+    """En el repositorio que se publica `huellas.txt` lleva solo la del
+    centinela (D9) y esta prueba se salta diciendolo: alli no comprobaria
+    nada."""
+    _el_arbol_no_lleva_huellas(RAIZ, HUELLAS)
+
+
+@pytest.mark.parametrize("con_git", [
+    pytest.param(False, id="sin_git"),
+    pytest.param(True, id="con_git", marks=hay_git),
+])
+def test_fuera_de_git_el_fallo_del_arbol_lo_dice(tmp_path, con_git):
+    # C4: fuera de la raiz de un repositorio se recorre la carpeta entera,
+    # tambien lo que git ignoraria (un `.env` de la copia de alguien).
+    raiz = _repositorio(tmp_path) if con_git else _arbol_limpio(
+        tmp_path / "repo")
+    (raiz / ".env").write_text("X=1\n", encoding="utf-8")
+    (raiz / "nota.md").write_text(f"{OTRO}\n", encoding="utf-8")
+    de_juguete = _huellas_de_juguete(tmp_path)
+    for comprobar in (_el_arbol_no_lleva_secretos, _el_arbol_no_lleva_huellas):
+        with pytest.raises(pytest.fail.Exception) as error:
+            comprobar(raiz, de_juguete, minimo=1)
+        assert (NO_ES_UN_REPOSITORIO in str(error.value)) is not con_git
+        assert OTRO not in str(error.value).lower()
 
 
 def test_con_solo_el_centinela_los_secretos_del_arbol_se_buscan(tmp_path):
@@ -1941,6 +2108,70 @@ def test_las_imagenes_de_los_notebooks_son_las_revisadas():
                                                 f"{nombre}, imagen {n}")
                 textos.append((f"{nombre}, imagen {n}", texto))
     _sin_huellas_en_los_valores(textos)
+
+
+def _tiradas_de_base64_sin_declarar(raiz, declaradas):
+    """(fichero, linea) de cada tirada de 120 o mas caracteres de base64 de
+    un fichero de texto que se publicaria (la expresion `BASE64` del script:
+    lo que la busqueda de huellas quita sin mirar) que, decodificada, no es
+    una de las imagenes `declaradas` (por su SHA-256). Nunca la tirada."""
+    sin_declarar = []
+    for ruta in va.ficheros_versionados(raiz):
+        texto = va._texto(ruta)
+        if texto is None:
+            continue
+        for n, linea in enumerate(texto.splitlines(), 1):
+            for m in va.BASE64.finditer(linea):
+                try:
+                    datos = base64.b64decode(m.group(), validate=True)
+                except (binascii.Error, ValueError):
+                    datos = None
+                if (datos is None or hashlib.sha256(datos).hexdigest()
+                        not in declaradas):
+                    sin_declarar.append((ruta.relative_to(raiz).as_posix(), n))
+    return sin_declarar
+
+
+def test_una_imagen_pegada_de_otra_forma_tambien_se_ve(tmp_path):
+    # C3: pegada en el texto de una celda o de un .md (`data:image/png;
+    # base64,...`) o en una salida `text/html`, la prueba de las imagenes de
+    # los notebooks no la ve, y la de huellas quita el base64 sin mirarlo.
+    raiz = _arbol_limpio(tmp_path / "arbol")
+    imagen = _png_de_juguete((b"Author", b"Autor Neutro " * 8))
+    en_base64 = base64.b64encode(imagen).decode("ascii")
+    assert len(en_base64) >= 120
+    (raiz / "notas.md").write_text(
+        f"uno\n![figura](data:image/png;base64,{en_base64})\n",
+        encoding="utf-8")
+    notebook = {"cells": [{"cell_type": "code", "outputs": [
+        {"output_type": "display_data", "data": {"text/html": [
+            f'<img src="data:image/png;base64,{en_base64}">']}}]}]}
+    (raiz / "cuaderno.ipynb").write_text(json.dumps(notebook, indent=1),
+                                         encoding="utf-8")
+    assert _imagenes_del_notebook(notebook) == []
+    sin_declarar = _tiradas_de_base64_sin_declarar(raiz, set())
+    assert ("notas.md", 2) in sin_declarar
+    assert sorted({f for f, _n in sin_declarar}) == ["cuaderno.ipynb",
+                                                     "notas.md"]
+    # Declarada, pasa; y una tirada que no es base64 valido no pasa.
+    assert _tiradas_de_base64_sin_declarar(
+        raiz, {hashlib.sha256(imagen).hexdigest()}) == []
+    (raiz / "ruta.txt").write_text("/".join(["abcdefgh"] * 20) + "\n",
+                                   encoding="utf-8")
+    assert _tiradas_de_base64_sin_declarar(
+        raiz, {hashlib.sha256(imagen).hexdigest()}) == [("ruta.txt", 1)]
+
+
+def test_toda_tirada_larga_de_base64_es_una_imagen_declarada():
+    """El base64 largo se quita sin mirarlo: solo puede ser una imagen de
+    IMAGENES_DE_LOS_NOTEBOOKS, revisada a mano. Si falla, dice el fichero y
+    la linea, no la tirada."""
+    declaradas = {una for suyas in IMAGENES_DE_LOS_NOTEBOOKS.values()
+                  for una in suyas}
+    sin_declarar = _tiradas_de_base64_sin_declarar(RAIZ, declaradas)
+    assert not sin_declarar, (
+        "tiradas de base64 que no son una imagen declarada: "
+        + ", ".join(f"{fichero}:{n}" for fichero, n in sin_declarar))
 
 
 def _mirar_metadatos_de_los_notebooks(notebooks):

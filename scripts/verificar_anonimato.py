@@ -38,8 +38,10 @@ Busca:
    `committer` es un hallazgo (una firma lleva el identificador de la clave
    de quien firma); `parent`, solo con --un-solo-commit.
 4. Con --un-solo-commit (la orden de publicar), las HUELLAS PUBLICADAS: una
-   huella de la lista escrita en el arbol que se publica (su `huellas.txt`
-   tiene que llevar solo la del centinela: ver --solo-centinela).
+   huella de la lista escrita en el arbol que se publica, en el commit (su
+   mensaje, su autor, quien lo confirma) o en el nombre de una rama o de una
+   etiqueta. Su `huellas.txt` tiene que llevar solo la del centinela, con
+   su propia cabecera: lo escribe --regenerar --solo-centinela.
 
 Ninguna salida lleva el token ni el secreto en claro: fichero, linea y huella
 o clase. En los nombres (de fichero, de rama, de etiqueta, la revision) el
@@ -86,7 +88,18 @@ CABECERA = """\
 # lista negra, que vive FUERA del repositorio. Una por línea, ordenadas.
 # Incluye siempre la del centinela público `centinelaanonimato7f3a`.
 # No se edita a mano. Se regenera con:
-#   ANONIMATO_LISTA=<lista en claro> python scripts/verificar_anonimato.py --regenerar
+#   python scripts/verificar_anonimato.py --regenerar --lista <lista en claro>
+"""
+# La del `huellas.txt` del repositorio que se publica (--solo-centinela).
+CABECERA_SOLO_CENTINELA = """\
+# Huellas del anonimato (spec de SP5 §6.1), del repositorio que se publica.
+# Lleva solo la huella del centinela público `centinelaanonimato7f3a`, y es
+# a propósito: la lista entera de huellas no se publica, porque la huella
+# de un token corto se adivina probando candidatos. La comprobación del
+# árbol se hace antes de publicar, con scripts/verificar_anonimato.py y las
+# huellas del repositorio de desarrollo.
+# No se edita a mano. Se escribe con:
+#   python scripts/verificar_anonimato.py --regenerar --solo-centinela --huellas <este fichero>
 """
 
 
@@ -230,16 +243,18 @@ def regenerar(lista, destino):
 
 
 def regenerar_solo_centinela(destino):
-    """Escribe el `huellas.txt` del repositorio que se publica (D9): la
-    cabecera y la huella del centinela, sin lista."""
-    return _escribir_huellas({huella(CENTINELA)}, destino)
+    """Escribe el `huellas.txt` del repositorio que se publica (D9): su
+    cabecera (CABECERA_SOLO_CENTINELA) y la huella del centinela, sin
+    lista."""
+    return _escribir_huellas({huella(CENTINELA)}, destino,
+                             CABECERA_SOLO_CENTINELA)
 
 
-def _escribir_huellas(todas, destino):
+def _escribir_huellas(todas, destino, cabecera=CABECERA):
     destino = Path(destino)
     destino.parent.mkdir(parents=True, exist_ok=True)
     with open(destino, "w", encoding="utf-8", newline="\n") as salida:
-        salida.write(CABECERA)
+        salida.write(cabecera)
         for una in sorted(todas):
             salida.write(una + "\n")
     return len(todas)
@@ -584,6 +599,13 @@ def buscar_huellas(raiz, huellas, commit=None):
 TOKEN_HEXADECIMAL = re.compile(r"(?<![A-Za-z0-9])[0-9A-Fa-f]{64}(?![A-Za-z0-9])")
 
 
+def _huellas_escritas(texto, huellas):
+    """Las huellas de `huellas` escritas en el texto, como token suelto de
+    64 hexadecimales (en mayusculas o en minusculas)."""
+    return [m.group().lower() for m in TOKEN_HEXADECIMAL.finditer(texto)
+            if m.group().lower() in huellas]
+
+
 def _huellas_publicadas_en(piezas, huellas):
     """Las huellas de la lista (`huellas`, ya sin la del centinela) escritas
     en lo que se publica: fichero, linea, clase `huella_publicada` y origen.
@@ -592,16 +614,16 @@ def _huellas_publicadas_en(piezas, huellas):
     Solo para el arbol que se publica (--un-solo-commit): el de desarrollo
     lleva su propio `huellas.txt` con la lista entera. Publicarlo es
     publicar, para quien tenga un diccionario, buena parte de la lista (D9).
+    El mensaje del commit y los nombres de las ramas y de las etiquetas se
+    miran igual (`verificar_commit`, `verificar_referencias`).
     """
     huellas = set(huellas)
     hallazgos = []
 
     def mirar(texto, fichero, linea, origen):
-        for m in TOKEN_HEXADECIMAL.finditer(texto):
-            if m.group().lower() in huellas:
-                hallazgos.append({"fichero": fichero, "linea": linea,
-                                  "clase": "huella_publicada",
-                                  "origen": origen})
+        for _una in _huellas_escritas(texto, huellas):
+            hallazgos.append({"fichero": fichero, "linea": linea,
+                              "clase": "huella_publicada", "origen": origen})
 
     for pieza in piezas:
         fichero = _publicable(pieza.nombre, huellas)
@@ -918,9 +940,12 @@ CAMPOS_DEL_COMMIT = ("autor", "correo_de_autor", "quien_confirma",
                      "correo_de_quien_confirma", "mensaje")
 
 
-def verificar_commit(raiz, revision="HEAD", huellas=None):
+def verificar_commit(raiz, revision="HEAD", huellas=None,
+                     un_solo_commit=False):
     """Autor, quien confirma, sus correos y el mensaje, contra las huellas y
-    contra los patrones de secretos.
+    contra los patrones de secretos; con `un_solo_commit` (el commit que se
+    publica), tambien una huella de la lista escrita en ellos
+    (`huella_publicada`, ver `_huellas_publicadas_en`).
 
     Devuelve `campo`, `linea` (la del mensaje; 0 en los demas) y `huella`
     o `clase` (la del secreto). Sin `huellas`, las del repositorio donde
@@ -947,6 +972,10 @@ def verificar_commit(raiz, revision="HEAD", huellas=None):
             for clase in _clases_de_secreto(linea):
                 hallazgos.append({"campo": campo, "linea": donde,
                                   "clase": clase})
+            if un_solo_commit:
+                hallazgos += [{"campo": campo, "linea": donde,
+                               "clase": "huella_publicada"}
+                              for _m in _huellas_escritas(linea, huellas)]
     return hallazgos
 
 
@@ -1003,13 +1032,14 @@ def _nombres_de_referencias(raiz):
     return nombres
 
 
-def verificar_referencias(raiz, huellas):
+def verificar_referencias(raiz, huellas, un_solo_commit=False):
     """Los nombres de las ramas y de las etiquetas, contra las huellas y
     contra los patrones de secretos (cada componente, como el nombre de un
-    fichero).
+    fichero); con `un_solo_commit`, tambien una huella de la lista escrita
+    en el nombre (`huella_publicada`).
 
     Devuelve `referencia` (`rama` o `etiqueta`), `nombre` (el publicable,
-    con el token y el secreto tapados) y `huella` o `clase`.
+    con el token, el secreto y la huella tapados) y `huella` o `clase`.
     """
     huellas = set(huellas)
     hallazgos = []
@@ -1024,6 +1054,10 @@ def verificar_referencias(raiz, huellas):
                        if c not in clases]
         hallazgos += [{"referencia": referencia, "nombre": publicable,
                        "clase": clase} for clase in clases]
+        if un_solo_commit:
+            hallazgos += [{"referencia": referencia, "nombre": publicable,
+                           "clase": "huella_publicada"}
+                          for _m in _huellas_escritas(nombre, huellas)]
     return hallazgos
 
 
@@ -1205,7 +1239,8 @@ def main(argv=None):
 
     del_commit, de_referencia = [], []
     if args.commit is not None:
-        del_commit = (verificar_commit(args.raiz, args.commit, huellas=huellas)
+        del_commit = (verificar_commit(args.raiz, args.commit, huellas=huellas,
+                                       un_solo_commit=args.un_solo_commit)
                       + cabeceras_del_commit(
                           args.raiz, args.commit, huellas,
                           un_solo_commit=args.un_solo_commit))
@@ -1214,7 +1249,8 @@ def main(argv=None):
                      else h["campo"])
             print(f"commit {revision}: {donde}: {que(h)}")
         # El nombre de las ramas y de las etiquetas se publica con el push.
-        de_referencia = verificar_referencias(args.raiz, huellas)
+        de_referencia = verificar_referencias(
+            args.raiz, huellas, un_solo_commit=args.un_solo_commit)
         for h in de_referencia:
             print(f"{h['referencia']} {h['nombre']}: {que(h)}")
 
