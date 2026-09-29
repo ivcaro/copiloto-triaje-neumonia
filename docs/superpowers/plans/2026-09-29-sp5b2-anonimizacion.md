@@ -17,11 +17,11 @@ compose por `RED_N8N` obligatoria, y los workflows de n8n con **marcadores**
 que una herramienta pone y quita (`scripts/marcadores_n8n.py`, con los valores
 reales en un fichero ignorado). El resto es sustitución mecánica en la
 documentación. La vigilancia no guarda la lista de lo prohibido: guarda una
-**huella SHA-256 por token**, y la prueba tokeniza cada fichero de texto
-versionado y falla si alguna huella aparece. Antes de publicar,
+**huella SHA-256 por token**, y la prueba tokeniza cada fichero de texto que
+se publicaría y falla si alguna huella aparece. Antes de publicar,
 `scripts/verificar_anonimato.py` repite esa comprobación sobre el árbol del
-repositorio nuevo y sobre los metadatos de su único commit, y busca además
-patrones de secretos.
+repositorio nuevo, sobre su único commit (contenido, autor, mensaje) y sobre
+los nombres de sus ramas, y busca además patrones de secretos.
 
 **Pila:** Python ≥ 3.11 (intérprete de la máquina de desarrollo:
 `C:/venv-copiloto/Scripts/python.exe`), pytest, `node` para las pruebas
@@ -161,8 +161,8 @@ en comentarios ni en nombres de fichero. Por eso:
 | `servidor/docker-compose.yml`, `servidor/.env.ejemplo`, `docs/sp2-despliegue.md`, `docs/sp3-operacion.md`, `tests/test_arrancar.py` | 3 | la red y su guía |
 | `n8n/*.json`, `n8n/valores.ejemplo.json`, `scripts/marcadores_n8n.py`, `tests/test_marcadores_n8n.py`, `tests/test_mantenimiento.py`, `tests/test_flujo_paciente.py`, `tests/test_flujo_profesional.py`, `tests/*.mjs`, `docs/sp3-operacion.md`, `.gitignore` | 4 | marcadores en los workflows |
 | `scripts/verificar_anonimato.py`, `tests/test_anonimato.py`, `tests/anonimato/huellas.txt`, `.gitignore` | 5 | la vigilancia: el mecanismo y sus pruebas |
-| `docs/**`, `notebooks/eda_rsna.ipynb`, lo que quede; `tests/test_anonimato.py` | 6 | sustitución mecánica, y la prueba del árbol limpio |
-| `tests/anonimato/README.md`, `tests/test_anonimato.py` | 7 | declaración de la revisión manual de los binarios |
+| `docs/**`, `notebooks/eda_rsna.ipynb`, `tests/mantenimiento.mjs`, lo que quede; `tests/test_anonimato.py`, `tests/anonimato/huellas.txt` | 6 | sustitución mecánica, el repaso a mano y la prueba del árbol limpio |
+| `tests/anonimato/README.md`, `tests/test_anonimato.py` | 7 | declaración de la revisión manual de los binarios, y lo que la vigilancia no ve |
 | `README.md`, `docs/sp3-operacion.md` | 8 | lo que el equipo tiene que hacer en el servidor |
 ---
 
@@ -4852,21 +4852,26 @@ Nada de esto toca la suite; es operación, y se le dice al usuario al entregar l
 ### Tarea 5: `verificar_anonimato.py`, las huellas y las pruebas del mecanismo
 
 Spec de SP5 §6.1. El repositorio lleva una prueba que corre siempre y que
-falla si en algún fichero versionado aparece un token de la lista negra, y un
-script que hace lo mismo desde la línea de órdenes, más los secretos y el
-commit, antes de publicar. La lista negra en claro NO vive en el repositorio:
-el repositorio lleva solo `tests/anonimato/huellas.txt`, con el sha256 de cada
-token.
+falla si en algo de lo que se publicaría aparece un token de la lista negra,
+y un script que hace lo mismo desde la línea de órdenes, más los secretos y
+el commit, antes de publicar. La lista negra en claro NO vive en el
+repositorio: el repositorio lleva solo `tests/anonimato/huellas.txt`, con el
+sha256 de cada token.
 
 Esta tarea deja el script, las huellas y todas las pruebas que NO miran el
 árbol de verdad: la suite queda verde. La prueba que exige el árbol limpio,
 `test_el_arbol_esta_limpio`, entra al final de la tarea 6, cuando ya no
 queda nada que quitar; antes fallaría, y tiene que fallar.
 
+El script es la última barrera antes de publicar, y su primer diseño dejaba
+pasar cosas que se publican. Lo que sigue es el que quedó después de dos
+rondas de revisión; las decisiones de más abajo dicen qué cambió y por qué.
+
 **Ficheros:**
 - Crear: `scripts/verificar_anonimato.py`
 - Crear: `tests/test_anonimato.py`
-- Crear: `tests/anonimato/huellas.txt` (generado; 29 huellas)
+- Crear: `tests/anonimato/huellas.txt` (generado desde la lista en claro; no
+  se cita en este plan)
 - Modificar: `.gitignore` (un bloque nuevo al final)
 
 **Interfaces:**
@@ -4876,83 +4881,139 @@ queda nada que quitar; antes fallaría, y tiene que fallar.
 - Produce, en `scripts/verificar_anonimato.py`:
   - constantes `CENTINELA = "centinelaanonimato7f3a"`, `HUELLAS_POR_DEFECTO`
     (`tests/anonimato/huellas.txt` del repositorio donde vive el script),
-    `VARIABLE_DE_LA_LISTA = "ANONIMATO_LISTA"`, `PATRONES_DE_SECRETO`,
+    `VARIABLE_DE_LA_LISTA = "ANONIMATO_LISTA"`, `COPIA`, `INDICE` y `COMMIT`
+    (de dónde sale cada hallazgo), `PATRONES_DE_SECRETO`,
     `CONTRASENAS_DE_EJEMPLO`, `FICHEROS_PROHIBIDOS`, `FICHEROS_PERMITIDOS`,
     `CAMPOS_DEL_COMMIT`.
   - `tokens(texto) -> set[str]`, `huella(token) -> str`,
-    `leer_huellas(ruta) -> set[str]`, `huellas_de_la_lista(huellas) -> set[str]`
-    (las huellas sin la del centinela), `leer_lista(ruta) -> list[str]`,
-    `regenerar(lista, destino) -> int`.
-  - `ficheros_versionados(raiz) -> list[Path]`, `es_texto(ruta) -> bool`,
-    `binarios(raiz) -> list[Path]`,
-    `buscar_huellas(raiz, huellas) -> list[dict]` con las claves `fichero`
-    (ruta relativa con `/`), `linea` (0 = el nombre del fichero) y `huella`.
-  - `buscar_secretos(raiz) -> list[dict]` con las claves `fichero`, `linea`
-    (0 = el fichero entero) y `clase`, que es una de
-    `token_de_bot_de_telegram`, `clave_de_api_sk`, `clave_de_api_akia`,
-    `clave_de_api_ghp`, `clave_de_api_github_pat`, `jwt`,
-    `contrasena_en_url`, `fichero_prohibido`.
+    `leer_huellas(ruta) -> set[str]` (`ValueError` si una línea no es una
+    huella), `huellas_de_la_lista(huellas) -> set[str]` (las huellas sin la
+    del centinela), `leer_lista(ruta) -> list[str]`,
+    `regenerar(lista, destino) -> int` (`ValueError`, sin escribir nada, si
+    una entrada no da exactamente un token).
+  - `ficheros_versionados(raiz) -> list[Path]` (rutas absolutas: en un
+    repositorio, lo que tiene seguimiento y lo que no lo tiene ni está
+    ignorado), `es_texto(ruta) -> bool`, `binarios(raiz) -> list[Path]`.
+  - `buscar_huellas(raiz, huellas, commit=None) -> list[dict]` con las claves
+    `fichero` (ruta relativa con `/`, con los tokens tapados), `linea` (0 =
+    el nombre del fichero), `huella` y `origen`.
+  - `buscar_secretos(raiz, huellas=None, commit=None) -> list[dict]` con las
+    claves `fichero`, `linea` (0 = el fichero entero o su nombre), `clase` y
+    `origen`. La clase es una clave de `PATRONES_DE_SECRETO`, o
+    `contrasena_en_url`, `asignacion_de_secreto`, `fichero_prohibido` o
+    `no_recorrido`.
   - `verificar_commit(raiz, revision="HEAD", huellas=None) -> list[dict]` con
     las claves `campo` (`autor`, `correo_de_autor`, `quien_confirma`,
     `correo_de_quien_confirma`, `mensaje`), `linea` (la del mensaje; 0 en los
-    demás) y `huella`; y `commits(raiz) -> int`.
+    demás) y `huella` o `clase`.
+  - `verificar_referencias(raiz, huellas) -> list[dict]` con las claves
+    `referencia` (`rama` o `etiqueta`), `nombre` (tapado) y `huella`.
+  - `commits(raiz) -> int` (los que alcanza cualquier referencia),
+    `ramas(raiz) -> int`, `etiquetas(raiz) -> int`.
   - `main(argv=None) -> int` con `--raiz`, `--huellas`, `--commit [REV]`,
-    `--un-solo-commit`, `--regenerar` y `--lista`. Devuelve 0 sin hallazgos y
-    1 con ellos.
+    `--un-solo-commit` (implica `--commit HEAD`), `--regenerar` y `--lista`.
+    Devuelve 0 sin hallazgos; 1 con ellos, si no se recorrió ningún fichero
+    de texto, o (con `SystemExit`) si las huellas son solo la del centinela.
+- Produce, en `tests/test_anonimato.py`: `va` (el script cargado por ruta),
+  `RAIZ`, `HUELLAS`, `solo_el_centinela(ruta=HUELLAS) -> bool` y
+  `SIN_LA_LISTA` (el motivo con el que se salta lo que exige la lista
+  entera). Los usan las tareas 6 y 7.
 
 **Decisiones de esta tarea** (donde el contrato dejaba margen):
+- **Se recorre lo que se publicaría, no lo que hay versionado.** En la raíz
+  de un repositorio: la copia de trabajo (lo que tiene seguimiento y lo que
+  no lo tiene ni está ignorado, que un `git add -A` añadiría), lo preparado
+  en el índice que no es lo que hay en disco y, con `--commit`, el árbol de
+  ese commit. El mismo contenido no se recorre dos veces. Si `raiz` no es la
+  raíz de un repositorio, todo lo que hay debajo salvo `.git/`: es el lado
+  seguro.
+- **Un recorrido vacío no es un árbol limpio.** Si no se recorrió ningún
+  fichero de texto, la salida es 1.
+- **Lo que no se puede mirar es un hallazgo**, no un silencio: un enlace
+  simbólico, un submódulo, otro repositorio dentro, un fichero que no se deja
+  leer. Clase `no_recorrido`.
 - **El centinela no cuenta en el árbol.** Es público y el spec lo nombra en
   claro, así que su huella, que va siempre en `huellas.txt`, daría un hallazgo
   en el propio spec, en este plan y en la prueba. `huellas_de_la_lista()`
   la quita, y la usan `test_el_arbol_esta_limpio` y la línea de órdenes. Las
   pruebas del centinela usan el conjunto entero sobre un árbol de juguete.
-- **El nombre del fichero también se tokeniza** (línea 0). Si un componente
-  del nombre es un hallazgo, la salida lo tapa con `<nombre-con-huella>`.
+- **Con solo la huella del centinela no se comprueba nada** (es el
+  `huellas.txt` del repositorio que se publica, D9): la línea de órdenes sale
+  con 1 diciéndolo, y las pruebas que exigen la lista entera se saltan con el
+  motivo `SIN_LA_LISTA`.
+- **La tokenización** (D6) normaliza con NFKD y quita las marcas de
+  combinación: las tildes y las letras de ancho completo dan las letras
+  llanas. Los caracteres de formato (un espacio de ancho cero, un guion
+  opcional) se tratan de las dos maneras, borrados y como separador. Y se
+  tokeniza **también el texto desescapado**: un `\n` escrito con barra, un
+  `%20` o una entidad HTML pegan letras al token y lo esconden.
 - **Se tokeniza línea a línea**, para poder dar el número de línea. Un token
-  no puede cruzar un salto de línea, así que el resultado es el mismo que
-  tokenizando el fichero entero.
-- **Texto** es lo que se decodifica en UTF-8 y no lleva bytes nulos. Todo lo
-  demás es binario: se declara y no se recorre.
-- **Si `raiz` está dentro de un repositorio pero no es su raíz**, se recorre
-  todo lo que hay debajo (salvo `.git/`), no solo lo versionado: es el lado
-  seguro.
-- **Contraseña en URL.** El árbol lleva seis apariciones, todas de ejemplo
-  (inventario del 28-sep: `docs/sp2-despliegue.md:310`,
-  `docs/sp3-operacion.md:324`, el plan de SP3 línea 372, `tests/conftest.py:76`,
-  `tests/test_esquema_bd.py:26`, `tests/test_mantenimiento.py:317`), con tres
-  valores: `prueba`, `clave` y `token`. Los tres entran en
+  partido por un salto de línea no se detecta: es un límite, y lo documenta
+  la tarea 7.
+- **Texto** es lo que tiene marca de orden de bytes (se lee en su
+  codificación) o no lleva bytes nulos (se lee como UTF-8, y los bytes que no
+  lo sean, como cp1252). Lo demás es binario: se declara y no se recorre.
+- **El nombre también viaja** (línea 0): se tokeniza, y se le pasan los
+  patrones de secretos. Lo mismo el nombre de las ramas y de las etiquetas,
+  que se publican con el `push`.
+- **El commit**: autor, quien confirma, sus correos y el mensaje, contra las
+  huellas y contra los patrones de secretos. `--un-solo-commit` exige un
+  commit contando lo que alcanza CUALQUIER referencia, una sola rama y
+  ninguna etiqueta.
+- **Secretos por patrón**: las clases de `PATRONES_DE_SECRETO` (el token de
+  bot de Telegram, también pegado a `bot` como va en la URL de su API; claves
+  de API; JWT; la cabecera de una clave privada; una cabecera
+  `Authorization` con un valor literal), la contraseña dentro de una URL y la
+  **asignación de un secreto**: una clave que nombra un secreto (`password`,
+  `secret`, `token`, `api_key`, o que acaba en `_key`) con un valor que es un
+  LITERAL que lo parece (8 o más caracteres, con letras y cifras) y no es de
+  ejemplo. No es un literal lo que lleva paréntesis, corchetes o llaves (una
+  llamada, un subíndice, una expresión de n8n) ni una variable. Los patrones
+  se pasan también por la línea con las comillas desescapadas: el texto de
+  un JSON (una celda de un notebook, el código de un nodo de n8n).
+- **Contraseña en URL.** El árbol lleva seis apariciones, todas de ejemplo,
+  con tres valores: `prueba`, `clave` y `token`. Los tres entran en
   `CONTRASENAS_DE_EJEMPLO` junto con `cambiar-esto`, `...` y `%s`; además se
-  permiten los marcadores entre `<` y `>` y las variables `$X` y `${X}`.
-  Ningún fichero del árbol hay que cambiarlo por esto.
-- **Ficheros prohibidos**: además de `.env`, cualquier `.env.*` que no sea
-  `.env.ejemplo`.
+  permiten los marcadores entre `<` y `>` y las variables `$X` y `${X}` (con
+  el nombre en mayúsculas). Ningún fichero del árbol hay que cambiarlo por
+  esto.
+- **Ficheros prohibidos**: `.env` y sus variantes (salvo `.env.ejemplo`),
+  ficheros de claves y de credenciales (`FICHEROS_PROHIBIDOS`). No distingue
+  mayúsculas.
 - **Los secretos de ejemplo de las pruebas se componen al correr**
   (`"sk" + "-" + …`). `tests/test_anonimato.py` y este plan también se
   recorren, y un secreto de ejemplo escrito entero haría saltar la prueba.
 - **Las salidas no llevan nunca el token ni el secreto**: fichero, línea y los
-  12 primeros caracteres de la huella, o la clase.
+  12 primeros caracteres de la huella, o la clase. En un nombre (de fichero,
+  de rama, de etiqueta, la revisión que se pasa a `--commit`) el token sale
+  tapado por el principio de su huella y el secreto por `<secreto>`. Las
+  rutas salen relativas, y la de la lista en claro no se imprime nunca.
 
 **Avisos para quien ejecuta:**
 - Todas las órdenes se corren desde la raíz del repo.
 - El código de esta sección se copia TAL CUAL. En particular, no «arregles»
-  las cadenas partidas de `_secretos()` ni escribas en ningún comentario una
-  URL con usuario y contraseña: el fichero se recorre a sí mismo.
+  las cadenas partidas de los secretos de ejemplo ni escribas en ningún
+  comentario una URL con usuario y contraseña: el fichero se recorre a sí
+  mismo.
 - La lista en claro vive fuera del repositorio. En las órdenes se escribe
   `ANONIMATO_LISTA=<lista en claro>`; su ruta no se escribe en ningún fichero
-  del repo ni en ningún mensaje de commit. Si no la tienes, no hace falta: el
-  paso 5 trae `huellas.txt` entero.
+  del repo ni en ningún mensaje de commit. **Sin ella no se puede hacer el
+  paso 5**: se le pide a quien la mantiene.
 - No se escribe en ninguna salida, mensaje ni comentario ningún token de la
   lista. Los hallazgos se nombran por fichero, línea y huella.
 - Las pruebas que usan `git` crean repositorios de juguete en el directorio
   temporal de pytest, con una configuración de git vacía: no tocan ni el
   repositorio ni la configuración de nadie. Sin `git` en el PATH se saltan.
-- `tests/test_anonimato.py` tarda unos 10 s: casi todo son los `git` de los
-  repositorios de juguete.
+- `tests/test_anonimato.py` tarda alrededor de un minuto: casi todo son los
+  `git` de los repositorios de juguete.
+- **El verificador mira también el índice.** Mientras un fichero arreglado no
+  esté preparado con `git add`, lo que git tiene preparado sigue siendo lo
+  de antes, y sigue dando el hallazgo.
 
 - [ ] **Paso 1: Escribir las pruebas, que fallan**
 
 Crear `tests/test_anonimato.py` con este contenido (todavía sin
-`test_el_arbol_esta_limpio`, que llega en el paso 8):
+`test_el_arbol_esta_limpio`, que llega en la tarea 6):
 
 ```python
 """Pruebas del anonimato del repositorio (spec de SP5 §6.1).
@@ -4960,9 +5021,10 @@ Crear `tests/test_anonimato.py` con este contenido (todavía sin
 El repositorio se publica, y lo que se publica no puede llevar ninguna cadena
 que identifique al cliente, a la empresa, a la maquina ni a los integrantes.
 La lista de esas cadenas NO vive aqui: el repositorio lleva solo
-`tests/anonimato/huellas.txt`, con el sha256 de cada token. Por eso estas
-pruebas corren siempre, sin la lista: se prueban a si mismas con un token
-publico, el centinela, cuya huella va siempre en el fichero.
+`tests/anonimato/huellas.txt`, con el sha256 de cada token (el de desarrollo;
+el que se publica lleva solo la del centinela, D9). Por eso estas pruebas
+corren siempre, sin la lista: se prueban a si mismas con un token publico, el
+centinela, cuya huella va siempre en el fichero.
 
 Los secretos de ejemplo se COMPONEN al correr (`"sk" + "-" + ...`): este
 fichero tambien se recorre, y un secreto de ejemplo escrito entero haria
@@ -4973,6 +5035,7 @@ import importlib.util
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -4995,6 +5058,9 @@ va = _cargar_script()
 
 CENTINELA = "centinelaanonimato7f3a"
 OTRO = "tokendeprueba9z"          # un segundo token inventado, para la CLI
+
+# De donde sale lo que se recorre (clave `origen` de cada hallazgo).
+COPIA, INDICE, COMMIT = "copia de trabajo", "indice", "commit"
 
 
 # --------------------------------------------------------------------------
@@ -5027,6 +5093,49 @@ def test_tokens_quita_el_base64_largo_y_conserva_el_corto():
     assert corto.lower() in va.tokens(f'"image/png": "{corto}"')
 
 
+@pytest.mark.parametrize("texto", [
+    pytest.param('{"notas": "linea uno\\n' + CENTINELA + '"}',
+                 id="barra_n_en_json"),
+    pytest.param('"columna\\t' + CENTINELA + '"', id="barra_t"),
+    pytest.param("https://ejemplo.test/?q=%20" + CENTINELA,
+                 id="por_ciento_20"),
+    pytest.param("https:%2F%2F" + CENTINELA + ".test", id="por_ciento_2f"),
+    pytest.param("&#99;" + CENTINELA[1:], id="entidad_decimal"),
+    pytest.param("&#x63;" + CENTINELA[1:], id="entidad_hexadecimal"),
+    pytest.param("\\u0063" + CENTINELA[1:], id="barra_u"),
+])
+def test_los_escapes_no_pegan_letras_al_token(tmp_path, texto):
+    assert CENTINELA in va.tokens(texto)
+    raiz = _arbol_limpio(tmp_path / "arbol")
+    (raiz / "a.json").write_text(texto + "\n", encoding="utf-8")
+    hallazgos = va.buscar_huellas(raiz, {va.huella(CENTINELA)})
+    assert [(h["fichero"], h["linea"]) for h in hallazgos] == [("a.json", 1)]
+
+
+@pytest.mark.parametrize("texto", [
+    pytest.param("".join(chr(ord(c) + 0xFEE0) for c in CENTINELA),
+                 id="ancho_completo"),
+    pytest.param(CENTINELA[:9] + "​" + CENTINELA[9:],
+                 id="espacio_de_ancho_cero"),
+    pytest.param(CENTINELA[:9] + "­" + CENTINELA[9:],
+                 id="guion_blando"),
+    pytest.param("﻿" + CENTINELA, id="marca_de_orden_pegada"),
+    # R7: el caracter de formato tambien hace de separador (union).
+    pytest.param("alfa​" + CENTINELA, id="formato_como_separador"),
+    pytest.param(CENTINELA[:5] + "​" + CENTINELA[5:],
+                 id="formato_dentro_del_token"),
+])
+def test_compatibilidad_y_caracteres_de_formato(texto):
+    # NFKD descompone tambien el ancho completo; los caracteres de formato
+    # (categoria Cf) se borran en vez de partir el token.
+    assert CENTINELA in va.tokens(texto)
+
+
+def test_tokens_une_el_texto_tal_cual_y_el_desescapado():
+    assert va.tokens("uno\\ndos") == {"uno", "ndos", "dos"}
+    assert va.tokens("a%20b &amp; c") == {"a", "20b", "b", "amp", "c"}
+
+
 def test_tokens_de_un_texto_vacio():
     assert va.tokens("") == set()
     assert va.tokens(" -- \n") == set()
@@ -5046,6 +5155,23 @@ def test_el_centinela_es_el_del_spec():
 # --------------------------------------------------------------------------
 # huellas.txt, el fichero versionado
 # --------------------------------------------------------------------------
+def solo_el_centinela(ruta=HUELLAS):
+    """Si el fichero de huellas lleva solo la del centinela.
+
+    Es el `huellas.txt` del repositorio que se publica (D9): alli la
+    comprobacion de verdad se hace antes de publicar, con las huellas del
+    repositorio de desarrollo, y lo que exige la lista entera se salta.
+    """
+    return va.leer_huellas(ruta) == {va.huella(CENTINELA)}
+
+
+SIN_LA_LISTA = ("huellas.txt lleva solo la huella del centinela (el "
+                "repositorio que se publica, D9): queda sin verificar aqui "
+                "que el arbol no lleva ninguna cadena de la lista. Esa "
+                "comprobacion se hace antes de publicar, con --huellas y las "
+                "huellas del repositorio de desarrollo")
+
+
 def test_el_centinela_esta_en_huellas_txt():
     assert va.huella(CENTINELA) in va.leer_huellas(HUELLAS)
 
@@ -5054,11 +5180,48 @@ def test_huellas_txt_lleva_cabecera_y_huellas_ordenadas_sin_repetir():
     lineas = HUELLAS.read_text(encoding="utf-8").splitlines()
     assert lineas[0].startswith("#")
     datos = [l for l in lineas if l and not l.startswith("#")]
-    assert len(datos) > 1, "solo esta el centinela: falta regenerar"
     assert all(len(l) == 64 and set(l) <= set("0123456789abcdef")
                for l in datos)
     assert datos == sorted(set(datos))
     assert set(datos) == va.leer_huellas(HUELLAS)
+
+
+@pytest.mark.skipif(solo_el_centinela(), reason=SIN_LA_LISTA)
+def test_huellas_txt_lleva_mas_que_el_centinela():
+    # Antes era parte de la prueba de arriba («len(datos) > 1»).
+    assert len(va.leer_huellas(HUELLAS)) > 1, "falta regenerar"
+
+
+def test_solo_el_centinela_reconoce_el_fichero_del_repositorio_publico(
+        tmp_path):
+    publico = tmp_path / "publico.txt"
+    publico.write_text("# cabecera\n" + va.huella(CENTINELA) + "\n",
+                       encoding="utf-8")
+    assert solo_el_centinela(publico)
+    assert not solo_el_centinela(_huellas_de_juguete(tmp_path))
+
+
+@pytest.mark.parametrize("mala", [
+    pytest.param(va.huella(OTRO).upper(), id="en_mayusculas"),
+    pytest.param(OTRO, id="un_token_en_claro"),
+    pytest.param(va.huella(OTRO)[:63], id="corta"),
+])
+def test_leer_huellas_exige_una_huella_por_linea(tmp_path, mala):
+    ruta = tmp_path / "huellas.txt"
+    ruta.write_text(f"# cabecera\n{va.huella(CENTINELA)}\n\n{mala}\n",
+                    encoding="utf-8")
+    with pytest.raises(ValueError) as error:
+        va.leer_huellas(ruta)
+    assert "línea 4" in str(error.value)
+    assert mala not in str(error.value)
+    assert OTRO not in str(error.value).lower()
+
+
+def test_leer_huellas_acepta_la_marca_de_orden_de_bytes(tmp_path):
+    ruta = tmp_path / "huellas.txt"
+    ruta.write_text("# cabecera\n" + va.huella(CENTINELA) + "\n",
+                    encoding="utf-8-sig")
+    assert va.leer_huellas(ruta) == {va.huella(CENTINELA)}
 
 
 def test_la_lista_en_claro_esta_ignorada_por_si_alguien_la_copia_dentro():
@@ -5072,9 +5235,10 @@ def test_la_lista_en_claro_esta_ignorada_por_si_alguien_la_copia_dentro():
 # --------------------------------------------------------------------------
 LISTA_DE_JUGUETE = """\
 # comentario de cabecera
-[huellas]
+[Huellas]
 # un grupo
-Uno-Dos
+Uno
+dos   # lo que sigue a una almohadilla es comentario
 tres
 
 [sustituciones]
@@ -5085,12 +5249,36 @@ cuatro => cinco
 def test_leer_lista_da_solo_la_seccion_de_huellas(tmp_path):
     lista = tmp_path / "lista.txt"
     lista.write_text(LISTA_DE_JUGUETE, encoding="utf-8")
-    assert va.leer_lista(lista) == ["Uno-Dos", "tres"]
+    assert va.leer_lista(lista) == ["Uno", "dos", "tres"]
+
+
+def test_leer_lista_con_marca_de_orden_y_la_seccion_en_la_primera_linea(
+        tmp_path):
+    lista = tmp_path / "lista.txt"
+    lista.write_text("[huellas]\nuno\n[HUELLAS]\ndos\n", encoding="utf-8-sig")
+    assert va.leer_lista(lista) == ["uno", "dos"]
+
+
+def test_regenerar_rechaza_lo_que_no_da_exactamente_un_token(tmp_path):
+    destino = tmp_path / "huellas.txt"
+    with pytest.raises(ValueError) as error:
+        va.regenerar(["uno", "zorro-azul.test", "tres", "--"], destino)
+    mensaje = str(error.value)
+    assert "2" in mensaje and "4" in mensaje
+    assert not {"zorro", "azul", "test"} & va.tokens(mensaje)
+    assert not destino.exists()
+
+
+def test_regenerar_sin_entradas_es_un_error(tmp_path):
+    destino = tmp_path / "huellas.txt"
+    with pytest.raises(ValueError):
+        va.regenerar([], destino)
+    assert not destino.exists()
 
 
 def test_regenerar_escribe_las_huellas_ordenadas_y_la_del_centinela(tmp_path):
     destino = tmp_path / "anonimato" / "huellas.txt"
-    n = va.regenerar(["Uno-Dos", "tres", "uno"], destino)
+    n = va.regenerar(["Uno", "dos", "tres", "uno"], destino)
     esperadas = {va.huella(t) for t in ("uno", "dos", "tres", CENTINELA)}
     assert n == 4
     assert va.leer_huellas(destino) == esperadas
@@ -5099,8 +5287,10 @@ def test_regenerar_escribe_las_huellas_ordenadas_y_la_del_centinela(tmp_path):
     assert datos == sorted(esperadas)
     assert texto.startswith("#")
     assert "\r" not in destino.read_bytes().decode("utf-8")
-    # El fichero se publica: ningun token en claro, salvo el centinela, que
-    # es publico y la cabecera lo nombra.
+    # Ningun token en claro, salvo el centinela, que es publico y la cabecera
+    # lo nombra. (La huella de un token corto se adivina probando: en el
+    # repositorio que se publica, huellas.txt lleva solo la del centinela,
+    # D9; la lista entera vive solo en el de desarrollo, que es privado.)
     for token in ("uno", "dos", "tres"):
         assert token not in va.tokens(texto)
 
@@ -5130,7 +5320,7 @@ def test_detecta_el_centinela_dentro_del_recorrido(tmp_path):
         f"primera\nsegunda con {CENTINELA}.\n", encoding="utf-8")
     hallazgos = va.buscar_huellas(raiz, va.leer_huellas(HUELLAS))
     assert hallazgos == [{"fichero": "docs/nota.md", "linea": 2,
-                          "huella": va.huella(CENTINELA)}]
+                          "huella": va.huella(CENTINELA), "origen": COPIA}]
 
 
 def test_lo_detecta_con_mayusculas_tildes_y_pegado_a_separadores(tmp_path):
@@ -5145,17 +5335,72 @@ def test_el_hallazgo_nunca_lleva_el_token_en_claro(tmp_path):
     raiz = _arbol_limpio(tmp_path / "arbol")
     (raiz / "a.txt").write_text(CENTINELA + "\n", encoding="utf-8")
     (hallazgo,) = va.buscar_huellas(raiz, {va.huella(CENTINELA)})
-    assert sorted(hallazgo) == ["fichero", "huella", "linea"]
+    assert sorted(hallazgo) == ["fichero", "huella", "linea", "origen"]
     assert CENTINELA not in repr(hallazgo)
 
 
 def test_el_nombre_del_fichero_tambien_se_tokeniza(tmp_path):
     raiz = _arbol_limpio(tmp_path / "arbol")
-    (raiz / "docs" / f"{CENTINELA}.md").write_text("nada\n", encoding="utf-8")
+    (raiz / "docs" / f"{CENTINELA}.md").write_text(
+        f"nada\ny {CENTINELA}\n", encoding="utf-8")
     hallazgos = va.buscar_huellas(raiz, {va.huella(CENTINELA)})
-    assert [h["linea"] for h in hallazgos] == [0]
+    assert [h["linea"] for h in hallazgos] == [0, 2]
     assert CENTINELA not in repr(hallazgos)
-    assert hallazgos[0]["fichero"].startswith("docs/")
+    # El nombre que sale es el publicable, el mismo en todos los hallazgos:
+    # el TOKEN dentro del componente pasa al principio de su huella (R6).
+    publicable = f"docs/<huella-{va.huella(CENTINELA)[:12]}>.md"
+    assert [h["fichero"] for h in hallazgos] == [publicable, publicable]
+
+
+def test_tres_hermanos_con_el_mismo_token_no_chocan(tmp_path, capsys):
+    raiz = _arbol_limpio(tmp_path / "arbol")
+    for nombre in (f"informe-{OTRO}.md", f"notas_{OTRO.upper()}.md",
+                   f"{OTRO}.txt"):
+        (raiz / "docs" / nombre).write_text("nada\n", encoding="utf-8")
+    tapada = f"<huella-{va.huella(OTRO)[:12]}>"
+    hallazgos = va.buscar_huellas(raiz, {va.huella(OTRO)})
+    assert sorted(h["fichero"] for h in hallazgos) == sorted([
+        f"docs/informe-{tapada}.md", f"docs/notas_{tapada}.md",
+        f"docs/{tapada}.txt"])
+    assert va.main(["--raiz", str(raiz),
+                    "--huellas", str(_huellas_de_juguete(tmp_path))]) == 1
+    salida = capsys.readouterr().out
+    assert "huellas: 3 en 3 ficheros" in salida
+    assert OTRO not in salida.lower()
+
+
+def test_un_secreto_en_el_nombre_del_fichero_es_un_hallazgo(tmp_path):
+    raiz = _arbol_limpio(tmp_path / "arbol")
+    clave = _secretos()["clave_de_api_akia"]
+    (raiz / "docs" / f"config-{clave}.txt").write_text("x\n",
+                                                       encoding="utf-8")
+    (raiz / "figura-{}.png".format(clave)).write_bytes(b"\x89PNG\x00")
+    hallazgos = va.buscar_secretos(raiz, huellas=set())
+    assert hallazgos == [
+        {"fichero": "docs/config-<secreto>.txt", "linea": 0,
+         "clase": "clave_de_api_akia", "origen": COPIA},
+        {"fichero": "figura-<secreto>.png", "linea": 0,
+         "clase": "clave_de_api_akia", "origen": COPIA}]
+    codigo, salida = _cli("--raiz", str(raiz),
+                          "--huellas", str(_huellas_de_juguete(tmp_path)))
+    assert codigo == 1
+    assert clave not in salida
+    assert "  figura-<secreto>.png" in salida
+
+
+def test_el_nombre_publicable_tambien_en_los_secretos(tmp_path):
+    raiz = _arbol_limpio(tmp_path / "arbol")
+    carpeta = raiz / CENTINELA
+    carpeta.mkdir()
+    (carpeta / "config.txt").write_text(
+        _secretos()["clave_de_api_akia"] + "\n", encoding="utf-8")
+    (carpeta / ".env").write_text("X=1\n", encoding="utf-8")
+    hallazgos = va.buscar_secretos(raiz, huellas={va.huella(CENTINELA)})
+    tapada = f"<huella-{va.huella(CENTINELA)[:12]}>"
+    assert [(h["fichero"], h["linea"], h["clase"]) for h in hallazgos] == [
+        (f"{tapada}/.env", 0, "fichero_prohibido"),
+        (f"{tapada}/config.txt", 1, "clave_de_api_akia")]
+    assert CENTINELA not in repr(hallazgos)
 
 
 def test_los_binarios_se_declaran_y_no_se_recorren(tmp_path):
@@ -5168,8 +5413,42 @@ def test_los_binarios_se_declaran_y_no_se_recorren(tmp_path):
     assert va.buscar_huellas(raiz, {va.huella(CENTINELA)}) == []
 
 
+_CON_TILDE = "CentinelaAnónimato7F3A"       # el centinela, escrito con tilde
+
+
+@pytest.mark.parametrize("datos", [
+    pytest.param(f"uno\ncon {CENTINELA}\n".encode("utf-16"),
+                 id="utf16_con_marca"),
+    pytest.param(f"uno\ncon {CENTINELA}\n".encode("utf-16-be"),
+                 id="utf16be_sin_marca_es_binario"),
+    pytest.param(b"\xfe\xff" + f"uno\ncon {CENTINELA}\n".encode("utf-16-be"),
+                 id="utf16be_con_marca"),
+    pytest.param(f"uno\ncon {CENTINELA}\n".encode("utf-32"),
+                 id="utf32_con_marca"),
+    pytest.param(f"Canción\ncon {_CON_TILDE}\n".encode("latin-1"),
+                 id="latin1"),
+    pytest.param(f"Canción\ncon {_CON_TILDE}".encode("utf-8") + b" \x96 fin\n",
+                 id="utf8_con_un_byte_cp1252_suelto"),
+])
+def test_el_texto_que_no_es_utf8_tambien_se_recorre(tmp_path, datos):
+    raiz = _arbol_limpio(tmp_path / "arbol")
+    (raiz / "tabla.csv").write_bytes(datos)
+    hallazgos = va.buscar_huellas(raiz, {va.huella(CENTINELA)})
+    if b"\0" in datos and not datos.startswith((b"\xff\xfe", b"\xfe\xff")):
+        # Bytes nulos sin marca de orden de bytes: binario, se declara.
+        assert not va.es_texto(raiz / "tabla.csv")
+        assert "tabla.csv" in [p.name for p in va.binarios(raiz)]
+        assert hallazgos == []
+        return
+    assert va.es_texto(raiz / "tabla.csv")
+    assert "tabla.csv" not in [p.name for p in va.binarios(raiz)]
+    assert [(h["fichero"], h["linea"]) for h in hallazgos] == [
+        ("tabla.csv", 2)]
+
+
 # --------------------------------------------------------------------------
-# Con git: solo lo versionado
+# Con git: lo que se publicaria (la copia de trabajo sin lo ignorado, el
+# indice y, con --commit, el arbol del commit)
 # --------------------------------------------------------------------------
 hay_git = pytest.mark.skipif(shutil.which("git") is None,
                              reason="sin git en el PATH: queda sin verificar "
@@ -5188,8 +5467,9 @@ def _git(raiz, *argumentos, **entorno):
                   GIT_COMMITTER_NAME="Autor Neutro",
                   GIT_COMMITTER_EMAIL="autor@ejemplo.test")
     limpio.update(entorno)
-    subprocess.run(["git", "-C", str(raiz), *argumentos], check=True,
-                   capture_output=True, env=limpio)
+    hecho = subprocess.run(["git", "-C", str(raiz), *argumentos], check=True,
+                           capture_output=True, env=limpio)
+    return hecho.stdout.decode("utf-8")
 
 
 def _repositorio(tmp_path):
@@ -5200,20 +5480,264 @@ def _repositorio(tmp_path):
 
 
 @hay_git
-def test_en_un_repositorio_se_recorre_solo_lo_versionado(tmp_path):
+def test_en_un_repositorio_se_recorre_lo_versionado_y_lo_no_ignorado(
+        tmp_path):
+    # Antes: «se recorre solo lo versionado». Lo que no tiene seguimiento y
+    # no esta ignorado tambien se publica (`git add -A` lo anade): se recorre.
     raiz = _repositorio(tmp_path)
+    (raiz / ".gitignore").write_text("ignorado.txt\n", encoding="utf-8")
+    (raiz / "ignorado.txt").write_text(CENTINELA + "\n", encoding="utf-8")
     (raiz / "sin_versionar.txt").write_text(CENTINELA + "\n",
                                             encoding="utf-8")
     nombres = [p.relative_to(raiz).as_posix()
                for p in va.ficheros_versionados(raiz)]
-    assert nombres == ["codigo.py", "docs/guia.md", "figura.png"]
-    assert va.buscar_huellas(raiz, {va.huella(CENTINELA)}) == []
+    assert nombres == [".gitignore", "codigo.py", "docs/guia.md",
+                       "figura.png", "sin_versionar.txt"]
+    hallazgos = va.buscar_huellas(raiz, {va.huella(CENTINELA)})
+    assert [(h["fichero"], h["linea"], h["origen"]) for h in hallazgos] == [
+        ("sin_versionar.txt", 1, COPIA)]
 
     (raiz / "docs" / "guia.md").write_text(f"ahora sí: {CENTINELA}\n",
                                            encoding="utf-8")
     hallazgos = va.buscar_huellas(raiz, {va.huella(CENTINELA)})
-    assert [(h["fichero"], h["linea"]) for h in hallazgos] == [
-        ("docs/guia.md", 1)]
+    assert [(h["fichero"], h["linea"], h["origen"]) for h in hallazgos] == [
+        ("docs/guia.md", 1, COPIA), ("sin_versionar.txt", 1, COPIA)]
+
+
+@hay_git
+def test_un_repositorio_recien_creado_sin_add_se_recorre(tmp_path):
+    raiz = _arbol_limpio(tmp_path / "repo")
+    _git(raiz, "init", "-q")
+    (raiz / "docs" / "nota.md").write_text(f"primera\ncon {CENTINELA}\n",
+                                           encoding="utf-8")
+    assert va.buscar_huellas(raiz, {va.huella(CENTINELA)}) == [
+        {"fichero": "docs/nota.md", "linea": 2,
+         "huella": va.huella(CENTINELA), "origen": COPIA}]
+
+
+@hay_git
+def test_la_cli_sobre_un_arbol_vacio_no_dice_limpio(tmp_path, capsys):
+    huellas = str(_huellas_de_juguete(tmp_path))
+    vacio = tmp_path / "vacio"
+    vacio.mkdir()
+    _git(vacio, "init", "-q")
+    sin_git = tmp_path / "sin_git"
+    sin_git.mkdir()
+    for raiz in (vacio, sin_git):
+        assert va.main(["--raiz", str(raiz), "--huellas", huellas]) == 1
+        salida = capsys.readouterr().out
+        assert "ficheros recorridos: 0" in salida
+        assert salida.splitlines()[-1].startswith("NO publicar: no se "
+                                                  "recorrió ningún fichero")
+
+
+@hay_git
+def test_lo_preparado_y_limpiado_despues_en_disco_sale_del_indice(tmp_path):
+    raiz = _repositorio(tmp_path)
+    guia = raiz / "docs" / "guia.md"
+    limpio = guia.read_bytes()
+    guia.write_text(f"uno\ncon {CENTINELA}\n", encoding="utf-8")
+    _git(raiz, "add", "docs/guia.md")
+    guia.write_bytes(limpio)
+    assert va.buscar_huellas(raiz, {va.huella(CENTINELA)}) == [
+        {"fichero": "docs/guia.md", "linea": 2,
+         "huella": va.huella(CENTINELA), "origen": INDICE}]
+
+
+@hay_git
+def test_lo_preparado_y_borrado_del_disco_se_recorre(tmp_path):
+    raiz = _repositorio(tmp_path)
+    nota = raiz / "nota.md"
+    nota.write_text(f"{CENTINELA}\n", encoding="utf-8")
+    _git(raiz, "add", "nota.md")
+    nota.unlink()
+    hallazgos = va.buscar_huellas(raiz, {va.huella(CENTINELA)})
+    assert [(h["fichero"], h["linea"], h["origen"]) for h in hallazgos] == [
+        ("nota.md", 1, INDICE)]
+
+
+@hay_git
+def test_con_commit_se_recorre_el_arbol_del_commit(tmp_path, capsys):
+    raiz = _repositorio(tmp_path)
+    nota = raiz / "nota.md"
+    nota.write_text(f"uno\n{CENTINELA} y {OTRO}\n", encoding="utf-8")
+    _git(raiz, "add", "nota.md")
+    _git(raiz, "commit", "-q", "-m", "arbol")
+    nota.write_text("uno\nya limpio\n", encoding="utf-8")
+    _git(raiz, "add", "nota.md")            # copia e indice, limpios
+
+    huellas = {va.huella(CENTINELA)}
+    assert va.buscar_huellas(raiz, huellas) == []
+    assert va.buscar_huellas(raiz, huellas, commit="HEAD") == [
+        {"fichero": "nota.md", "linea": 2,
+         "huella": va.huella(CENTINELA), "origen": COMMIT}]
+
+    de_juguete = str(_huellas_de_juguete(tmp_path))
+    assert va.main(["--raiz", str(raiz), "--huellas", de_juguete]) == 0
+    capsys.readouterr()
+    assert va.main(["--raiz", str(raiz), "--huellas", de_juguete,
+                    "--commit", "HEAD"]) == 1
+    salida = capsys.readouterr().out
+    assert f"nota.md:2: huella {va.huella(OTRO)[:12]} (commit)" in salida
+    assert OTRO not in salida.lower()
+
+
+@hay_git
+def test_un_mismo_contenido_se_recorre_una_sola_vez(tmp_path):
+    raiz = _repositorio(tmp_path)
+    (raiz / "nota.md").write_text(f"{CENTINELA}\n", encoding="utf-8")
+    _git(raiz, "add", "nota.md")
+    _git(raiz, "commit", "-q", "-m", "arbol")
+    hallazgos = va.buscar_huellas(raiz, {va.huella(CENTINELA)},
+                                  commit="HEAD")
+    assert [(h["fichero"], h["origen"]) for h in hallazgos] == [
+        ("nota.md", COPIA)]
+
+
+@hay_git
+def test_una_subcarpeta_de_un_repositorio_se_recorre_entera(tmp_path):
+    # No es la raiz de un repositorio: se recorre todo lo que hay debajo,
+    # tambien lo ignorado (es el arbol que alguien copiaria para publicar).
+    raiz = _repositorio(tmp_path)
+    (raiz / ".gitignore").write_text("docs/ignorado.md\n", encoding="utf-8")
+    (raiz / "docs" / "ignorado.md").write_text(f"{CENTINELA}\n",
+                                               encoding="utf-8")
+    assert va.buscar_huellas(raiz, {va.huella(CENTINELA)}) == []
+    hallazgos = va.buscar_huellas(raiz / "docs", {va.huella(CENTINELA)})
+    assert [(h["fichero"], h["linea"], h["origen"]) for h in hallazgos] == [
+        ("ignorado.md", 1, COPIA)]
+    assert [p.name for p in va.ficheros_versionados(raiz / "docs")] == [
+        "guia.md", "ignorado.md"]
+
+
+@hay_git
+def test_las_ordenes_de_git_no_heredan_el_repositorio_del_entorno(
+        tmp_path, monkeypatch):
+    raiz = _repositorio(tmp_path)
+    (raiz / ".gitignore").write_text("ignorado.md\n", encoding="utf-8")
+    (raiz / "ignorado.md").write_text(f"{CENTINELA}\n", encoding="utf-8")
+    nota = raiz / "nota.md"
+    nota.write_text(f"{CENTINELA}\n", encoding="utf-8")
+    _git(raiz, "add", "nota.md")
+    nota.unlink()                       # solo queda en el indice
+
+    otro = _arbol_limpio(tmp_path / "otro")
+    _git(otro, "init", "-q")
+    _git(otro, "add", "-A")
+    monkeypatch.setenv("GIT_DIR", str(otro / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(otro))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(otro / ".git" / "index"))
+
+    hallazgos = va.buscar_huellas(raiz, {va.huella(CENTINELA)})
+    assert [(h["fichero"], h["linea"], h["origen"]) for h in hallazgos] == [
+        ("nota.md", 1, INDICE)]
+
+
+def _no_recorrido(fichero, origen):
+    return {"fichero": fichero, "linea": 0, "clase": "no_recorrido",
+            "origen": origen}
+
+
+@hay_git
+def test_un_submodulo_no_se_recorre_en_silencio(tmp_path, capsys):
+    raiz = _repositorio(tmp_path)
+    _git(raiz, "commit", "-q", "-m", "uno")
+    sha = _git(raiz, "rev-parse", "HEAD").strip()
+    _git(raiz, "update-index", "--add", "--cacheinfo",
+         f"160000,{sha},vendor/otro")
+    assert va.buscar_secretos(raiz, huellas=set()) == [
+        _no_recorrido("vendor/otro", INDICE)]
+
+    _git(raiz, "commit", "-q", "-m", "con submodulo")
+    assert va.buscar_secretos(raiz, huellas=set(), commit="HEAD") == [
+        _no_recorrido("vendor/otro", INDICE)]
+    assert va.main(["--raiz", str(raiz),
+                    "--huellas", str(_huellas_de_juguete(tmp_path))]) == 1
+    salida = capsys.readouterr().out
+    assert "vendor/otro:0: no_recorrido (indice)" in salida
+
+
+@hay_git
+def test_un_enlace_simbolico_del_indice_no_se_recorre_en_silencio(tmp_path):
+    # Se prepara con git, sin crear el enlace en disco: vale tambien en una
+    # maquina que no deja crear enlaces simbolicos.
+    raiz = _repositorio(tmp_path)
+    (raiz / "destino.txt").write_text("docs/guia.md", encoding="utf-8")
+    sha = _git(raiz, "hash-object", "-w", "destino.txt").strip()
+    (raiz / "destino.txt").unlink()
+    _git(raiz, "update-index", "--add", "--cacheinfo", f"120000,{sha},enlace")
+    assert va.buscar_secretos(raiz, huellas=set()) == [
+        _no_recorrido("enlace", INDICE)]
+
+
+@hay_git
+def test_otro_repositorio_dentro_sin_seguimiento_no_se_recorre(tmp_path):
+    raiz = _repositorio(tmp_path)
+    dentro = raiz / "vendor" / "otro"
+    dentro.mkdir(parents=True)
+    _git(dentro, "init", "-q")
+    (dentro / "nota.md").write_text(f"{CENTINELA}\n", encoding="utf-8")
+    assert va.buscar_secretos(raiz, huellas=set()) == [
+        _no_recorrido("vendor/otro", COPIA)]
+
+
+def _enlazar(enlace, destino):
+    try:
+        os.symlink(destino, enlace)
+    except (OSError, NotImplementedError) as error:
+        pytest.skip("esta maquina no deja crear enlaces simbolicos "
+                    f"({error.__class__.__name__}): queda sin verificar que "
+                    "un enlace simbolico en disco se declara no_recorrido")
+
+
+@pytest.mark.parametrize("con_git", [
+    pytest.param(False, id="sin_git"),
+    pytest.param(True, id="con_git", marks=hay_git),
+])
+def test_un_enlace_simbolico_en_disco_no_se_recorre_en_silencio(tmp_path,
+                                                               con_git):
+    raiz = _repositorio(tmp_path) if con_git else _arbol_limpio(
+        tmp_path / "repo")
+    fuera = tmp_path / "fuera.md"
+    fuera.write_text(f"{CENTINELA}\n", encoding="utf-8")
+    _enlazar(raiz / "enlace.md", fuera)
+    assert va.buscar_secretos(raiz, huellas=set()) == [
+        _no_recorrido("enlace.md", COPIA)]
+    assert va.buscar_huellas(raiz, {va.huella(CENTINELA)}) == []
+
+
+def test_un_fichero_que_no_se_puede_leer_no_se_recorre_en_silencio(
+        tmp_path, monkeypatch):
+    raiz = _arbol_limpio(tmp_path / "arbol")
+    leer = Path.read_bytes
+
+    def leer_salvo_la_guia(ruta):
+        if ruta.name == "guia.md":
+            raise PermissionError(13, "acceso denegado")
+        return leer(ruta)
+
+    monkeypatch.setattr(Path, "read_bytes", leer_salvo_la_guia)
+    assert va.buscar_secretos(raiz, huellas=set()) == [
+        _no_recorrido("docs/guia.md", COPIA)]
+
+
+@pytest.mark.parametrize("con_git", [
+    pytest.param(False, id="sin_git"),
+    pytest.param(True, id="con_git", marks=hay_git),
+])
+def test_lo_que_el_disco_dice_que_es_un_enlace_no_se_recorre(
+        tmp_path, monkeypatch, con_git):
+    # La misma rama que la prueba de arriba, en una maquina sin enlaces: un
+    # fichero normal que `_es_enlace` declara enlace.
+    raiz = _repositorio(tmp_path) if con_git else _arbol_limpio(
+        tmp_path / "repo")
+    (raiz / "enlace.md").write_text(f"{CENTINELA}\n", encoding="utf-8")
+    monkeypatch.setattr(va, "_es_enlace",
+                        lambda ruta: Path(ruta).name == "enlace.md")
+    assert va.buscar_secretos(raiz, huellas=set()) == [
+        _no_recorrido("enlace.md", COPIA)]
+    assert "enlace.md" not in [p.name for p in va.ficheros_versionados(raiz)]
+    assert va.buscar_huellas(raiz, {va.huella(CENTINELA)}) == []
 
 
 def test_sin_repositorio_se_recorre_todo_salvo_la_carpeta_de_git(tmp_path):
@@ -5236,12 +5760,15 @@ def test_verificar_commit_mira_autor_quien_confirma_y_mensaje(tmp_path):
     (raiz / "codigo.py").write_text("x = 2\n", encoding="utf-8")
     _git(raiz, "commit", "-q", "-a", "-m", "segundo",
          "-m", f"cuerpo con {CENTINELA}",
+         "-m", f"Co-Authored-By: Alguien <alguien@{CENTINELA}.test>",
          GIT_AUTHOR_NAME=f"Nombre {CENTINELA.upper()}",
+         GIT_COMMITTER_NAME=f"Quien {CENTINELA}",
          GIT_COMMITTER_EMAIL=f"{CENTINELA}@ejemplo.test")
     assert va.commits(raiz) == 2
     hallazgos = va.verificar_commit(raiz, "HEAD", huellas=huellas)
     assert [(h["campo"], h["linea"]) for h in hallazgos] == [
-        ("autor", 0), ("correo_de_quien_confirma", 0), ("mensaje", 3)]
+        ("autor", 0), ("quien_confirma", 0), ("correo_de_quien_confirma", 0),
+        ("mensaje", 3), ("mensaje", 5)]
     assert all(h["huella"] == va.huella(CENTINELA) for h in hallazgos)
     assert CENTINELA not in repr(hallazgos).lower()
     assert va.verificar_commit(raiz, "HEAD~1", huellas=huellas) == []
@@ -5252,7 +5779,7 @@ def test_verificar_commit_mira_autor_quien_confirma_y_mensaje(tmp_path):
 # --------------------------------------------------------------------------
 def _secretos():
     return {
-        "token_de_bot_de_telegram": "123456789" + ":" + "AAH" + "x" * 32,
+        "token_de_bot_de_telegram": _token_de_bot(),
         "clave_de_api_sk": "sk" + "-" + "proj" + "-" + "a1B2" * 6,
         "clave_de_api_akia": "AK" + "IA" + "ABCDEFGHIJKLMNOP",
         "clave_de_api_ghp": "gh" + "p_" + "a1B2" * 9,
@@ -5262,18 +5789,97 @@ def _secretos():
                          "dozjgNryP4J3jVmNHl0w5N"]),
         "contrasena_en_url": "postgresql://usuario" + ":" + "S3creta!"
                              + "@" + "bd.ejemplo.test:5432/base",
+        "clave_de_api_aiza": "AI" + "za"
+                             + "SyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6q",
+        "clave_de_api_gho": "gh" + "o_" + "a1B2" * 9,
+        "clave_de_api_ghs": "gh" + "s_" + "a1B2" * 9,
+        "clave_de_api_asia": "AS" + "IA" + "ABCDEFGHIJKLMNOP",
+        "clave_privada": "-----BEGIN " + "OPENSSH PRIV" + "ATE KEY-----",
+        "cabecera_authorization": "Author" + "ization: Bearer "
+                                  + "a1B2c3D4" * 3,
+        "asignacion_de_secreto": "PASS" + "WORD=" + "a1B2c3D4e5F6g7H8",
     }
 
 
-@pytest.mark.parametrize("clase", sorted(_secretos()))
-def test_buscar_secretos_encuentra_cada_clase_sin_imprimirla(tmp_path, clase):
-    secreto = _secretos()[clase]
+def _token_de_bot(cifras="123456789"):
+    return cifras + ":" + "AAH" + "x" * 32
+
+
+# Otras formas de las mismas clases: (id de la prueba, clase, secreto).
+_VARIANTES = [
+    ("telegram_en_url", "token_de_bot_de_telegram",
+     "curl https://api.telegram.org/bot" + _token_de_bot() + "/setWebhook"),
+    ("telegram_en_expresion_de_n8n", "token_de_bot_de_telegram",
+     "=https://api.telegram.org/bot" + _token_de_bot()
+     + "/sendMessage?chat_id={{ $json.chat_id }}"),
+    ("telegram_id_de_10_cifras_en_url", "token_de_bot_de_telegram",
+     "https://api.telegram.org/bot" + _token_de_bot("1234567890") + "/getMe"),
+    ("telegram_id_de_12_cifras", "token_de_bot_de_telegram",
+     _token_de_bot("123456789012")),
+    ("clave_privada_rsa", "clave_privada",
+     "-----BEGIN " + "RSA PRIV" + "ATE KEY-----"),
+    ("clave_privada_sin_tipo", "clave_privada",
+     "-----BEGIN " + "PRIV" + "ATE KEY-----"),
+    ("authorization_basic", "cabecera_authorization",
+     "-H 'author" + "ization: basic " + "dXN1YXJpbzpTM2NyZXRhMTIzNDU2'"),
+    ("asignacion_en_un_compose", "asignacion_de_secreto",
+     "POSTGRES_" + "PASSWORD: " + "a1B2c3D4e5F6g7H8"),
+    ("asignacion_fuera_de_un_env", "asignacion_de_secreto",
+     "COPILOTO_BD_" + "PASSWORD=" + "a1B2c3D4e5F6g7H8"),
+    ("asignacion_de_secret_token", "asignacion_de_secreto",
+     "secret" + "_token=" + "0123456789abcdef" * 2),
+    ("asignacion_de_api_key_en_json", "asignacion_de_secreto",
+     '"api' + '_key": "' + "a1B2c3D4e5F6g7H8" + '"'),
+    ("asignacion_de_passwd_entre_comillas", "asignacion_de_secreto",
+     "db_pass" + "wd = 'Zq9" + "x7Kw2Lm4'"),
+    ("url_sin_usuario", "contrasena_en_url",
+     "redis://" + ":" + "S3creta!" + "@" + "cache.ejemplo.test:6379/0"),
+    ("url_con_dolar_que_no_es_variable", "contrasena_en_url",
+     "postgresql://u" + ":" + "$uperS3creta9" + "@" + "bd.ejemplo.test/b"),
+    ("url_con_angulos_que_no_son_marcador", "contrasena_en_url",
+     "postgresql://u" + ":" + "<S3:creta>" + "@" + "bd.ejemplo.test/b"),
+    # R4: las formas de este proyecto que no saltaban.
+    ("url_con_barra_en_la_contrasena", "contrasena_en_url",
+     "postgresql://u" + ":" + "S3cr/eta+9w==" + "@" + "bd.ejemplo.test/b"),
+    ("url_con_valor_por_defecto", "contrasena_en_url",
+     "postgresql://u" + ":" + "${PGPASS:-S3creta!}" + "@" + "bd.ejemplo.test"),
+    ("asignacion_con_subindice", "asignacion_de_secreto",
+     'os.environ["COPILOTO_BD_' + 'PASSWORD"] = "' + "a1B2c3D4e5F6g7H8" + '"'),
+    ("asignacion_con_llamada", "asignacion_de_secreto",
+     'monkeypatch.setenv("COPILOTO_BD_' + 'PASSWORD", "' + "a1B2c3D4e5F6g7H8"
+     + '")'),
+    ("clave_que_acaba_en_key_con_subindice", "asignacion_de_secreto",
+     # El valor, por una llamada: con las comillas mezcladas, el propio
+     # codigo de la prueba formaria un literal.
+     "os.environ['KAGGLE" + "_KEY'] = '" + "".join(["0123456789abcdef"] * 2)
+     + "'"),
+    ("clave_que_acaba_en_key", "asignacion_de_secreto",
+     "AWS_ACCESS" + "_KEY=" + "a1B2c3D4e5F6g7H8"),
+    ("clave_privada_en_una_variable", "asignacion_de_secreto",
+     "PRIVATE" + "_KEY: " + "a1B2c3D4e5F6g7H8"),
+    ("asignacion_en_json_escapado", "asignacion_de_secreto",
+     '"source": ["pass' + 'word=\\"' + "a1B2c3D4e5F6g7H8" + '\\"\\n"]'),
+    ("valor_por_defecto_de_una_variable", "asignacion_de_secreto",
+     "COPILOTO_BD_PASS" + "WORD: ${COPILOTO_BD_PASSWORD:-" + "a1B2c3D4e5F6g7H8"
+     + "}"),
+]
+
+
+def _casos_de_secreto():
+    return ([pytest.param(c, s, id=c) for c, s in sorted(_secretos().items())]
+            + [pytest.param(c, s, id=i) for i, c, s in _VARIANTES])
+
+
+@pytest.mark.parametrize("clase, secreto", _casos_de_secreto())
+def test_buscar_secretos_encuentra_cada_clase_sin_imprimirla(tmp_path, clase,
+                                                            secreto):
     raiz = _arbol_limpio(tmp_path / "arbol")
     (raiz / "config.txt").write_text(f"uno\ndos\nVALOR = \"{secreto}\"\n",
                                      encoding="utf-8")
     hallazgos = va.buscar_secretos(raiz)
     assert hallazgos == [{"fichero": "config.txt", "linea": 3,
-                          "clase": clase}]
+                          "clase": clase, "origen": COPIA}]
+    assert secreto not in repr(hallazgos)
 
 
 def test_las_contrasenas_de_ejemplo_en_url_se_permiten(tmp_path):
@@ -5298,14 +5904,54 @@ def test_una_url_sin_contrasena_no_es_un_hallazgo(tmp_path):
 
 @pytest.mark.parametrize("nombre", [
     ".env", "servidor/.env", ".env.local", "kaggle.json", "claves/servidor.pem",
-    "privada.key", "id_rsa", "id_rsa.pub", "certificado.p12"])
+    "privada.key", "id_rsa", "id_rsa.pub", "certificado.p12",
+    "id_ed25519", "id_ecdsa", "id_dsa.pub", "produccion.env", ".envrc",
+    "putty.ppk", "certificado.pfx", "credentials.json",
+    ".pgpass", ".netrc", ".git-credentials",
+    "client_secret_1234.apps.googleusercontent.com.json",
+    # Los nombres no distinguen mayusculas.
+    ".ENV", "servidor.PEM", "Kaggle.json", "ID_RSA"])
 def test_los_ficheros_prohibidos_son_hallazgos(tmp_path, nombre):
     raiz = _arbol_limpio(tmp_path / "arbol")
     ruta = raiz / nombre
     ruta.parent.mkdir(parents=True, exist_ok=True)
     ruta.write_text("X=1\n", encoding="utf-8")
     assert va.buscar_secretos(raiz) == [
-        {"fichero": nombre, "linea": 0, "clase": "fichero_prohibido"}]
+        {"fichero": nombre, "linea": 0, "clase": "fichero_prohibido",
+         "origen": COPIA}]
+
+
+def test_lo_que_este_proyecto_escribe_de_tokens_y_contrasenas_no_salta(
+        tmp_path):
+    # Las formas que el arbol usa de verdad: variables, marcadores, valores
+    # de ejemplo y codigo. Ninguna es un valor literal que parezca secreto.
+    raiz = _arbol_limpio(tmp_path / "arbol")
+    (raiz / "notas.md").write_text("\n".join([
+        'token = os.environ.get("TELEGRAM_TOKEN_AVISOS")',
+        'monkeypatch.setenv("TELEGRAM_TOKEN_AVISOS", "T0K3N")',
+        "COPILOTO_BD_PASSWORD=cambiar-esto",
+        "POSTGRES_PASSWORD: ${COPILOTO_BD_PASSWORD:?falta la contraseña}",
+        "TELEGRAM_SECRET_PRUEBA=x python -m pytest",
+        'DSN = "host=127.0.0.1 user=postgres password=verifica"',
+        '"CRED_SECRETO_PACIENTE": "id-de-ejemplo-secreto-paciente",',
+        "$s = Read-Host 'secret_token'; secret_token=$s",
+        "password = $(Read-Host 'contraseña')",
+        "Authorization: Bearer ${TOKEN_DEL_BOT}",
+        "Authorization: Bearer <token>",
+        'headers = {"Authorization": f"Bearer {token}"}',
+        'api_key = config["api_key"]',
+        "secretos: 2 (clave_de_api_akia: 1)",
+        "X-Telegram-Bot-Api-Secret-Token: {{ $json.secreto }}",
+        # R4: una expresion no es un literal; ni una variable.
+        "token = partes[1]",
+        "token = sys.argv[1]",
+        '"token": "={{ $env.X_2 }}"',
+        "Authorization: Bearer <TOKEN_DEL_BOT>",
+        "COPILOTO_BD_PASSWORD: ${COPILOTO_BD_PASSWORD:-cambiar-esto}",
+        # Un puerto y una ruta con arroba no son una contrasena.
+        "https://ejemplo.test:8443/paquete/@ambito/x",
+    ]) + "\n", encoding="utf-8")
+    assert va.buscar_secretos(raiz) == []
 
 
 def test_el_env_de_ejemplo_se_permite(tmp_path):
@@ -5324,6 +5970,17 @@ def _huellas_de_juguete(tmp_path):
     return destino
 
 
+def _cli(*argumentos, cwd=None):
+    """El script como lo corre una persona: codigo de salida y TODA la
+    salida (la normal y la de errores, juntas)."""
+    entorno = {c: v for c, v in os.environ.items() if c != "ANONIMATO_LISTA"}
+    entorno["PYTHONIOENCODING"] = "utf-8"
+    hecho = subprocess.run([sys.executable, "-B", str(SCRIPT), *argumentos],
+                           cwd=cwd, capture_output=True, env=entorno)
+    salida = (hecho.stdout + hecho.stderr).decode("utf-8", errors="replace")
+    return hecho.returncode, salida
+
+
 def test_la_cli_sale_con_0_sobre_un_arbol_limpio(tmp_path, capsys):
     raiz = _arbol_limpio(tmp_path / "arbol")
     # El centinela es publico (el spec lo nombra): en el arbol no cuenta.
@@ -5336,6 +5993,20 @@ def test_la_cli_sale_con_0_sobre_un_arbol_limpio(tmp_path, capsys):
     assert "huellas: 0" in salida and "secretos: 0" in salida
     assert "binarios sin recorrer: 1" in salida
     assert "figura.png" in salida
+
+
+def test_con_binarios_sin_recorrer_no_dice_limpio_a_secas(tmp_path, capsys):
+    raiz = _arbol_limpio(tmp_path / "arbol")          # con figura.png
+    huellas = str(_huellas_de_juguete(tmp_path))
+    assert va.main(["--raiz", str(raiz), "--huellas", huellas]) == 0
+    ultima = capsys.readouterr().out.splitlines()[-1]
+    assert ultima != "limpio"
+    assert ultima.startswith("limpio lo recorrido")
+    assert "1 binario" in ultima and "a mano" in ultima
+
+    (raiz / "figura.png").unlink()
+    assert va.main(["--raiz", str(raiz), "--huellas", huellas]) == 0
+    assert capsys.readouterr().out.splitlines()[-1] == "limpio"
 
 
 def test_la_cli_sale_con_1_y_resume_por_clase(tmp_path, capsys):
@@ -5354,6 +6025,115 @@ def test_la_cli_sale_con_1_y_resume_por_clase(tmp_path, capsys):
     assert "secretos: 1 (clave_de_api_akia: 1)" in salida
     assert OTRO not in salida.lower()
     assert _secretos()["clave_de_api_akia"] not in salida
+
+
+def test_la_cli_con_solo_el_centinela_no_dice_limpio(tmp_path):
+    raiz = _arbol_limpio(tmp_path / "arbol")
+    publico = tmp_path / "publico.txt"
+    publico.write_text("# cabecera\n" + va.huella(CENTINELA) + "\n",
+                       encoding="utf-8")
+    codigo, salida = _cli("--raiz", str(raiz), "--huellas", str(publico))
+    assert codigo == 1
+    assert "solo la huella del centinela" in salida
+    assert "--huellas" in salida and "repositorio de desarrollo" in salida
+    assert "limpio" not in salida.splitlines()
+    assert "Traceback" not in salida
+
+
+def test_la_cli_con_huellas_mal_formadas_dice_la_linea_y_no_su_contenido(
+        tmp_path):
+    raiz = _arbol_limpio(tmp_path / "arbol")
+    malo = tmp_path / "malo.txt"
+    malo.write_text(f"# cabecera\n{va.huella(OTRO)}\n{OTRO}\n",
+                    encoding="utf-8")
+    codigo, salida = _cli("--raiz", str(raiz), "--huellas", str(malo))
+    assert codigo == 1
+    assert "línea 3" in salida
+    assert OTRO not in salida.lower()
+    assert "Traceback" not in salida
+
+
+def _sin_rutas_absolutas(salida, *carpetas):
+    for carpeta in (*carpetas, RAIZ):
+        for forma in (str(carpeta), carpeta.as_posix()):
+            assert forma.lower() not in salida.lower()
+
+
+@hay_git
+def test_la_cli_no_imprime_rutas_absolutas(tmp_path):
+    raiz = _repositorio(tmp_path)
+    (raiz / "docs" / "nota.md").write_text(
+        f"{OTRO}\n{_secretos()['clave_de_api_akia']}\n", encoding="utf-8")
+    _huellas_de_juguete(tmp_path)
+    codigo, salida = _cli("--raiz", "repo", "--huellas", "huellas.txt",
+                          "--commit", "--un-solo-commit", cwd=tmp_path)
+    assert codigo == 1
+    _sin_rutas_absolutas(salida, tmp_path)
+
+    sin_git = tmp_path / "sin_git"
+    sin_git.mkdir()
+    codigo, salida = _cli("--raiz", str(sin_git), "--huellas", "huellas.txt",
+                          "--commit", cwd=tmp_path)
+    assert codigo == 1
+    _sin_rutas_absolutas(salida, tmp_path)
+    for funcion in (va.commits, va.verificar_commit):
+        with pytest.raises(SystemExit) as error:
+            funcion(sin_git)
+        _sin_rutas_absolutas(str(error.value), tmp_path)
+
+
+def test_la_ruta_de_las_huellas_sale_como_se_paso(tmp_path, monkeypatch):
+    monkeypatch.delenv("ANONIMATO_LISTA", raising=False)
+    (tmp_path / "lista.txt").write_text("[huellas]\nuno\n", encoding="utf-8")
+    codigo, salida = _cli("--regenerar", "--lista", "lista.txt",
+                          "--huellas", "sub/huellas.txt", cwd=tmp_path)
+    assert codigo == 0
+    assert "en sub/huellas.txt" in salida
+    _sin_rutas_absolutas(salida, tmp_path)
+
+    # Lo que no se puede leer (una carpeta) tampoco saca la ruta absoluta
+    # en una traza de Python.
+    arbol = _arbol_limpio(tmp_path / "arbol")
+    for orden in (["--raiz", "arbol", "--huellas", "sub"],
+                  ["--regenerar", "--lista", "sub",
+                   "--huellas", "otra/huellas.txt"]):
+        codigo, salida = _cli(*orden, cwd=tmp_path)
+        assert codigo == 1
+        assert "Traceback" not in salida
+        _sin_rutas_absolutas(salida, tmp_path)
+
+    # La de por defecto sale relativa al repositorio.
+    publico = tmp_path / "publico.txt"
+    publico.write_text(va.huella(CENTINELA) + "\n", encoding="utf-8")
+    monkeypatch.setattr(va, "HUELLAS_POR_DEFECTO", publico)
+    with pytest.raises(SystemExit) as error:
+        va.main(["--raiz", str(arbol)])
+    assert "tests/anonimato/huellas.txt" in str(error.value)
+    _sin_rutas_absolutas(str(error.value), tmp_path)
+
+
+def test_la_cli_no_imprime_el_token_ni_en_los_nombres(tmp_path):
+    raiz = _arbol_limpio(tmp_path / "arbol")
+    carpeta = raiz / f"Informes-{OTRO.upper()}"
+    carpeta.mkdir()
+    (carpeta / f"nota_{OTRO}.md").write_text(
+        f"uno\n{OTRO}\n{_secretos()['clave_de_api_akia']}\n",
+        encoding="utf-8")
+    (carpeta / "figura.png").write_bytes(b"\x89PNG\x00\x00")
+    codigo, salida = _cli("--raiz", str(raiz),
+                          "--huellas", str(_huellas_de_juguete(tmp_path)))
+    assert codigo == 1
+    assert OTRO not in salida.lower()
+    assert _secretos()["clave_de_api_akia"] not in salida
+    tapada = f"<huella-{va.huella(OTRO)[:12]}>"
+    nota = f"Informes-{tapada}/nota_{tapada}.md"
+    assert f"{nota}:0: huella " in salida
+    assert f"{nota}:2: huella " in salida
+    assert f"{nota}:3: clave_de_api_akia" in salida
+    assert f"  Informes-{tapada}/figura.png" in salida
+    # La nota da dos hallazgos (nombre y linea 2) y la figura uno (su
+    # carpeta): tres, en dos ficheros distintos.
+    assert "huellas: 3 en 2 ficheros" in salida
 
 
 @hay_git
@@ -5377,6 +6157,125 @@ def test_la_cli_verifica_el_commit_y_que_sea_uno_solo(tmp_path, capsys):
     assert OTRO not in salida.lower()
 
 
+@hay_git
+def test_un_solo_commit_mira_todas_las_ramas(tmp_path, capsys):
+    raiz = _repositorio(tmp_path)
+    huellas = str(_huellas_de_juguete(tmp_path))
+    _git(raiz, "commit", "-q", "-m", "arbol anonimizado")
+    orden = ["--raiz", str(raiz), "--huellas", huellas, "--un-solo-commit"]
+    assert va.main(orden) == 0
+    salida = capsys.readouterr().out
+    assert "commits: 1" in salida and "ramas: 1" in salida
+    assert "etiquetas: 0" in salida
+
+    # Otra rama, con un commit que HEAD no alcanza.
+    _git(raiz, "checkout", "-q", "-b", "otra")
+    (raiz / "codigo.py").write_text("x = 2\n", encoding="utf-8")
+    _git(raiz, "commit", "-q", "-a", "-m", "en otra rama")
+    _git(raiz, "checkout", "-q", "-")
+    assert va.main(orden) == 1
+    salida = capsys.readouterr().out
+    assert "commits: 2" in salida and "ramas: 2" in salida
+    assert va.commits(raiz) == 2
+
+
+@hay_git
+def test_un_solo_commit_no_admite_etiquetas(tmp_path, capsys):
+    raiz = _repositorio(tmp_path)
+    _git(raiz, "commit", "-q", "-m", "arbol anonimizado")
+    _git(raiz, "tag", "-a", "v1", "-m", "una etiqueta anotada")
+    assert va.main(["--raiz", str(raiz),
+                    "--huellas", str(_huellas_de_juguete(tmp_path)),
+                    "--un-solo-commit"]) == 1
+    salida = capsys.readouterr().out
+    assert "commits: 1" in salida and "ramas: 1" in salida
+    assert "etiquetas: 1" in salida
+
+
+@hay_git
+@pytest.mark.parametrize("referencia", ["rama", "etiqueta"])
+def test_los_nombres_de_ramas_y_etiquetas_se_comparan_con_las_huellas(
+        tmp_path, capsys, referencia):
+    raiz = _repositorio(tmp_path)
+    _git(raiz, "commit", "-q", "-m", "arbol")
+    nombre = f"informe-{OTRO}"
+    if referencia == "rama":
+        _git(raiz, "branch", "-m", nombre)      # la unica, a la que va HEAD
+    else:
+        _git(raiz, "tag", nombre)
+    tapada = f"informe-<huella-{va.huella(OTRO)[:12]}>"
+    assert va.verificar_referencias(raiz, {va.huella(OTRO)}) == [
+        {"referencia": referencia, "nombre": tapada,
+         "huella": va.huella(OTRO)}]
+    huellas = str(_huellas_de_juguete(tmp_path))
+    codigo, salida = _cli("--raiz", str(raiz), "--huellas", huellas,
+                          "--commit", "HEAD", "--un-solo-commit")
+    assert codigo == 1
+    assert OTRO not in salida.lower()
+    assert f"{referencia} {tapada}: huella {va.huella(OTRO)[:12]}" in salida
+
+    # La revision que se pasa a --commit sale tapada (R6), exista o no.
+    assert va.main(["--raiz", str(raiz), "--huellas", huellas,
+                    "--commit", nombre]) == 1
+    salida = capsys.readouterr().out
+    assert f"commit {tapada}: 0" in salida
+    assert OTRO not in salida.lower()
+    with pytest.raises(SystemExit) as error:
+        va.main(["--raiz", str(raiz), "--huellas", huellas,
+                 "--commit", f"inexistente-{OTRO}"])
+    assert OTRO not in str(error.value).lower()
+    assert "inexistente-<huella-" in str(error.value)
+
+
+@hay_git
+def test_un_secreto_en_el_commit_es_un_hallazgo(tmp_path):
+    raiz = _repositorio(tmp_path)
+    huellas = str(_huellas_de_juguete(tmp_path))
+    bot = _token_de_bot()
+    _git(raiz, "commit", "-q", "-m", "arbol", "-m", f"el bot es {bot}")
+    assert va.verificar_commit(raiz, huellas=set()) == [
+        {"campo": "mensaje", "linea": 3, "clase": "token_de_bot_de_telegram"}]
+    codigo, salida = _cli("--raiz", str(raiz), "--huellas", huellas,
+                          "--commit", "HEAD")
+    assert codigo == 1
+    assert bot not in salida
+    assert "commit HEAD: mensaje:3: token_de_bot_de_telegram" in salida
+
+    literal = "a1B2c3D4e5F6g7H8"
+    clave = _secretos()["clave_de_api_akia"]
+    _git(raiz, "commit", "-q", "--allow-empty", "-m", "otro",
+         "-m", "PASS" + "WORD=" + literal, GIT_AUTHOR_NAME=clave)
+    assert [(h["campo"], h["linea"], h["clase"])
+            for h in va.verificar_commit(raiz, huellas=set())] == [
+        ("autor", 0, "clave_de_api_akia"),
+        ("mensaje", 3, "asignacion_de_secreto")]
+    codigo, salida = _cli("--raiz", str(raiz), "--huellas", huellas,
+                          "--commit", "HEAD")
+    assert codigo == 1
+    assert literal not in salida and clave not in salida
+    assert "commit HEAD: autor: clave_de_api_akia" in salida
+
+
+@hay_git
+def test_un_solo_commit_mira_el_arbol_del_commit(tmp_path, capsys):
+    raiz = _repositorio(tmp_path)
+    nota = raiz / "nota.md"
+    nota.write_text(f"{OTRO}\n", encoding="utf-8")
+    _git(raiz, "add", "nota.md")
+    _git(raiz, "commit", "-q", "-m", "arbol")
+    nota.write_text("limpia\n", encoding="utf-8")
+    _git(raiz, "add", "nota.md")            # copia e indice, limpios
+    huellas = str(_huellas_de_juguete(tmp_path))
+    assert va.main(["--raiz", str(raiz), "--huellas", huellas]) == 0
+    capsys.readouterr()
+    assert va.main(["--raiz", str(raiz), "--huellas", huellas,
+                    "--un-solo-commit"]) == 1
+    salida = capsys.readouterr().out
+    assert f"nota.md:1: huella {va.huella(OTRO)[:12]} (commit)" in salida
+    assert "commits: 1" in salida and "ramas: 1" in salida
+    assert "etiquetas: 0" in salida
+
+
 def test_la_cli_regenera_desde_la_variable_o_desde_lista(tmp_path, capsys,
                                                         monkeypatch):
     lista = tmp_path / "lista.txt"
@@ -5394,6 +6293,27 @@ def test_la_cli_regenera_desde_la_variable_o_desde_lista(tmp_path, capsys,
     monkeypatch.setenv("ANONIMATO_LISTA", str(lista))
     assert va.main(["--regenerar", "--huellas", str(destino)]) == 0
     assert va.leer_huellas(destino) == esperadas
+
+
+def test_la_cli_no_regenera_con_una_entrada_mala_ni_dice_cual(tmp_path,
+                                                             monkeypatch):
+    monkeypatch.delenv("ANONIMATO_LISTA", raising=False)
+    lista = tmp_path / "lista.txt"
+    lista.write_text(f"[huellas]\nuno\nzorro-{OTRO}\n", encoding="utf-8")
+    destino = tmp_path / "huellas.txt"
+    with pytest.raises(SystemExit) as salida:
+        va.main(["--regenerar", "--lista", str(lista),
+                 "--huellas", str(destino)])
+    assert "2" in str(salida.value)
+    assert OTRO not in str(salida.value).lower()
+    assert "zorro" not in str(salida.value).lower()
+    assert not destino.exists()
+
+    lista.write_text("[huellas]\n# nada\n", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        va.main(["--regenerar", "--lista", str(lista),
+                 "--huellas", str(destino)])
+    assert not destino.exists()
 
 
 def test_la_cli_sin_lista_dice_que_variable_falta(tmp_path, monkeypatch):
@@ -5416,7 +6336,7 @@ repositorio):
 ```
 ERROR tests/test_anonimato.py - FileNotFoundError: [Errno 2] No such file or ...
 !!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
-1 error in 0.17s
+1 error in 0.31s
 ```
 
 - [ ] **Paso 3: Escribir el script**
@@ -5432,34 +6352,52 @@ Uso, desde la raiz del repositorio:
     python scripts/verificar_anonimato.py --raiz <arbol> --commit --un-solo-commit
     ANONIMATO_LISTA=<lista en claro> python scripts/verificar_anonimato.py --regenerar
 
-Busca dos cosas en los ficheros versionados:
+Mira lo que se publicaria: la copia de trabajo (en un repositorio, lo que
+tiene seguimiento y lo que no lo tiene ni esta ignorado), lo preparado en el
+indice que no es lo que hay en disco y, con --commit (o --un-solo-commit,
+que lo implica), el arbol de ese commit, su autor, quien lo confirma y su
+mensaje, y los nombres de las ramas y de las etiquetas. Busca dos cosas:
 
 1. HUELLAS. La lista de cadenas que identifican al cliente, a la empresa, a la
    maquina o a los integrantes NO vive en el repositorio. El repositorio lleva
-   solo `tests/anonimato/huellas.txt`: el sha256 de cada token. Cada fichero
-   de texto se tokeniza igual que la lista (minusculas, sin tildes, particion
-   por todo lo que no sea [a-z0-9]) y se compara huella con huella.
-2. SECRETOS, por patron: token de bot de Telegram, claves de API, contrasena
-   dentro de una URL, y ficheros que no deben viajar (`.env`, claves).
+   solo `tests/anonimato/huellas.txt`: el sha256 de cada token (en el de
+   desarrollo, la lista entera; en el que se publica, solo la del centinela,
+   D9). Cada fichero de texto se tokeniza igual que la lista (minusculas, sin
+   tildes, particion por todo lo que no sea [a-z0-9], tambien desescapado) y
+   se compara huella con huella.
+2. SECRETOS, por patron: token de bot de Telegram, claves de API, claves
+   privadas, cabeceras Authorization, asignaciones de contrasenas y tokens,
+   contrasena dentro de una URL, y ficheros que no deben viajar (`.env`,
+   claves). Un enlace simbolico o un submodulo es un hallazgo `no_recorrido`.
 
 Ninguna salida lleva el token ni el secreto en claro: fichero, linea y huella
-o clase. La salida tambien se puede publicar.
+o clase. En los nombres (de fichero, de rama, de etiqueta, la revision) el
+token sale tapado por el principio de su huella y el secreto por
+`<secreto>`; las rutas salen relativas a la raiz que se recorre (la de las
+huellas, como se paso).
 
-Sale con 0 si no hay hallazgos y con 1 si los hay. Lo usa
-`tests/test_anonimato.py`, que lo carga por ruta.
+Sale con 0 si no hay hallazgos y con 1 si los hay, si no se ha recorrido
+ningun fichero o si las huellas son solo la del centinela. Con binarios sin
+recorrer, la ultima linea no dice «limpio» a secas: se revisan a mano. Lo
+usa `tests/test_anonimato.py`, que lo carga por ruta.
 """
 import argparse
+import codecs
 import fnmatch
 import hashlib
+import html
 import os
 import re
 import subprocess
 import sys
 import unicodedata
+import urllib.parse
 from pathlib import Path
+from typing import NamedTuple, Optional
 
 REPO = Path(__file__).resolve().parents[1]
 HUELLAS_POR_DEFECTO = REPO / "tests" / "anonimato" / "huellas.txt"
+HUELLAS_MOSTRADAS = "tests/anonimato/huellas.txt"   # en las salidas
 VARIABLE_DE_LA_LISTA = "ANONIMATO_LISTA"
 
 # El centinela es PUBLICO: el spec lo nombra. Su huella va siempre en
@@ -5484,26 +6422,92 @@ CABECERA = """\
 # --------------------------------------------------------------------------
 # Tokens y huellas
 # --------------------------------------------------------------------------
-def _sin_tildes(texto):
-    return "".join(c for c in unicodedata.normalize("NFD", texto)
-                   if unicodedata.category(c) != "Mn")
+def _normalizados(texto):
+    """El texto con la normalizacion de compatibilidad (NFKD: descompone las
+    tildes y el ancho completo) y sin las marcas de combinacion (Mn).
+
+    Los caracteres de formato (Cf: U+200B, U+00AD...) se tratan de las dos
+    maneras, y se devuelven los dos textos: BORRADOS (`to<U+200B>ken` da
+    `token`) y como SEPARADOR (`alfa<U+200B>token` da `token`).
+    """
+    if texto.isascii():                 # ni Mn ni Cf: nada que normalizar
+        return (texto,)
+    borrados, partidos, hay_formato = [], [], False
+    for c in unicodedata.normalize("NFKD", texto):
+        categoria = unicodedata.category(c)
+        if categoria == "Mn":
+            continue
+        if categoria == "Cf":
+            hay_formato = True
+            partidos.append(" ")
+            continue
+        borrados.append(c)
+        partidos.append(c)
+    if hay_formato:
+        return "".join(borrados), "".join(partidos)
+    return ("".join(borrados),)
+
+
+def _partir(texto):
+    hallados = set()
+    for normal in _normalizados(BASE64.sub(" ", texto)):
+        hallados |= set(NO_TOKEN.split(normal.lower()))
+    return hallados - {""}
+
+
+# Los escapes pegan letras al token: `\n` delante da `n...`, `%20` da `20...`,
+# `&#99;` parte la primera letra. Se tokeniza tambien el texto desescapado.
+HAY_ESCAPE = re.compile(r"\\[ntru]|%[0-9A-Fa-f]{2}|&(?:#|[A-Za-z]+;)")
+ESCAPE_DE_CONTROL = re.compile(r"\\[ntr]")
+ESCAPE_UNICODE = re.compile(r"\\u([0-9A-Fa-f]{4})")
+
+
+def _desescapado(texto):
+    """`\\n`, `\\t` y `\\r` escritos con barra pasan a un espacio; `\\uXXXX`,
+    `%XX` y las entidades HTML, a su caracter."""
+    texto = ESCAPE_DE_CONTROL.sub(" ", texto)
+    texto = ESCAPE_UNICODE.sub(lambda m: chr(int(m.group(1), 16)), texto)
+    texto = urllib.parse.unquote(texto, errors="replace")
+    return html.unescape(texto)
 
 
 def tokens(texto):
-    """Los tokens de un texto: la misma regla para la lista y los ficheros."""
-    texto = BASE64.sub(" ", texto)
-    return set(NO_TOKEN.split(_sin_tildes(texto).lower())) - {""}
+    """Los tokens de un texto: la misma regla para la lista y los ficheros.
+
+    La union de los del texto tal cual y los del texto desescapado.
+    """
+    hallados = _partir(texto)
+    if HAY_ESCAPE.search(texto):
+        hallados |= _partir(_desescapado(texto))
+    return hallados
 
 
 def huella(token):
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+UNA_HUELLA = re.compile(r"[0-9a-f]{64}")
+
+
 def leer_huellas(ruta):
-    """Las huellas de `huellas.txt`, sin la cabecera ni lineas vacias."""
-    lineas = Path(ruta).read_text(encoding="utf-8").splitlines()
-    return {l.strip() for l in lineas
-            if l.strip() and not l.lstrip().startswith("#")}
+    """Las huellas de `huellas.txt`, sin la cabecera ni lineas vacias.
+
+    Cada linea que no sea comentario tiene que ser una huella: 64 caracteres
+    hexadecimales en minusculas. Si no, ValueError con el NUMERO de la linea
+    (nunca su contenido: podria ser un token en claro).
+    """
+    huellas = set()
+    lineas = Path(ruta).read_text(encoding="utf-8-sig").splitlines()
+    for n, linea in enumerate(lineas, 1):
+        linea = linea.strip()
+        if not linea or linea.startswith("#"):
+            continue
+        if not UNA_HUELLA.fullmatch(linea):
+            raise ValueError(
+                f"la línea {n} no es una huella (64 caracteres hexadecimales "
+                "en minúsculas)")
+        huellas.add(linea)
+    return huellas
 
 
 def huellas_de_la_lista(huellas):
@@ -5512,13 +6516,19 @@ def huellas_de_la_lista(huellas):
 
 
 def leer_lista(ruta):
-    """Las entradas de la seccion `[huellas]` de la lista en claro."""
+    """Las entradas de la seccion `[huellas]` de la lista en claro.
+
+    Admite la marca de orden de bytes; los nombres de seccion no distinguen
+    mayusculas; lo que sigue a un `#` en una linea es comentario.
+    """
     entradas, dentro = [], False
-    for linea in Path(ruta).read_text(encoding="utf-8").splitlines():
-        linea = linea.strip()
+    for linea in Path(ruta).read_text(encoding="utf-8-sig").splitlines():
+        linea = linea.split("#", 1)[0].strip()
+        if not linea:
+            continue
         if linea.startswith("["):
-            dentro = linea == "[huellas]"
-        elif dentro and linea and not linea.startswith("#"):
+            dentro = linea.lower() == "[huellas]"
+        elif dentro:
             entradas.append(linea)
     return entradas
 
@@ -5526,12 +6536,25 @@ def leer_lista(ruta):
 def regenerar(lista, destino):
     """Escribe las huellas de los tokens de `lista`, ordenadas, y las cuenta.
 
-    Cada entrada se tokeniza: una entrada con separadores da varias huellas.
-    La del centinela va siempre.
+    Cada entrada tiene que dar EXACTAMENTE un token (`zorro-azul.test` da
+    tres: la lista se tokeniza a mano, un token por linea). Si alguna no, o
+    si no hay entradas, ValueError con los NUMEROS de entrada (nunca su
+    contenido) y no se escribe nada. La del centinela va siempre.
     """
-    todas = {huella(CENTINELA)}
-    for entrada in lista:
-        todas |= {huella(t) for t in tokens(entrada)}
+    if not lista:
+        raise ValueError("la sección [huellas] de la lista no tiene entradas")
+    todas, malas = {huella(CENTINELA)}, []
+    for n, entrada in enumerate(lista, 1):
+        suyos = tokens(entrada)
+        if len(suyos) == 1:
+            todas |= {huella(t) for t in suyos}
+        else:
+            malas.append(n)
+    if malas:
+        raise ValueError(
+            f"{len(malas)} entradas de [huellas] no dan exactamente un token "
+            f"(números de entrada: {', '.join(map(str, malas))}); pon un "
+            "token por línea")
     destino = Path(destino)
     destino.parent.mkdir(parents=True, exist_ok=True)
     with open(destino, "w", encoding="utf-8", newline="\n") as salida:
@@ -5542,13 +6565,29 @@ def regenerar(lista, destino):
 
 
 # --------------------------------------------------------------------------
-# El recorrido
+# El recorrido: lo que se publicaria
 # --------------------------------------------------------------------------
-def _git(raiz, *argumentos):
-    """La salida de git en bytes, o None si git falla o no esta."""
+# De donde sale cada cosa que se recorre (clave `origen` de los hallazgos).
+COPIA, INDICE, COMMIT = "copia de trabajo", "indice", "commit"
+
+
+# Variables que harian que git mirase otro repositorio, otro indice u otra
+# copia de trabajo que la de `raiz` (un gancho de git las pone, por ejemplo).
+NO_HEREDADAS = ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE",
+                "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE")
+
+
+def _git(raiz, *argumentos, entrada=None):
+    """La salida de git en bytes, o None si git falla o no esta.
+
+    Sobre `raiz` y solo sobre ella: no hereda las variables de NO_HEREDADAS.
+    """
+    entorno = {c: v for c, v in os.environ.items() if c not in NO_HEREDADAS}
     try:
         hecho = subprocess.run(["git", "-C", str(raiz), *argumentos],
-                               capture_output=True, check=False)
+                               input=entrada, capture_output=True,
+                               check=False, env=entorno)
     except OSError:
         return None
     return hecho.stdout if hecho.returncode == 0 else None
@@ -5564,38 +6603,162 @@ def _es_la_raiz_de_un_repositorio(raiz):
         return False
 
 
-def ficheros_versionados(raiz):
-    """Los ficheros versionados bajo `raiz`, ordenados.
+def _partir_z(salida):
+    return [n for n in salida.decode("utf-8", errors="replace").split("\0")
+            if n]
 
-    Si `raiz` no es la raiz de un repositorio de git, todos los ficheros que
-    hay debajo salvo la carpeta `.git/`.
+
+def _indice(raiz):
+    """Las entradas del indice: {nombre: [(modo, sha), ...]}, una por
+    etapa."""
+    salida = _git(raiz, "ls-files", "-s", "-z")
+    if salida is None:
+        return None
+    indice = {}
+    for linea in _partir_z(salida):
+        cabecera, nombre = linea.split("\t", 1)
+        modo, sha, _etapa = cabecera.split()
+        indice.setdefault(nombre, []).append((modo, sha))
+    return indice
+
+
+def _sin_seguimiento(raiz):
+    """Lo que no tiene seguimiento ni esta ignorado (`git add -A` lo anade).
+
+    Una carpeta que es otro repositorio sale con `/` al final.
+    """
+    salida = _git(raiz, "ls-files", "-z", "--others", "--exclude-standard")
+    return None if salida is None else _partir_z(salida)
+
+
+def _arbol_del_commit(raiz, revision, huellas=()):
+    """{nombre: (modo, sha)} del arbol de `revision`, bajo `raiz`."""
+    salida = _git(raiz, "ls-tree", "-r", "-z", revision, "--")
+    if salida is None:
+        raise SystemExit("No se pudo leer el árbol del commit "
+                         f"{_publicable(revision, huellas)}: ¿es un "
+                         "repositorio de git con commits?")
+    arbol = {}
+    for linea in _partir_z(salida):
+        cabecera, nombre = linea.split("\t", 1)
+        modo, _tipo, sha = cabecera.split()
+        arbol[nombre] = (modo, sha)
+    return arbol
+
+
+def _blobs(raiz, shas):
+    """{sha: contenido} de los blobs pedidos, con una sola llamada a git."""
+    shas = sorted(set(shas))
+    if not shas:
+        return {}
+    salida = _git(raiz, "cat-file", "--batch",
+                  entrada=("\n".join(shas) + "\n").encode("ascii")) or b""
+    blobs, i = {}, 0
+    while i < len(salida):
+        fin = salida.index(b"\n", i)
+        cabecera = salida[i:fin].split()
+        i = fin + 1
+        if len(cabecera) != 3:                  # «<sha> missing»
+            continue
+        sha, tamano = cabecera[0].decode("ascii"), int(cabecera[2])
+        blobs[sha] = salida[i:i + tamano]
+        i += tamano + 1
+    return blobs
+
+
+def _en_git(raiz):
+    """Indice y lo sin seguimiento, o None si `raiz` no es la raiz de un
+    repositorio de git."""
+    if not _es_la_raiz_de_un_repositorio(raiz):
+        return None
+    indice, otros = _indice(raiz), _sin_seguimiento(raiz)
+    if indice is None or otros is None:
+        return None
+    return indice, otros
+
+
+def _recorrer_carpeta(raiz):
+    """Todo lo que hay debajo de `raiz` salvo las carpetas `.git/`: los
+    ficheros, y aparte los enlaces simbolicos (que no se siguen)."""
+    ficheros, enlaces = [], []
+    for carpeta, subcarpetas, nombres in os.walk(raiz):
+        carpeta = Path(carpeta)
+        enlaces += [carpeta / s for s in subcarpetas
+                    if _es_enlace(carpeta / s)]
+        subcarpetas[:] = [s for s in subcarpetas
+                          if s != ".git" and not _es_enlace(carpeta / s)]
+        for n in nombres:
+            (enlaces if _es_enlace(carpeta / n) else ficheros).append(
+                carpeta / n)
+    orden = lambda p: p.relative_to(raiz).as_posix()  # noqa: E731
+    return sorted(ficheros, key=orden), sorted(enlaces, key=orden)
+
+
+def _es_enlace(ruta):
+    """Enlace simbolico (o, en Windows, union de carpetas): no se sigue."""
+    es_union = getattr(os.path, "isjunction", lambda _ruta: False)
+    return os.path.islink(ruta) or es_union(ruta)
+
+
+def ficheros_versionados(raiz):
+    """Los ficheros de la copia de trabajo que se publicarian, ordenados.
+
+    En la raiz de un repositorio de git, los que tienen seguimiento y los que
+    no lo tienen ni estan ignorados. Si `raiz` no es la raiz de un
+    repositorio, todos los que hay debajo salvo la carpeta `.git/`. Los
+    enlaces simbolicos no (no se recorren: ver `_piezas`).
     """
     raiz = Path(raiz)
-    if _es_la_raiz_de_un_repositorio(raiz):
-        salida = _git(raiz, "ls-files", "-z")
-        if salida is not None:
-            nombres = [n for n in salida.decode("utf-8").split("\0") if n]
-            return [raiz / n for n in sorted(nombres) if (raiz / n).is_file()]
-    hallados = []
-    for carpeta, subcarpetas, nombres in os.walk(raiz):
-        subcarpetas[:] = [s for s in subcarpetas if s != ".git"]
-        hallados += [Path(carpeta) / n for n in nombres]
-    return sorted(hallados, key=lambda p: p.relative_to(raiz).as_posix())
+    en_git = _en_git(raiz)
+    if en_git is None:
+        return _recorrer_carpeta(raiz)[0]
+    indice, otros = en_git
+    nombres = sorted(set(indice) | {n for n in otros if not n.endswith("/")})
+    return [raiz / n for n in nombres
+            if (raiz / n).is_file() and not _es_enlace(raiz / n)]
+
+
+# La de UTF-32 antes que la de UTF-16: la de UTF-32 LE empieza por la otra.
+MARCAS_DE_ORDEN = ((codecs.BOM_UTF32_LE, "utf-32"),
+                   (codecs.BOM_UTF32_BE, "utf-32"),
+                   (codecs.BOM_UTF8, "utf-8-sig"),
+                   (codecs.BOM_UTF16_LE, "utf-16"),
+                   (codecs.BOM_UTF16_BE, "utf-16"))
+
+
+def _cp1252_suelto(error):
+    """Lo que no es UTF-8 se lee como cp1252 (el CSV de Excel), byte a byte:
+    un byte suelto no estropea las tildes del resto del fichero."""
+    trozo = error.object[error.start:error.end]
+    return trozo.decode("cp1252", errors="replace"), error.end
+
+
+codecs.register_error("verificar_anonimato.cp1252", _cp1252_suelto)
+
+
+def _texto_de(datos):
+    """El texto de unos bytes, o None si no es texto.
+
+    Con marca de orden de bytes, en su codificacion (UTF-8, UTF-16 o
+    UTF-32). Sin ella: binario si lleva algun byte nulo; si no, UTF-8, y lo
+    que no lo sea, cp1252 (lo que no se pueda decodificar se sustituye).
+    """
+    for marca, codificacion in MARCAS_DE_ORDEN:
+        if datos.startswith(marca):
+            return datos.decode(codificacion, errors="replace")
+    if b"\0" in datos:
+        return None
+    return datos.decode("utf-8", errors="verificar_anonimato.cp1252")
 
 
 def _texto(ruta):
     """El texto del fichero, o None si no es texto."""
-    datos = Path(ruta).read_bytes()
-    if b"\0" in datos:
-        return None
-    try:
-        return datos.decode("utf-8")
-    except UnicodeDecodeError:
-        return None
+    return _texto_de(Path(ruta).read_bytes())
 
 
 def es_texto(ruta):
-    """Es texto lo que se decodifica en UTF-8 y no lleva bytes nulos."""
+    """Es texto lo que tiene marca de orden de bytes o no lleva bytes nulos
+    (ver `_texto_de`)."""
     return _texto(ruta) is not None
 
 
@@ -5608,36 +6771,185 @@ def _relativo(ruta, raiz):
     return Path(ruta).relative_to(raiz).as_posix()
 
 
-def buscar_huellas(raiz, huellas):
-    """Las apariciones de alguna huella: fichero, linea y huella.
+class _Pieza(NamedTuple):
+    """Una cosa que se publicaria: un contenido con su nombre y su origen."""
+    nombre: str             # relativo a la raiz, con `/`
+    origen: str             # COPIA, INDICE o COMMIT
+    texto: Optional[str]    # None: binario, o no recorrida
+    primera: bool           # la primera pieza de ese nombre: se mira el nombre
+    recorrida: bool = True  # False: enlace simbolico, submodulo o ilegible
 
-    La linea 0 es el nombre del fichero. El token en claro no sale nunca.
+
+# Modos de git cuyo contenido no es el de un fichero: no se recorren.
+ENLACE_SIMBOLICO, SUBMODULO = "120000", "160000"
+
+
+def _piezas(raiz, commit=None, huellas=()):
+    """Lo que se publicaria bajo `raiz`, sin recorrer dos veces un contenido.
+
+    1. La copia de trabajo (en un repositorio, lo que tiene seguimiento y lo
+       que no lo tiene ni esta ignorado).
+    2. El indice: lo preparado que no es lo que hay en disco, o cuyo fichero
+       ya no esta en disco.
+    3. Con `commit`, el arbol de ese commit.
+
+    Un enlace simbolico, un submodulo (o otro repositorio dentro, sin
+    seguimiento) y un contenido que git no entrega no se recorren, pero no
+    en silencio: son piezas con `recorrida=False`. Las `huellas` solo sirven
+    para tapar la revision en un mensaje de error.
     """
-    raiz, huellas = Path(raiz), set(huellas)
+    raiz = Path(raiz)
+    en_git = _en_git(raiz)
+    arbol = ({} if commit is None
+             else _arbol_del_commit(raiz, commit, huellas))
+    if en_git is None:
+        indice = {}
+        ficheros, enlaces = _recorrer_carpeta(raiz)
+        en_disco = {_relativo(r, raiz) for r in ficheros}
+        sin_mirar = {_relativo(r, raiz) for r in enlaces}
+    else:
+        indice, otros = en_git
+        en_disco = set(indice) | {n for n in otros if not n.endswith("/")}
+        sin_mirar = {n.rstrip("/") for n in otros if n.endswith("/")}
+
+    especiales = (ENLACE_SIMBOLICO, SUBMODULO)
+    del_indice = {nombre: {sha for _modo, sha in entradas}
+                  for nombre, entradas in indice.items()}
+    pedidos = [sha for entradas in indice.values()
+               for modo, sha in entradas if modo not in especiales]
+    pedidos += [sha for nombre, (modo, sha) in arbol.items()
+                if modo not in especiales
+                and sha not in del_indice.get(nombre, ())]
+    blobs = _blobs(raiz, pedidos)
+
+    piezas, vistos, nombres_vistos, no_recorridos = [], {}, set(), set()
+
+    def primera(nombre):
+        es_la_primera = nombre not in nombres_vistos
+        nombres_vistos.add(nombre)
+        return es_la_primera
+
+    def poner(nombre, origen, datos):
+        # El mismo contenido con otros finales de linea es el mismo contenido
+        # (core.autocrlf): no se recorre dos veces.
+        firma = hashlib.sha256(datos.replace(b"\r\n", b"\n")).digest()
+        suyas = vistos.setdefault(nombre, set())
+        if firma in suyas:
+            return
+        suyas.add(firma)
+        piezas.append(_Pieza(nombre, origen, _texto_de(datos),
+                             primera(nombre)))
+
+    def no_recorrer(nombre, origen):
+        if nombre not in no_recorridos:
+            no_recorridos.add(nombre)
+            piezas.append(_Pieza(nombre, origen, None, primera(nombre),
+                                 recorrida=False))
+
+    for nombre in sorted(en_disco | sin_mirar | set(indice) | set(arbol)):
+        ruta = raiz / nombre
+        if nombre in sin_mirar or (nombre in en_disco and _es_enlace(ruta)):
+            no_recorrer(nombre, COPIA)
+        elif nombre in en_disco and ruta.is_file():
+            try:
+                poner(nombre, COPIA, ruta.read_bytes())
+            except OSError:                     # sin permiso, bloqueado...
+                no_recorrer(nombre, COPIA)
+        for modo, sha in indice.get(nombre, ()):
+            if modo in especiales or sha not in blobs:
+                no_recorrer(nombre, INDICE)
+            else:
+                poner(nombre, INDICE, blobs[sha])
+        if nombre in arbol:
+            modo, sha = arbol[nombre]
+            if modo in especiales or (sha not in blobs and
+                                      sha not in del_indice.get(nombre, ())):
+                no_recorrer(nombre, COMMIT)
+            elif sha not in del_indice.get(nombre, ()):
+                poner(nombre, COMMIT, blobs[sha])
+    return piezas
+
+
+def _huellas_en(piezas, huellas):
+    huellas = set(huellas)
     hallazgos = []
 
-    def mirar(texto, fichero, linea):
+    def mirar(texto, fichero, linea, origen):
         for una in sorted({huella(t) for t in tokens(texto)} & huellas):
             hallazgos.append({"fichero": fichero, "linea": linea,
-                              "huella": una})
+                              "huella": una, "origen": origen})
 
-    for ruta in ficheros_versionados(raiz):
-        fichero = _relativo(ruta, raiz)
-        mirar(fichero, _oculto(fichero, huellas), 0)
-        texto = _texto(ruta)
-        if texto is None:
+    for pieza in piezas:
+        fichero = _publicable(pieza.nombre, huellas)
+        if pieza.primera:
+            mirar(pieza.nombre, fichero, 0, pieza.origen)
+        if pieza.texto is None:
             continue
-        for n, linea in enumerate(texto.splitlines(), 1):
-            mirar(linea, fichero, n)
+        for n, linea in enumerate(pieza.texto.splitlines(), 1):
+            mirar(linea, fichero, n, pieza.origen)
     return hallazgos
 
 
-def _oculto(fichero, huellas):
-    """El nombre del fichero, con los componentes que son hallazgo tapados."""
+def buscar_huellas(raiz, huellas, commit=None):
+    """Las apariciones de alguna huella: fichero, linea, huella y origen.
+
+    La linea 0 es el nombre del fichero. El token en claro no sale nunca.
+    Con `commit`, tambien el arbol de ese commit.
+    """
+    return _huellas_en(_piezas(raiz, commit, huellas), huellas)
+
+
+def _tapar_tokens(parte, huellas):
+    """El componente con cada token de la lista cambiado por `<huella-...>`,
+    el principio de su huella; lo demas se queda (`informe-<huella-...>.md`),
+    para que dos nombres distintos no salgan iguales.
+
+    Recorre el texto original: los caracteres que normalizados dan
+    `[a-z0-9]` forman el token; los que no dan nada (marcas, formato) van
+    dentro; cualquier otro lo corta.
+    """
+    salida, tramo, token = [], [], []
+
+    def cerrar():
+        if tramo:
+            una = huella("".join(token))
+            salida.append(f"<huella-{una[:12]}>" if una in huellas
+                          else "".join(tramo))
+            tramo.clear()
+            token.clear()
+
+    for c in parte:
+        normal = _normalizados(c)[0].lower()
+        if not normal:
+            (tramo if tramo else salida).append(c)
+        elif NO_TOKEN.search(normal) is None:
+            tramo.append(c)
+            token.append(normal)
+        else:
+            cerrar()
+            salida.append(c)
+    cerrar()
+    return "".join(salida)
+
+
+def _publicable(fichero, huellas):
+    """El nombre que puede salir en una salida: en cada componente de la
+    ruta, el token de la lista pasa a `<huella-...>` (ver `_tapar_tokens`) y
+    el secreto a `<secreto>`.
+
+    Si aun asi el componente da un token o un secreto (uno que solo se ve
+    desescapado, por ejemplo), se tapa el componente entero.
+    """
+    huellas = set(huellas)
     partes = []
     for parte in fichero.split("/"):
-        sucio = {huella(t) for t in tokens(parte)} & huellas
-        partes.append("<nombre-con-huella>" if sucio else parte)
+        tapada = _tapar_tokens(_tapar_secretos(parte), huellas)
+        quedan = sorted({huella(t) for t in tokens(tapada)} & huellas)
+        if quedan:
+            tapada = "<huella-" + "+".join(h[:12] for h in quedan) + ">"
+        elif _clases_de_secreto(tapada):
+            tapada = "<secreto>"
+        partes.append(tapada)
     return "/".join(partes)
 
 
@@ -5645,77 +6957,203 @@ def _oculto(fichero, huellas):
 # Secretos
 # --------------------------------------------------------------------------
 PATRONES_DE_SECRETO = {
+    # Suelto, o pegado a `bot` como va en la URL de la API de Telegram.
     "token_de_bot_de_telegram": re.compile(
-        r"(?<![0-9A-Za-z])\d{8,10}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])"),
+        r"(?:(?<=bot)|(?<![0-9A-Za-z]))\d{8,12}:[A-Za-z0-9_-]{35}"
+        r"(?![A-Za-z0-9_-])"),
     "clave_de_api_sk": re.compile(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}"),
     "clave_de_api_akia": re.compile(
         r"(?<![A-Z0-9])AKIA[0-9A-Z]{16}(?![0-9A-Z])"),
+    "clave_de_api_asia": re.compile(
+        r"(?<![A-Z0-9])ASIA[0-9A-Z]{16}(?![0-9A-Z])"),
+    "clave_de_api_aiza": re.compile(
+        r"(?<![A-Za-z0-9_-])AIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])"),
     "clave_de_api_ghp": re.compile(r"(?<![A-Za-z0-9])ghp_[A-Za-z0-9]{36}"),
+    "clave_de_api_gho": re.compile(r"(?<![A-Za-z0-9])gho_[A-Za-z0-9]{36}"),
+    "clave_de_api_ghs": re.compile(r"(?<![A-Za-z0-9])ghs_[A-Za-z0-9]{36}"),
     "clave_de_api_github_pat": re.compile(
         r"(?<![A-Za-z0-9])github_pat_[A-Za-z0-9_]{22,}"),
     "jwt": re.compile(
         r"eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
+    # La cabecera de una clave privada (RSA, OPENSSH, EC, PGP, sin tipo...).
+    "clave_privada": re.compile(r"-----BEGIN[A-Z0-9 ]*PRIVATE KEY"),
+    # Con un valor literal largo: `${TOKEN}`, `<token>` o `{token}` no.
+    "cabecera_authorization": re.compile(
+        r"(?i)authorization[\"']?\s*[:=]\s*[\"']?(?:basic|bearer)\s+"
+        r"[A-Za-z0-9._~+/=-]{20,}"),
 }
 
-# Esquema, dos barras, usuario, dos puntos, contrasena, arroba y host.
+# Esquema, dos barras, usuario (puede ir vacio), dos puntos, contrasena
+# (puede llevar `/`: la de base64 casi siempre la lleva), arroba y host.
 URL_CON_CONTRASENA = re.compile(
-    r"[A-Za-z][A-Za-z0-9+.-]*://[^\s/:@]+:([^\s/@]+)@")
+    r"[A-Za-z][A-Za-z0-9+.-]*://[^\s/:@]*:([^\s@]+)@")
+# Lo que en esa forma no es una contrasena sino un puerto y una ruta
+# (`https://ejemplo.test:8443/ruta/@ambito`).
+PUERTO_Y_RUTA = re.compile(r"\d{1,5}/.*")
 
-# Lo que puede ir en el sitio de la contrasena. Las palabras salen del
-# inventario del arbol (28-sep): `prueba` es la del PostgreSQL desechable de
-# las pruebas; `clave` y `token`, las de los ejemplos de las guias;
-# `cambiar-esto`, el valor de ejemplo del spec.
+# Los valores de ejemplo que se permiten, en una URL o en una asignacion. Las
+# palabras salen del inventario del arbol (28-sep): `prueba` es la del
+# PostgreSQL desechable de las pruebas; `clave` y `token`, las de los
+# ejemplos de las guias; `cambiar-esto`, el valor de ejemplo del spec.
 CONTRASENAS_DE_EJEMPLO = ("prueba", "cambiar-esto", "clave", "token",
                           "...", "%s")
+# Una variable es `$NOMBRE` o `${NOMBRE...}` ENTERO, con el nombre en
+# mayusculas (`$uper...9` es una contrasena); un marcador `<...>` no lleva
+# `:`, `/` ni `@` dentro.
 CONTRASENA_MARCADOR = re.compile(
-    r"<[^<>]+>|\$[A-Za-z_][A-Za-z0-9_]*|\$\{[^{}]+\}")
+    r"<[^<>:/@]+>|\$[A-Z_][A-Z0-9_]*|\$\{[A-Z_][A-Z0-9_]*[^{}]*\}")
 
-FICHEROS_PROHIBIDOS = (".env", ".env.*", "kaggle.json", "*.pem", "*.key",
-                       "id_rsa*", "*.p12")
+# Una clave que nombra un secreto (lleva `password`, `passwd`, `secret`,
+# `token` o `api_key`, o acaba en `_key`), y su valor: detras de `=` o `:`
+# (tambien con subindice, `os.environ["X_PASSWORD"] = ...`), o, si la clave
+# va entre comillas, detras de una coma (`setenv("X_PASSWORD", ...)`). El
+# valor va entre comillas, es `${...}` entero, o va suelto hasta el primer
+# blanco, comilla, coma o `;`.
+ASIGNACION = re.compile(
+    r"(?i)(?<![A-Za-z0-9_])(?P<comilla>[\"'])?"
+    r"[A-Za-z0-9_.-]*(?:(?:password|passwd|secret|token|api[_-]?key)"
+    r"[A-Za-z0-9_.-]*|_key(?![A-Za-z0-9_.-]))"
+    r"(?:[\"']?\s*\]?\s*[:=]|(?(comilla)(?P=comilla)\s*,|(?!)))\s*"
+    r"(?:\"(?P<doble>[^\"]*)\"|'(?P<simple>[^']*)'"
+    r"|(?P<llaves>\$\{[^{}]*\})|(?P<suelto>[^\s\"',;]+))")
+VALOR_DE_LA_ASIGNACION = ("doble", "simple", "llaves", "suelto")
+# Lo que parece un secreto en una asignacion: 8 o mas caracteres, con letras
+# Y cifras. Deja pasar los nombres de variable, las palabras de ejemplo
+# (`cambiar-esto`, `verifica`) y los ids de ejemplo; y tambien, sin remedio,
+# una contrasena hecha solo de letras.
+LITERAL_QUE_PARECE_SECRETO = re.compile(
+    r"(?=.*[A-Za-z])(?=.*[0-9]).{8,}")
+# Una expresion no es un literal: una llamada, un subindice, una expresion
+# de n8n (`={{ ... }}`).
+EXPRESION = re.compile(r"[()\[\]{}]")
+# `${NOMBRE:-valor}` (o `-`, `:=`, `=`): lo de detras es un literal.
+CON_VALOR_POR_DEFECTO = re.compile(
+    r"\$\{[A-Za-z_][A-Za-z0-9_]*:?[-=](?P<valor>[^{}]*)\}")
+
+FICHEROS_PROHIBIDOS = (".env*", "*.env", "kaggle.json", "credentials.json",
+                       "client_secret*.json", ".pgpass", ".netrc",
+                       ".git-credentials",
+                       "*.pem", "*.key", "*.p12", "*.pfx", "*.ppk",
+                       "id_rsa*", "id_dsa*", "id_ecdsa*", "id_ed25519*")
 FICHEROS_PERMITIDOS = (".env.ejemplo",)
 
 
 def _es_de_ejemplo(contrasena):
-    return (contrasena in CONTRASENAS_DE_EJEMPLO
+    por_defecto = CON_VALOR_POR_DEFECTO.fullmatch(contrasena)
+    if por_defecto is not None:
+        return _es_de_ejemplo(por_defecto.group("valor"))
+    return (contrasena.lower() in CONTRASENAS_DE_EJEMPLO
             or CONTRASENA_MARCADOR.fullmatch(contrasena) is not None)
 
 
+def _es_un_literal_secreto(valor):
+    """El valor de una asignacion es un secreto si es un LITERAL (no una
+    variable ni una expresion) que no es de ejemplo y lo parece."""
+    por_defecto = CON_VALOR_POR_DEFECTO.fullmatch(valor)
+    if por_defecto is not None:
+        valor = por_defecto.group("valor")
+    return (LITERAL_QUE_PARECE_SECRETO.fullmatch(valor) is not None
+            and EXPRESION.search(valor) is None
+            and not _es_de_ejemplo(valor))
+
+
+def _secretos_de_la_linea(linea):
+    """(clase, inicio, fin) de cada secreto de la linea; el tramo es el del
+    secreto (en una URL o en una asignacion, el del valor)."""
+    for clase, patron in PATRONES_DE_SECRETO.items():
+        for m in patron.finditer(linea):
+            yield clase, m.start(), m.end()
+    for m in URL_CON_CONTRASENA.finditer(linea):
+        contrasena = m.group(1)
+        if not (_es_de_ejemplo(contrasena)
+                or PUERTO_Y_RUTA.fullmatch(contrasena)):
+            yield "contrasena_en_url", m.start(1), m.end(1)
+    for m in ASIGNACION.finditer(linea):
+        grupo = next(g for g in VALOR_DE_LA_ASIGNACION
+                     if m.group(g) is not None)
+        if _es_un_literal_secreto(m.group(grupo)):
+            yield "asignacion_de_secreto", m.start(grupo), m.end(grupo)
+
+
 def _clases_de_secreto(linea):
-    clases = [clase for clase, patron in PATRONES_DE_SECRETO.items()
-              if patron.search(linea)]
-    if any(not _es_de_ejemplo(m.group(1))
-           for m in URL_CON_CONTRASENA.finditer(linea)):
-        clases.append("contrasena_en_url")
+    """Las clases de secreto de una linea, sin repetir. Tambien con `\\"`
+    convertido en `"`: el texto de un JSON escapado (una celda de un
+    notebook, el codigo de un nodo de n8n)."""
+    variantes = [linea]
+    if '\\"' in linea:
+        variantes.append(linea.replace('\\"', '"'))
+    clases = []
+    for texto in variantes:
+        for clase, _inicio, _fin in _secretos_de_la_linea(texto):
+            if clase not in clases:
+                clases.append(clase)
     return clases
 
 
+def _tapar_secretos(texto):
+    """El texto con cada secreto cambiado por `<secreto>`."""
+    tramos = sorted((inicio, fin) for _clase, inicio, fin
+                    in _secretos_de_la_linea(texto))
+    salida, hasta = [], 0
+    for inicio, fin in tramos:
+        if inicio >= hasta:
+            salida.append(texto[hasta:inicio])
+            salida.append("<secreto>")
+            hasta = fin
+        elif fin > hasta:                       # tramos que se solapan
+            hasta = fin
+    salida.append(texto[hasta:])
+    return "".join(salida)
+
+
 def _prohibido(nombre):
+    """Si el nombre es el de un fichero que no debe viajar. No distingue
+    mayusculas."""
+    nombre = nombre.lower()
     return (nombre not in FICHEROS_PERMITIDOS
             and any(fnmatch.fnmatchcase(nombre, p)
                     for p in FICHEROS_PROHIBIDOS))
 
 
-def buscar_secretos(raiz):
-    """Secretos por patron y ficheros prohibidos: fichero, linea y clase.
-
-    La linea 0 es el fichero entero. El secreto no sale nunca.
-    """
-    raiz = Path(raiz)
+def _secretos_en(piezas, huellas):
     hallazgos = []
-    for ruta in ficheros_versionados(raiz):
-        fichero = _relativo(ruta, raiz)
-        if _prohibido(ruta.name):
-            hallazgos.append({"fichero": fichero, "linea": 0,
-                              "clase": "fichero_prohibido"})
+    for pieza in piezas:
+        fichero = _publicable(pieza.nombre, huellas)
+        prohibido = (pieza.recorrida
+                     and _prohibido(pieza.nombre.rsplit("/", 1)[-1]))
+        # La linea 0 es el fichero entero: lo que no se ha mirado (enlace
+        # simbolico, submodulo, ilegible) no puede darse por limpio; y el
+        # nombre, que tambien viaja, puede ser el de un fichero prohibido o
+        # llevar un secreto.
+        clases = [] if pieza.recorrida else ["no_recorrido"]
+        if pieza.primera:
+            clases += ["fichero_prohibido"] if prohibido else []
+            for parte in pieza.nombre.split("/"):
+                clases += [c for c in _clases_de_secreto(parte)
+                           if c not in clases]
+        hallazgos += [{"fichero": fichero, "linea": 0, "clase": clase,
+                       "origen": pieza.origen} for clase in clases]
+        if not pieza.recorrida or prohibido or pieza.texto is None:
             continue
-        texto = _texto(ruta)
-        if texto is None:
-            continue
-        for n, linea in enumerate(texto.splitlines(), 1):
+        for n, linea in enumerate(pieza.texto.splitlines(), 1):
             for clase in _clases_de_secreto(linea):
                 hallazgos.append({"fichero": fichero, "linea": n,
-                                  "clase": clase})
+                                  "clase": clase, "origen": pieza.origen})
     return hallazgos
+
+
+def buscar_secretos(raiz, huellas=None, commit=None):
+    """Secretos por patron y ficheros prohibidos: fichero, linea, clase y
+    origen.
+
+    La linea 0 es el fichero entero. El secreto no sale nunca. El nombre del
+    fichero es el publicable (ver `_publicable`) con `huellas`; sin ellas,
+    con las del repositorio donde vive el script. Con `commit`, tambien el
+    arbol de ese commit.
+    """
+    if huellas is None:
+        huellas = huellas_de_la_lista(leer_huellas(HUELLAS_POR_DEFECTO))
+    return _secretos_en(_piezas(raiz, commit, huellas), huellas)
 
 
 # --------------------------------------------------------------------------
@@ -5726,10 +7164,12 @@ CAMPOS_DEL_COMMIT = ("autor", "correo_de_autor", "quien_confirma",
 
 
 def verificar_commit(raiz, revision="HEAD", huellas=None):
-    """Autor, quien confirma, sus correos y el mensaje, contra las huellas.
+    """Autor, quien confirma, sus correos y el mensaje, contra las huellas y
+    contra los patrones de secretos.
 
-    Devuelve `campo`, `linea` (la del mensaje; 0 en los demas) y `huella`.
-    Sin `huellas`, las del repositorio donde vive el script.
+    Devuelve `campo`, `linea` (la del mensaje; 0 en los demas) y `huella`
+    o `clase` (la del secreto). Sin `huellas`, las del repositorio donde
+    vive el script.
     """
     if huellas is None:
         huellas = huellas_de_la_lista(leer_huellas(HUELLAS_POR_DEFECTO))
@@ -5737,27 +7177,85 @@ def verificar_commit(raiz, revision="HEAD", huellas=None):
     salida = _git(raiz, "log", "-1",
                   "--format=%an%x00%ae%x00%cn%x00%ce%x00%B", revision, "--")
     if salida is None:
-        raise SystemExit(f"No se pudo leer el commit {revision} de {raiz}: "
-                         "¿es un repositorio de git con commits?")
+        raise SystemExit("No se pudo leer el commit "
+                         f"{_publicable(revision, huellas)} del árbol que se "
+                         "comprueba: ¿es un repositorio de git con commits?")
     valores = salida.decode("utf-8", errors="replace").split("\0", 4)
     hallazgos = []
     for campo, valor in zip(CAMPOS_DEL_COMMIT, valores):
         lineas = valor.splitlines() if campo == "mensaje" else [valor]
         for n, linea in enumerate(lineas, 1):
+            donde = n if campo == "mensaje" else 0
             for una in sorted({huella(t) for t in tokens(linea)} & huellas):
-                hallazgos.append({"campo": campo,
-                                  "linea": n if campo == "mensaje" else 0,
+                hallazgos.append({"campo": campo, "linea": donde,
                                   "huella": una})
+            for clase in _clases_de_secreto(linea):
+                hallazgos.append({"campo": campo, "linea": donde,
+                                  "clase": clase})
+    return hallazgos
+
+
+def _nombres_de_referencias(raiz):
+    """[(referencia, nombre)]: las ramas (con la de HEAD, aunque aun no
+    tenga commits) y las etiquetas. Sus nombres se publican con el push."""
+    nombres = [("rama", r[len("refs/heads/"):])
+               for r in _referencias(raiz, "refs/heads/")]
+    cabeza = _git(raiz, "symbolic-ref", "-q", "HEAD")
+    if cabeza is not None:
+        rama = cabeza.decode("utf-8", errors="replace").strip()
+        if rama.startswith("refs/heads/"):
+            rama = ("rama", rama[len("refs/heads/"):])
+            if rama not in nombres:
+                nombres.append(rama)
+    nombres += [("etiqueta", r[len("refs/tags/"):])
+                for r in _referencias(raiz, "refs/tags/")]
+    return nombres
+
+
+def verificar_referencias(raiz, huellas):
+    """Los nombres de las ramas y de las etiquetas, contra las huellas.
+
+    Devuelve `referencia` (`rama` o `etiqueta`), `nombre` (el publicable,
+    con el token tapado) y `huella`.
+    """
+    huellas = set(huellas)
+    hallazgos = []
+    for referencia, nombre in _nombres_de_referencias(raiz):
+        for una in sorted({huella(t) for t in tokens(nombre)} & huellas):
+            hallazgos.append({"referencia": referencia,
+                              "nombre": _publicable(nombre, huellas),
+                              "huella": una})
     return hallazgos
 
 
 def commits(raiz):
-    """Cuantos commits se alcanzan desde HEAD."""
-    salida = _git(raiz, "rev-list", "--count", "HEAD")
+    """Cuantos commits tiene el repositorio entero: los que alcanza
+    cualquier referencia (ramas, etiquetas, stash...), no solo HEAD."""
+    salida = _git(raiz, "rev-list", "--count", "--all")
     if salida is None:
-        raise SystemExit(f"No se pudieron contar los commits de {raiz}: "
-                         "¿es un repositorio de git con commits?")
+        raise SystemExit("No se pudieron contar los commits del árbol que "
+                         "se comprueba: ¿es un repositorio de git?")
     return int(salida.decode("ascii").strip())
+
+
+def _referencias(raiz, prefijo):
+    salida = _git(raiz, "for-each-ref", "--format=%(refname)", prefijo)
+    if salida is None:
+        raise SystemExit("No se pudieron leer las referencias del árbol que "
+                         "se comprueba: ¿es un repositorio de git?")
+    return [r for r in salida.decode("utf-8", errors="replace").splitlines()
+            if r]
+
+
+def ramas(raiz):
+    """Cuantas ramas locales hay."""
+    return len(_referencias(raiz, "refs/heads/"))
+
+
+def etiquetas(raiz):
+    """Cuantas etiquetas hay (quien las crea y sus mensajes no se miran:
+    en el repositorio que se publica no puede haber ninguna)."""
+    return len(_referencias(raiz, "refs/tags/"))
 
 
 # --------------------------------------------------------------------------
@@ -5770,17 +7268,19 @@ def _argumentos(argv):
     analizador.add_argument("--raiz", type=Path, default=REPO,
                             help="árbol que se comprueba (por defecto, este "
                                  "repositorio)")
-    analizador.add_argument("--huellas", type=Path,
-                            default=HUELLAS_POR_DEFECTO,
+    # Como texto: en las salidas, la ruta de las huellas sale como se paso.
+    analizador.add_argument("--huellas", default=None,
                             help="fichero de huellas (por defecto, "
-                                 "tests/anonimato/huellas.txt)")
+                                 f"{HUELLAS_MOSTRADAS})")
     analizador.add_argument("--commit", nargs="?", const="HEAD", default=None,
                             metavar="REV",
-                            help="comprueba también autor, correo, quien "
-                                 "confirma y mensaje de ese commit (HEAD)")
+                            help="comprueba también el árbol, el autor, "
+                                 "quien confirma y el mensaje de ese commit "
+                                 "(HEAD), y los nombres de ramas y etiquetas")
     analizador.add_argument("--un-solo-commit", action="store_true",
-                            help="exige que el repositorio tenga un solo "
-                                 "commit")
+                            help="exige que el repositorio entero tenga un "
+                                 "solo commit, una sola rama y ninguna "
+                                 "etiqueta; implica --commit HEAD")
     analizador.add_argument("--regenerar", action="store_true",
                             help="escribe el fichero de huellas desde la "
                                  f"lista en claro ({VARIABLE_DE_LA_LISTA} o "
@@ -5790,15 +7290,58 @@ def _argumentos(argv):
     return analizador.parse_args(argv)
 
 
+def _las_huellas(args):
+    """La ruta del fichero de huellas y como se dice en las salidas: como se
+    paso, o relativa al repositorio si es la de por defecto."""
+    if args.huellas is None:
+        return HUELLAS_POR_DEFECTO, HUELLAS_MOSTRADAS
+    return Path(args.huellas), args.huellas
+
+
 def _regenerar(args):
     lista = args.lista or os.environ.get(VARIABLE_DE_LA_LISTA)
     if not lista:
         raise SystemExit(
             f"Falta la lista en claro: define {VARIABLE_DE_LA_LISTA} o pasa "
             "--lista. Vive fuera del repositorio.")
-    n = regenerar(leer_lista(lista), args.huellas)
-    print(f"{n} huellas escritas en {args.huellas} (con la del centinela).")
+    destino, mostrado = _las_huellas(args)
+    # La ruta de la lista no se imprime nunca: vive fuera del repositorio y
+    # lleva el usuario de la maquina.
+    try:
+        n = regenerar(leer_lista(lista), destino)
+    except FileNotFoundError:
+        raise SystemExit("No existe la lista en claro que se ha pasado.")
+    except OSError:
+        raise SystemExit("No se pudo leer la lista en claro que se ha "
+                         "pasado, o escribir las huellas.")
+    except ValueError as error:
+        raise SystemExit(f"No se escribe nada: {error}.")
+    print(f"{n} huellas escritas en {mostrado} (con la del centinela).")
     return 0
+
+
+def _huellas_de_la_cli(ruta, mostrado):
+    """Las huellas que se buscan (sin la del centinela), o SystemExit.
+
+    Con solo la del centinela no se comprueba nada: es el `huellas.txt` del
+    repositorio que se publica (D9), y la comprobacion de verdad se hace con
+    las del repositorio de desarrollo.
+    """
+    try:
+        huellas = huellas_de_la_lista(leer_huellas(ruta))
+    except FileNotFoundError:
+        raise SystemExit(f"No existe el fichero de huellas {mostrado}.")
+    except OSError:
+        raise SystemExit(f"No se pudo leer el fichero de huellas {mostrado}.")
+    except ValueError as error:
+        raise SystemExit(f"El fichero de huellas {mostrado} no vale: "
+                         f"{error}.")
+    if not huellas:
+        raise SystemExit(
+            f"{mostrado} lleva solo la huella del centinela: así no se "
+            "comprueba nada. Pasa --huellas con las huellas del repositorio "
+            "de desarrollo (el que tiene la lista entera).")
+    return huellas
 
 
 def main(argv=None):
@@ -5806,31 +7349,53 @@ def main(argv=None):
     if args.regenerar:
         return _regenerar(args)
 
-    huellas = huellas_de_la_lista(leer_huellas(args.huellas))
-    recorridos = ficheros_versionados(args.raiz)
-    sin_recorrer = binarios(args.raiz)
-    de_huella = buscar_huellas(args.raiz, huellas)
-    de_secreto = buscar_secretos(args.raiz)
+    huellas = _huellas_de_la_cli(*_las_huellas(args))
+    if args.un_solo_commit and args.commit is None:
+        args.commit = "HEAD"            # lo que se publica es ese commit
+    revision = (None if args.commit is None
+                else _publicable(args.commit, huellas))
+    piezas = _piezas(args.raiz, args.commit, huellas)
+    de_huella = _huellas_en(piezas, huellas)
+    de_secreto = _secretos_en(piezas, huellas)
+
+    def de_donde(h):
+        return "" if h["origen"] == COPIA else f" ({h['origen']})"
+
+    def que(h):
+        return (f"huella {h['huella'][:12]}" if "huella" in h
+                else h["clase"])
 
     for h in de_huella:
-        print(f"{h['fichero']}:{h['linea']}: huella {h['huella'][:12]}")
+        print(f"{h['fichero']}:{h['linea']}: {que(h)}" + de_donde(h))
     for h in de_secreto:
-        print(f"{h['fichero']}:{h['linea']}: {h['clase']}")
+        print(f"{h['fichero']}:{h['linea']}: {que(h)}" + de_donde(h))
 
-    del_commit = []
+    del_commit, de_referencia = [], []
     if args.commit is not None:
         del_commit = verificar_commit(args.raiz, args.commit, huellas=huellas)
         for h in del_commit:
             donde = (f"{h['campo']}:{h['linea']}" if h["linea"]
                      else h["campo"])
-            print(f"commit {args.commit}: {donde}: "
-                  f"huella {h['huella'][:12]}")
+            print(f"commit {revision}: {donde}: {que(h)}")
+        # El nombre de las ramas y de las etiquetas se publica con el push.
+        de_referencia = verificar_referencias(args.raiz, huellas)
+        for h in de_referencia:
+            print(f"{h['referencia']} {h['nombre']}: {que(h)}")
 
+    recorridas = [p for p in piezas if p.texto is not None]
+    sin_recorrer = [p for p in piezas if p.recorrida and p.texto is None]
     print("--")
-    print(f"ficheros recorridos: {len(recorridos) - len(sin_recorrer)}")
+    por_origen = {}
+    for p in recorridas:
+        por_origen[p.origen] = por_origen.get(p.origen, 0) + 1
+    detalle = ", ".join(f"{o}: {por_origen[o]}"
+                        for o in (COPIA, INDICE, COMMIT) if o in por_origen)
+    print(f"ficheros recorridos: {len(recorridas)}"
+          + (f" ({detalle})" if len(por_origen) > 1 else ""))
     print(f"binarios sin recorrer: {len(sin_recorrer)}")
-    for ruta in sin_recorrer:
-        print(f"  {_relativo(ruta, args.raiz)}")
+    for p in sin_recorrer:
+        print(f"  {_publicable(p.nombre, huellas)}"
+              + ("" if p.origen == COPIA else f" ({p.origen})"))
     ficheros = len({h["fichero"] for h in de_huella})
     print(f"huellas: {len(de_huella)} en {ficheros} ficheros")
     por_clase = {}
@@ -5838,15 +7403,36 @@ def main(argv=None):
         por_clase[h["clase"]] = por_clase.get(h["clase"], 0) + 1
     detalle = ", ".join(f"{c}: {n}" for c, n in sorted(por_clase.items()))
     print(f"secretos: {len(de_secreto)}" + (f" ({detalle})" if detalle else ""))
-    mal = len(de_huella) + len(de_secreto) + len(del_commit)
+    mal = (len(de_huella) + len(de_secreto) + len(del_commit)
+           + len(de_referencia))
     if args.commit is not None:
-        print(f"commit {args.commit}: {len(del_commit)}")
+        print(f"commit {revision}: {len(del_commit)}")
+        print(f"nombres de ramas y etiquetas: {len(de_referencia)}")
     if args.un_solo_commit:
-        cuantos = commits(args.raiz)
+        # Un commit, una rama y ninguna etiqueta: lo que sobre, es hallazgo.
+        cuantos, cuantas, sueltas = (commits(args.raiz), ramas(args.raiz),
+                                     etiquetas(args.raiz))
         print(f"commits: {cuantos}")
-        mal += cuantos != 1
-    print("limpio" if not mal else "NO publicar: hay hallazgos")
-    return 1 if mal else 0
+        print(f"ramas: {cuantas}")
+        print(f"etiquetas: {sueltas}")
+        mal += (cuantos != 1) + (cuantas != 1) + (sueltas != 0)
+    if not recorridas:
+        print("NO publicar: no se recorrió ningún fichero de texto, y lo que "
+              "no se ha mirado no está limpio")
+        return 1
+    if mal:
+        print("NO publicar: hay hallazgos")
+        return 1
+    if sin_recorrer:
+        # Lo que no se ha recorrido no se da por limpio: se revisa a mano.
+        n = len(sin_recorrer)
+        print(f"limpio lo recorrido; {n} "
+              + ("binario sin recorrer, que se revisa" if n == 1
+                 else "binarios sin recorrer, que se revisan")
+              + " a mano")
+    else:
+        print("limpio")
+    return 0
 
 
 if __name__ == "__main__":
@@ -5855,27 +7441,55 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Paso 4: Correr las pruebas: quedan cinco en rojo, las del fichero de huellas y la del `.gitignore`**
+- [ ] **Paso 4: Correr las pruebas: siguen sin poder cargarse, ahora por el fichero de huellas**
 
 ```bash
 C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_anonimato.py
 ```
 
+Salida esperada (el mismo error con otra causa: el fichero que falta es
+`tests/anonimato/huellas.txt`, que `solo_el_centinela()` lee al cargarse el
+módulo):
+
+```
+ERROR tests/test_anonimato.py - FileNotFoundError: [Errno 2] No such file or ...
+!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+1 error in 0.38s
+```
+
+- [ ] **Paso 5: `huellas.txt` y `.gitignore`**
+
+Generar las huellas, con la lista en claro:
+
+```bash
+ANONIMATO_LISTA=<lista en claro> C:/venv-copiloto/Scripts/python.exe -B scripts/verificar_anonimato.py --regenerar
+```
+
 Salida esperada:
 
 ```
-FAILED tests/test_anonimato.py::test_el_centinela_esta_en_huellas_txt - FileN...
-FAILED tests/test_anonimato.py::test_huellas_txt_lleva_cabecera_y_huellas_ordenadas_sin_repetir
-FAILED tests/test_anonimato.py::test_la_lista_en_claro_esta_ignorada_por_si_alguien_la_copia_dentro
-FAILED tests/test_anonimato.py::test_un_arbol_limpio_no_da_hallazgos - FileNo...
-FAILED tests/test_anonimato.py::test_detecta_el_centinela_dentro_del_recorrido
-5 failed, 41 passed in 10.21s
+30 huellas escritas en tests/anonimato/huellas.txt (con la del centinela).
 ```
 
-Cuatro fallan con `FileNotFoundError` (falta `tests/anonimato/huellas.txt`) y
-una con `AssertionError` (falta la línea del `.gitignore`).
+El número es el de la lista de hoy más la del centinela (al escribirse esta
+tarea eran 29; la tarea 6 encontró un identificador que la lista no conocía
+y son 30). **El contenido del fichero no se cita aquí**: este plan se publica
+con el repositorio, y una huella no es un secreto (D9). Si una entrada de la
+lista no da exactamente un token, el script no escribe nada y dice el número
+de la entrada, nunca su contenido.
 
-- [ ] **Paso 5: `.gitignore` y `huellas.txt`**
+Correr las pruebas:
+
+```bash
+C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_anonimato.py
+```
+
+Salida esperada (queda una en rojo, la del `.gitignore`):
+
+```
+FAILED tests/test_anonimato.py::test_la_lista_en_claro_esta_ignorada_por_si_alguien_la_copia_dentro
+1 failed, 152 passed, 2 skipped in 110.19s (0:01:50)
+```
 
 Añadir AL FINAL de `.gitignore`, después de la línea `pruebas/sesion/` y
 dejando una línea en blanco:
@@ -5887,63 +7501,6 @@ dejando una línea en blanco:
 tests/anonimato/lista*.txt
 ```
 
-Generar las huellas. Con la lista en claro:
-
-```bash
-ANONIMATO_LISTA=<lista en claro> C:/venv-copiloto/Scripts/python.exe -B scripts/verificar_anonimato.py --regenerar
-```
-
-Salida esperada (la ruta es la de tu repositorio):
-
-```
-29 huellas escritas en <raiz-del-repositorio>\tests\anonimato\huellas.txt (con la del centinela).
-```
-
-El fichero que sale tiene que ser EXACTAMENTE este. Sin la lista en claro,
-crear `tests/anonimato/huellas.txt` con este contenido (son sha256: se pueden
-publicar):
-
-```
-# Huellas del anonimato (spec de SP5 §6.1): el sha256 de cada token de la
-# lista negra, que vive FUERA del repositorio. Una por línea, ordenadas.
-# Incluye siempre la del centinela público `centinelaanonimato7f3a`.
-# No se edita a mano. Se regenera con:
-#   ANONIMATO_LISTA=<lista en claro> python scripts/verificar_anonimato.py --regenerar
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-3f3ef2d55fba74e22660c8d7f97c35aff20cba82f26eb998502be73ade436547
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-[retirado]
-```
-
-Si al regenerar sale otro número u otras huellas, la lista en claro ha
-cambiado desde que se escribió este plan: se versiona lo que sale de la lista
-de hoy, y se dice en el mensaje del commit cuántas huellas lleva.
-
 - [ ] **Paso 6: Correr las pruebas: verde**
 
 ```bash
@@ -5953,25 +7510,32 @@ C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/te
 Salida esperada:
 
 ```
-..............................................                           [100%]
-46 passed in 9.89s
+153 passed, 2 skipped in 73.49s (0:01:13)
 ```
+
+Las dos que se saltan son las de los enlaces simbólicos, que Windows no deja
+crear sin privilegios; donde se puedan crear, pasan.
 
 Ningún fichero que existiera cambia de comportamiento con esta tarea (solo
 gana tres líneas el `.gitignore`), así que la suite entera tiene que dar lo
-mismo que antes más estas 46. Sobre la base en la que se escribió este plan
-(antes de fusionar SP5-B1; con SP5-B1 la partida es `699 passed, 18
-skipped, 7 errors`), sin los ficheros ignorados por git y sin
-dataset, eran `543 passed, 18 skipped, 7 errors` y
-pasan a ser `589 passed, 18 skipped, 7 errors`; los 7 errores son de
-`tests/test_contrato_mcp.py` (2) y `tests/test_seleccion_casos.py` (5), por
-ficheros ignorados que faltan, con o sin esta tarea.
+mismo que antes más estas 155 pruebas.
+
+Y el script, sobre el repositorio:
+
+```bash
+C:/venv-copiloto/Scripts/python.exe scripts/verificar_anonimato.py --raiz .
+```
+
+Esperado, antes de la tarea 6: salida 1, con hallazgos de huella solo en
+ficheros de documentación (los de la lista de «Ficheros» de la tarea 6) y
+`secretos: 0`. Si aparece un fichero de código o de pruebas, alguna de las
+tareas 1 a 4 quedó a medias.
 
 - [ ] **Paso 7: Commit**
 
 ```bash
 git add scripts/verificar_anonimato.py tests/test_anonimato.py tests/anonimato/huellas.txt .gitignore
-git commit -m "test(anonimato): huellas de la lista negra, centinela y patrones de secretos (SP5-B2 T5)" -m "scripts/verificar_anonimato.py tokeniza los ficheros versionados y los compara, huella con huella, con tests/anonimato/huellas.txt (29 sha256, con la del centinela publico); busca secretos por patron y ficheros prohibidos, y comprueba autor, quien confirma y mensaje del commit. Ninguna salida lleva el token ni el secreto. La lista en claro vive fuera del repositorio. Falta test_el_arbol_esta_limpio, que exige la anonimizacion hecha." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "test(anonimato): huellas de la lista negra, centinela y patrones de secretos (SP5-B2 T5)" -m "scripts/verificar_anonimato.py tokeniza lo que se publicaria (la copia de trabajo, el indice y, con --commit, el arbol del commit) y lo compara, huella con huella, con tests/anonimato/huellas.txt; busca secretos por patron y ficheros prohibidos, y comprueba autor, quien confirma, mensaje y nombres de ramas y etiquetas. Ninguna salida lleva el token ni el secreto. La lista en claro vive fuera del repositorio. Falta test_el_arbol_esta_limpio, que exige la anonimizacion hecha." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 ---
 
@@ -5990,6 +7554,9 @@ añade a la suite la prueba que exige el árbol limpio.
   `docs/superpowers/plans/2026-09-24-sp3-bot-n8n.md`,
   `docs/superpowers/plans/2026-09-26-sp4-combinacion-bayesiana.md`
 - Modificar: `notebooks/eda_rsna.ipynb` (la celda de la cabecera)
+- Modificar: `tests/mantenimiento.mjs` (un comentario)
+- Modificar: `tests/anonimato/huellas.txt` (solo si el repaso a mano del
+  paso 6 encuentra un identificador que la lista no conocía)
 - Modificar: cualquier otro fichero versionado donde el comprobador encuentre
   algo (no debería quedar ninguno fuera de esta lista: si aparece, es un
   hallazgo que se anota en el informe de la tarea)
@@ -6163,15 +7730,19 @@ queda no se arregla con una sustitución ciega. Para cada línea, el criterio:
 
 | Qué nombra la línea | Qué se escribe |
 | :--- | :--- |
-| la lista de contenedores del servidor con sus nombres (salida de `docker ps` copiada en la guía de despliegue) | se conservan las filas del proyecto (`copiloto-mcp`, `copiloto-bd`) y las demás se sustituyen por una sola fila «(los contenedores ajenos: no se tocan)»; los nombres sueltos en prosa pasan a `api-ajena` y `bd-ajena` |
+| la lista de contenedores del servidor con sus nombres (salida de `docker ps` copiada en la guía de despliegue) | se conservan las filas del proyecto (`copiloto-mcp`, `copiloto-bd`) y las dos genéricas (`n8n` y `nginx`, con la imagen como `n8nio/n8n:...` y `nginx:...`), que ayudan a reconocer el contenedor de n8n; las demás se sustituyen por una sola fila «(los contenedores ajenos: no se tocan)»; los nombres sueltos en prosa pasan a «los contenedores ajenos» |
 | productos de la pila de mensajería del cliente, en prosa o en un comentario | «los contenedores ajenos», sin enumerarlos |
 | la credencial de Telegram del cliente y la de pruebas anterior, con su nombre | «la credencial de Telegram del cliente», «una credencial de pruebas anterior» |
 | la tabla «Credenciales y workflows» del manual de operación, que nombra las tres credenciales de Telegram del proyecto | la columna de la credencial pasa a los nombres neutros de la tarea 4: `bot-paciente`, `bot-profesional` y `bot-avisos` |
 | el nombre de usuario de un bot del proyecto, en prosa | «el bot del paciente», «el bot del profesional», «el bot de pruebas y avisos» |
-| el indicador del intérprete de órdenes del servidor | `usuario@vps` |
+| el indicador del intérprete de órdenes del servidor | `usuario@vps` en las órdenes; en prosa, «el prompt del servidor», sin decir cuál es |
+| el `id` de un workflow de la instancia de n8n (16 caracteres alfanuméricos) | `<id-del-workflow-profesional>` |
+| el número de una ejecución de la instancia, en un comentario | se quita |
+| la universidad, fuera del `README.md` | `<institución y programa>` (restricción 1) |
+| una ruta de la máquina en una orden | `<raiz-del-repositorio>` o `<RSNA_RAIZ>`, entre comillas si va detrás de un `cd` (la real puede llevar espacios), y definidos al principio del documento que los usa |
 | un título de sección que nombra a un integrante («… de …») | «(la máquina de desarrollo)»; busca si algún enlace interno apunta al ancla del título viejo y corrígelo |
 | los nombres del equipo y la filiación | «el equipo» |
-| la cuenta propietaria del remoto en una URL de clonado | `<cuenta>`; y donde la guía diga que el repositorio es privado, «el repositorio» a secas |
+| la cuenta propietaria del remoto en una URL de clonado | `<cuenta>`; y donde la guía diga que el repositorio es privado, «el repositorio» a secas o, si la frase depende de ello, en condicional («si el repositorio es privado») |
 | un identificador de red de Docker (12 hexadecimales) en una salida copiada | `<id-de-la-red>` |
 | una ruta temporal de la máquina | `<carpeta-temporal>/…` |
 
@@ -6208,7 +7779,23 @@ Y con la herramienta que se publica, que además busca secretos:
 
 Orden: `C:/venv-copiloto/Scripts/python.exe scripts/verificar_anonimato.py --raiz .`
 
-Esperado: código de salida 0 y ningún hallazgo de ninguna clase.
+Esperado: código de salida 0 y ningún hallazgo de ninguna clase. La última
+línea dice cuántos binarios quedan sin recorrer: son los de la tarea 7.
+**El verificador mira también el índice**: si da hallazgos en un fichero
+que ya arreglaste, prepáralo (`git add`) y vuelve a correrlo.
+
+**Y un repaso a mano, que las huellas no pueden hacer.** Las huellas solo
+ven lo que la lista conoce. Antes de dar el árbol por limpio, recorre los
+ficheros versionados buscando lo que identifica y la lista puede no
+conocer: correos, dominios, direcciones IP, rutas con un usuario, nombres
+propios, nombres de bots, `chat_id`, y los identificadores de la instancia
+de n8n (el `id` de un workflow o de una credencial, el número de una
+ejecución). Lo que aparezca se sustituye por un marcador, se añade a la
+lista en claro —la pone al día quien la mantiene, fuera del repositorio— y
+se regeneran las huellas (paso 5 de la tarea 5). Así entraron el `id` de un
+workflow, que estaba en el plan de SP4, y el número de una ejecución, en un
+comentario de `tests/mantenimiento.mjs`: los encontró la revisión de esta
+tarea, no las huellas.
 
 - [ ] **Paso 7: La prueba que lo vigila**
 
@@ -6256,50 +7843,27 @@ def test_el_arbol_esta_limpio():
             + _por_fichero(de_secreto, "clase")), pytrace=False)
 ```
 
-Sobre el árbol SIN anonimizar esta prueba fallaba así (se vio al escribir el
-plan, y se repitió sobre `main` con SP5-B1 fusionado, que no añadió ninguna:
-201 huellas en 27 ficheros, ningún secreto). Es la forma de su
-salida: fichero, líneas y el principio de cada huella, nunca el token:
+Sobre el árbol SIN anonimizar esta prueba fallaba (se vio al escribir el
+plan, y se repitió sobre `main` con SP5-B1 fusionado, que no añadió
+ninguna: 201 huellas en 27 ficheros, ningún secreto). Esta es la FORMA de
+su salida —fichero, líneas y el principio de cada huella, nunca el
+token—, con los principios cambiados por un marcador: la salida de verdad
+no se copia en un documento que se publica (D9).
 
 ```
 ================================== FAILURES ===================================
 __________________________ test_el_arbol_esta_limpio __________________________
 El arbol no se puede publicar: 201 huellas en 27 ficheros y 0 secretos. La linea 0 es el nombre del fichero.
-  docs/comparativa-corridas.md: 8 (lineas 70, 71, 72, 73, 74, 75, 76, 77; huella [retirado])
-  docs/sp2-despliegue.md: 29 (lineas 107, 108, 144, 158, 165, 169, 178, 182, 266, 323, 332, 333, 366, 467, 484, 486, 489, 502, 520, 655, 716, 866, 1055, 1077, 1097, 1178, 1226; huella [retirado], [retirado], [retirado], [retirado], [retirado], [retirado], [retirado])
-  docs/sp3-operacion.md: 14 (lineas 29, 114, 206, 354, 409, 460, 471, 494, 516, 559, 560, 561, 564, 586; huella [retirado], [retirado], [retirado], [retirado], [retirado], [retirado], [retirado])
-  docs/superpowers/plans/2026-09-16-sp1-nucleo-imagen.md: 4 (lineas 16, 1432, 1433, 1519; huella [retirado])
-  docs/superpowers/plans/2026-09-23-sp2-servidor-mcp.md: 4 (lineas 531, 532, 1265, 1298; huella [retirado])
-  docs/superpowers/plans/2026-09-24-sp3-bot-n8n.md: 11 (lineas 34, 158, 180, 627, 652, 656, 669, 727, 913, 994, 1519; huella [retirado], [retirado])
-  docs/superpowers/plans/2026-09-26-sp4-combinacion-bayesiana.md: 3 (lineas 82, 1611, 2483; huella [retirado], [retirado])
-  docs/superpowers/specs/2026-09-16-sp1-nucleo-imagen-design.md: 7 (lineas 5, 46; huella [retirado], [retirado], [retirado], [retirado], [retirado], [retirado], [retirado])
-  docs/superpowers/specs/2026-09-24-sp3-bot-n8n-design.md: 15 (lineas 73, 93, 112, 1048, 1049, 1050, 1052, 1053, 1054, 1058, 1059, 1150; huella [retirado], [retirado], [retirado], [retirado], [retirado], [retirado], [retirado], [retirado], [retirado])
-  n8n/copiloto-mantenimiento.json: 9 (lineas 68, 96, 156, 184, 207, 243, 338, 339, 346; huella [retirado], [retirado], [retirado], [retirado])
-  n8n/copiloto-paciente.json: 31 (lineas 23, 27, 62, 238, 286, 287, 313, 314, 338, 431, 432, 455, 721, 722, 788, 789, 855, 856, 904, 905, 953, 954, 1008, 1009, 1052, 1053, 1077, 1137, 1138, 1167, 1168; huella [retirado], [retirado], [retirado], [retirado], [retirado])
-  n8n/copiloto-profesional.json: 27 (lineas 23, 27, 61, 262, 285, 309, 498, 499, 523, 524, 548, 549, 596, 597, 645, 646, 670, 671, 692, 693, 793, 815, 875, 876, 904, 905; huella [retirado], [retirado], [retirado], [retirado], [retirado])
-  notebooks/eda_rsna.ipynb: 6 (lineas 11; huella [retirado], [retirado], [retirado], [retirado], [retirado], [retirado])
-  pruebas/puntuaciones.py: 1 (lineas 37; huella [retirado])
-  pruebas/reproducir_casos.py: 2 (lineas 61, 1387; huella [retirado])
-  pruebas/seleccionar_casos.py: 1 (lineas 21; huella [retirado])
-  pruebas/verificar_webhooks.py: 1 (lineas 54; huella [retirado])
-  scripts/entrenar_local.py: 1 (lineas 5; huella [retirado])
-  scripts/preparar_datos.py: 2 (lineas 5, 6; huella [retirado])
-  servidor/docker-compose.yml: 5 (lineas 72, 82, 120, 123, 128; huella [retirado], [retirado])
-  tests/conftest.py: 2 (lineas 10, 38; huella [retirado])
-  tests/decidir.mjs: 1 (lineas 90; huella [retirado])
-  tests/profesional.mjs: 2 (lineas 365, 1617; huella [retirado])
-  tests/test_contrato_mcp.py: 2 (lineas 28, 121; huella [retirado])
-  tests/test_flujo_paciente.py: 2 (lineas 457; huella [retirado], [retirado])
-  tests/test_flujo_profesional.py: 6 (lineas 161, 164, 481, 486, 790; huella [retirado], [retirado], [retirado], [retirado])
-  tests/test_mantenimiento.py: 5 (lineas 38, 39, 181, 501, 523; huella [retirado], [retirado], [retirado])
+  docs/comparativa-corridas.md: 8 (lineas 70, 71, 72, 73, 74, 75, 76, 77; huella <12 hex>)
+  docs/sp2-despliegue.md: 29 (lineas 107, 108, 144, ...; huella <12 hex>, <12 hex>, ...)
+  ...
 =========================== short test summary info ===========================
 FAILED tests/test_anonimato.py::test_el_arbol_esta_limpio - Failed: El arbol ...
-1 failed, 46 passed in 13.41s
 ```
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_anonimato.py -q`
 
-Esperado: `132 passed, 2 skipped` (las dos que se saltan son las de los enlaces
+Esperado: `154 passed, 2 skipped` (las dos que se saltan son las de los enlaces
 simbólicos, que esta máquina no deja crear). Si falla, la salida dice qué
 fichero y qué líneas.
 **No se toca la lista, ni `huellas.txt`, ni la prueba**: se quita la cadena
@@ -6325,7 +7889,9 @@ rm -rf "$TEMP/anonimato"
 git status --short
 ```
 
-Esperado: solo los ficheros de esta tarea. Tres commits:
+Esperado: solo los ficheros de esta tarea. Tres commits, y un cuarto si el
+repaso a mano encontró algo (los dos de documentación van ANTES que la
+prueba: el verificador mira el índice, y la prueba nacería en rojo):
 
 ```bash
 git add docs/sp2-despliegue.md docs/sp3-operacion.md
@@ -6336,25 +7902,33 @@ git commit -m "docs(anonimato): specs, planes y la cabecera del notebook, sin id
 
 git add tests/test_anonimato.py
 git commit -m "test(anonimato): el árbol versionado no lleva ninguna huella ni ningún secreto" -m "Entra la última: exige aplicadas las tareas 1 a 6." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+
+# solo si el repaso a mano encontró un identificador que la lista no conocía
+git add tests/anonimato/huellas.txt docs tests/mantenimiento.mjs
+git commit -m "docs(anonimato): el id de un workflow de la instancia, fuera; y las guías dicen qué poner en cada marcador" -m "Un plan llevaba el id de un workflow de n8n, que la lista no conocía: pasa a marcador y entra en las huellas." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 ---
 
-### Tarea 7: Los binarios, revisados a mano y declarados
+### Tarea 7: Los binarios, revisados a mano y declarados; y lo que la vigilancia no ve
 
 La prueba de huellas recorre texto. Lo que no es texto —imágenes— solo se
 puede revisar mirándolo, y el spec §6.1 pide que se haga una vez y se declare.
-Esta tarea escribe la declaración y ata la lista de binarios a una prueba:
-si alguien añade un binario nuevo, la prueba falla hasta que se revise y se
-declare.
+Esta tarea escribe la declaración, ata la lista de binarios a una prueba —si
+alguien añade un binario nuevo, la prueba falla hasta que se revise y se
+declare— y deja dicho, en el mismo documento, **qué comprueba la vigilancia y
+qué no puede comprobar**.
 
 **Ficheros:**
 - Crear: `tests/anonimato/README.md`
-- Modificar: `tests/test_anonimato.py` (gana `BINARIOS_REVISADOS` y dos pruebas)
+- Modificar: `tests/test_anonimato.py` (gana `BINARIOS_REVISADOS`,
+  `METADATOS_PERMITIDOS` y dos pruebas)
 
 **Interfaces:**
-- Consume: `verificar_anonimato.binarios(raiz) -> list[Path]` y
-  `verificar_anonimato.ficheros_versionados(raiz)` (tarea 5); `PIL.Image`
-  (pillow ya es dependencia del paquete).
+- Consume: `verificar_anonimato.binarios(raiz) -> list[Path]` (tarea 5: en un
+  repositorio, los binarios con seguimiento y los que no lo tienen ni están
+  ignorados); `va`, `RAIZ` y `HUELLAS`, de la cabecera de
+  `tests/test_anonimato.py`; `PIL.Image` (pillow ya es dependencia del
+  paquete).
 - Produce: `tests/test_anonimato.py::BINARIOS_REVISADOS` (tupla de rutas
   relativas, con `/`), `test_los_binarios_versionados_son_los_revisados` y
   `test_los_png_no_llevan_metadatos_que_identifiquen`.
@@ -6375,7 +7949,8 @@ diez, después de la última corrida de SP5-B1.
 
 - [ ] **Paso 1: Escribir las pruebas**
 
-Añade a `tests/test_anonimato.py`, detrás de los imports, la lista:
+Añade a `tests/test_anonimato.py`, en la cabecera, detrás de la línea
+`COPIA, INDICE, COMMIT = …` y dejando una línea en blanco, la lista:
 
 ```python
 # Los binarios versionados, revisados A MANO uno a uno (tests/anonimato/README.md).
@@ -6402,7 +7977,8 @@ BINARIOS_REVISADOS = (
 METADATOS_PERMITIDOS = {"Software", "dpi", "Title", "Description"}
 ```
 
-y al final del fichero:
+y AL FINAL del fichero (detrás de `test_el_arbol_esta_limpio`, dejando dos
+líneas en blanco):
 
 ```python
 # --------------------------------------------------------------------------
@@ -6410,7 +7986,9 @@ y al final del fichero:
 # --------------------------------------------------------------------------
 def test_los_binarios_versionados_son_los_revisados():
     """Lo que no es texto no lo recorre la prueba de huellas: se mira a mano y
-    se declara. Si esta prueba falla, hay un binario que nadie ha mirado."""
+    se declara. Si esta prueba falla, hay un binario que nadie ha mirado (o
+    uno sin seguimiento y sin ignorar en la carpeta, que se publicaria con un
+    `git add -A`)."""
     hallados = sorted(p.relative_to(RAIZ).as_posix() for p in va.binarios(RAIZ))
     assert hallados == sorted(BINARIOS_REVISADOS)
 
@@ -6423,46 +8001,54 @@ def test_los_png_no_llevan_metadatos_que_identifiquen():
             assert imagen.format == "PNG", nombre
             assert set(imagen.info) <= METADATOS_PERMITIDOS, (nombre, sorted(imagen.info))
             texto = " ".join(str(v) for v in imagen.info.values())
-        assert not {va.huella(t) for t in va.tokens(texto)} & huellas, nombre
+        con_huella = {va.huella(t) for t in va.tokens(texto)} & huellas
+        assert not con_huella, nombre
 ```
 
-`va` (el script cargado como módulo), `RAIZ` y `HUELLAS` son los nombres que
-la tarea 5 dejó en la cabecera de `tests/test_anonimato.py`. Si `va.binarios`
-devuelve rutas relativas en vez de absolutas, quita el `relative_to`: lo que
-se compara son rutas relativas a la raíz, con `/`.
+`va` (el script cargado como módulo), `RAIZ` y `HUELLAS` son los nombres de
+la cabecera de `tests/test_anonimato.py`. Si `va.binarios` devuelve rutas
+relativas en vez de absolutas, quita el `relative_to`: lo que se compara son
+rutas relativas a la raíz, con `/`.
 
 - [ ] **Paso 2: Correrlas**
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_anonimato.py -q`
 
-Esperado: todo en verde. (Estas dos pruebas son de caracterización: atan lo
-que ya se revisó. Para verlas fallar, añade un PNG cualquiera con `git add`
-sin confirmar, corre la primera, mira que falla nombrándolo y quítalo con
-`git rm --cached` y bórralo.)
+Esperado: todo en verde, dos pruebas más que antes de la tarea. (Estas dos
+pruebas son de caracterización: atan lo que ya se revisó. Para verlas fallar,
+copia un PNG cualquiera a la raíz del repositorio con otro nombre, SIN
+`git add`: la primera falla nombrándolo, porque un fichero sin seguimiento y
+sin ignorar también se publicaría. Bórralo después.)
 
-Si la primera falla porque la lista no coincide con lo que hay —por ejemplo
-porque el plan SP5-B1 cambió el nombre de alguna figura—, **no edites la
-lista sin mirar**: abre cada PNG que sobre o falte, comprueba que no lleva
+Si la primera falla porque la lista no coincide con lo que hay, **no edites
+la lista sin mirar**: abre cada PNG que sobre o falte, comprueba que no lleva
 nada que identifique y entonces corrige la lista y la declaración.
 
 - [ ] **Paso 3: La declaración**
 
 Crea `tests/anonimato/README.md`:
 
-```markdown
+````markdown
 # Anonimato del repositorio
 
 Este repositorio no lleva ninguna cadena que identifique a un cliente, a una
 empresa, a una máquina ni a personas, ni ningún secreto. Lo vigilan dos
-comprobaciones.
+comprobaciones y una revisión a mano. Aquí se dice qué hace cada una y, al
+final, **qué no puede ver ninguna de las tres**.
 
 ## `tests/test_anonimato.py` (en la suite, siempre)
 
-Tokeniza cada fichero de texto versionado —minúsculas, sin tildes, partición
-por cualquier carácter que no sea `[a-z0-9]`— y falla si el SHA-256 de algún
-token está en `huellas.txt`. Antes de tokenizar quita las tiradas de 120 o más
+Tokeniza cada fichero de texto —minúsculas, sin tildes, partición por
+cualquier carácter que no sea `[a-z0-9]`— y falla si el SHA-256 de algún
+token está en `huellas.txt`. Tokeniza también el texto «desescapado» (un `\n`
+escrito con barra invertida, `%20`, `&#99;`), para que un escape no pegue
+letras a un token y lo esconda. Antes quita las tiradas de 120 o más
 caracteres de base64 (las imágenes incrustadas en los notebooks), que
-producirían tokens al azar.
+producirían tokens al azar. El texto que no es UTF-8 también se recorre.
+
+Recorre lo que se publicaría: los ficheros con seguimiento, los que no lo
+tienen ni están ignorados, y lo que está preparado en el índice de git y no
+es lo que hay en disco. Un recorrido vacío no cuenta como limpio.
 
 `huellas.txt` lleva una huella por línea. **La lista de lo prohibido no está
 en el repositorio**: solo sus huellas. Una de ellas es la del centinela
@@ -6475,20 +8061,37 @@ documentación— se conserva porque no está en la lista, no porque se exceptú
 
 ## `scripts/verificar_anonimato.py` (antes de publicar)
 
-Repite la búsqueda de huellas sobre cualquier árbol y añade la de secretos
-(tokens de bot, claves de API, contraseñas en URL, ficheros de claves) y la
-de los metadatos de un commit (autor, quien confirma y mensaje):
+Repite la búsqueda de huellas sobre cualquier árbol y añade:
 
-    python scripts/verificar_anonimato.py --raiz <árbol> --commit HEAD --un-solo-commit
+- los **secretos**, por patrón (token de bot, claves de API, JWT, claves
+  privadas, cabeceras `Authorization`, contraseñas y tokens asignados a una
+  clave, contraseña dentro de una URL) y los ficheros que no deben viajar
+  (`.env`, claves);
+- lo que **no ha podido mirar** —un enlace simbólico, un submódulo, un
+  fichero que no se deja leer—, que sale como hallazgo y no como limpio;
+- el **commit**: el contenido de su árbol, el autor, quien confirma y el
+  mensaje (con sus pies), contra las huellas y contra los patrones de
+  secretos;
+- los **nombres** de los ficheros, de las carpetas, de las ramas y de las
+  etiquetas;
+- que el repositorio tenga **un solo commit, una sola rama y ninguna
+  etiqueta**.
+
+      python scripts/verificar_anonimato.py --raiz <árbol> --huellas <huellas> --un-solo-commit
 
 Sus hallazgos dicen fichero, línea y huella o clase: nunca el token ni el
-secreto.
+secreto, y el nombre de un fichero que lleve un token sale tapado. Sale con 1
+si hay hallazgos, si no ha recorrido ningún fichero o si las huellas que
+recibe son solo la del centinela.
 
 ## Cómo se regeneran las huellas
 
 Quien mantiene la lista en claro, fuera del repositorio:
 
     ANONIMATO_LISTA=<lista en claro> python scripts/verificar_anonimato.py --regenerar
+
+Cada entrada de la lista es un token ya tokenizado; una entrada que no dé
+exactamente un token es un error, y no se escribe nada.
 
 ## Lo que no es texto: revisión manual
 
@@ -6499,41 +8102,70 @@ La prueba de huellas no puede leer imágenes. Se revisaron a mano, una a una:
 | los 6 PNG de `docs/eda/` | 28-sep-2026 | contenido (gráficos de datos agregados del dataset público, sin nombres, rutas, marcas de agua ni pies) y metadatos (solo `Software` y `dpi`) |
 | las 6 imágenes incrustadas en `notebooks/eda_rsna.ipynb` | 28-sep-2026 | son las mismas seis figuras; mismos metadatos |
 | los metadatos de los tres notebooks | 28-sep-2026 | solo `kernelspec`, `language_info` y, en uno, el nombre del propio notebook; los otros dos notebooks no tienen salidas |
-| las figuras de `docs/validacion-semisintetica/` | al generarlas | las dibuja `scripts/validar_combinacion.py` desde `resultados_simulacion.json`; su título lleva el rótulo «simulación semisintética»; metadatos `Software`, `dpi`, `Title` y `Description` (la huella del JSON de resultados con el que se dibujó cada una) |
+| las 10 figuras de `docs/validacion-semisintetica/` | al generarlas | las dibuja `scripts/validar_combinacion.py` desde `resultados_simulacion.json`; su título lleva el rótulo «simulación semisintética»; metadatos `Software`, `dpi`, `Title` y `Description` (la huella del JSON de resultados con el que se dibujó cada una) |
 
 La lista de binarios revisados está en `tests/test_anonimato.py`
 (`BINARIOS_REVISADOS`): un binario nuevo hace fallar la suite hasta que se
-revisa y se declara aquí.
+revisa y se declara aquí. Cuando no hay hallazgos pero sí binarios, el
+script no dice «limpio» a secas: dice cuántos binarios quedan sin recorrer.
 
 ## Lo que esto no protege
 
-Quita cadenas; no oculta la autoría a quien llegue al repositorio por otro
-camino. Y no revisa el historial: por eso el repositorio que se publica es
-nuevo y de un solo commit.
+**Compara tokens con una lista cerrada.** Dice «limpio» de lo que la lista
+conoce. Un identificador que nadie puso en la lista —el `id` de un workflow
+nuevo, un nombre que aparece por primera vez— no lo ve. Antes de publicar
+hace falta, además, que una persona recorra el árbol buscando lo que
+identifica: correos, dominios, direcciones, rutas con un usuario, nombres
+propios, identificadores de una instancia.
+
+**Un token solo se detecta entero y suelto.** No se detecta pegado a otras
+letras o cifras (`prefijoTOKENsufijo`, `token2026`), partido por un salto de
+línea o por un guion de fin de línea, escrito con letras de otro alfabeto que
+se parecen, ni en un base64 corto. Una tirada de 120 o más caracteres del
+alfabeto de base64 se quita sin mirarla.
+
+**Los secretos se buscan por su forma.** Detrás de una clave, una contraseña
+de menos de ocho caracteres, o escrita solo con letras, o solo con cifras, no
+tiene forma de secreto y no salta. Lo que lleva paréntesis, corchetes o
+llaves se toma por una expresión, no por un literal.
+
+**No mira la carpeta `.git`.** La dirección del remoto, el historial de
+referencias y los commits que ya no alcanza ninguna rama viven ahí. El
+repositorio se publica con `git push` de su único commit, nunca comprimiendo
+la carpeta.
+
+**Quita cadenas; no oculta la autoría** a quien llegue al repositorio por
+otro camino. Y no revisa el historial: por eso el repositorio que se publica
+es nuevo y de un solo commit, hecho con una identidad de git que no sea la de
+una persona.
 
 **Una huella no es un secreto.** El SHA-256 de un token corto —un nombre, una
 palabra, un dominio de pocas letras— se adivina probando candidatos: quien
 tenga `huellas.txt` y un diccionario recupera buena parte de la lista. Por
 eso la lista completa de huellas vive **solo en el repositorio de
 desarrollo**, que es privado. En el repositorio que se publica,
-`huellas.txt` lleva únicamente la huella del centinela: la prueba sigue
-comprobando que el mecanismo funciona, y la comprobación de verdad se hace
-antes de publicar, con `scripts/verificar_anonimato.py` y las huellas del
-repositorio de desarrollo.
-```
+`huellas.txt` lleva únicamente la huella del centinela: allí la prueba del
+árbol se salta diciéndolo, las demás siguen comprobando que el mecanismo
+funciona, y la comprobación de verdad se hace antes de publicar, con
+`scripts/verificar_anonimato.py` y las huellas del repositorio de
+desarrollo. Por lo mismo, la salida de la prueba y la del script —que
+enseñan el principio de cada huella— tampoco se publican cuando hay
+hallazgos.
+````
 
 - [ ] **Paso 4: La declaración también pasa la prueba**
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_anonimato.py -q`
 
 Esperado: todo en verde (la declaración es un fichero de texto versionable y
-la recorre la prueba del árbol).
+la recorre la prueba del árbol). Recuerda que el verificador mira también el
+índice: prepara los ficheros (`git add`) antes de correrla.
 
 - [ ] **Paso 5: Commit**
 
 ```bash
 git add tests/anonimato/README.md tests/test_anonimato.py
-git commit -m "test(anonimato): los binarios versionados son los revisados a mano, y la declaración" -m "La prueba de huellas recorre texto; las imágenes se revisaron una a una y se declaran. Un binario nuevo hace fallar la suite hasta que alguien lo mira." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "test(anonimato): los binarios versionados son los revisados a mano, y la declaración" -m "La prueba de huellas recorre texto; las imágenes se revisaron una a una y se declaran. Un binario nuevo hace fallar la suite hasta que alguien lo mira. La declaración dice también lo que la vigilancia no puede ver." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
 ---
@@ -6541,8 +8173,10 @@ git commit -m "test(anonimato): los binarios versionados son los revisados a man
 ### Tarea 8: La suite entera y lo que el equipo tiene que hacer fuera del repositorio
 
 **Ficheros:**
-- Modificar: `README.md` (una sección «Variables de entorno» o la que ya haga ese papel)
-- Modificar: `docs/sp3-operacion.md` (una sección nueva al final: «Después de la anonimización»)
+- Modificar: `README.md` (una sección nueva, «Variables de entorno»; una
+  frase de «Las que se saltan»; dos líneas de «Documentos»)
+- Modificar: `docs/sp3-operacion.md` (§5: la tarea programada gana `N8N_URL`;
+  y una sección nueva al final, «9. Después de la anonimización»)
 
 **Interfaces:**
 - Consume: todo lo anterior.
@@ -6567,19 +8201,25 @@ RSNA_RAIZ="<RSNA_RAIZ>" C:/venv-copiloto/Scripts/python.exe -m pytest -q -rs
 ```
 
 Esperado: ningún fallo ni error, y menos pruebas saltadas que en la corrida
-anterior (las que necesitan el dataset ahora corren).
+anterior (las que necesitan el dataset ahora corren). Si no tienes el
+dataset, dilo en el informe y sigue: esa corrida la hace el equipo.
 
-Y las de `node`:
+Y las de `node`, una a una y sin tubería (con una tubería el código de salida
+es el de la última orden):
 
 ```bash
-node tests/decidir.mjs && node tests/profesional.mjs && node tests/mantenimiento.mjs && node tests/formulario.mjs
+node tests/decidir.mjs
+node tests/profesional.mjs
+node tests/mantenimiento.mjs
+node tests/formulario.mjs
 ```
 
-Esperado: las cuatro terminan con su línea de `OK` y código 0.
+Esperado: cada una imprime `TODO VERDE` y sale con 0.
 
 - [ ] **Paso 2: El README dice qué variables hacen falta**
 
-Añade a `README.md`, detrás de la sección «Requisitos», esta sección:
+Añade a `README.md`, detrás de la sección «Requisitos» (antes de «Dónde corre
+cada cosa»), esta sección:
 
 ```markdown
 ## Variables de entorno
@@ -6592,8 +8232,9 @@ mensaje o, en la suite, se salta diciendo qué se queda sin verificar.
 | :--- | :--- | :--- |
 | `RSNA_RAIZ` | `scripts/preparar_sesion.py`, `pruebas/seleccionar_casos.py`, `pruebas/puntuaciones.py` (solo si no hay caché) y las pruebas que leen placas | la raíz del dataset preparado (`crudo/`, `png/`, `manifiestos/`) |
 | `N8N_URL` | `pruebas/reproducir_casos.py` con bots, `pruebas/verificar_webhooks.py` y las pruebas conducidas | la dirección base de n8n, p. ej. `https://n8n.ejemplo.test` |
-| `RED_N8N` | `servidor/docker-compose.yml` | el nombre de la red externa de Docker que comparte n8n; obligatoria |
+| `RED_N8N` | `servidor/docker-compose.yml` (se declara en `servidor/.env`) | el nombre de la red externa de Docker que comparte n8n; obligatoria |
 | `COPILOTO_URL`, `COPILOTO_BD_DSN`, `TELEGRAM_SECRET_PRUEBA`, `TELEGRAM_TOKEN_PROFESIONAL`, `CHAT_SUBIDA_PLACAS` | el arnés y las pruebas conducidas | las describe la cabecera de `pruebas/reproducir_casos.py` |
+| `ANONIMATO_LISTA` | solo quien mantiene la lista de lo que no se publica, para regenerar las huellas | la ruta de esa lista, que vive fuera del repositorio (`tests/anonimato/README.md`) |
 
 Los workflows de `n8n/` llevan **marcadores** en vez de la dirección y de los
 identificadores de las credenciales: `scripts/marcadores_n8n.py` los
@@ -6601,12 +8242,62 @@ sustituye por los valores de `n8n/valores.local.json` (que no se versiona;
 `n8n/valores.ejemplo.json` dice qué claves lleva) antes de importarlos.
 ```
 
-- [ ] **Paso 3: Lo que cambia para quien opera lo desplegado**
+En la subsección «Las que se saltan, y qué se queda sin comprobar», la
+primera frase pasa de
 
-Añade al final de `docs/sp3-operacion.md` esta sección:
+```
+Varias pruebas necesitan algo que no está siempre: el contenedor del copiloto,
+una Postgres desechable, el túnel a la base del VPS o los secretos de Telegram.
+```
+
+a
+
+```
+Varias pruebas necesitan algo que no está siempre: el dataset (`RSNA_RAIZ`),
+la dirección de n8n (`N8N_URL`), el contenedor del copiloto, una Postgres
+desechable, el túnel a la base del VPS o los secretos de Telegram.
+```
+
+Y en «Documentos», detrás de la línea de «Despliegue», estas dos:
+
+```markdown
+- Operación: `docs/sp3-operacion.md`
+- Anonimato del repositorio: `tests/anonimato/README.md`
+```
+
+- [ ] **Paso 3: La tarea programada necesita `N8N_URL`**
+
+En `docs/sp3-operacion.md`, §5, «Paso 2: la tarea programada diaria (la
+máquina de desarrollo)»:
+
+1. «las cuatro variables quedan en su perfil» pasa a «las cinco variables
+   quedan en su perfil», y al bloque de `setx` se le añade, la primera:
+
+   ```powershell
+   setx N8N_URL (Read-Host 'dirección base de n8n, con https://')
+   ```
+
+2. «**Son cuatro y hacen dos cosas distintas**» pasa a «**Son cinco y hacen
+   tres cosas distintas**», y la lista gana, la primera, esta entrada:
+
+   ```markdown
+   - `N8N_URL` es la dirección con la que el script compara la de cada
+     webhook. El repositorio ya no la lleva escrita: sin ella el script **no
+     comprueba nada**, lo dice, avisa por el canal si lo tiene, y devuelve 1.
+   ```
+
+`setx` escribe la variable para las consolas que se abran DESPUÉS: la tarea
+programada la ve en su siguiente corrida.
+
+- [ ] **Paso 4: Lo que cambia para quien opera lo desplegado**
+
+Añade al final de `docs/sp3-operacion.md`, detrás de «8. Retirada» y
+separada por una línea `---`, esta sección:
 
 ````markdown
-## Después de la anonimización: lo que hay que hacer una vez
+---
+
+## 9. Después de la anonimización: lo que hay que hacer una vez
 
 El repositorio dejó de llevar escritos la dirección de n8n, el nombre de la
 red y los identificadores de las credenciales. Lo desplegado **sigue
@@ -6622,33 +8313,47 @@ de la sesión con el médico.
    obligatoria»: se sigue ese, no se improvisa otro.
 
 2. **En la máquina de desarrollo:** la tarea programada diaria que corre
-   `pruebas/verificar_webhooks.py` necesita `N8N_URL` en su entorno. Sin
-   ella el script no comprueba nada: lo dice, avisa por el canal de avisos si
-   lo tiene configurado, y devuelve un código de error.
+   `pruebas/verificar_webhooks.py` necesita `N8N_URL` en su entorno (§5,
+   «Paso 2»). Sin ella el script no comprueba nada: lo dice, avisa por el
+   canal de avisos si lo tiene configurado, y devuelve un código de error.
 
-       [Environment]::SetEnvironmentVariable('N8N_URL', '<dirección base de n8n>', 'User')
+3. **En la máquina de desarrollo:** `n8n/valores.local.json`, con los valores
+   reales de cada marcador. Si no existe, se crea a partir de
+   `n8n/valores.ejemplo.json`. Está ignorado por git y no sale de la
+   máquina. Cómo se usa, en el §7 de este manual, «Los marcadores: del
+   repositorio a n8n, y de n8n al repositorio».
 
-3. **En la máquina de desarrollo:** crear `n8n/valores.local.json` a partir
-   de `n8n/valores.ejemplo.json`, con los valores reales. Ese fichero está
-   ignorado por git. Cómo se usa, en el §7 de este manual, «Los marcadores:
-   del repositorio a n8n, y de n8n al repositorio».
+4. **La primera vez que se importe un workflow desde el repositorio**, empezar
+   por el de mantenimiento, que no atiende a nadie, y mirar en n8n, nodo a
+   nodo, que cada workflow usa la credencial de SU bot antes de activarlo: un
+   valor cruzado en `valores.local.json` haría contestar a un bot con la
+   cuenta de otro.
 
-4. **Para correr la suite completa**, `RSNA_RAIZ` (y `N8N_URL`, con los
+5. **Para correr la suite completa**, `RSNA_RAIZ` (y `N8N_URL`, con los
    secretos de siempre, para las pruebas conducidas). Un salto se ve verde:
    conviene correr con `-rs` y leer qué se saltó.
+
+       setx RSNA_RAIZ "<RSNA_RAIZ>"
 ````
 
-- [ ] **Paso 4: La documentación nueva también pasa la prueba**
+- [ ] **Paso 5: La documentación nueva también pasa la prueba**
 
-Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_anonimato.py -q`
-
-Esperado: todo en verde.
-
-- [ ] **Paso 5: Commit**
+El verificador mira también el índice: prepara antes los ficheros.
 
 ```bash
 git add README.md docs/sp3-operacion.md
-git commit -m "docs(anonimato): las variables de entorno y lo que el equipo hace una vez en el servidor" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+C:/venv-copiloto/Scripts/python.exe scripts/verificar_anonimato.py --raiz .
+C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_anonimato.py tests/test_arrancar.py tests/test_marcadores_n8n.py -q
+```
+
+Esperado: el verificador sale con 0 (`huellas: 0`, `secretos: 0`) y las
+pruebas, todas en verde. (`tests/test_arrancar.py` y
+`tests/test_marcadores_n8n.py` leen las guías.)
+
+- [ ] **Paso 6: Commit**
+
+```bash
+git commit -m "docs(anonimato): las variables de entorno y lo que el equipo hace una vez en el servidor" -m "El README dice qué variables hacen falta y quién las necesita. El manual de operación gana N8N_URL en la tarea programada y la lista de lo que hay que hacer una vez tras la anonimización." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
 ---
@@ -6678,7 +8383,18 @@ git commit -m "docs(anonimato): las variables de entorno y lo que el equipo hace
 las credenciales de n8n y los nombres de los bots del proyecto (tarea 4); los
 docstrings de `scripts/entrenar_local.py` y `scripts/preparar_datos.py` y la
 tabla «Procedencia» que genera `scripts/comparar_corridas.py` (tarea 2); un
-identificador de red copiado en la guía (tarea 6).
+identificador de red copiado en la guía, el `id` de un workflow de la
+instancia y el número de una ejecución (tarea 6: los dos últimos no los
+conocía la lista, y los encontró la revisión); y, en lo que se publica con
+un `push`, los nombres de las ramas y de las etiquetas y el mensaje del
+commit (tarea 5).
+
+**Lo que cambió al ejecutarlo.** El verificador de la tarea 5 se rehízo en
+dos rondas de revisión: el primer diseño recorría solo lo versionado (con
+un repositorio recién creado decía «limpio» sin haber mirado nada), no
+miraba el árbol del commit ni los nombres de las ramas, y no cazaba el
+token de un bot en la forma en que va en una URL. Y este plan citaba
+entero `huellas.txt`: se quitó, porque una huella no es un secreto (D9).
 
 **Lo que este plan no hace:** crear ni publicar el repositorio nuevo, correr
 `scripts/verificar_anonimato.py` sobre él y sobre su commit, ni decidir si el
