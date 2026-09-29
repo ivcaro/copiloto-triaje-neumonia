@@ -28,6 +28,7 @@ saldrian diez valores, y se rechazan): sin medicion a mano, `--manual` se
 omite.
 """
 import argparse
+import datetime
 import json
 import math
 import pathlib
@@ -64,6 +65,39 @@ MINIMO = 30
 A_MANO_N = 5                 # spec §6.3: se acota a mano en 5 consultas
 UMBRALES_S = {"minimo": 8, "objetivo": 3}
 NO_MEDIDO = "no medido"
+# La regla del spec de SP5 §6.2, escrita en el JSON para que nadie tenga que
+# deducir la etiqueta de cuatro booleanos.
+REGLA = (f"La etiqueta del KPI se decide con el p95 de `ms_extremo` frente al "
+         f"mínimo de {UMBRALES_S['minimo']} s: si no lo cumple, «no cumplido»; si lo "
+         f"cumple, «cumplido con cambio», porque `ms_extremo` no ve todo el "
+         f"tramo. Lo cronometrado a mano pesa en contra: si su mediana supera "
+         f"los {UMBRALES_S['minimo']} s, «no cumplido»; si no se cronometró, no pesa. "
+         f"El p50 y el objetivo de {UMBRALES_S['objetivo']} s se reportan al lado y no "
+         f"deciden (spec de SP5 §6.2).")
+CUMPLIDO, NO_CUMPLIDO = "cumplido con cambio", "no cumplido"
+# La fecha de la corrida es el dia en la hora de Ecuador continental (UTC−5).
+ZONA = datetime.timezone(datetime.timedelta(hours=-5))
+GLOSARIO = {
+    "n": ("las consultas que cuentan: pasaron por los bots, llegaron al final, "
+          "tenían que dar un pre-informe, no dieron error, las confirma la "
+          "lectura propia del arnés y llevan `ms_extremo`"),
+    "menor_ms y mayor_ms": ("la medida más pequeña y la más grande de "
+                            "`ms_extremo_ordenados`; no son umbrales"),
+    "modelo_p50_ms": ("la mediana de lo que el servidor dijo que tardó el modelo en "
+                      "esas mismas consultas; es una parte de `ms_extremo`"),
+    "corrida_del": ("el día, en la hora de Ecuador continental (UTC−5), en que el "
+                    "arnés escribió la corrida que aquí se resume"),
+    "descartadas": {
+        "sin_bots": "la fila no pasó por los bots, y no tiene `ms_extremo`",
+        "rechazo_previsto": ("un caso que el sistema tiene que rechazar (perfiles 05 "
+                             "a 09 del arnés): no da un pre-informe que medir"),
+        "fallo": "la conversación con los bots no llegó al final",
+        "error": "la consulta medida acabó en error",
+        "no_coincide": ("la lectura propia del arnés no dio lo mismo que el bot, o "
+                        "no se pudo hacer"),
+        "sin_ms_extremo": "la fila no lleva una medida válida",
+    },
+}
 # Los motivos de descarte, en el orden en que se miran: cada fila cuenta en
 # uno solo, el primero que le toca. Los rechazos previstos van antes que los
 # fallos: asi `fallo` cuenta solo las consultas que tenian que dar resultado.
@@ -113,13 +147,31 @@ def _frente_a(ms):
             "cumple_objetivo": bool(ms <= UMBRALES_S["objetivo"] * 1000)}
 
 
-def resumir(filas, minimo=MINIMO, manual=None) -> dict:
+def veredicto(p95_ms, manual) -> dict:
+    """La etiqueta del KPI segun `REGLA`. Se decide con el percentil y con la
+    mediana de lo cronometrado SIN redondear: 8,004 s se escribe «8,0» y
+    supera los 8 s."""
+    minimo_ms = UMBRALES_S["minimo"] * 1000
+    cumple = bool(p95_ms <= minimo_ms)
+    supera = bool(statistics.median(manual) * 1000 > minimo_ms) if manual else None
+    return {"regla": REGLA, "p95_cumple_el_minimo": cumple,
+            "a_mano_supera_el_minimo": supera,
+            "etiqueta": CUMPLIDO if cumple and not supera else NO_CUMPLIDO}
+
+
+def fecha_de(ruta) -> str:
+    """El dia (UTC−5) en que se escribio el fichero de la corrida."""
+    escrito = pathlib.Path(ruta).stat().st_mtime
+    return datetime.datetime.fromtimestamp(escrito, tz=ZONA).date().isoformat()
+
+
+def resumir(filas, minimo=MINIMO, manual=None, corrida_del=None) -> dict:
     """El contenido de latencia.json, desde las filas de latencias.json.
 
     `manual` son los segundos de envio a respuesta cronometrados a mano (el
     tiempo total, no el tramo que falta); sin ellos, `total_a_mano` dice «no
-    medido». Con menos de `minimo` consultas validas sale con `SystemExit`:
-    no hay cifra que dar.
+    medido». `corrida_del` es el dia de la corrida (`fecha_de`). Con menos de
+    `minimo` consultas validas sale con `SystemExit`: no hay cifra que dar.
     """
     descartadas = {"total": 0, **{m: 0 for m in MOTIVOS}}
     validas = []
@@ -131,14 +183,23 @@ def resumir(filas, minimo=MINIMO, manual=None) -> dict:
             descartadas[motivo] += 1
             descartadas["total"] += 1
     if len(validas) < minimo:
+        # lo que mas descarta entre las consultas que tenian que contar
+        imprevistos = {m: descartadas[m] for m in MOTIVOS if m != "rechazo_previsto"}
+        if descartadas["no_coincide"] and descartadas["no_coincide"] == max(
+                imprevistos.values()):
+            consejo = ("Lo que más descarta es `no_coincide`: el copiloto que contesta "
+                       "al arnés (COPILOTO_URL) no da la misma lectura que el "
+                       "desplegado. Comprueba que es la misma imagen y vuelve a "
+                       "correr el arnés")
+        else:
+            consejo = "Vuelve a correr el arnés con un --por-perfil mayor"
         raise SystemExit(
             f"hay {len(validas)} consultas con bots, que no son un rechazo "
             f"previsto, sin fallo ni error, que coinciden con el arnés y llevan "
             f"ms_extremo, y hacen falta "
             f"{minimo}: la latencia de extremo a extremo queda «no medida» y "
-            f"no se escribe nada (descartadas: {descartadas}). Vuelve a correr "
-            f"el arnés con un --por-perfil mayor o, si no se puede, lleva "
-            f"esta causa al informe")
+            f"no se escribe nada (descartadas: {descartadas}). {consejo} o, si "
+            f"no se puede, lleva esta causa al informe")
 
     ms = np.sort(np.array([float(f["ms_extremo"]) for f in validas]))
     # Los umbrales se comparan con el percentil SIN redondear: 8 000,04 ms se
@@ -150,12 +211,13 @@ def resumir(filas, minimo=MINIMO, manual=None) -> dict:
         "titulo": TITULO,
         "tramo": TRAMO,
         "lectura": LECTURA,
+        "corrida_del": corrida_del,
         "n": len(validas),
         "percentil": PERCENTIL,
         "p50_ms": round(p50, 1),
         "p95_ms": round(p95, 1),
-        "minimo_ms": round(float(ms.min()), 1),
-        "maximo_ms": round(float(ms.max()), 1),
+        "menor_ms": round(float(ms.min()), 1),
+        "mayor_ms": round(float(ms.max()), 1),
         "ms_extremo_ordenados": [round(float(v), 1) for v in ms],
         # lo que el servidor dijo que tardo el modelo EN las consultas medidas
         "modelo_p50_ms": round(statistics.median(modelo), 1) if modelo else None,
@@ -163,9 +225,11 @@ def resumir(filas, minimo=MINIMO, manual=None) -> dict:
         "frente_a_umbrales": {"p50": _frente_a(p50), "p95": _frente_a(p95)},
         "total_a_mano": ({"que_es": A_MANO, "valores_s": manual, "n": len(manual),
                           "mediana_s": round(statistics.median(manual), 2),
-                          "minimo_s": min(manual), "maximo_s": max(manual)}
+                          "menor_s": min(manual), "mayor_s": max(manual)}
                          if manual else NO_MEDIDO),
+        "veredicto": veredicto(p95, manual),
         "descartadas": descartadas,
+        "glosario": GLOSARIO,
     }
 
 
@@ -238,7 +302,8 @@ def main(argv=None) -> int:
     args = p.parse_args(argv)
 
     manual = leer_manual(args.manual)
-    resultado = resumir(leer_corrida(args.corrida), manual=manual)
+    filas = leer_corrida(args.corrida)
+    resultado = resumir(filas, manual=manual, corrida_del=fecha_de(args.corrida))
 
     # Se serializa ANTES de abrir: si fallara, el fichero anterior sigue entero.
     texto = json.dumps(resultado, ensure_ascii=False, indent=1, allow_nan=False) + "\n"
@@ -253,7 +318,9 @@ def main(argv=None) -> int:
         f.write(texto)
     print(f"{resultado['n']} consultas: p50 {_segundos(resultado['p50_ms'])}, "
           f"p95 {_segundos(resultado['p95_ms'])} "
-          f"({resultado['descartadas']['total']} descartadas); {salida}")
+          f"({resultado['descartadas']['total']} descartadas); corrida del "
+          f"{resultado['corrida_del']}; etiqueta del KPI: "
+          f"«{resultado['veredicto']['etiqueta']}»; {salida}")
     if manual is not None:
         # para que un decimal escrito con coma se vea antes de versionar nada
         print("cronometrado a mano: " + "; ".join(_segundos(1000 * v) for v in manual))
@@ -261,4 +328,9 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    # Los mensajes llevan tildes y «», y el de «no medida» sale por stderr: en
+    # una consola que no es UTF-8 saldrian rotos.
+    for flujo in (sys.stdout, sys.stderr):
+        if hasattr(flujo, "reconfigure"):
+            flujo.reconfigure(encoding="utf-8", errors="replace")
     sys.exit(main())

@@ -220,11 +220,17 @@ def test_el_veredicto_lee_el_intervalo_y_dice_cuando_solo_hay_estimacion(
         if contencion is not None and 0.8995 < contencion < 0.9:
             # lo que el lector ve al lado del veredicto
             assert f"| {nombre} | 90,0 % " in documento
-    # junto a la tabla se dice con que se decide, y que el JSON va sin redondear
+    # junto a la tabla se dice con que se decide, y que mira el campo del JSON
     horquilla = _seccion(texto, "La horquilla frente al oráculo")
     assert ("Se decide con la contención tal como se imprime (un «90,0 %» alcanza un umbral "
-            "del 90 %); el campo `se_sostiene` del fichero de resultados se calcula sin "
-            "redondear:") in horquilla
+            "del 90 %). El campo `se_sostiene` del fichero de resultados mira solo la "
+            "estimación, sin su intervalo y sin redondear, y puede no coincidir con esta "
+            "columna:") in horquilla
+    # y de verdad pueden no coincidir: el campo dice que si, y la columna, que
+    # no se puede decir
+    otro = _con_hipotesis(resultados_minimos, 3, 0.91, (0.88, 0.97))
+    assert otro["celdas"][3]["hipotesis"]["se_sostiene"] is True
+    assert _veredictos(informe.redactar(otro))["(0,3; 0,3)"] == NO_SE_PUEDE
 
 
 def test_el_umbral_se_imprime_con_los_decimales_con_que_se_compara(resultados_minimos):
@@ -240,6 +246,8 @@ def test_el_umbral_se_imprime_con_los_decimales_con_que_se_compara(resultados_mi
     # un 90,2 % no alcanza un 90,5 %, y la fila lo deja ver
     assert "| (0,3; 0,3) | 90,2 % (IC 95 %: 88,0 a 90,4) | ≥ 90,5 % | no se sostiene |" in documento
     assert "en ≥ 90,5 % de los concordantes»" in documento
+    assert "(un «90,5 %» alcanza un umbral del 90,5 %)" in documento
+    assert "«90,0 %»" not in documento
     assert "(contención ≥ 90,5 % de los concordantes)" in documento
     assert "≥ 90 %" not in documento and "≥ 91 %" not in documento
 
@@ -276,10 +284,11 @@ def test_la_lectura_de_la_hipotesis_cuenta_0a_aparte_y_lee_los_intervalos(
         "0A es la comprobación de la métrica y se cuenta aparte. "
         "Celdas con dependencia: 3; con intervalo, 1. "
         "Donde hay intervalo decide el intervalo entero. "
-        "Con intervalo, celdas en las que se sostiene: ninguna. "
-        "Con intervalo, celdas en las que no se sostiene: 1, que es (0,3; 0,3). "
-        "Con intervalo, celdas en las que no se puede decir, porque la estimación y su "
-        "intervalo no quedan enteros a un lado del umbral: ninguna. "
+        "Con dependencia y con intervalo, celdas en las que se sostiene: ninguna. "
+        "Con dependencia y con intervalo, celdas en las que no se sostiene: 1, que es "
+        "(0,3; 0,3). "
+        "Con dependencia y con intervalo, celdas en las que no se puede decir, porque la "
+        "estimación y su intervalo no quedan enteros a un lado del umbral: ninguna. "
         "Sin intervalo, 2: solo hay estimación puntual. "
         "Sin intervalo, celdas en las que la estimación alcanza el umbral: ninguna.")
     # cada cuenta dice de que celdas es: la tabla del veredicto tiene mas
@@ -294,16 +303,22 @@ def test_la_lectura_de_la_hipotesis_cuenta_0a_aparte_y_lee_los_intervalos(
     assert ("Sin intervalo, 2: solo hay estimación puntual. Sin intervalo, celdas en las "
             "que la estimación alcanza el umbral: 1, que es (0; 0,3).") in _hipotesis(
         informe.redactar(otro))
-    assert "Con intervalo, celdas en las que se sostiene: ninguna." in _hipotesis(
-        informe.redactar(otro))
+    assert ("Con dependencia y con intervalo, celdas en las que se sostiene: ninguna."
+            ) in _hipotesis(informe.redactar(otro))
     otro = _con_hipotesis(resultados_minimos, 3, 0.95, (0.91, 0.97))
-    assert ("Con intervalo, celdas en las que se sostiene: 1, que es (0,3; 0,3). Con "
-            "intervalo, celdas en las que no se sostiene: ninguna.") in _hipotesis(
-        informe.redactar(otro))
+    assert ("Con dependencia y con intervalo, celdas en las que se sostiene: 1, que es "
+            "(0,3; 0,3). Con dependencia y con intervalo, celdas en las que no se "
+            "sostiene: ninguna.") in _hipotesis(informe.redactar(otro))
     otro = _con_hipotesis(resultados_minimos, 3, 0.91, (0.88, 0.97))
     frase = _hipotesis(informe.redactar(otro))
-    assert ("Con intervalo, celdas en las que se sostiene: ninguna. Con intervalo, celdas "
-            "en las que no se sostiene: ninguna.") in frase
+    assert ("Con dependencia y con intervalo, celdas en las que se sostiene: ninguna. Con "
+            "dependencia y con intervalo, celdas en las que no se sostiene: ninguna."
+            ) in frase
+    # 0A lleva intervalo y en la tabla «se sostiene»: la cuenta dice que no es de ella
+    assert "| 0A | 100,0 % (IC 95 %: 100,0 a 100,0) | ≥ 90 % | se sostiene |" in (
+        informe.redactar(otro))
+    assert not re.search(r"(?<!Con dependencia y )con intervalo, celdas", frase,
+                         flags=re.IGNORECASE)
     assert "a un lado del umbral: 1, que es (0,3; 0,3)." in frase
     # sin bootstrap no hay intervalos que leer, y no se finge
     otro = copy.deepcopy(resultados_minimos)
@@ -345,12 +360,35 @@ def test_la_lectura_cuenta_las_cifras_fuera_de_su_intervalo(resultados_minimos):
     total = sum(len(c.get("intervalos", {})) for c in otro["celdas"])
     assert total > 50
     lectura = _seccion(informe.redactar(otro), "Lectura de los resultados")
-    assert f"quedan fuera de su intervalo 0 de las {total} cifras que lo llevan" in lectura
+    assert (f"de 2 réplicas, no queda fuera de su intervalo ninguna de las {total} cifras "
+            f"que lo llevan (comparadas sin redondear).") in lectura
     otro["celdas"][3]["intervalos"]["modelos.imagen.auc"] = [0.1, 0.2]
+    lectura = _seccion(informe.redactar(otro), "Lectura de los resultados")
+    assert (f"de 2 réplicas, queda fuera de su intervalo 1 de las {total} cifras que lo "
+            f"llevan (comparadas sin redondear).") in lectura
     otro["celdas"][0]["intervalos"]["modelos.imagen.auc"] = [0.99, 0.999]
     lectura = _seccion(informe.redactar(otro), "Lectura de los resultados")
-    assert f"quedan fuera de su intervalo 2 de las {total} cifras que lo llevan" in lectura
-    assert "de 2 réplicas" in lectura
+    assert (f"de 2 réplicas, quedan fuera de su intervalo 2 de las {total} cifras que lo "
+            f"llevan (comparadas sin redondear).") in lectura
+    assert "quedan fuera de su intervalo 1 " not in informe.redactar(resultados_minimos)
+
+
+def test_las_cifras_fuera_de_su_intervalo_se_cuentan_sin_redondear():
+    """0,12341 y 0,12344 se imprimen igual («0,123»): impreso, el valor toca
+    el extremo; crudo, queda fuera, y es lo que la frase dice contar."""
+    celda = {"modelos": {"imagen": {"auc": 0.12341}},
+             "intervalos": {"modelos.imagen.auc": [0.12344, 0.9]}}
+    assert informe.numero(0.12341, 3) == informe.numero(0.12344, 3) == "0,123"
+    assert informe._fuera_de_su_intervalo([celda]) == (1, 1)
+    celda["intervalos"]["modelos.imagen.auc"] = [0.12341, 0.9]          # en el extremo
+    assert informe._fuera_de_su_intervalo([celda]) == (0, 1)
+    celda["intervalos"]["modelos.imagen.auc"] = [0.12341 + 1e-12, 0.9]  # ruido de coma
+    assert informe._fuera_de_su_intervalo([celda]) == (0, 1)
+    celda["intervalos"]["modelos.imagen.auc"] = [0.1, 0.12340]          # por arriba
+    assert informe._fuera_de_su_intervalo([celda]) == (1, 1)
+    celda["intervalos"]["modelos.imagen.auc"] = [None, 0.9]             # sin intervalo
+    assert informe._fuera_de_su_intervalo([celda]) == (0, 0)
+    assert informe._fuera_de_su_intervalo([{"modelos": {}}]) == (0, 0)
 
 
 def test_los_ejes_de_la_lectura_van_en_orden_fijo(resultados_minimos):
@@ -360,8 +398,8 @@ def test_los_ejes_de_la_lectura_van_en_orden_fijo(resultados_minimos):
     lectura = _seccion(informe.redactar(otro), "Lectura de los resultados")
     ejes = [l for l in lectura.splitlines() if l.startswith("- **Dependencia")]
     assert ejes == ["- **Dependencia simétrica (ρ1 = ρ0).**",
-                    "- **Dependencia solo entre los casos con neumonía (ρ0 = 0).**",
-                    "- **Dependencia solo entre los casos sin neumonía (ρ1 = 0).**"]
+                    "- **Dependencia solo entre los casos con opacidad (ρ0 = 0).**",
+                    "- **Dependencia solo entre los casos sin opacidad (ρ1 = 0).**"]
     celdas = [l.strip()[2:].split(":")[0] for l in lectura.splitlines() if l.startswith("  - ")]
     assert celdas == ["(0,3; 0,3)", "(0,3; 0)", "(0; 0,3)"]
 
@@ -411,8 +449,11 @@ def test_no_aparecen_nan_none_llaves_ni_puntos_decimales(resultados_minimos):
         assert not re.search(r"\bnan\b", documento, flags=re.IGNORECASE)
         assert "None" not in documento
         assert "{" not in documento and "}" not in documento
-        # los «§4.7» son referencias, no cifras
-        assert not re.search(r"(?<![§\d.])\d+\.\d", documento)
+        # los «§4.7» son referencias, no cifras; y las versiones de las
+        # librerias, que van entre acentos graves, llevan punto y no coma
+        sin_codigo = re.sub(r"`[^`\n]*`", "", documento)
+        assert not re.search(r"(?<![§\d.])\d+\.\d", sin_codigo)
+        assert re.search(r"`NumPy \d+\.\d", documento)
         assert "-0," not in documento                       # el menos es «−»
     assert "n/d" not in informe.redactar(resultados_minimos)
     assert "n/d (IC 95 %: n/d a n/d)" in informe.redactar(otro)
@@ -502,19 +543,64 @@ def test_como_se_reproduce_cita_la_orden_y_las_replicas(texto):
     assert "python scripts/validar_combinacion.py --replicas 2" in reproducir
     assert "--solo-documento" in reproducir
     assert "sin los pesos" in reproducir
+    assert ("con `--sin-figuras` no se dibujan, y el documento enlaza las que hubiera en "
+            "la carpeta.") in reproducir
+
+
+def test_como_se_reproduce_dice_con_que_versiones_se_calculo(texto, resultados_minimos):
+    e = resultados_minimos["entorno"]
+    reproducir = _seccion(texto, "Cómo se reproduce")
+    assert (f"Estos resultados se calcularon con `Python {e['python']}`, "
+            f"`NumPy {e['numpy']}`, `SciPy {e['scipy']}`, `pandas {e['pandas']}` y "
+            f"`scikit-learn {e['scikit-learn']}`. Con otras versiones las cifras pueden "
+            f"no ser las mismas: NumPy no garantiza el mismo flujo de números aleatorios "
+            f"de una versión a otra.") in reproducir
+    # salen del diccionario, en el orden de siempre y sin perder ninguna
+    otro = copy.deepcopy(resultados_minimos)
+    otro["entorno"] = {"zlib": "1.3", "numpy": "9.8.7", "python": "4.0.1"}
+    assert "se calcularon con `Python 4.0.1`, `NumPy 9.8.7` y `zlib 1.3`. Con" in _seccion(
+        informe.redactar(otro), "Cómo se reproduce")
+    del otro["entorno"]
+    with pytest.raises(KeyError, match="entorno"):
+        informe.redactar(otro)
 
 
 def test_el_modulo_es_puro():
+    """Ni lee ni escribe ni dibuja ni calcula: no importa mas que `math`.
+    (Nombra NumPy y pandas, para citar sus versiones: no los importa.)"""
     fuente = pathlib.Path(informe.__file__).read_text(encoding="utf-8")
-    for prohibido in ("matplotlib", "open(", "pathlib", "import os", "numpy", "pandas"):
+    importados = re.findall(r"^[ \t]*(?:import|from)[ \t]+([\w.]+)", fuente,
+                            flags=re.MULTILINE)
+    assert importados == ["__future__", "math"]
+    for prohibido in ("open(", "__import__", "importlib"):
         assert prohibido not in fuente, prohibido
 
 
 def test_los_nombres_de_las_figuras_son_los_del_guion(validar):
-    """El documento y el guion nombran las figuras por separado (el paquete
-    no puede importar el guion): que no se separen."""
+    """El paquete no puede importar el guion, pero el guion sí el paquete:
+    los nombres de las figuras, de las celdas y de los modelos y el título
+    se escriben UNA vez, aquí, y el guion los toma de `informe`."""
     assert [clave for clave, _ in informe.FIGURAS_GLOBALES] == list(validar.FIGURAS_GLOBALES)
     assert informe.PREFIJO_FIABILIDAD == validar.PREFIJO_FIABILIDAD
+    assert validar.slug_de_celda is informe.slug_de_celda
+    assert validar.celdas_con_figura is informe.celdas_completas
+    assert validar.TITULO == informe.TITULO and validar.ROTULO in informe.TITULO
+    assert validar.NOMBRE_MODELO == dict(informe.MODELOS)
+    assert validar._rho(0.15) == informe.rho(0.15) == "0,15"
+
+
+def test_nada_del_paquete_importa_matplotlib():
+    """El Dockerfile instala el paquete entero, sin el extra `figuras`: un
+    `import matplotlib` en `src/` pasaría aquí y rompería el contenedor."""
+    raiz = pathlib.Path(informe.__file__).resolve().parents[2]
+    assert raiz.name == "src"
+    fuentes = sorted(raiz.rglob("*.py"))
+    assert len(fuentes) > 20
+    culpables = [f"{f.relative_to(raiz).as_posix()}:{n}"
+                 for f in fuentes
+                 for n, linea in enumerate(f.read_text(encoding="utf-8").splitlines(), 1)
+                 if re.match(r"\s*(import|from)\s+matplotlib\b", linea)]
+    assert culpables == []
 
 
 def test_las_definiciones_del_diseno_que_la_prosa_da_por_fijas_son_las_del_codigo():
@@ -585,10 +671,12 @@ def test_la_fila_0a_dice_si_la_metrica_se_cumple(texto, resultados_minimos):
         n=0, bajo=None, sobre=None, contencion=None)
     documento = informe.redactar(otro)
     cero = _seccion(documento, "Escenario 0A: la aritmética")
-    assert "**No se puede comprobar: no hay casos concordantes con horquilla" in cero
+    assert ("**No se puede comprobar: no hay casos concordantes con horquilla. Las tablas "
+            "de la horquilla de este documento quedan sin la comprobación de 0A.**") in cero
+    assert "no se pueden leer" not in documento
     assert "NO se cumple" not in cero and "Se cumple: la métrica" not in cero
     assert "tienen un defecto" not in cero
-    assert "Horquilla: no hay casos con horquilla." in _seccion(
+    assert "Horquilla: no hay casos que medir." in _seccion(
         documento, "Lectura de los resultados")
     otro = copy.deepcopy(resultados_minimos)
     del otro["celdas"][0]
@@ -742,16 +830,22 @@ def test_las_colas_en_todas_sus_ramas():
         dentro = None if bajo is None or sobre is None else 1.0 - bajo - sobre
         return informe._colas({"bajo": bajo, "sobre": sobre, "contencion": dentro})
 
-    assert colas(None, 0.1) == colas(0.1, None) == "no hay casos con horquilla"
+    assert colas(None, 0.1) == colas(0.1, None) == "no hay casos que medir"
     assert colas(0.0, 0.0) == "queda dentro el 100,0 %; ninguna cola tiene casos"
     assert colas(0.2, 0.2) == ("queda dentro el 60,0 %; las dos colas pesan lo mismo "
                                "(20,0 % cada una)")
     # las dos se imprimen «20,0 %»: ninguna es «la mayor»
     assert colas(0.2001, 0.2004) == ("queda dentro el 60,0 %; las dos colas pesan lo mismo "
                                      "(20,0 % cada una)")
-    # con un solo caso en una cola no se dice que ninguna tiene casos
-    assert colas(0.0004, 0.0) == ("queda dentro el 100,0 %; las dos colas pesan lo mismo "
-                                  "(0,0 % cada una)")
+    # con un solo caso en una cola no se dice que ninguna tiene casos, ni que
+    # las dos pesan lo mismo: se dice cual los tiene
+    assert colas(0.0004, 0.0) == ("queda dentro el 100,0 %; las dos colas se imprimen "
+                                  "«0,0 %», pero la del lado conservador tiene casos")
+    assert colas(0.0, 0.0004) == ("queda dentro el 100,0 %; las dos colas se imprimen "
+                                  "«0,0 %», pero la de más allá de la independencia "
+                                  "tiene casos")
+    assert colas(0.0004, 0.0003) == ("queda dentro el 99,9 %; las dos colas se imprimen "
+                                     "«0,0 %», pero las dos tienen casos")
     assert colas(0.3, 0.1) == ("queda dentro el 60,0 %; la cola mayor es la del lado "
                                "conservador (30,0 %, frente a 10,0 % más allá de la "
                                "independencia)")
@@ -855,7 +949,7 @@ def test_las_semillas_van_sin_separador_y_la_prevalencia_es_la_del_conjunto(
         texto, resultados_minimos):
     insumos = _seccion(texto, "Insumos y parámetros")
     assert "(semilla 20261009)" in insumos
-    assert "clínica de la réplica b, 10000 + b; placas de la réplica b, 20000 + b." in insumos
+    assert "- Semillas: clínica, 1; casos de la réplica b, 20000 + b." in insumos
     assert "20 261 009" not in texto and "10 000" not in texto
     assert "con la semilla 1 sobre todas las placas" in _seccion(
         texto, "Lectura de los resultados")
@@ -901,6 +995,137 @@ def test_las_listas_de_celdas_no_llevan_doble_parentesis(texto, resultados_minim
         celda["destacada"] = True
     for documento in (texto, informe.redactar(otro)):
         assert "((" not in documento and "))" not in documento
-    assert "las figuras que ya hubiera" not in texto
-    assert "que pueden ser de una corrida anterior" in informe.redactar(
-        resultados_minimos, {"contencion_rejilla": "f/contencion_rejilla.png"})
+
+
+def test_la_ece_va_sin_intervalo_y_el_documento_dice_por_que(texto, resultados_minimos):
+    cero = resultados_minimos["celdas"][0]
+    assert "modelos.independencia.ece" in cero["intervalos"]      # el JSON lo lleva
+    seccion = _seccion(texto, "Escenario 0A: la aritmética")
+    fila = next(l for l in seccion.splitlines()
+                if l.startswith("| combinación, independencia |"))
+    celdas = [c.strip() for c in fila.strip("|").split("|")]
+    # modelo, AUC, Brier, pendiente, intercepto, ECE, suelo (media), suelo (p95)
+    assert len(celdas) == 8
+    assert all("(IC 95 %:" in c for c in celdas[1:5])
+    assert celdas[5] == informe.numero(cero["modelos"]["independencia"]["ece"], 3)
+    assert "La ECE va sin intervalo: se lee al lado de su suelo." in seccion
+    lectura = _seccion(texto, "Lectura de los resultados")
+    assert ("El intervalo de la ECE está desplazado hacia arriba por construcción: la "
+            "ECE de un remuestreo suma el ruido del remuestreo al de la muestra. Por eso "
+            "la ECE se lee al lado de su suelo y no contra su intervalo, que no se "
+            "imprime.") in lectura
+
+
+def test_el_documento_dice_que_bootstrap_es(texto):
+    insumos = _seccion(texto, "Insumos y parámetros")
+    assert ("cada réplica remuestrea con reemplazo los casos de la estimación puntual, "
+            "cada placa con la clínica que se le sorteó (una placa por paciente, así que "
+            "es un bootstrap por paciente). La clínica no se vuelve a sortear: el "
+            "remuestreo de los casos ya lleva el ruido del sorteo, y sortearla otra vez lo "
+            "contaría dos veces.") in insumos
+    lectura = _seccion(texto, "Lectura de los resultados")
+    assert ("con la semilla 1 sobre todas las placas; cada réplica remuestrea esos mismos "
+            "casos, cada placa con su clínica. El intervalo son los percentiles de las "
+            "réplicas: en esta corrida, de 2 réplicas, ") in lectura
+    for vieja in ("vuelve a sortear la clínica.", "sortea otra clínica",
+                  "no está centrado en la estimación puntual", "clínica de la réplica"):
+        assert vieja not in texto, vieja
+
+
+def test_lo_que_pidio_la_revision_de_la_rama(texto, resultados_minimos):
+    # DOC-1: el sistema no imprime ninguna categoria
+    sensibilidad = _seccion(texto, "Sensibilidad al previo")
+    assert ("La categoría del sistema (todos los casos, también los del asma desconocida). "
+            "El sistema no imprime ninguna categoría: entrega un rango, [mínima, máxima]. "
+            "La categoría es una regla de este análisis: la banda del punto medio, en "
+            "log-odds, de ese rango:") in sensibilidad
+    assert ("Las bandas son baja (< 20 %), intermedia (20-70 %) y alta (> 70 %): una "
+            "convención del equipo, no un estándar publicado:") in sensibilidad
+    assert "el sistema imprime (" not in texto
+    # DOC-2: lo que se mide con el asma desconocida
+    horquilla = _seccion(texto, "La horquilla frente al oráculo")
+    assert ("y el error, en log-odds, de la media de las dos posteriores de "
+            "independencia (una por puntuación posible). Esa media no es el centro del "
+            "rango cuando clínica e imagen son concordantes, porque entonces el rango "
+            "incluye además los extremos conservadores; tampoco es el punto medio con "
+            "que se decide la categoría del sistema, que sí es el del rango:") in horquilla
+    assert ("| media de las independencias: error absoluto mediano | media de las "
+            "independencias: sesgo mediano |") in horquilla
+    assert "punto medio del rango" not in texto
+    # DOC-3: las clases son las de la etiqueta de opacidad
+    assert "neumonía" not in texto.replace("sospecha de neumonía", "")
+    assert "| celda | ρ1 | ρ0 | correlación con opacidad | correlación sin opacidad |" in texto
+    # DOC-4: el criterio y la cifra se leen igual
+    escala = _seccion(texto, "Cuánto de su evidencia conserva la puntuación")
+    assert "(|ln RV de recuentos| < 0,5)" in escala
+    filas = [l.split(" | ") for l in escala.splitlines() if l.startswith(("| 2 |", "| 3 |"))]
+    assert {f[1] for f in filas} == {"−0,353", "+0,495"}
+    assert all(f[-1] == "poco informativa |" for f in filas)
+    # DOC-5: por que cambia la fila de la imagen sola
+    dependencia = _seccion(texto, "Dependencia entre clínica e imagen")
+    assert ("La fila de la imagen sola cambia de una celda a otra aunque el modelo de "
+            "imagen es el mismo: cada celda sortea su clínica") in dependencia
+    # DOC-6: sin bootstrap, la pendiente no «lleva su intervalo»
+    assert "La pendiente lleva su intervalo; la ECE va al lado de su suelo:" in dependencia
+    otro = copy.deepcopy(resultados_minimos)
+    otro["parametros"]["replicas"] = 0
+    for celda in otro["celdas"]:
+        celda.pop("intervalos", None)
+        celda.pop("replicas", None)
+    sin_bootstrap = _seccion(informe.redactar(otro), "Dependencia entre clínica e imagen")
+    assert "lleva su intervalo" not in sin_bootstrap
+    assert ("(casos con el asma conocida). La ECE va al lado de su suelo:") in sin_bootstrap
+    # DOC-9: los terminos, definidos una vez
+    insumos = _seccion(texto, "Insumos y parámetros")
+    for termino in ("- **RV:** razón de verosimilitud.", "- **Oráculo:** la probabilidad "
+                    "posterior que da el propio generador", "- **Modelos puntuales:** la "
+                    "imagen sola (", "- **Clases:** «con opacidad» y «sin opacidad»"):
+        assert termino in insumos, termino
+    assert texto.index("razón de verosimilitud") < texto.index("RV de recuentos")
+    assert texto.index("- **Oráculo:**") < texto.index("El oráculo toma")
+
+
+def test_las_figuras_dicen_si_salen_de_estos_resultados(texto, resultados_minimos):
+    figuras = {"pendiente_rejilla": "f/pendiente_rejilla.png",
+               "fiabilidad_0a": "f/fiabilidad_0a.png",
+               "contencion_rejilla": "f/contencion_rejilla.png"}
+
+    def seccion(enlazadas, ajenas=()):
+        return _seccion(informe.redactar(resultados_minimos, enlazadas, ajenas), "Figuras")
+
+    intro = ("El guion las dibuja leyendo el mismo fichero de resultados que este "
+             "documento, y escribe en los metadatos de cada una la huella de los "
+             "resultados de los que sale.")
+    al_dia = seccion(figuras)
+    assert (intro + " Las 3 figuras enlazadas llevan la huella de los resultados de este "
+            "documento.") in al_dia
+    assert "Aviso" not in al_dia and "corrida" not in al_dia
+    una = {"contencion_rejilla": "f/contencion_rejilla.png"}
+    assert (intro + " La única figura enlazada lleva la huella de los resultados de este "
+            "documento.") in seccion(una)
+    # el aviso nombra las que no la llevan, en el orden en que se enlazan
+    dos = seccion(figuras, ["pendiente_rejilla", "fiabilidad_0a"])
+    assert (intro + "\n\n**Aviso: 2 de las 3 figuras enlazadas no llevan la huella de los "
+            "resultados de este documento** (`fiabilidad_0a` y `pendiente_rejilla`): son "
+            "de otra corrida, o no las dibujó este guion. Se redibujan con "
+            "`python scripts/validar_combinacion.py --solo-documento`.\n") in dos
+    assert "enlazadas llevan la huella" not in dos
+    assert ("**Aviso: 1 de las 3 figuras enlazadas no lleva la huella de los resultados "
+            "de este documento** (`contencion_rejilla`): es de otra corrida, o no la "
+            "dibujó este guion. Se redibuja con ") in seccion(figuras, ["contencion_rejilla"])
+    assert ("**Aviso: ninguna de las 3 figuras enlazadas lleva la huella de los "
+            "resultados de este documento** (`fiabilidad_0a`, `contencion_rejilla` y "
+            "`pendiente_rejilla`): son de otra corrida, o no las dibujó este guion. Se "
+            "redibujan con ") in seccion(figuras, list(figuras))
+    assert ("**Aviso: la única figura enlazada no lleva la huella de los resultados de "
+            "este documento** (`contencion_rejilla`): es de otra corrida, o no la dibujó "
+            "este guion. Se redibuja con ") in seccion(una, ["contencion_rejilla"])
+    # una que no se enlaza no cuenta; y el aviso no quita ni pone enlaces
+    assert seccion(figuras, ["otra"]) == al_dia
+    assert [l for l in dos.splitlines() if l.startswith("![")] == [
+        l for l in al_dia.splitlines() if l.startswith("![")]
+    assert len([l for l in dos.splitlines() if l.startswith("![")]) == 3
+    # ya no se siembra la duda sobre todas las figuras
+    for documento in (al_dia, dos, texto):
+        assert "pueden ser de una corrida anterior" not in documento
+        assert "las figuras que ya hubiera" not in documento

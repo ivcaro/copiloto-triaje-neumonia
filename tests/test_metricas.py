@@ -284,6 +284,11 @@ def test_los_vectores_de_log_odds_tienen_que_casar():
 def test_error_puntual_y_contencion_en_rango():
     e = metricas.error_puntual([1.0, 2.0, 0.0], [0.5, 2.5, 0.0])
     assert e == {"n": 3, "error_abs_mediano": 0.5, "sesgo_mediano": 0.0}
+    # el signo: sistema MENOS oráculo (positivo, el sistema da de más)
+    e = metricas.error_puntual([1.0, 2.0, 0.0], [0.5, 1.0, 0.0])
+    assert e == {"n": 3, "error_abs_mediano": 0.5, "sesgo_mediano": 0.5}
+    e = metricas.error_puntual([0.5, 1.0, 0.0], [1.0, 2.0, 0.0])
+    assert e["sesgo_mediano"] == -0.5
     assert metricas.error_puntual([], [])["error_abs_mediano"] is None
     c = metricas.contencion_en_rango([0.0, 1.01, 1.02, -0.02], [0.0] * 4, [1.0] * 4)
     assert c["n"] == 4
@@ -291,10 +296,15 @@ def test_error_puntual_y_contencion_en_rango():
     assert metricas.contencion_en_rango([], [], [])["contencion"] is None
 
 
-def test_percentiles_ignora_lo_que_no_es_un_numero():
-    lo, hi = metricas.percentiles(list(range(1, 101)) + [float("nan")])
+def test_percentiles_no_calla_lo_que_no_es_un_numero():
+    lo, hi = metricas.percentiles(list(range(1, 101)))
     assert (lo, hi) == pytest.approx((3.475, 97.525))
-    assert metricas.percentiles([float("nan")]) == [None, None]
+    assert metricas.percentiles([]) == [None, None]
+    # un intervalo no se calcula sobre menos replicas de las que se dicen
+    with pytest.raises(ArithmeticError, match="1 de las 101 réplicas no dan un número"):
+        metricas.percentiles(list(range(1, 101)) + [float("nan")])
+    with pytest.raises(ArithmeticError, match="2 de las 3 réplicas"):
+        metricas.percentiles([float("inf"), 0.5, float("nan")])
 
 
 def test_cuantiles_ponderados():

@@ -163,7 +163,12 @@ el túnel a la base (`COPILOTO_BD_DSN`), los dos secretos
 (`TELEGRAM_SECRET_PRUEBA` y `TELEGRAM_TOKEN_PROFESIONAL`), `CHAT_SUBIDA_PLACAS`
 y `COPILOTO_URL`; la cabecera de `pruebas/reproducir_casos.py` dice qué es
 cada uno. Si falta `COPILOTO_BD_DSN` o alguno de los dos secretos, el arnés
-corre sin bots y no mide nada.
+corre sin bots y no mide nada. Cómo se abre el túnel a la base y cómo se
+escribe el DSN está en `docs/sp3-operacion.md` §3; cómo se levanta el copiloto
+que contesta al arnés (`COPILOTO_URL`), en su §2, «El arnés». **Ese copiloto
+tiene que ser la misma imagen que la desplegada:** el arnés confirma cada
+consulta con una lectura propia, y si la imagen es otra las lecturas no
+coinciden y todas las consultas se descartan como `no_coincide`.
 
     C:/venv-copiloto/Scripts/python.exe pruebas/reproducir_casos.py --por-perfil 12 --salida pruebas/corpus/latencia
 
@@ -206,17 +211,23 @@ Lo que `ms_extremo` no ve se acota **a mano, en 5 consultas** completas,
 hechas por una persona con los dos bots y un cronómetro, porque el cliente de
 Telegram solo enseña horas y minutos. Hace falta:
 
-- un chat dado de alta como profesional (`pruebas/profesionales.py --alta`);
+- un chat dado de alta como profesional (`pruebas/profesionales.py --alta`;
+  cómo se hace y de dónde sale el identificador del chat, en
+  `docs/sp3-operacion.md` §1);
 - un código de cuestionario, del bot del paciente. Basta uno para las cinco
-  consultas: el código no es de un solo uso y vale 7 días (spec de SP3 §5.2),
-  y cada uso queda en `consultas`. Un cuestionario nuevo cuenta contra el
-  límite de 5 por chat y día (spec de SP3 §4.2);
-- cinco placas del conjunto de prueba, en DICOM.
+  consultas: el código no es de un solo uso (spec de SP3 §5.2) y vale 7 días
+  (§5.4), y cada uso queda en `consultas`. Un cuestionario nuevo cuenta
+  contra el límite de 5 por chat y día (spec de SP3 §4.2);
+- cinco placas del conjunto de prueba, en DICOM. Valen cinco de las que usó
+  el arnés: sus `patientId` están en `latencias.json`, y el fichero de cada
+  una es `<RSNA_RAIZ>/crudo/stage_2_train_images/<patientId>.dcm`.
 
-En el bot del profesional cada consulta es: el código, los cuatro signos
-(temperatura, frecuencia cardiaca, crepitantes y murmullo) y la placa, enviada
-como **documento** (como foto, Telegram la recomprime a JPEG y deja de ser un
-DICOM). El cronómetro se pone en marcha al enviar la placa y se para cuando
+En el bot del profesional cada consulta empieza con un mensaje cualquiera
+(p. ej. `/start`): el bot contesta pidiendo el código, y un código enviado
+como primer mensaje no se lee como código. Después van el código, los cuatro
+signos (temperatura, frecuencia cardiaca, crepitantes y murmullo) y la placa,
+enviada como **documento** (como foto, Telegram la recomprime a JPEG y deja
+de ser un DICOM). El cronómetro se pone en marcha al enviar la placa y se para cuando
 aparece el pre-informe: es el tiempo **total**, subida incluida, no el tramo
 que falta, y no se suma al p50. Son los cinco valores de `--manual`. Esas
 consultas quedan registradas con el chat de quien mide: son consultas de
@@ -227,7 +238,13 @@ propia llamada se descarta como `no_coincide`: no entra en la medida, y se ve
 en el recuento.
 
 Al terminar, las filas que el arnés dejó en `consultas` se borran con la
-orden que él mismo imprime.
+sentencia que él mismo imprime (`DELETE FROM consultas WHERE chat_id = …`).
+Se ejecuta desde cualquier cliente de PostgreSQL, con el mismo túnel abierto
+(`docs/sp3-operacion.md` §3).
+
+La etiqueta del KPI («cumplido con cambio», «no cumplido» o «no medido») se
+decide con la regla del spec de SP5 §6.2. `latencia.json` la lleva escrita
+(`veredicto.regla`) y aplicada (`veredicto.etiqueta`), y la orden la imprime.
 
 ## Qué se versiona y qué no
 

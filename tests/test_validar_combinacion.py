@@ -1,6 +1,7 @@
 """scripts/validar_combinacion.py: la rejilla, el JSON y sus huellas."""
 import copy
 import json
+import re
 
 import pytest
 
@@ -47,6 +48,34 @@ def test_los_resultados_llevan_rotulo_insumos_y_parametros(resultados_minimos):
     assert p["previo_desplegado"] == pytest.approx(PREVALENCIA_COHORTE)
     assert p["semilla_puntual"] == simulacion.SEMILLA_PUNTUAL
     assert p["rejilla"] == [0.0, 0.3] and p["destacadas"] == [[0.3, 0.3]]
+    assert list(r) == ["rotulo", "titulo", "advertencia", "insumos", "parametros",
+                       "entorno", "imagen_sola", "celdas"]
+
+
+def test_los_resultados_dicen_con_que_versiones_se_calcularon(validar, resultados_minimos):
+    import platform
+
+    import numpy
+    import pandas
+    import scipy
+    import sklearn
+    assert resultados_minimos["entorno"] == validar.entorno() == {
+        "python": platform.python_version(), "numpy": numpy.__version__,
+        "scipy": scipy.__version__, "pandas": pandas.__version__,
+        "scikit-learn": sklearn.__version__}
+    assert list(validar.entorno()) == ["python", "numpy", "scipy", "pandas", "scikit-learn"]
+    # versiones y nada mas: ni la maquina, ni el usuario, ni la ruta del interprete
+    for version in validar.entorno().values():
+        assert re.fullmatch(r"\d+(\.\w+)+", version), version
+
+
+def test_las_destacadas_repetidas_salen_una_vez(validar, monkeypatch):
+    monkeypatch.setattr(simulacion, "evaluar_tarea", lambda tarea: {})
+    r = validar.calcular(replicas=2, procesos=1, rejilla=(0.0, 0.3, 0.6),
+                         destacadas=[[0.6, 0.3], (0.3, 0.3), (0.6, 0.3), [0.3, 0.3]])
+    assert r["parametros"]["destacadas"] == [[0.6, 0.3], [0.3, 0.3]]
+    assert [c["destacada"] for c in r["celdas"]].count(True) == 2
+    assert len(r["celdas"]) == 9
 
 
 def test_las_celdas_van_en_el_orden_de_la_rejilla(resultados_minimos):
@@ -117,6 +146,26 @@ def test_la_huella_de_los_pesos_tiene_que_ser_un_sha256(validar, tmp_path, monke
 def test_un_nan_no_llega_al_json(validar, tmp_path):
     with pytest.raises(ValueError):
         validar.escribir_resultados({"cifra": float("nan")}, tmp_path / "r.json")
+    assert not (tmp_path / "r.json").exists()
+
+
+def test_si_no_se_puede_escribir_lo_anterior_sigue_entero(
+        validar, resultados_minimos, tmp_path, monkeypatch):
+    ruta = validar.escribir_resultados({"cifra": 1.5}, tmp_path / "r.json")
+    antes = ruta.read_bytes()
+    with pytest.raises(ValueError):
+        validar.escribir_resultados({"cifra": float("nan")}, ruta)
+    assert ruta.read_bytes() == antes
+    # y el documento, lo mismo: se redacta antes de abrir
+    analisis = validar.escribir_analisis(resultados_minimos, [], tmp_path / "a.md")
+    antes = analisis.read_bytes()
+    sin_entorno = {k: v for k, v in resultados_minimos.items() if k != "entorno"}
+    with pytest.raises(KeyError):
+        validar.escribir_analisis(sin_entorno, [], analisis)
+    assert analisis.read_bytes() == antes and len(antes) > 1000
+    with pytest.raises(KeyError):
+        validar.escribir_analisis(sin_entorno, [], tmp_path / "sub" / "no.md")
+    assert not (tmp_path / "sub").exists()
 
 
 def test_main_escribe_los_resultados_donde_se_le_dice(
@@ -171,6 +220,24 @@ def test_las_figuras_salen_con_su_nombre_a_300_dpi_y_con_el_rotulo(
             assert imagen.size == (2700, 1650)            # 9 x 5,5 pulgadas a 300 DPI
             assert imagen.info["dpi"] == pytest.approx((300, 300), abs=1)
             assert "simulación semisintética" in imagen.info["Title"]
+            # la version con que se dibujo, sin direccion web
+            import matplotlib
+            assert imagen.info["Software"] == f"matplotlib {matplotlib.__version__}"
+            assert "http" not in " ".join(str(v) for v in imagen.info.values())
+            assert sorted(k for k in imagen.info if k != "dpi") == [
+                "Description", "Software", "Title"]
+    # cada una dice de que resultados sale
+    huella = validar.huella_de_resultados(resultados_minimos)
+    assert re.fullmatch(r"[0-9a-f]{64}", huella)
+    for ruta in rutas:
+        with Image.open(ruta) as imagen:
+            assert imagen.info["Description"] == (
+                "dibujada de resultados_simulacion.json; sha256 de su contenido: " + huella)
+        assert validar.huella_de_figura(ruta) == huella
+    assert validar.figuras_ajenas(resultados_minimos, rutas) == []
+    otro = copy.deepcopy(resultados_minimos)
+    otro["imagen_sola"]["auc"] += 1e-9
+    assert validar.figuras_ajenas(otro, rutas) == sorted(r.stem for r in rutas)
     titulos = {}
     for ruta in rutas:
         with Image.open(ruta) as imagen:
@@ -191,9 +258,63 @@ def test_cada_figura_se_puede_dibujar_por_separado(validar, resultados_minimos, 
     assert validar.figura_rejilla(resultados_minimos, tmp_path / "cuatro.png",
                                   "pendiente").is_file()
     assert destino.stat().st_size > 10_000
+    # dibujada suelta no lleva huella, salvo que se le de
+    assert validar.huella_de_figura(destino) is None
+    assert validar.figuras_ajenas(resultados_minimos, [destino]) == ["una"]
+    for n, dibujar in enumerate((
+            lambda d: validar.figura_fiabilidad(celda, d, "ab" * 32),
+            lambda d: validar.figura_horquilla(resultados_minimos, d, "ab" * 32),
+            lambda d: validar.figura_rejilla(resultados_minimos, d, "pendiente", "ab" * 32))):
+        assert validar.huella_de_figura(dibujar(tmp_path / f"con_huella_{n}.png")) == "ab" * 32
     with pytest.raises(ValueError, match="contencion"):
         validar.figura_rejilla(resultados_minimos, tmp_path / "cinco.png", "auc")
     assert not (tmp_path / "cinco.png").exists()
+
+
+def test_la_huella_es_del_contenido_y_no_del_fichero(validar, resultados_minimos, tmp_path):
+    huella = validar.huella_de_resultados(resultados_minimos)
+    al_reves = dict(reversed(list(resultados_minimos.items())))
+    assert list(al_reves) != list(resultados_minimos)
+    assert validar.huella_de_resultados(al_reves) == huella
+    ruta = validar.escribir_resultados(resultados_minimos, tmp_path / "r.json")
+    assert validar.huella_de_resultados(validar.leer_resultados(ruta)) == huella
+    con_crlf = tmp_path / "crlf.json"
+    con_crlf.write_bytes(ruta.read_bytes().replace(b"\n", b"\r\n"))
+    assert validar.huella_de_resultados(validar.leer_resultados(con_crlf)) == huella
+    otro = copy.deepcopy(resultados_minimos)
+    otro["celdas"][3]["horquilla"]["todos"]["contencion"] += 1e-12
+    assert validar.huella_de_resultados(otro) != huella
+    # lo que no es un PNG con huella, no la tiene
+    (tmp_path / "no_es.png").write_bytes(b"de una corrida anterior")
+    assert validar.huella_de_figura(tmp_path / "no_es.png") is None
+    assert validar.huella_de_figura(tmp_path / "no_existe.png") is None
+    from PIL import Image
+    Image.new("RGB", (4, 4)).save(tmp_path / "sin_metadatos.png")
+    assert validar.huella_de_figura(tmp_path / "sin_metadatos.png") is None
+
+
+def test_un_lado_sin_casos_se_rotula_en_la_figura_de_la_horquilla(
+        validar, resultados_minimos, tmp_path, monkeypatch):
+    pytest.importorskip("matplotlib")
+    from matplotlib.axes import Axes
+    escritos = []
+    escribir = Axes.text
+
+    def escribir_espia(self, x, y, texto, **kwargs):
+        escritos.append((x, y, texto, kwargs.get("color")))
+        return escribir(self, x, y, texto, **kwargs)
+
+    monkeypatch.setattr(Axes, "text", escribir_espia)
+    validar.figura_horquilla(resultados_minimos, tmp_path / "con_casos.png")
+    assert escritos and not [e for e in escritos if "n/d" in e[2]]
+    escritos.clear()
+    vacio = copy.deepcopy(resultados_minimos)
+    vacio["celdas"][3]["horquilla"]["en_contra"].update(
+        n=0, bajo=None, contencion=None, sobre=None)
+    validar.figura_horquilla(vacio, tmp_path / "sin_casos.png")
+    # la celda (0,3; 0,3) es la segunda barra (la primera es 0A)
+    assert [e for e in escritos if "n/d" in e[2]] == [
+        (50.0, 1, "n/d (sin casos)", validar.TINTA)]
 
 
 def _contraste(una: float, otra: float) -> float:
@@ -263,7 +384,8 @@ def test_las_casillas_y_las_barras_se_escriben_con_la_tinta_que_contrasta(
     for lado in ("a_favor", "en_contra"):
         trucados["celdas"][3]["horquilla"][lado].update(bajo=0.25, contencion=0.5, sobre=0.25)
     validar.figura_horquilla(trucados, tmp_path / "horquilla.png")
-    assert ("25 %", validar.TINTA) in escritos and ("50 %", validar.TINTA) in escritos
+    assert ("25,0 %", validar.TINTA) in escritos and ("50,0 %", validar.TINTA) in escritos
+    assert not [texto for texto, _ in escritos if "," not in texto]
     assert all(color == validar.TINTA for _, color in escritos)
 
 
@@ -299,6 +421,33 @@ def test_el_rojo_es_exagerar_en_la_horquilla_y_en_la_pendiente(validar):
     assert colores["bajo"] == validar.RAMPA_DIVERGENTE[0]          # pendiente < 1
     assert colores["sobre"] == validar.RAMPA_DIVERGENTE[-1]        # pendiente > 1
     assert [clave for clave, _, _ in validar.TRAMOS] == ["bajo", "contencion", "sobre"]
+    # las colas llevan la tolerancia: no son «λ < 0» y «λ > 1» a secas
+    assert [rotulo for _, rotulo, _ in validar.TRAMOS] == [
+        "más allá del extremo conservador, en más de ε", "dentro de la horquilla",
+        "más allá de la independencia, en más de ε"]
+
+
+def test_las_figuras_nombran_los_modelos_y_las_clases_como_el_documento(
+        validar, resultados_minimos, tmp_path, monkeypatch):
+    from copiloto_triaje.validacion import informe
+    assert validar.NOMBRE_MODELO == dict(informe.MODELOS)
+    assert list(validar.NOMBRE_MODELO) == list(simulacion.MODELOS)
+    pytest.importorskip("matplotlib")
+    from matplotlib.axes import Axes
+    ejes = []
+    for cual in ("set_xlabel", "set_ylabel"):
+        poner = getattr(Axes, cual)
+
+        def espia(self, texto, *a, _poner=poner, **k):
+            ejes.append(texto)
+            return _poner(self, texto, *a, **k)
+
+        monkeypatch.setattr(Axes, cual, espia)
+    for que in validar.REJILLAS:
+        validar.figura_rejilla(resultados_minimos, tmp_path / f"{que}.png", que)
+    assert "ρ0 (dependencia entre los casos sin opacidad)" in ejes
+    assert "ρ1 (dependencia entre los casos con opacidad)" in ejes
+    assert not [e for e in ejes if "neumon" in e]
 
 
 def test_sin_matplotlib_se_calcula_y_dibujar_lo_dice(
@@ -398,7 +547,9 @@ def test_main_dibuja_las_figuras_leyendo_el_json(
 
 
 def test_main_sin_figuras_no_dibuja_nada(validar, tmp_path, capsys):
-    """La unica prueba que corre la rejilla entera (25 celdas, sin bootstrap)."""
+    """Corre la rejilla entera (25 celdas, sin bootstrap) por la línea de
+    órdenes; `tests/test_resultados_publicados.py` la corre también, por
+    `calcular`."""
     assert validar.main(["--replicas", "0", "--procesos", "1", "--salida", str(tmp_path),
                          "--sin-figuras"]) == 0
     assert [p.name for p in tmp_path.iterdir()] == ["resultados_simulacion.json"]
@@ -424,6 +575,10 @@ def test_escribir_analisis_enlaza_las_figuras_con_rutas_relativas(
     assert "](../validacion-semisintetica/contencion_rejilla.png)" in texto
     assert texto.count(".png") == 2
     assert "\\" not in texto and str(tmp_path) not in texto
+    # esas dos figuras no existen: no llevan la huella, y el documento lo avisa
+    assert ("**Aviso: ninguna de las 2 figuras enlazadas lleva la huella de los "
+            "resultados de este documento** (`fiabilidad_0a` y `contencion_rejilla`)"
+            ) in texto
     sin = validar.escribir_analisis(resultados_minimos, [], tmp_path / "sin.md")
     assert ".png" not in sin.read_text(encoding="utf-8")
 
@@ -447,6 +602,10 @@ def test_main_escribe_el_analisis_leyendo_el_json(
             ("Pendiente de la independencia, por celda", "pendiente_rejilla.png"))]
     assert capsys.readouterr().out.splitlines()[-1] == f"análisis: {analisis}"
     assert not analisis_fuera_del_repo.exists()
+    # recien dibujadas de estos resultados: todas llevan su huella
+    assert ("Las 5 figuras enlazadas llevan la huella de los resultados de este "
+            "documento.") in texto
+    assert "Aviso" not in texto
     # sin --analisis va al de por defecto (aqui, desviado a una carpeta temporal)
     assert validar.main(["--replicas", "2", "--procesos", "1", "--salida", str(salida),
                          "--sin-figuras"]) == 0
@@ -481,6 +640,8 @@ def test_solo_documento_escribe_el_documento_sin_recalcular(
     texto = analisis.read_text(encoding="utf-8")
     assert "9 876" in texto                                   # leido del JSON
     assert "](fiabilidad_0a.png)" in texto                    # las figuras que hubiera
+    assert ("**Aviso: la única figura enlazada no lleva la huella de los resultados de "
+            "este documento** (`fiabilidad_0a`)") in texto
     assert ajena.read_bytes() == b"de una corrida anterior"
     salida = capsys.readouterr().out
     assert "resultados:" not in salida and "figura:" not in salida

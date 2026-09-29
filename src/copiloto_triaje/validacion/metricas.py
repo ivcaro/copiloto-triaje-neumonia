@@ -265,12 +265,15 @@ def contencion_en_rango(l_oraculo, l_minima, l_maxima, epsilon: float = EPSILON)
 
 
 def percentiles(valores, alfa: float = 0.05) -> list:
-    """El intervalo por percentiles de las replicas, ignorando las que no
-    se pudieron calcular (nan)."""
+    """El intervalo por percentiles de las replicas. Cuentan TODAS: si
+    alguna no es un numero se detiene, porque un intervalo no se calcula
+    sobre menos replicas de las que el resultado dice que hubo."""
     v = np.asarray(valores, dtype=float)
-    v = v[np.isfinite(v)]
     if v.size == 0:
         return [None, None]
+    if not np.all(np.isfinite(v)):
+        raise ArithmeticError(f"{int((~np.isfinite(v)).sum())} de las {v.size} réplicas "
+                              "no dan un número")
     lo, hi = np.percentile(v, [100 * alfa / 2, 100 * (1 - alfa / 2)])
     return [float(lo), float(hi)]
 

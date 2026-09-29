@@ -39,6 +39,9 @@ TEXTO_FIJADO = (
 # Las fechas del acta son el dia en la hora de Ecuador continental (UTC−5, sin
 # horario de verano), no en la zona de la maquina que analiza.
 ZONA_DE_LA_SESION = datetime.timezone(datetime.timedelta(hours=-5))
+# Bland-Altman acota el porcentaje del medico antes del logit (spec §5.5): un
+# 0 % es 0,5 % y un 100 %, 99,5 %.
+COTA_DEL_MEDICO = (0.005, 0.995)
 
 
 # --------------------------------------------------------------------------
@@ -160,6 +163,10 @@ def acuerdo_continuo(pct_medico, p_sistema, minima=None, maxima=None) -> dict:
     Bland-Altman en log-odds con 0 y 100 acotados a 0,5 y 99,5; y la fraccion
     de porcentajes que caen dentro de la horquilla.
 
+    Se acota al medico y no al sistema (spec §5.5). Donde el punto medio del
+    sistema queda fuera de la cota, la diferencia no puede ser cero ni
+    contestando lo mismo: esos casos se cuentan, para que el acta lo diga.
+
     «Dentro» compara el porcentaje entero del medico, SIN acotar, con la
     horquilla tal como la imprime el bot: los DOS extremos pasan por
     `_entero_como_el_bot`. Un extremo por debajo de 0,01 se imprime «< 1 %» y
@@ -171,7 +178,7 @@ def acuerdo_continuo(pct_medico, p_sistema, minima=None, maxima=None) -> dict:
     pct = np.asarray(pct_medico, dtype=float)
     p = np.asarray(p_sistema, dtype=float)
     acotados = int(np.sum((pct <= 0) | (pct >= 100)))
-    pm = np.clip(pct, 0.5, 99.5) / 100.0
+    pm = np.clip(pct / 100.0, *COTA_DEL_MEDICO)
     d = np.log(pm / (1 - pm)) - np.log(p / (1 - p))
     de = float(d.std(ddof=1)) if d.size > 1 else 0.0
     if pct.size > 1:
@@ -182,13 +189,19 @@ def acuerdo_continuo(pct_medico, p_sistema, minima=None, maxima=None) -> dict:
     salida = {"n": int(pct.size), "spearman": spearman,
               "diferencia_media_log_odds": float(d.mean()), "de": de,
               "limites_95": [float(d.mean() - 1.96 * de), float(d.mean() + 1.96 * de)],
-              "acotados_0_o_100": acotados}
+              "acotados_0_o_100": acotados,
+              "sistema_fuera_de_la_cota": int(np.sum(
+                  (p < COTA_DEL_MEDICO[0]) | (p > COTA_DEL_MEDICO[1])))}
     if minima is not None and maxima is not None:
         lo = np.array([_entero_como_el_bot(x) for x in minima], dtype=int)
         hi = np.array([_entero_como_el_bot(x) for x in maxima], dtype=int)
         dentro = (pct >= lo) & (pct <= hi)
+        salida["dentro_de_la_horquilla"] = int(dentro.sum())
         salida["fraccion_dentro_de_la_horquilla"] = float(dentro.mean())
         salida["horquillas_de_anchura_cero"] = int(np.sum(lo == hi))
+        # de las de un solo valor, las que el bot imprime como una cota
+        salida["horquillas_que_son_una_cota"] = int(np.sum(
+            (lo == hi) & ((lo == 0) | (lo == 100))))
     return salida
 
 
@@ -455,7 +468,11 @@ def analizar(clave: dict, lectura1: list, lectura2: list | None = None,
 def _f(x, decimales=2):
     if x is None or (isinstance(x, float) and math.isnan(x)):
         return "—"
-    return f"{x:.{decimales}f}".replace(".", ",")
+    texto = f"{x:.{decimales}f}"
+    if float(texto) == 0:
+        # un cero con residuo de coma flotante (−5e-16) no es «-0,00»
+        texto = texto.lstrip("-")
+    return texto.replace(".", ",")
 
 
 def _kappa_texto(k: dict) -> str:
@@ -535,9 +552,55 @@ def _criterio(nombre: str, k: dict) -> str:
     elif u["li_bca_lt_0_4"]:
         limite = f"queda por debajo de 0,4 con el BCa ({lb}) y no con el método analítico ({la})"
     else:
-        limite = f"queda por encima de 0,4 con los dos métodos (analítico {la}; BCa {lb})"
+        # «no queda por debajo», y no «queda por encima»: un limite que ES
+        # 0,4 llega aqui, y por encima no esta
+        limite = (f"no queda por debajo de 0,4 con ninguno de los dos métodos "
+                  f"(analítico {la}; BCa {lb})")
     return (f"{nombre} ({_f_frente_a_umbral(k['kappa'])}) {alcance}; "
             f"el límite inferior del intervalo {limite}.")
+
+
+METODOS = (("ic95", "el método analítico"), ("ic95_bca", "el BCa"))
+
+
+def _anchura_observada(k: dict) -> str:
+    """Lo que el intervalo del kappa ponderado dio EN ESTA SESION, para
+    ponerlo al lado del texto declarado antes de ella: sus limites y su
+    anchura por los dos metodos, y si 0,4 y 0,6 quedan dentro. Todo, con
+    los limites tal como se imprimen."""
+    if k.get("frente_a_umbrales") is None:
+        return "el kappa ponderado no es calculable con estas lecturas, y su intervalo tampoco."
+    limites = {nombre: [round(x, 2) + 0.0 for x in k[clave]] for clave, nombre in METODOS}
+    va = " y ".join(f"de {_f(li)} a {_f(ls)} con {nombre} (anchura {_f(ls - li)})"
+                    for nombre, (li, ls) in limites.items())
+
+    def dentro(umbral):
+        return [nombre for nombre, (li, ls) in limites.items() if li <= umbral <= ls]
+
+    def frase(umbrales):
+        sujeto = " y ".join(f"el {_f(u, 1)}" for u in umbrales)
+        queda = "queda" if len(umbrales) == 1 else "quedan"
+        con = dentro(umbrales[0])
+        sin = [nombre for nombre in limites if nombre not in con]
+        if not sin:
+            return f"{sujeto} {queda} dentro con los dos métodos"
+        if not con:
+            return f"{sujeto} {queda} fuera con los dos métodos"
+        return f"{sujeto} {queda} dentro con {con[0]} y fuera con {sin[0]}"
+
+    bajo, alto = UMBRALES_KAPPA
+    lectura = (frase((bajo, alto)) if dentro(bajo) == dentro(alto)
+               else f"{frase((bajo,))} y {frase((alto,))}")
+    return f"el intervalo del 95 % del kappa ponderado va {va}; {lectura}."
+
+
+def _dentro_de_la_horquilla(a: dict) -> str:
+    """«7 de 24 casos (29 %)»: el recuento, y el porcentaje con la regla del
+    bot (el ,5 hacia arriba), como el resto del acta."""
+    if "dentro_de_la_horquilla" not in a or not a["n"]:
+        return "—"
+    dentro, n = a["dentro_de_la_horquilla"], a["n"]
+    return f"{dentro} de {_plural(n, 'caso', 'casos')} ({porcentaje_entero(dentro / n)} %)"
 
 
 ESTRATOS_LEGIBLES = {"positiva_clara": "positiva clara", "negativa_clara": "negativa clara",
@@ -654,9 +717,12 @@ def valores_para_acta(sesion: dict, clave: dict) -> dict:
         "razones_controles": razones_controles,
         "huellas": _huellas(sesion.get("huellas")),
         "spearman": _f(a["spearman"]), "bland_altman": f"{_f(a['diferencia_media_log_odds'])} (DE {_f(a['de'])})",
-        "dentro_horquilla": _f(a.get("fraccion_dentro_de_la_horquilla", float("nan")) * 100, 0),
+        "dentro_horquilla": _dentro_de_la_horquilla(a),
         "horquillas_anchura_cero": str(a.get("horquillas_de_anchura_cero", "—")),
+        "horquillas_cota": str(a.get("horquillas_que_son_una_cota", "—")),
         "acotados": str(a["acotados_0_o_100"]),
+        "sistema_fuera": str(a["sistema_fuera_de_la_cota"]),
+        "anchura_observada": _anchura_observada(k["ponderado_lineal"]),
         "influencia": influencia, "utilidad": utilidad, "tiempo": tiempo,
         "tabla_casos": casos, "tabla_desacuerdos": desacuerdos,
         "texto_fijado": sesion["texto_fijado"],

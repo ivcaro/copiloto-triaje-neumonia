@@ -1027,14 +1027,16 @@ def filas_de_latencia(filas):
     flujo, desde que `Normalizar update` recibe el update con la placa hasta
     que `Desenlace` compone la respuesta. Todo lo que dice si esa medida
     cuenta es de LA MISMA consulta: `error_consulta` es el error que el flujo
-    guardo en esa fila de `consultas` (un `copiloto_no_responde` o una
-    `descarga_fallida` solo nacen alli), `coincide` dice si esa consulta y la
-    lectura de este arnes cuentan lo mismo, y `ms_modelo` es lo que el
-    servidor dijo que tardo el modelo EN ESA consulta.
+    guardo en esa fila de `consultas` (un `copiloto_no_responde` DEL FLUJO o
+    una `descarga_fallida`, que solo nace alli), `coincide` dice si esa
+    consulta y la lectura de este arnes cuentan lo mismo, y `ms_modelo` es lo
+    que el servidor dijo que tardo el modelo EN ESA consulta.
 
     `error_arnes` y `ms_arnes` son de la otra llamada, la que este arnes hace
     por su cuenta al copiloto para redactar: no pasa por Telegram ni por n8n
-    y no dice nada de la latencia de extremo a extremo. Sin bots no hay
+    y no dice nada de la latencia de extremo a extremo. Puede llevar el
+    mismo codigo (`copiloto_no_responde`, si esa llamada no llega): es el de
+    la otra llamada, y no descarta la medida por `error`. Sin bots no hay
     consulta, y `ms_modelo` es entonces el de la llamada del arnes.
 
     Aqui no se filtra ni se resume nada: que filas cuentan lo decide quien

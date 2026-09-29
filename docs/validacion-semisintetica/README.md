@@ -1,13 +1,18 @@
 # Validación semisintética de la combinación (SP5)
 
-**Todo lo que hay en esta carpeta, salvo `crudas_prueba.csv`,
-`crudas_prueba.sha256` y `latencia.json`, es resultado de una simulación
-semisintética** (spec de SP5, §4): las placas y sus etiquetas son reales
-(conjunto de prueba de RSNA), la clínica se sortea con la distribución
-publicada de la puntuación de Heckerling, y la dependencia entre clínica e
-imagen es un supuesto declarado. Nada de aquí mide exactitud clínica en
-pacientes. Cada tabla, figura y JSON de resultados lleva ese rótulo en su
-título.
+**`resultados_simulacion.json` y las figuras de esta carpeta son resultado
+de una simulación semisintética** (spec de SP5, §4): las placas y sus
+etiquetas son reales (conjunto de prueba de RSNA), la clínica se sortea con
+la distribución publicada de la puntuación de Heckerling, y la dependencia
+entre clínica e imagen es un supuesto declarado. Nada de eso mide exactitud
+clínica en pacientes. Cada figura y el JSON de resultados llevan ese rótulo
+en su título; las tablas están en el análisis, que lo lleva en el suyo.
+
+Lo demás **no** es simulación, y cada sección de abajo dice qué es: las
+puntuaciones crudas congeladas (`crudas_prueba.csv` y su `.sha256`), la
+medición de la latencia (`latencia.json`) y lo de la sesión con el médico
+(`acta-h7-plantilla.md` y, cuando la sesión se haga, `sesion.json` y
+`acta-h7.md`).
 
 ## `resultados_simulacion.json`
 
@@ -20,13 +25,20 @@ colas y la contención de la horquilla frente al oráculo por lado de la
 imagen, los casos discordantes, los del asma desconocida y la escala
 legible. 0A y las seis celdas destacadas llevan además los intervalos del
 95 % (bootstrap de 1 000 réplicas) y la sensibilidad al previo; 0A, el
-cálculo 0C. No lleva fecha: dos corridas dan el mismo fichero.
+cálculo 0C. Lleva también las versiones de Python, NumPy, SciPy, pandas y
+scikit-learn con que se calculó (`entorno`). No lleva fecha: dos corridas
+con las mismas versiones dan el mismo fichero; con otras, las cifras pueden
+cambiar (NumPy no garantiza el mismo flujo de números aleatorios de una
+versión a otra).
 
 ## Las figuras (`fiabilidad_*.png`, `horquilla_por_celda.png`, `contencion_rejilla.png`, `pendiente_rejilla.png`)
 
 A 300 DPI, dibujadas **leyendo** `resultados_simulacion.json`. Cada una lleva
 «simulación semisintética» en el título, que va también en el metadato
-`Title` del PNG.
+`Title` del PNG; en `Software` va la versión de matplotlib con que se dibujó.
+En el metadato `Description` lleva la huella (sha256) del contenido de los
+resultados de los que sale: así se sabe si una figura es de estos resultados
+o de otra corrida, y el análisis avisa si enlaza alguna que no lo sea.
 
 ## El análisis
 
@@ -38,17 +50,23 @@ cifra se teclea y el documento no se edita a mano.
 
     python scripts/validar_combinacion.py
 
-Sin los pesos, sin red y sin contenedores; de 3 a 5 minutos. Con
+Sin los pesos, sin red y sin contenedores; en torno a un minuto. Con
 `--solo-documento` se regeneran las figuras y el análisis sin recalcular.
 
 `tests/test_resultados_publicados.py` vuelve a calcular todo lo que no es
 bootstrap (las 25 celdas, la imagen sola, los insumos y los parámetros) y
 falla si lo versionado deja de corresponder a los insumos o al código;
-también regenera el análisis desde el JSON y lo compara con el versionado.
-**No** repite el bootstrap ni compara el contenido de las figuras: de los
-intervalos solo comprueba la forma, y de las figuras, el nombre, la
-resolución y el título. Si se toca algo que cambie el bootstrap o el dibujo,
-hay que volver a correr el guion, porque ninguna prueba lo va a pedir.
+también regenera el análisis desde el JSON y lo compara con el versionado,
+y comprueba que cada figura lleva la huella de ese JSON.
+**No** repite el bootstrap ni compara los píxeles de las figuras. De los
+intervalos comprueba que están todos y bien formados; sus cifras solo
+quedan vigiladas de rebote, las que el análisis imprime y con los decimales
+con que las imprime. De las figuras comprueba el nombre, la resolución, la
+huella y que el título lleva el rótulo y, en las de fiabilidad, el nombre
+de su celda. Si se toca algo que cambie el bootstrap o el dibujo, hay que
+volver a correr el guion, porque ninguna prueba lo va a pedir. Si la prueba
+falla en una máquina con otras versiones de las librerías, lo dice: la
+diferencia puede venir de la librería y no del código.
 
 ## `acta-h7-plantilla.md`
 
@@ -83,7 +101,10 @@ compone la respuesta; la subida a Telegram, la entrega del webhook y el envío
 de `Responder` quedan fuera. Es, por tanto, una **cota inferior** de la
 latencia de extremo a extremo: cumplir un umbral aquí es necesario, no
 suficiente. Lo que queda fuera se acota cronometrando a mano 5 consultas
-completas (`total_a_mano`: el tiempo total, que no se suma al p50). Los casos
+completas (`total_a_mano`: el tiempo total, que no se suma al p50). El JSON
+lleva la fecha de la corrida (`corrida_del`), la regla con que se decide la
+etiqueta del KPI y la etiqueta (`veredicto`), y un `glosario` de sus claves
+y de los motivos de descarte. Los casos
 son placas de RSNA con clínica inventada: no hay usuarios ni pacientes. Si el
 fichero no está, la latencia de extremo a extremo no se midió. Cómo se mide:
 `docs/sp5-sesion.md`, «Medir la latencia».

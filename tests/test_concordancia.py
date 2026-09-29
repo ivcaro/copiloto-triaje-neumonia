@@ -87,6 +87,25 @@ def test_acuerdo_continuo_acota_0_y_100_y_mide_spearman():
     assert r["acotados_0_o_100"] == 2
     assert np.isfinite(r["diferencia_media_log_odds"]) and r["n"] == 5
     assert r["fraccion_dentro_de_la_horquilla"] == pytest.approx(1.0)
+    assert r["dentro_de_la_horquilla"] == 5
+    assert r["sistema_fuera_de_la_cota"] == 0
+
+
+def test_donde_el_sistema_queda_fuera_de_la_cota_la_diferencia_no_puede_ser_cero():
+    """Se acota al médico y no al sistema (spec §5.5): con el sistema por
+    debajo del 0,5 %, contestar 0 % cuenta como contestar MÁS que él."""
+    assert cc.COTA_DEL_MEDICO == (0.005, 0.995)
+    r = cc.acuerdo_continuo([0, 0, 100, 50], [0.0034, 0.005, 0.9960, 0.5])
+    assert r["sistema_fuera_de_la_cota"] == 2           # 0,005 justo no queda fuera
+    assert r["acotados_0_o_100"] == 3
+    solo = cc.acuerdo_continuo([0, 0], [0.0034, 0.0009])
+    assert solo["sistema_fuera_de_la_cota"] == 2 and solo["diferencia_media_log_odds"] > 0.3
+    arriba = cc.acuerdo_continuo([100, 100], [0.9960, 0.9991])
+    assert arriba["diferencia_media_log_odds"] < -0.2
+    # acotar sigue dando lo de siempre: un 0 % es un 0,5 %
+    igual = cc.acuerdo_continuo([0, 100], [0.005, 0.995])
+    assert igual["diferencia_media_log_odds"] == pytest.approx(0.0, abs=1e-12)
+    assert igual["de"] == pytest.approx(0.0, abs=1e-12)
 
 
 @pytest.mark.parametrize("minima, maxima, pct, dentro", [
@@ -114,6 +133,10 @@ def test_dentro_de_la_horquilla_compara_enteros_como_los_imprime_el_bot(minima, 
     # «de un solo valor» es lo que el bot imprime como un solo valor
     un_solo_valor = cc._pct_como_el_bot(minima) == cc._pct_como_el_bot(maxima)
     assert r["horquillas_de_anchura_cero"] == int(un_solo_valor)
+    # y de esas, las que el bot imprime como una cota
+    assert r["horquillas_que_son_una_cota"] == int(
+        un_solo_valor and cc._pct_como_el_bot(minima) in ("< 1 %", "> 99 %"))
+    assert r["dentro_de_la_horquilla"] == 1 + int(dentro)
     assert cc._horquilla_como_el_bot(minima, maxima).count("%") == (1 if un_solo_valor else 2)
 
 
@@ -162,9 +185,26 @@ def test_un_kappa_que_es_exactamente_un_umbral_lo_alcanza(tmp_path):
     assert (u["li_analitico_lt_0_4"], u["li_bca_lt_0_4"]) == (False, True)
     assert "con el BCa (0,39) y no con el método analítico (0,40)" in cc._criterio(
         "K", con(0.7, li_a=un_ulp, li_b=0.39))
+    # tambien con el ulp en el limite del BCa
+    u = con(0.7, li_a=0.39, li_b=un_ulp)["frente_a_umbrales"]
+    assert (u["li_analitico_lt_0_4"], u["li_bca_lt_0_4"]) == (True, False)
+    assert "con el método analítico (0,39) y no con el BCa (0,40)" in cc._criterio(
+        "K", con(0.7, li_a=0.39, li_b=un_ulp))
+    # un limite que ES el umbral no queda por debajo; tampoco «por encima»
+    en_el_umbral = cc._criterio("K", con(0.7, li_a=un_ulp, li_b=0.4))
+    assert ("el límite inferior del intervalo no queda por debajo de 0,4 con ninguno de los "
+            "dos métodos (analítico 0,40; BCa 0,40).") in en_el_umbral
+    assert "por encima" not in en_el_umbral
     # y lo que a seis decimales NO es el umbral sigue sin alcanzarlo, y se ve
     assert con(0.399999)["frente_a_umbrales"]["puntual_ge_0_4"] is False
     assert cc._criterio("K", con(0.399999)).startswith("K (0,399999) no alcanza el mínimo")
+    # la tolerancia son SEIS decimales, ni siete ni 1e-9: lo que a seis es el
+    # umbral lo alcanza, y no puede salir «K (0,400000) no alcanza»
+    assert con(0.3999996)["frente_a_umbrales"]["puntual_ge_0_4"] is True
+    assert cc._criterio("K", con(0.3999996)).startswith("K (0,40) alcanza el mínimo de 0,4")
+    assert con(0.3999994)["frente_a_umbrales"]["puntual_ge_0_4"] is False
+    assert cc._criterio("K", con(0.3999994)).startswith("K (0,399999) no alcanza el mínimo")
+    assert con(0.5999996)["frente_a_umbrales"]["puntual_ge_0_6"] is True
 
 
 @pytest.mark.filterwarnings("error::RuntimeWarning")
@@ -404,10 +444,24 @@ def test_el_acta_se_rellena_desde_sesion_json_y_no_deja_huecos(tmp_path):
     assert "no hay controles (solo la lectura sin copiloto)" in plano
     assert "**Congelado verificable:** sin huellas (el análisis no recibió los ficheros de la sesión)." in plano
     assert "casos cuya horquilla cruza un límite: 1 de 24" in plano
-    assert "(0 de 24 horquillas son un solo porcentaje: en ellas solo cuenta el valor exacto)" in plano
-    # acuerdo perfecto: los tres kappas valen 1 y su límite inferior queda por encima de 0,4
+    assert ("el porcentaje del médico cae dentro de la horquilla en 8 de 24 casos (33 %) "
+            "(0 de 24 horquillas son un solo valor impreso, y 0 de ellas una cota, «< 1 %» "
+            "o «> 99 %»: en ellas solo cuenta ese entero, y una «< 1 %» solo la cumple un "
+            "0 y una «> 99 %», un 100; en un rango, «menos de 1 %» admite desde el 0 y "
+            "«más de 99 %», hasta el 100); porcentajes de 0 o 100 acotados: 0; puntos "
+            "medios del sistema por debajo de 0,5 % o por encima de 99,5 %: 0 (en ellos la "
+            "diferencia no puede ser cero: lo que conteste el médico se acota a 0,5 % y "
+            "99,5 %, y el sistema no).") in plano
+    # acuerdo perfecto: los tres kappas valen 1 y su límite inferior no queda por debajo de 0,4
     assert ("El kappa ponderado (1,00) alcanza el mínimo de 0,4 de la Semana 1 y el objetivo de 0,6; "
-            "el límite inferior del intervalo queda por encima de 0,4 con los dos métodos") in plano
+            "el límite inferior del intervalo no queda por debajo de 0,4 con ninguno de los dos "
+            "métodos") in plano
+    # el texto fijado se cita como lo declarado, y detrás va lo observado
+    assert ("**Declarado antes de la sesión** (spec de SP5 §5.5): «" + cc.TEXTO_FIJADO
+            + "» **Observado en esta sesión:** el intervalo del 95 % del kappa ponderado "
+            "va de 1,00 a 1,00 con el método analítico (anchura 0,00) y de 1,00 a 1,00 con "
+            "el BCa (anchura 0,00); el 0,4 y el 0,6 quedan fuera con los dos métodos."
+            ) in plano
     assert "El kappa de Cohen (1,00)" in plano and "El kappa binario en «alta» (1,00)" in plano
     assert plano.index("Kappa binario en «alta»") < plano.index("El kappa ponderado (1,00)") < plano.index(cc.TEXTO_FIJADO)
     with pytest.raises(KeyError):
@@ -456,6 +510,92 @@ def test_la_frase_del_criterio_cubre_cada_combinacion():
     assert cc.frente_a_umbrales({"kappa": nan, "ic95": [nan, nan], "ic95_bca": [nan, nan]}) is None
     assert cc._criterio("El kappa binario en «alta»", {"kappa": nan, "frente_a_umbrales": None}) == \
         "El kappa binario en «alta» no es calculable con estas lecturas."
+
+
+def test_un_cero_con_residuo_de_coma_flotante_no_se_imprime_negativo():
+    """El limite inferior del BCa de una tabla puede ser −5e-16: es un 0."""
+    assert cc._f(-5.3e-16) == "0,00" and cc._f(-0.0) == "0,00" and cc._f(0.0) == "0,00"
+    assert cc._f(-0.004) == "0,00" and cc._f(-0.0004, 3) == "0,000"
+    assert cc._f(-0.005001) == "-0,01" and cc._f(-0.12) == "-0,12"
+    assert cc._f_frente_a_umbral(-5.3e-16) == "0,00"
+    k = {"kappa": 0.5, "ic95": [-5.3e-16, 0.75], "ic95_bca": [-1e-17, 0.75], "n": 24}
+    assert cc._kappa_texto(k) == ("0,50 (IC 95 % analítico 0,00 a 0,75; BCa 0,00 a 0,75; "
+                                  "n = 24)")
+
+
+def test_lo_observado_va_al_lado_de_lo_declarado_y_no_lo_contradice():
+    """El texto fijado dice «una anchura de 0,5 a 0,6»: con un kappa alto el
+    intervalo es mucho más estrecho, y el acta tiene que decir el suyo."""
+    def k(kappa, analitico, bca):
+        r = {"kappa": kappa, "ic95": list(analitico), "ic95_bca": list(bca), "n": 24}
+        r["frente_a_umbrales"] = cc.frente_a_umbrales(r)
+        return r
+    assert cc._anchura_observada(k(0.893, (0.7512, 1.0), (0.6488, 1.0))) == (
+        "el intervalo del 95 % del kappa ponderado va de 0,75 a 1,00 con el método "
+        "analítico (anchura 0,25) y de 0,65 a 1,00 con el BCa (anchura 0,35); el 0,4 y el "
+        "0,6 quedan fuera con los dos métodos.")
+    assert cc._anchura_observada(k(0.55, (0.28, 0.82), (0.25, 0.79))) == (
+        "el intervalo del 95 % del kappa ponderado va de 0,28 a 0,82 con el método "
+        "analítico (anchura 0,54) y de 0,25 a 0,79 con el BCa (anchura 0,54); el 0,4 y el "
+        "0,6 quedan dentro con los dos métodos.")
+    # los límites, tal como se imprimen: 0,3996 se imprime «0,40» y contiene el 0,4
+    assert cc._anchura_observada(k(0.7, (0.3996, 0.95), (0.41, 0.95))) == (
+        "el intervalo del 95 % del kappa ponderado va de 0,40 a 0,95 con el método "
+        "analítico (anchura 0,55) y de 0,41 a 0,95 con el BCa (anchura 0,54); el 0,4 queda "
+        "dentro con el método analítico y fuera con el BCa y el 0,6 queda dentro con los "
+        "dos métodos.")
+    assert "de 0,00 a 0,00 con el método analítico (anchura 0,00)" in cc._anchura_observada(
+        k(0.0, (-5.3e-16, 0.0), (0.0, 0.0)))
+    nan = float("nan")
+    for sin_kappa in ({"kappa": nan, "ic95": [nan, nan], "ic95_bca": [nan, nan],
+                       "frente_a_umbrales": None},
+                      {"kappa": None, "ic95": [None, None], "ic95_bca": [None, None],
+                       "frente_a_umbrales": None}):
+        assert cc._anchura_observada(sin_kappa) == (
+            "el kappa ponderado no es calculable con estas lecturas, y su intervalo tampoco.")
+
+
+def test_dentro_de_la_horquilla_da_el_recuento_y_redondea_como_el_bot():
+    def dicho(dentro, n=24):
+        return cc._dentro_de_la_horquilla({"dentro_de_la_horquilla": dentro, "n": n})
+    assert dicho(7) == "7 de 24 casos (29 %)"
+    # 3 de 24 son el 12,5 %: hacia arriba, como `Math.round` en el bot
+    assert dicho(3) == "3 de 24 casos (13 %)" and dicho(15) == "15 de 24 casos (63 %)"
+    assert dicho(9) == "9 de 24 casos (38 %)" and dicho(21) == "21 de 24 casos (88 %)"
+    assert dicho(0) == "0 de 24 casos (0 %)" and dicho(24) == "24 de 24 casos (100 %)"
+    assert dicho(1, 1) == "1 de 1 caso (100 %)"
+    assert cc._dentro_de_la_horquilla({"n": 24}) == "—"
+
+
+def test_sesion_json_no_lleva_nan(tmp_path):
+    """Con el porcentaje del médico constante Spearman no es calculable: en
+    `sesion.json` va `null`, que un lector estricto abre, y en el acta «—»."""
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    sesion = tmp_path / "sesion"
+    (sesion / "corpus").mkdir(parents=True)
+    clave = _clave()
+    (sesion / "clave.json").write_text(json.dumps(clave, ensure_ascii=False), encoding="utf-8")
+    (sesion / "corpus" / "mensajes.json").write_text("{}", encoding="utf-8")
+    casos = {c["patientId"]: c for c in clave["casos"]}
+    _csv(sesion / "lectura1.csv", [
+        _fila(1, i + 1, casos[pid], casos[pid]["categoria"]["primaria"], 50, 60.0)
+        for i, pid in enumerate(clave["ordenes"]["lectura1"])])
+    salida, acta = tmp_path / "out" / "sesion.json", tmp_path / "out" / "acta-h7.md"
+    r = subprocess.run(
+        [sys.executable, str(repo / "scripts" / "analizar_sesion.py"), "--sesion", str(sesion),
+         "--lectura1", "lectura1.csv", "--salida", str(salida), "--acta", str(acta)],
+        capture_output=True, text=True, encoding="utf-8",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    assert r.returncode == 0, r.stderr
+    crudo = salida.read_text(encoding="utf-8")
+    assert "NaN" not in crudo and "Infinity" not in crudo
+
+    def estricto(constante):
+        raise AssertionError(f"sesion.json lleva {constante}")
+    s = json.loads(crudo, parse_constant=estricto)
+    assert s["acuerdo_continuo"]["spearman"] is None
+    assert s["kappa"]["ponderado_lineal"]["kappa"] == pytest.approx(1.0)
+    assert "Spearman —;" in _plano(acta.read_text(encoding="utf-8"))
 
 
 def test_pegado_a_un_umbral_imprime_los_decimales_que_lo_distinguen():
@@ -748,7 +888,13 @@ def test_analizar_sesion_escribe_sesion_json_y_un_acta_sin_huecos(tmp_path, modo
     assert "se generaron con bots contra el sistema desplegado, con la prevalencia desplegada (0,1466)" in plano
     assert "**Frente a 0,4 y 0,6:** El kappa ponderado (" in plano
     assert "casos cuya horquilla cruza un límite: 1 de 24." in plano
-    assert "horquillas son un solo porcentaje: en ellas solo cuenta el valor exacto" in plano
+    assert "horquillas son un solo valor impreso, y 0 de ellas una cota" in plano
+    assert "**Declarado antes de la sesión** (spec de SP5 §5.5): «" + cc.TEXTO_FIJADO in plano
+    assert "**Observado en esta sesión:** el intervalo del 95 % del kappa ponderado va de " in plano
+    # sesion.json lo abre un lector estricto: no lleva NaN
+    def estricto(constante):
+        raise AssertionError(f"sesion.json lleva {constante}")
+    json.loads(salida.read_text(encoding="utf-8"), parse_constant=estricto)
     assert "Los síntomas referidos son un fondo constante en todos los casos" in plano
     assert "## Pregunta sobre el PACS" in texto
     assert ("Razones individuales de los controles (lectura 2 / lectura 1): "

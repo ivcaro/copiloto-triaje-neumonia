@@ -10,13 +10,15 @@ convertido a porcentaje entero con redondeo hacia arriba en ,5 (el mismo
 Variantes, fijadas de antemano como analisis de sensibilidad: la banda del
 extremo de independencia, la del extremo conservador, y la regla «si la
 horquilla cruza un limite, intermedia». Con las tablas actuales ninguna
-horquilla cruza a la vez el 20 % y el 70 % (prueba): el cociente de odds de
-los dos extremos vale min(RV_clinica, RV_imagen) ≤ 17,5, y cruzar los dos
-exige ademas odds_previas × max(RV) < 0,25, que solo ocurre con prevalencia
-declarada por debajo de ≈ 3,3 %. El caso limite es el asma `no_se` con
-puntuacion [4, 5], donde la minima sale de la RV de 4 puntos (7,18) y la
-maxima de la de 5 (17,5) por la de la imagen; la prueba lo fija con 0,032
-(cruza) y 0,034 (no cruza).
+horquilla cruza a la vez el 20 % y el 70 % (prueba). La cuenta esta en el
+spec §5.3. Con UNA puntuacion, el cociente de odds de los dos extremos vale
+min(RV_clinica, RV_imagen) ≤ 17,5 y tiene que pasar de 9,33: solo puede con
+la RV de 5 puntos (17,5), y entonces odds_previas × 17,5 < 0,25, es decir,
+una prevalencia declarada por debajo de ≈ 1,4 %. El umbral de verdad, ≈ 3,3 %,
+sale del asma `no_se` con puntuacion [4, 5], donde la minima sale de la RV de
+4 puntos (7,18) y la maxima de la de 5 (17,5) por la de la imagen:
+0,25/7,18 da 3,36 %, y con el porcentaje entero, 3,26 %. La prueba lo fija
+con 0,032 (cruza) y 0,034 (no cruza).
 """
 from __future__ import annotations
 

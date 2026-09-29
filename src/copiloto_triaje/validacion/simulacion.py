@@ -7,9 +7,9 @@ es `heckerling.combinacion` y `heckerling.combinar`: el mismo código que
 sirve el contenedor, llamado caso a caso, nunca una reimplementación.
 
 Una CELDA es un par (ρ1, ρ0). Su estimación puntual usa la clínica sorteada
-con `SEMILLA_PUNTUAL` sobre las 3 811 placas. Su bootstrap remuestrea placas
-con reemplazo y vuelve a sortear la clínica en cada réplica, con `z_y`, los
-umbrales y el calibrador FIJOS: el generador es el mismo en todas.
+con `SEMILLA_PUNTUAL` sobre las 3 811 placas. Su bootstrap remuestrea con
+reemplazo esos mismos casos, cada placa con la clínica que se le sorteó: la
+clínica NO se vuelve a sortear (ver `replica`).
 """
 from __future__ import annotations
 
@@ -26,7 +26,6 @@ from . import datos, generador, metricas, oraculo
 from .categoria import BANDAS, banda, categoria_del_sistema, porcentaje_entero
 
 SEMILLA_PUNTUAL = 1          # la misma clinica que comprueba 0A
-SEMILLA_CLINICA = 10_000     # replica b: generar(modelo, SEMILLA_CLINICA + b)
 SEMILLA_INDICES = 20_000     # replica b: default_rng(SEMILLA_INDICES + b)
 B_REPLICAS = 1000
 HIPOTESIS_CONTENCION = 0.90  # «el oraculo queda dentro en ≥ 90 % de los concordantes»
@@ -176,19 +175,29 @@ def aplanar(d: dict, prefijo: str = "") -> dict:
     return plano
 
 
-def replica(conjunto: Conjunto, modelo: oraculo.Modelo, b: int) -> dict:
-    clinica = generador.generar(modelo, SEMILLA_CLINICA + b)
-    salidas = salidas_del_sistema(conjunto.prevalencia, clinica, conjunto.rv)
-    l_or = oraculo_de_los_casos(modelo, conjunto.q, clinica)
+def replica(conjunto: Conjunto, salidas: dict, l_oraculo, b: int) -> dict:
+    """Una replica del bootstrap: los casos de la estimacion puntual -cada
+    placa CON la clinica que se le sorteo, lo que el sistema dio y su
+    oraculo-, remuestreados con reemplazo.
+
+    La clinica NO se vuelve a sortear. El remuestreo de las parejas ya
+    lleva el ruido del sorteo: sorteando otra vez en cada replica ese ruido
+    se cuenta dos veces (medido en esta simulacion: la varianza sale × 1,57
+    en mediana, y un «IC 95 %» cubre mas del 99 %). Remuestrear primero y
+    sortear despues quita la doble cuenta, pero centra las replicas en la
+    media sobre la clinica y no en la estimacion que se publica, y el
+    intervalo por percentiles sigue cubriendo mas del 99 %."""
     n = conjunto.y.size
     filas = np.random.default_rng(SEMILLA_INDICES + b).integers(0, n, n)
-    return aplanar(medir(conjunto, salidas, l_or, filas))
+    return aplanar(medir(conjunto, salidas, l_oraculo, filas))
 
 
-def bootstrap(conjunto: Conjunto, modelo: oraculo.Modelo, replicas: int = B_REPLICAS) -> dict:
+def bootstrap(conjunto: Conjunto, salidas: dict, l_oraculo,
+              replicas: int = B_REPLICAS) -> dict:
     """{ruta: [li, ls]} al 95 % por percentiles, pareado: cada replica mide
-    todos los modelos sobre las mismas placas y la misma clinica."""
-    corridas = [replica(conjunto, modelo, b) for b in range(replicas)]
+    todos los modelos sobre los mismos casos. `salidas` y `l_oraculo` son
+    los de la estimacion puntual."""
+    corridas = [replica(conjunto, salidas, l_oraculo, b) for b in range(replicas)]
     rutas = sorted(set().union(*corridas)) if corridas else []
     incompletas = [r for r in rutas if any(r not in c for c in corridas)]
     if incompletas:
@@ -198,7 +207,14 @@ def bootstrap(conjunto: Conjunto, modelo: oraculo.Modelo, replicas: int = B_REPL
         raise ArithmeticError(f"{len(incompletas)} cifras faltan en alguna réplica (la "
                               f"primera, {incompletas[0]}): algún grupo de casos quedó "
                               "vacío al remuestrear")
-    return {r: metricas.percentiles([c[r] for c in corridas]) for r in rutas}
+    intervalos = {}
+    for r in rutas:
+        try:
+            intervalos[r] = metricas.percentiles([c[r] for c in corridas])
+        except ArithmeticError as error:
+            # tampoco sobre las que dieron algo que no es un numero
+            raise ArithmeticError(f"{r}: {error}") from None
+    return intervalos
 
 
 def escala_legible(modelo: oraculo.Modelo, conjunto: Conjunto) -> dict:
@@ -309,8 +325,8 @@ def evaluar_celda(conjunto: Conjunto, rho1: float, rho0: float, replicas: int = 
     l_or = oraculo_de_los_casos(modelo, conjunto.q, clinica)
     celda = {"rho1": float(rho1), "rho0": float(rho0),
              "nombre": nombre_de_celda(rho1, rho0),
-             "correlacion_teorica": {"con_neumonia": oraculo.correlacion_teorica(modelo, 1),
-                                     "sin_neumonia": oraculo.correlacion_teorica(modelo, 0)}}
+             "correlacion_teorica": {"con_opacidad": oraculo.correlacion_teorica(modelo, 1),
+                                     "sin_opacidad": oraculo.correlacion_teorica(modelo, 0)}}
     celda.update(medir(conjunto, salidas, l_or))
     s = salidas["conocida"]
     p = {"imagen": conjunto.p_cal, "clinica": salidas["clinica"],
@@ -325,7 +341,7 @@ def evaluar_celda(conjunto: Conjunto, rho1: float, rho0: float, replicas: int = 
     celda["escala_legible"] = escala_legible(modelo, conjunto)
     if replicas:
         celda["replicas"] = int(replicas)
-        celda["intervalos"] = bootstrap(conjunto, modelo, replicas)
+        celda["intervalos"] = bootstrap(conjunto, salidas, l_or, replicas)
     if con_sensibilidad:
         celda["sensibilidad_al_previo"] = sensibilidad_al_previo(conjunto, clinica, salidas)
         if rho1 == 0.0 and rho0 == 0.0:

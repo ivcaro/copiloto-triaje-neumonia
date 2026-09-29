@@ -698,7 +698,7 @@ def test_un_error_del_flujo_no_entra_en_la_medida_aunque_el_arnes_salga_limpio()
     assert [obs["coincide"] for _, obs, _ in filas[30:]] == [
         "NO: uno dio resultado y el otro no", "sí", "NO: uno dio resultado y el otro no"]
     medido = medir.resumir(json.loads(json.dumps(filas_de_latencia(filas))))
-    assert medido["n"] == 30 and medido["maximo_ms"] == 3900.0
+    assert medido["n"] == 30 and medido["mayor_ms"] == 3900.0
     assert medido["descartadas"]["error"] == 1
     assert medido["descartadas"]["rechazo_previsto"] == 1
     assert medido["descartadas"]["no_coincide"] == 1
@@ -719,7 +719,7 @@ def test_el_arnes_no_llama_de_extremo_a_extremo_a_ms_extremo(tmp_path):
     assert "de extremo a extremo" not in caso
     dicho = resumen([(_caso(), obs, bien)], True, tmp_path)
     assert "ms_extremo, todas las filas (mediana)" in dicho and "1840 ms" in dicho
-    assert "de extremo a extremo (mediana)" not in dicho
+    assert "de extremo a extremo" not in dicho
 
 
 def test_escribir_latencias_deja_el_json_en_la_carpeta_de_salida(tmp_path):

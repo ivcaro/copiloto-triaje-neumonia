@@ -1,6 +1,8 @@
 """La simulación celda a celda sobre las 3 811 placas congeladas (spec de
 SP5 §4.3-§4.6, §8, §11.2-§11.3). La fila 0A es la comprobación de la
 métrica: con dependencia nula el oráculo no puede salirse de la horquilla."""
+import inspect
+
 import numpy as np
 import pytest
 
@@ -212,6 +214,24 @@ def test_la_direccion_depende_de_donde_vive_la_dependencia(conjunto):
     assert sanos["en_contra"]["sobre"] > 0.7
 
 
+def test_el_sesgo_es_sistema_menos_oraculo_y_el_rango_lleva_la_tolerancia(
+        conjunto, medida_0a):
+    """Cifras con su signo: con los argumentos intercambiados, o con el
+    oráculo menos el sistema, cambian de signo; sin la tolerancia, cambia la
+    contención del asma desconocida."""
+    assert medida_0a["no_se"]["punto_medio"]["sesgo_mediano"] == pytest.approx(
+        -0.3381, abs=5e-4)
+    _, _, salidas, l_or = _escenario(conjunto, 0.6, 0.0)
+    m = simulacion.medir(conjunto, salidas, l_or)
+    assert m["discordantes"]["sesgo_mediano"] == pytest.approx(0.3958, abs=5e-4)
+    assert m["no_se"]["punto_medio"]["sesgo_mediano"] == pytest.approx(-0.8047, abs=5e-4)
+    assert m["no_se"]["contencion"] == pytest.approx(0.2514, abs=5e-4)
+    ns = ~salidas["conocida"]
+    sin = metricas.contencion_en_rango(l_or[ns], salidas["l_minima"][ns],
+                                       salidas["l_maxima"][ns], epsilon=0.0)
+    assert sin["contencion"] < m["no_se"]["contencion"]
+
+
 def test_medir_sobre_filas_repetidas_es_medir_ese_remuestreo(conjunto, escenario_0a):
     _, _, salidas, l_or = escenario_0a
     filas = np.random.default_rng(3).integers(0, 3811, 3811)
@@ -234,10 +254,15 @@ def test_aplanar_se_queda_con_las_cifras():
 # --------------------------------------------------------------------------
 # El bootstrap
 # --------------------------------------------------------------------------
-def test_el_bootstrap_es_pareado_reproducible_y_por_percentiles(conjunto):
-    modelo = oraculo.ajustar(conjunto.q, conjunto.y, 0.3, 0.3)
-    a = simulacion.bootstrap(conjunto, modelo, replicas=4)
-    assert a == simulacion.bootstrap(conjunto, modelo, replicas=4)
+@pytest.fixture(scope="module")
+def escenario_simetrico(conjunto):
+    return _escenario(conjunto, 0.3, 0.3)
+
+
+def test_el_bootstrap_es_pareado_reproducible_y_por_percentiles(conjunto, escenario_simetrico):
+    _, _, salidas, l_or = escenario_simetrico
+    a = simulacion.bootstrap(conjunto, salidas, l_or, replicas=4)
+    assert a == simulacion.bootstrap(conjunto, salidas, l_or, replicas=4)
     for ruta in ("modelos.independencia.auc", "pareadas.independencia.auc",
                  "pareadas.conservador.pendiente", "horquilla.todos.contencion",
                  "horquilla.a_favor.lambda.mediana", "discordantes.sesgo_mediano",
@@ -245,45 +270,54 @@ def test_el_bootstrap_es_pareado_reproducible_y_por_percentiles(conjunto):
         lo, hi = a[ruta]
         assert lo <= hi, ruta
     assert not any(ruta.startswith("recuentos") for ruta in a)
-    # cada replica sortea su clinica y sus placas
-    r0, r1 = (simulacion.replica(conjunto, modelo, b) for b in (0, 1))
-    assert r0 != r1 and r0 == simulacion.replica(conjunto, modelo, 0)
+    # cada replica remuestrea sus casos
+    r0, r1 = (simulacion.replica(conjunto, salidas, l_or, b) for b in (0, 1))
+    assert r0 != r1 and r0 == simulacion.replica(conjunto, salidas, l_or, 0)
     # y el intervalo son los percentiles 2,5 y 97,5 de las replicas
-    corridas = [simulacion.replica(conjunto, modelo, b) for b in range(4)]
+    corridas = [simulacion.replica(conjunto, salidas, l_or, b) for b in range(4)]
     ruta = "pareadas.independencia.auc"
     assert a[ruta] == pytest.approx(list(np.percentile([c[ruta] for c in corridas],
                                                        [2.5, 97.5])))
 
 
-def test_cada_replica_remuestrea_placas_y_vuelve_a_sortear_la_clinica(conjunto, monkeypatch):
-    """Las dos mitades del bootstrap, fijadas: si una réplica dejara de
-    remuestrear las placas, o midiera siempre la clínica de la estimación
-    puntual, los intervalos se estrecharían sin que nada más lo notara."""
-    modelo = oraculo.ajustar(conjunto.q, conjunto.y, 0.3, 0.3)
-    semillas, filas = [], []
-    generar, medir = generador.generar, simulacion.medir
+def test_cada_replica_remuestrea_los_casos_de_la_estimacion_y_no_vuelve_a_sortear(
+        conjunto, escenario_simetrico, monkeypatch):
+    """Una réplica remuestrea las parejas (placa, clínica) de la estimación
+    puntual. Si además volviera a sortear la clínica, el ruido del sorteo
+    se contaría dos veces y los intervalos saldrían más anchos de lo que
+    dicen; si dejara de remuestrear, se estrecharían."""
+    _, _, salidas, l_or = escenario_simetrico
+    medidas = []
+    medir = simulacion.medir
 
-    def generar_espia(m, semilla):
-        semillas.append(semilla)
-        return generar(m, semilla)
+    # El espía no fija CÓMO se llama a `medir`: lee cada argumento por su
+    # nombre en la firma de verdad, vaya por posición o por palabra clave.
+    def medir_espia(*a, **k):
+        medidas.append(inspect.signature(medir).bind(*a, **k).arguments)
+        return medir(*a, **k)
 
-    def medir_espia(c, salidas, l_oraculo, f=None):
-        filas.append(f)
-        return medir(c, salidas, l_oraculo, f)
+    def prohibido(*a, **k):
+        raise AssertionError("una réplica ni sortea la clínica ni llama al sistema")
 
-    monkeypatch.setattr(generador, "generar", generar_espia)
     monkeypatch.setattr(simulacion, "medir", medir_espia)
-    corridas = [simulacion.replica(conjunto, modelo, b) for b in (0, 1, 2)]
-    assert semillas == [simulacion.SEMILLA_CLINICA + b for b in (0, 1, 2)]
-    assert simulacion.SEMILLA_PUNTUAL not in semillas
+    for modulo, nombre in ((generador, "generar"), (simulacion, "salidas_del_sistema"),
+                           (simulacion, "oraculo_de_los_casos"), (oraculo, "ajustar")):
+        monkeypatch.setattr(modulo, nombre, prohibido)
+    corridas = [simulacion.replica(conjunto, salidas, l_or, b) for b in (0, 1, 2)]
     n = conjunto.y.size
-    for b, f in enumerate(filas):
+    filas = [m["filas"] for m in medidas]
+    for b, (f, medida) in enumerate(zip(filas, medidas)):
+        # los casos son los de la estimación: las mismas placas, lo que el
+        # sistema dio para ellas y su oráculo
+        assert medida["conjunto"] is conjunto and medida["salidas"] is salidas
+        assert medida["l_oraculo"] is l_or
         assert f is not None and f.shape == (n,)
         assert 0 <= f.min() and f.max() < n
         assert np.unique(f).size < n                    # con reemplazo: hay repetidas
         assert np.array_equal(f, np.random.default_rng(
             simulacion.SEMILLA_INDICES + b).integers(0, n, n))
     assert not np.array_equal(filas[0], filas[1])
+    assert not hasattr(simulacion, "SEMILLA_CLINICA")
     # pareado: la diferencia entre modelos es la de ESA réplica
     for c in corridas:
         for combinado in simulacion.COMBINADOS:
@@ -292,26 +326,65 @@ def test_cada_replica_remuestrea_placas_y_vuelve_a_sortear_la_clinica(conjunto, 
                     c[f"modelos.{combinado}.{cifra}"] - c[f"modelos.imagen.{cifra}"], abs=1e-15)
 
 
-def test_un_intervalo_no_se_calcula_sobre_menos_replicas_de_las_que_dice(conjunto, monkeypatch):
-    modelo = oraculo.ajustar(conjunto.q, conjunto.y, 0.3, 0.3)
-    monkeypatch.setattr(simulacion, "replica", lambda c, m, b: (
+def test_las_replicas_se_centran_en_la_estimacion_que_se_publica(conjunto):
+    """Lo que separa este bootstrap de uno que vuelve a sortear la clínica:
+    en (0,6; 0) la pendiente del extremo conservador de la estimación es
+    1,13, y la media sobre otras clínicas, 1,08. Las réplicas tienen que
+    rodear a la primera: el intervalo es de la cifra que se publica."""
+    _, _, salidas, l_or = _escenario(conjunto, 0.6, 0.0)
+    ruta = "modelos.conservador.pendiente"
+    puntual = simulacion.aplanar(simulacion.medir(conjunto, salidas, l_or))[ruta]
+    assert puntual == pytest.approx(1.13, abs=5e-3)
+    replicas = np.array([simulacion.replica(conjunto, salidas, l_or, b)[ruta]
+                         for b in range(200)])
+    assert abs(replicas.mean() - puntual) < 0.25 * replicas.std(ddof=1)
+    lo, hi = np.percentile(replicas, [2.5, 97.5])
+    assert lo < puntual < hi and lo > 1.0
+
+
+def test_un_intervalo_no_se_calcula_sobre_menos_replicas_de_las_que_dice(
+        conjunto, escenario_simetrico, monkeypatch):
+    _, _, salidas, l_or = escenario_simetrico
+    monkeypatch.setattr(simulacion, "replica", lambda c, s, l, b: (
         {"a.auc": 0.9, "a.ece": 0.01} if b != 2 else {"a.auc": 0.9}))
-    assert simulacion.bootstrap(conjunto, modelo, replicas=2) == {
+    assert simulacion.bootstrap(conjunto, salidas, l_or, replicas=2) == {
         "a.auc": [0.9, 0.9], "a.ece": [0.01, 0.01]}
-    with pytest.raises(ArithmeticError, match="a.ece"):
-        simulacion.bootstrap(conjunto, modelo, replicas=3)
+    with pytest.raises(ArithmeticError, match=r"a\.ece"):
+        simulacion.bootstrap(conjunto, salidas, l_or, replicas=3)
+    # ni sobre una replica que dio algo que no es un numero
+    monkeypatch.setattr(simulacion, "replica", lambda c, s, l, b: (
+        {"a.auc": 0.9, "a.ece": 0.01 if b != 1 else float("nan")}))
+    assert simulacion.bootstrap(conjunto, salidas, l_or, replicas=1) == {
+        "a.auc": [0.9, 0.9], "a.ece": [0.01, 0.01]}
+    with pytest.raises(ArithmeticError,
+                       match=r"a\.ece: 1 de las 3 réplicas no dan un número"):
+        simulacion.bootstrap(conjunto, salidas, l_or, replicas=3)
 
 
-def test_las_replicas_no_reajustan_el_generador(conjunto, monkeypatch):
-    """z_y, los umbrales y el calibrador quedan fijos: una réplica no vuelve
-    a llamar a `oraculo.ajustar` (spec §4.6)."""
-    modelo = oraculo.ajustar(conjunto.q, conjunto.y, 0.3, 0.3)
+def test_el_bootstrap_de_una_celda_es_el_de_su_estimacion(conjunto, monkeypatch):
+    """`evaluar_celda` le da al bootstrap lo que acaba de medir: los
+    intervalos son de ESA estimación, con esa clínica."""
+    recibido = []
+    firma = inspect.signature(simulacion.bootstrap)
 
-    def prohibido(*a, **k):
-        raise AssertionError("una réplica no reajusta el modelo")
+    def bootstrap_espia(*a, **k):
+        recibido.append(firma.bind(*a, **k).arguments)
+        return {"modelos.imagen.auc": [0.0, 1.0]}
 
-    monkeypatch.setattr(oraculo, "ajustar", prohibido)
-    assert simulacion.bootstrap(conjunto, modelo, replicas=1)
+    celda_sin = simulacion.evaluar_celda(conjunto, 0.3, 0.0)
+    monkeypatch.setattr(simulacion, "bootstrap", bootstrap_espia)
+    celda = simulacion.evaluar_celda(conjunto, 0.3, 0.0, replicas=3)
+    assert celda["replicas"] == 3 and celda["intervalos"] == {"modelos.imagen.auc": [0.0, 1.0]}
+    (llamada,) = recibido
+    assert llamada["conjunto"] is conjunto and llamada["replicas"] == 3
+    clinica = generador.generar(oraculo.ajustar(conjunto.q, conjunto.y, 0.3, 0.0),
+                                simulacion.SEMILLA_PUNTUAL)
+    esperadas = simulacion.salidas_del_sistema(conjunto.prevalencia, clinica, conjunto.rv)
+    for clave in ("independencia", "conservador", "l_minima", "l_maxima"):
+        assert np.array_equal(llamada["salidas"][clave], esperadas[clave], equal_nan=True)
+    assert llamada["l_oraculo"].shape == (conjunto.y.size,)
+    # y la estimación puntual no depende de que haya bootstrap
+    assert {k: v for k, v in celda.items() if k not in ("replicas", "intervalos")} == celda_sin
 
 
 # --------------------------------------------------------------------------
@@ -345,8 +418,9 @@ def test_la_celda_lleva_lo_medido_y_lo_que_solo_se_calcula_una_vez(celda_0a, med
 
 def test_la_hipotesis_del_90_no_se_sostiene_con_dependencia_simetrica(celda_simetrica):
     c = celda_simetrica
-    assert c["correlacion_teorica"]["con_neumonia"] == pytest.approx(0.2860, abs=5e-4)
-    assert c["correlacion_teorica"]["sin_neumonia"] == pytest.approx(0.2751, abs=5e-4)
+    assert c["correlacion_teorica"]["con_opacidad"] == pytest.approx(0.2860, abs=5e-4)
+    assert c["correlacion_teorica"]["sin_opacidad"] == pytest.approx(0.2751, abs=5e-4)
+    assert set(c["correlacion_teorica"]) == {"con_opacidad", "sin_opacidad"}
     assert c["hipotesis"]["contencion"] == c["horquilla"]["todos"]["contencion"]
     assert c["hipotesis"]["se_sostiene"] is False
     independencia = c["modelos"]["independencia"]

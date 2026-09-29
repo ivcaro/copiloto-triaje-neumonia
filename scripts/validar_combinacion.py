@@ -3,13 +3,15 @@
 
 USO
     python scripts/validar_combinacion.py
-    python scripts/validar_combinacion.py --replicas 50 --sin-figuras     (ensayo rapido)
+    python scripts/validar_combinacion.py --replicas 50 --sin-figuras
+        --salida CARPETA --analisis FICHERO.md                            (ensayo rapido)
     python scripts/validar_combinacion.py --solo-documento                (sin recalcular)
 
 Lee docs/validacion-semisintetica/crudas_prueba.csv (congelada) y
 servidor/calibrador.json; no necesita los pesos, ni Docker, ni red. Escribe en
 docs/validacion-semisintetica/ el fichero resultados_simulacion.json y las
 figuras a 300 DPI, y en docs/validacion-semisintetica-sp5.md el analisis.
+Eso es lo PUBLICADO: un ensayo lleva siempre --salida y --analisis, o lo pisa.
 Ninguna cifra del analisis se teclea: el documento y las figuras se generan
 LEYENDO resultados_simulacion.json, no las variables en memoria.
 
@@ -19,6 +21,7 @@ La rejilla son 25 celdas (ρ1, ρ0); el bootstrap (1 000 replicas) se corre en
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -38,7 +41,7 @@ CARPETA = datos.CARPETA
 NOMBRE_RESULTADOS = "resultados_simulacion.json"
 ANALISIS = REPO / "docs" / "validacion-semisintetica-sp5.md"
 ROTULO = "simulación semisintética"
-TITULO = "Validación de la combinación de clínica e imagen: simulación semisintética (SP5 §4)"
+TITULO = informe.TITULO            # el del documento: escrito una sola vez
 ADVERTENCIA = (
     "Las placas y sus etiquetas son reales (conjunto de prueba de RSNA); la clínica "
     "se sortea con la distribución publicada de la puntuación de Heckerling y la "
@@ -85,6 +88,21 @@ def huella_de_los_pesos() -> str:
     return partes[0]
 
 
+def entorno() -> dict:
+    """Las versiones con que se calcula. El resultado las lleva porque las
+    cifras dependen de ellas: NumPy no promete el mismo flujo de numeros
+    aleatorios de una version a otra."""
+    import platform
+
+    import numpy
+    import pandas
+    import scipy
+    import sklearn
+    return {"python": platform.python_version(), "numpy": numpy.__version__,
+            "scipy": scipy.__version__, "pandas": pandas.__version__,
+            "scikit-learn": sklearn.__version__}
+
+
 def calcular(replicas: int = simulacion.B_REPLICAS, procesos: int = 1,
              rejilla=oraculo.RHO_REJILLA, destacadas=oraculo.CELDAS_DESTACADAS) -> dict:
     pesos = huella_de_los_pesos()
@@ -114,7 +132,6 @@ def calcular(replicas: int = simulacion.B_REPLICAS, procesos: int = 1,
         "parametros": {
             "replicas": int(replicas),
             "semilla_puntual": simulacion.SEMILLA_PUNTUAL,
-            "semilla_clinica": simulacion.SEMILLA_CLINICA,
             "semilla_indices": simulacion.SEMILLA_INDICES,
             "epsilon": metricas.EPSILON,
             "bins": metricas.BINS,
@@ -123,8 +140,11 @@ def calcular(replicas: int = simulacion.B_REPLICAS, procesos: int = 1,
             "hipotesis_contencion": simulacion.HIPOTESIS_CONTENCION,
             "previo_desplegado": PREVALENCIA_COHORTE,
             "rejilla": [float(r) for r in rejilla],
-            "destacadas": [[float(a), float(b)] for a, b in destacadas],
+            # sin repetidas y en el orden en que se dieron
+            "destacadas": [list(d) for d in dict.fromkeys(
+                (float(a), float(b)) for a, b in destacadas)],
         },
+        "entorno": entorno(),
         "imagen_sola": simulacion.imagen_sola(conjunto),
         "celdas": celdas,
     }
@@ -132,15 +152,27 @@ def calcular(replicas: int = simulacion.B_REPLICAS, procesos: int = 1,
 
 def escribir_resultados(resultados: dict, ruta) -> Path:
     ruta = Path(ruta)
+    # allow_nan=False: «NaN» no es JSON, y un tercero no podria leerlo. Se
+    # serializa ANTES de abrir: si falla, el fichero anterior sigue entero.
+    texto = json.dumps(resultados, ensure_ascii=False, indent=1, allow_nan=False) + "\n"
     ruta.parent.mkdir(parents=True, exist_ok=True)
     with ruta.open("w", encoding="utf-8", newline="\n") as f:
-        # allow_nan=False: «NaN» no es JSON, y un tercero no podria leerlo.
-        f.write(json.dumps(resultados, ensure_ascii=False, indent=1, allow_nan=False) + "\n")
+        f.write(texto)
     return ruta
 
 
 def leer_resultados(ruta) -> dict:
     return json.loads(Path(ruta).read_text(encoding="utf-8"))
+
+
+def huella_de_resultados(resultados: dict) -> str:
+    """El sha256 del CONTENIDO de unos resultados, con las claves ordenadas.
+    Cada figura lo lleva en sus metadatos: dice de que resultados sale el
+    dibujo. Es del contenido y no del fichero, para que no dependa de los
+    finales de linea ni del sangrado."""
+    texto = json.dumps(resultados, ensure_ascii=False, allow_nan=False, sort_keys=True,
+                       separators=(",", ":"))
+    return hashlib.sha256(texto.encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -161,23 +193,27 @@ COLOR_DIAGONAL = "#7a7974"
 COLOR_MODELO = {"imagen": "#2a78d6", "clinica": "#eb6834",
                 "independencia": "#1baf7a", "conservador": "#4a3aa7"}
 MARCA_MODELO = {"imagen": "o", "clinica": "s", "independencia": "^", "conservador": "D"}
-NOMBRE_MODELO = {"imagen": "imagen sola", "clinica": "clínica sola",
-                 "independencia": "combinación por independencia",
-                 "conservador": "combinación conservadora"}
+# Los nombres de los modelos son los del documento (`informe.MODELOS`).
+NOMBRE_MODELO = dict(informe.MODELOS)
 # Las tres fracciones de la horquilla, en el orden del eje de λ: por debajo de
 # 0 (mas alla del extremo conservador), dentro, y por encima de 1. Los colores
 # dicen lo mismo que en el mapa de la pendiente: rojo donde el sistema exagera
 # (λ < 0: el oraculo queda mas cerca del previo que las dos combinaciones) y
 # azul donde se queda corto (λ > 1).
-TRAMOS = (("bajo", "por el lado conservador (λ < 0)", "#e34948"),
+# «En más de ε»: las colas no son λ < 0 y λ > 1 a secas, llevan la tolerancia.
+TRAMOS = (("bajo", "más allá del extremo conservador, en más de ε", "#e34948"),
           ("contencion", "dentro de la horquilla", "#c9c8c3"),
-          ("sobre", "más allá de la independencia (λ > 1)", "#2a78d6"))
+          ("sobre", "más allá de la independencia, en más de ε", "#2a78d6"))
 LADOS = (("a_favor", "imagen a favor (RV ≥ 1)"),
          ("en_contra", "imagen en contra (RV < 1)"))
 RAMPA_AZUL = ("#cde2fb", "#86b6ef", "#3987e5", "#1c5cab", "#0d366b")
 RAMPA_DIVERGENTE = ("#e34948", "#f0efec", "#2a78d6")
-FIGURAS_GLOBALES = ("horquilla_por_celda", "contencion_rejilla", "pendiente_rejilla")
-PREFIJO_FIABILIDAD = "fiabilidad_"
+# Los nombres de las figuras y de las celdas son los del documento.
+FIGURAS_GLOBALES = tuple(clave for clave, _ in informe.FIGURAS_GLOBALES)
+# El metadato del PNG que dice de que resultados sale, y como empieza.
+CLAVE_DE_LA_HUELLA = "Description"
+PREFIJO_DE_LA_HUELLA = f"dibujada de {NOMBRE_RESULTADOS}; sha256 de su contenido: "
+PREFIJO_FIABILIDAD = informe.PREFIJO_FIABILIDAD
 REJILLAS = ("contencion", "pendiente")
 
 
@@ -228,32 +264,50 @@ def _coma(valor, decimales: int) -> str:
     return f"{valor:.{decimales}f}".replace(".", ",")
 
 
-def _rho(valor) -> str:
-    return f"{valor:g}".replace(".", ",")
+_rho = informe.rho
 
 
-def _guardar(plt, fig, destino, titulo) -> Path:
-    """300 DPI, y el titulo -con su rotulo- tambien en los metadatos del PNG."""
+def _guardar(plt, fig, destino, titulo, huella=None) -> Path:
+    """300 DPI. En los metadatos del PNG van el titulo -con su rotulo-, la
+    version de matplotlib con que se dibujo (sin la direccion web que pone
+    por defecto) y, si se da, la huella de los resultados de los que sale."""
+    import matplotlib
     destino = Path(destino)
     destino.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(destino, dpi=DPI, metadata={"Title": titulo})
+    metadatos = {"Title": titulo, "Software": f"matplotlib {matplotlib.__version__}"}
+    if huella is not None:
+        metadatos[CLAVE_DE_LA_HUELLA] = PREFIJO_DE_LA_HUELLA + huella
+    fig.savefig(destino, dpi=DPI, metadata=metadatos)
     plt.close(fig)
     return destino
 
 
-def slug_de_celda(celda: dict) -> str:
-    """`0a` para 0A; `r1-030_r0-000` para el resto (ρ × 100, tres cifras)."""
-    if celda["nombre"] == "0A":
-        return "0a"
-    return f"r1-{round(celda['rho1'] * 100):03d}_r0-{round(celda['rho0'] * 100):03d}"
+def huella_de_figura(ruta):
+    """La huella de los resultados de los que salio un PNG, leida de sus
+    metadatos; None si no la lleva o si no se puede leer."""
+    from PIL import Image
+    try:
+        with Image.open(ruta) as imagen:
+            texto = imagen.info.get(CLAVE_DE_LA_HUELLA)
+    except OSError:
+        return None
+    if not isinstance(texto, str) or not texto.startswith(PREFIJO_DE_LA_HUELLA):
+        return None
+    return texto[len(PREFIJO_DE_LA_HUELLA):]
 
 
-def celdas_con_figura(resultados: dict) -> list:
-    """0A y las destacadas, en el orden de la rejilla."""
-    return [c for c in resultados["celdas"] if c["nombre"] == "0A" or c["destacada"]]
+def figuras_ajenas(resultados: dict, figuras) -> list:
+    """Los nombres, sin extension, de las figuras que NO salen de estos
+    resultados: las que no llevan su huella."""
+    huella = huella_de_resultados(resultados)
+    return sorted(Path(f).stem for f in figuras if huella_de_figura(f) != huella)
 
 
-def figura_fiabilidad(celda: dict, destino) -> Path:
+slug_de_celda = informe.slug_de_celda
+celdas_con_figura = informe.celdas_completas
+
+
+def figura_fiabilidad(celda: dict, destino, huella=None) -> Path:
     """La curva de fiabilidad por deciles de los cuatro modelos de una celda.
 
     La ECE va en la leyenda AL LADO de su suelo (media y percentil 95): sola
@@ -281,14 +335,16 @@ def figura_fiabilidad(celda: dict, destino) -> Path:
     _ejes(ax, titulo, "probabilidad predicha (media del decil)", "frecuencia observada")
     ax.legend(fontsize=9, loc="upper left")
     fig.tight_layout()
-    return _guardar(plt, fig, destino, titulo)
+    return _guardar(plt, fig, destino, titulo, huella)
 
 
-def figura_horquilla(resultados: dict, destino) -> Path:
+def figura_horquilla(resultados: dict, destino, huella=None) -> Path:
     """Donde queda el oraculo respecto de la horquilla, en 0A y las destacadas.
 
     Un panel por lado de la imagen; en cada celda, una barra apilada con las
-    tres fracciones de los casos concordantes. No es una cobertura."""
+    tres fracciones de los casos concordantes. No es una cobertura. Un lado
+    sin casos no tiene fracciones: se rotula «n/d», para que la barra vacia
+    no se lea como un 0 %."""
     plt = _pyplot()
     from matplotlib.patches import Patch
     celdas = celdas_con_figura(resultados)
@@ -302,9 +358,13 @@ def figura_horquilla(resultados: dict, destino) -> Path:
                     edgecolor="white", linewidth=1.2)
             for y, (x0, ancho) in enumerate(zip(izquierda, anchos)):
                 if ancho >= 12.0:
-                    ax.text(x0 + ancho / 2, y, f"{_coma(ancho, 0)} %", ha="center",
+                    ax.text(x0 + ancho / 2, y, f"{_coma(ancho, 1)} %", ha="center",
                             va="center", fontsize=8, color=_tinta_sobre(color))
             izquierda = [a + b for a, b in zip(izquierda, anchos)]
+        for y, c in enumerate(celdas):
+            if all(c["horquilla"][lado][clave] is None for clave, _, _ in TRAMOS):
+                ax.text(50.0, y, "n/d (sin casos)", ha="center", va="center",
+                        fontsize=8, color=TINTA)
         _ejes(ax, rotulo, "% de los casos concordantes", "")
         ax.set_title(rotulo, fontsize=10)
         ax.set_xlim(0, 100)
@@ -318,10 +378,10 @@ def figura_horquilla(resultados: dict, destino) -> Path:
     fig.legend(handles=[Patch(facecolor=color, label=nombre) for _, nombre, color in TRAMOS],
                loc="lower center", ncol=3, fontsize=9, frameon=False)
     fig.tight_layout(rect=(0, 0.06, 1, 1))
-    return _guardar(plt, fig, destino, titulo)
+    return _guardar(plt, fig, destino, titulo, huella)
 
 
-def figura_rejilla(resultados: dict, destino, que: str) -> Path:
+def figura_rejilla(resultados: dict, destino, que: str, huella=None) -> Path:
     """Mapa de calor ρ1 × ρ0 con la cifra escrita en cada casilla.
 
     `contencion`: la de `horquilla.todos`, en un solo tono. `pendiente`: la del
@@ -363,8 +423,8 @@ def figura_rejilla(resultados: dict, destino, que: str) -> Path:
             ax.text(j, i, _coma(v, decimales) + (unidad if v == v else ""),
                     ha="center", va="center", fontsize=10 if len(rejilla) <= 5 else 8,
                     color=_tinta_sobre(mapa(norma(v))) if v == v else TINTA)
-    _ejes(ax, titulo, "ρ0 (dependencia entre los casos sin neumonía)",
-          "ρ1 (dependencia entre los casos con neumonía)")
+    _ejes(ax, titulo, "ρ0 (dependencia entre los casos sin opacidad)",
+          "ρ1 (dependencia entre los casos con opacidad)")
     ax.grid(False)
     ax.set_xticks(range(len(rejilla)))
     ax.set_xticklabels([_rho(r) for r in rejilla])
@@ -374,7 +434,7 @@ def figura_rejilla(resultados: dict, destino, que: str) -> Path:
     cbar = fig.colorbar(imagen, ax=ax, format=FuncFormatter(lambda v, _: _coma(v, cifras)))
     cbar.set_label(barra, fontsize=10)
     fig.tight_layout()
-    return _guardar(plt, fig, destino, titulo)
+    return _guardar(plt, fig, destino, titulo, huella)
 
 
 def figuras_presentes(carpeta) -> list[Path]:
@@ -393,17 +453,22 @@ def figuras(resultados: dict, carpeta) -> list[Path]:
 
     Borra antes las propias que hubiera: si cambian las celdas destacadas, una
     `fiabilidad_*.png` de la corrida anterior quedaria en la carpeta con cifras
-    que ya no son las del JSON. Sin matplotlib sale ANTES de borrar nada."""
+    que ya no son las del JSON. Sin matplotlib sale ANTES de borrar nada.
+    Cada una lleva en sus metadatos la huella de `resultados`."""
     _pyplot()
     carpeta = Path(carpeta)
     carpeta.mkdir(parents=True, exist_ok=True)
     for rancia in figuras_presentes(carpeta):
         rancia.unlink()
-    rutas = [figura_fiabilidad(c, carpeta / f"{PREFIJO_FIABILIDAD}{slug_de_celda(c)}.png")
+    huella = huella_de_resultados(resultados)
+    rutas = [figura_fiabilidad(c, carpeta / f"{PREFIJO_FIABILIDAD}{slug_de_celda(c)}.png",
+                               huella)
              for c in celdas_con_figura(resultados)]
-    rutas.append(figura_horquilla(resultados, carpeta / "horquilla_por_celda.png"))
-    rutas.append(figura_rejilla(resultados, carpeta / "contencion_rejilla.png", "contencion"))
-    rutas.append(figura_rejilla(resultados, carpeta / "pendiente_rejilla.png", "pendiente"))
+    rutas.append(figura_horquilla(resultados, carpeta / "horquilla_por_celda.png", huella))
+    rutas.append(figura_rejilla(resultados, carpeta / "contencion_rejilla.png", "contencion",
+                                huella))
+    rutas.append(figura_rejilla(resultados, carpeta / "pendiente_rejilla.png", "pendiente",
+                                huella))
     return rutas
 
 
@@ -424,12 +489,15 @@ def escribir_analisis(resultados: dict, figuras: list, ruta) -> Path:
     """Escribe el documento de analisis en `ruta`, en UTF-8 y con LF.
 
     `figuras` son las rutas de los PNG que se enlazan; el texto lo redacta
-    `informe.redactar` LEYENDO `resultados`."""
+    `informe.redactar` LEYENDO `resultados`, y dice cuales de esas figuras no
+    llevan la huella de estos resultados. Se redacta ANTES de abrir: si
+    falla, el documento anterior sigue entero."""
     ruta = Path(ruta)
-    ruta.parent.mkdir(parents=True, exist_ok=True)
     enlaces = {Path(f).stem: _enlace(Path(f), ruta.parent) for f in figuras}
+    texto = informe.redactar(resultados, enlaces, figuras_ajenas(resultados, figuras))
+    ruta.parent.mkdir(parents=True, exist_ok=True)
     with ruta.open("w", encoding="utf-8", newline="\n") as f:
-        f.write(informe.redactar(resultados, enlaces))
+        f.write(texto)
     return ruta
 
 
@@ -469,4 +537,8 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    # «análisis:» lleva tilde: en una consola que no es UTF-8 saldria rota
+    for flujo in (sys.stdout, sys.stderr):
+        if hasattr(flujo, "reconfigure"):
+            flujo.reconfigure(encoding="utf-8", errors="replace")
     raise SystemExit(main())

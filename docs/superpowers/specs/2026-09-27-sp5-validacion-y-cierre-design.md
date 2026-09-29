@@ -368,15 +368,24 @@ de la etiqueta.
 ### 4.6. Qué se mide
 
 Sobre el conjunto de prueba, con **bootstrap de B = 1 000 réplicas**: cada
-réplica remuestrea con reemplazo las 3 811 placas (una por paciente, así que es
-un bootstrap por paciente) y vuelve a sortear la clínica con la semilla `b`.
-`z_y`, los umbrales `τ` y el calibrador **quedan fijos**, calculados una vez
-sobre el conjunto completo: solo se remuestrean placas y se resortea la
-clínica, para que el generador sea el mismo en todas las réplicas. Intervalos
-del 95 % por percentiles. Las diferencias entre modelos se calculan **dentro
-de cada réplica** (pareadas). El oráculo cerrado hace que todo cueste segundos;
-el bootstrap completo se corre en las seis celdas destacadas (§4.5) y en 0A;
-el resto de la rejilla se publica sin intervalos.
+réplica remuestrea con reemplazo los 3 811 **casos de la estimación puntual**,
+cada placa con la clínica que se le sorteó (una placa por paciente, así que es
+un bootstrap por paciente). `z_y`, los umbrales `τ` y el calibrador **quedan
+fijos**, calculados una vez sobre el conjunto completo. Intervalos del 95 %
+por percentiles. Las diferencias entre modelos se calculan **dentro de cada
+réplica** (pareadas). El bootstrap completo se corre en las seis celdas
+destacadas (§4.5) y en 0A; el resto de la rejilla se publica sin intervalos.
+
+> **Corregido el 28-sep, en la revisión final de SP5-B1.** Este párrafo decía
+> que cada réplica, además de remuestrear las placas, **volvía a sortear la
+> clínica**. Eso cuenta dos veces el ruido del sorteo —el remuestreo de los
+> casos ya lo lleva—: medido sobre la simulación, la varianza de las réplicas
+> salía × 1,57 en mediana y un «IC 95 %» cubría más del 99 %. Remuestrear
+> primero y sortear después quita la doble cuenta, pero centra las réplicas en
+> la media sobre la clínica y no en la estimación que se publica, y el
+> intervalo por percentiles sigue cubriendo más del 99 %. El bootstrap de los
+> casos de la estimación es el que da el 95 %. Las estimaciones puntuales no
+> cambian; los intervalos se estrechan.
 
 **Cuatro modelos puntuales** (casos con asma conocida; los `no_se` van aparte):
 
@@ -648,10 +657,17 @@ condición con casos y con periodo. Por eso:
   (0,6), ni generaliza a otros médicos ni a otro reparto de casos, que aquí es
   deliberado. El criterio ≥ 0,4 de la Semana 1 se evalúa sobre la estimación
   puntual y se publica siempre con su intervalo; si el límite inferior queda por
-  debajo de 0,4, se dice.»*
+  debajo de 0,4, se dice.»* El acta y el informe lo citan como lo que es, lo
+  **declarado antes de la sesión**, y a continuación dan lo **observado**: los
+  límites y la anchura del intervalo del kappa ponderado por los dos métodos, y
+  si 0,4 y 0,6 quedan dentro. Así el texto no afirma en presente una anchura
+  que las cifras de la sesión puedan desmentir (con un kappa de 0,9 el
+  intervalo es mucho más estrecho).
 - **Acuerdo continuo (secundario):** Spearman entre el porcentaje del médico y
   el punto medio del sistema; Bland-Altman en log-odds, con los porcentajes 0 y
-  100 acotados a 0,5 y 99,5 antes del logit (y contando cuántas veces ocurre);
+  100 acotados a 0,5 y 99,5 antes del logit (y contando cuántas veces ocurre, y
+  en cuántos casos el punto medio del sistema queda fuera de esa cota: en ellos
+  la diferencia no puede ser cero);
   fracción de casos en que el porcentaje del médico cae dentro de la
   horquilla.
 - **Influencia del sistema:** kappa de la lectura 2 **sobre los 20 casos con
@@ -840,7 +856,7 @@ las decida sobre la marcha:
 | Verificación bayesiana con casos simulados (§5.2) | cumplido | §4.4, 0A: caso a caso |
 | «Probabilidad previa, de imagen y combinada por separado» (§7.9) | cumplido con cambio | el mensaje imprime prevalencia, RV clínica, RV de imagen y horquilla combinada, no una «probabilidad previa por síntomas» |
 | Sesión con médico, 20-30 casos, kappa, utilidad, tiempos (H7; kappa 0,4/0,6) | cumplido con cambio, si hay acta | dos lecturas del mismo conjunto en vez de una sesión (para que el kappa sea independiente y el tiempo se mida sobre el mismo set, como pedía el KPI 1); pregunta por opacidad compatible, no por neumonía (SP4 §8.1); kappa ponderado como primario y el de Cohen sin ponderar como prometido; tiempo medido con el efecto de releer estimado aparte; el objetivo 0,6 no es evaluable con 24 casos. Plan B: además el tiempo no se mide. Si la estimación puntual queda por debajo de 0,4: «no cumplido, causa documentada caso por caso», que es lo que §5.7 permite |
-| Latencia de extremo a extremo (8 s / 3 s) | cumplido con cambio (provisional) | se mide `ms_extremo`, el tramo n8n → respuesta, no la subida a Telegram ni la entrega (§6.3): es una cota inferior. La etiqueta se decide con el p95 frente al mínimo de 8 s (el p50 y el objetivo de 3 s se reportan al lado): si no lo cumple, «no cumplido»; si lo cumple, «cumplido con cambio», diciendo el tramo que no ve y lo cronometrado a mano. Lo cronometrado a mano pesa en contra: si su mediana supera los 8 s, «no cumplido». Si no hay corrida con bots antes del 16-oct, «no medido» con la causa |
+| Latencia de extremo a extremo (8 s / 3 s) | cumplido con cambio (provisional) | se mide `ms_extremo`, el tramo n8n → respuesta, no la subida a Telegram ni la entrega (§6.3): es una cota inferior. La etiqueta se decide con el p95 frente al mínimo de 8 s (`veredicto.p95_cumple_el_minimo` de `latencia.json`; el p50 y el objetivo de 3 s se reportan al lado): si no lo cumple, «no cumplido»; si lo cumple, «cumplido con cambio», diciendo el tramo que no ve y lo cronometrado a mano. Lo cronometrado a mano pesa en contra: si su mediana, sin redondear, supera los 8 s (`veredicto.a_mano_supera_el_minimo`), «no cumplido»; si no se cronometró, «cumplido con cambio» diciendo que no se cronometró. `latencia.json` lleva la regla y la etiqueta que sale de ella (`veredicto`). Si antes del 16-oct no hay una corrida con bots con al menos 30 consultas válidas, «no medido» con la causa |
 | Reducción del tiempo de triaje (20 / 40 %) | por la sesión | §5.4; plan B: «cumplido con cambio», no medido |
 | PadChest como validación externa | **descopado** | el acuerdo no se gestionó; sesgo de origen único declarado en ética |
 | Grad-CAM (opcional) | descopado | opcional en la Semana 1; sin tiempo |
@@ -1038,7 +1054,8 @@ Todas en la suite, sin red:
 - **Categoría del sistema (§5.3):** punto medio en log-odds, redondeo hacia
   arriba en ,5, bandas con los bordes 20 y 70 exactos, y la prueba de que
   **ninguna horquilla cruza los dos límites** con los previos 0,1466, 0,2215 y
-  0,05, y de que sí lo hace con 0,02 (el umbral analítico).
+  0,05, y de que sí lo hace por debajo del umbral analítico (≈ 3,3 %, §5.3):
+  con 0,02 y con 0,032, y no con 0,034.
 - **Sesión:** `analizar_sesion.py` sobre CSV de ejemplo con valores conocidos:
   los tres kappas y sus intervalos, el acuerdo continuo (con un 0 % y un 100 %
   acotados), los 20 tiempos pareados y los 4 controles, la influencia del
