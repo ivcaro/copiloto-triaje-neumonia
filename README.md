@@ -56,16 +56,18 @@ mensaje o, en la suite, se salta diciendo qué se queda sin verificar.
 
 | Variable | Quién la necesita | Qué es |
 | :--- | :--- | :--- |
-| `RSNA_RAIZ` | `scripts/preparar_sesion.py`, `pruebas/seleccionar_casos.py`, `pruebas/puntuaciones.py` (solo si no hay caché) y las pruebas que leen placas | la raíz del dataset preparado (`crudo/`, `png/`, `manifiestos/`) |
+| `RSNA_RAIZ` | `scripts/preparar_sesion.py`, `pruebas/seleccionar_casos.py`, `pruebas/reproducir_casos.py` (con bots y sin ellos), `pruebas/puntuaciones.py` y `pruebas/caracterizar_conjunto.py` (estos dos, solo si no hay caché) y las pruebas que leen placas | la raíz del dataset preparado (`crudo/`, `png/`, `manifiestos/`) |
 | `N8N_URL` | `pruebas/reproducir_casos.py` con bots, `pruebas/verificar_webhooks.py` y las pruebas conducidas | la dirección base de n8n, p. ej. `https://n8n.ejemplo.test` |
 | `RED_N8N` | `servidor/docker-compose.yml` (se declara en `servidor/.env`) | el nombre de la red externa de Docker que comparte n8n; obligatoria |
-| `COPILOTO_URL`, `COPILOTO_BD_DSN`, `TELEGRAM_SECRET_PRUEBA`, `TELEGRAM_TOKEN_PROFESIONAL`, `CHAT_SUBIDA_PLACAS` | el arnés y las pruebas conducidas | las describe la cabecera de `pruebas/reproducir_casos.py` |
+| `COPILOTO_URL`, `COPILOTO_BD_DSN`, `TELEGRAM_SECRET_PRUEBA`, `TELEGRAM_TOKEN_PROFESIONAL`, `CHAT_SUBIDA_PLACAS` | el arnés y las pruebas conducidas | las describe la cabecera de `pruebas/reproducir_casos.py`. Ojo: `COPILOTO_URL` no quiere el mismo valor en el arnés y en las pruebas de contrato (`docs/sp3-operacion.md`, §2) |
 | `ANONIMATO_LISTA` | solo quien mantiene la lista de lo que no se publica, para regenerar las huellas | la ruta de esa lista, que vive fuera del repositorio (`tests/anonimato/README.md`) |
 
 Los workflows de `n8n/` llevan **marcadores** en vez de la dirección y de los
 identificadores de las credenciales: `scripts/marcadores_n8n.py` los
 sustituye por los valores de `n8n/valores.local.json` (que no se versiona;
-`n8n/valores.ejemplo.json` dice qué claves lleva) antes de importarlos.
+`n8n/valores.ejemplo.json` dice qué claves lleva) antes de importarlos, y los
+vuelve a poner antes de versionar un export. El procedimiento, en
+`docs/sp3-operacion.md`, §7.
 
 ## Dónde corre cada cosa
 
@@ -137,6 +139,10 @@ Cada una imprime `TODO VERDE` y sale 0, o cuenta los fallos y sale 1. **No las
 encadene con una tubería**: `node tests/profesional.mjs | tail` devuelve el
 estado de `tail`, que es 0 siempre, y así se han fusionado pruebas rojas.
 
+El formulario de la sesión con el médico tiene la suya, `node
+tests/formulario.mjs`: imprime cuántas comprobaciones pasaron (`16 OK`) y
+sale 0, o se detiene en la primera que falla y sale 1.
+
 ### Las que se saltan, y qué se queda sin comprobar
 
 Varias pruebas necesitan algo que no está siempre: el dataset (`RSNA_RAIZ`),
@@ -166,6 +172,13 @@ esas consultas dejaban la suite entera en verde.
 11 821 anormales sin opacidad (44,3%), 8 851 normales (33,2%). El desbalance se
 maneja con partición estratificada, ponderación de clases y selección del umbral
 sobre la curva ROC de validación.
+
+En el repositorio viajan dos tablas derivadas de ese dataset, sin imágenes:
+`docs/eda/metadatos_eda.csv` (identificador público, edad, sexo, proyección y
+etiqueta de cada placa, con los que se hizo el análisis exploratorio) y
+`docs/validacion-semisintetica/crudas_prueba.csv` (la puntuación del modelo
+sobre las placas del conjunto de prueba). Las imágenes no viajan: se descargan
+de la competición, con sus reglas aceptadas.
 
 ## El servidor (SP2)
 

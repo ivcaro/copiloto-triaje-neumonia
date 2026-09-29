@@ -778,7 +778,10 @@ eso (decisión del 28-sep):
   ejemplo (`ejemplo.test`, `cambiar-esto`).
 - **Solo datos de prueba.** Las únicas tablas de datos son puntuaciones del
   modelo sobre identificadores públicos de RSNA (`crudas_prueba.csv`
-  congelada) y resultados de simulación rotulados (§6.7.7). El corpus del
+  congelada), resultados de simulación rotulados (§6.7.7) y —enmienda del
+  29-sep-2026: estaba en el árbol y esta lista no la nombraba— los metadatos
+  del dataset público con los que se hizo el análisis exploratorio
+  (`docs/eda/metadatos_eda.csv`). El corpus del
   arnés, `consultas` y cualquier CSV de la sesión con el médico no se
   publican; las viñetas de la sesión que se citen en el acta son sintéticas y
   se rotulan.
@@ -811,7 +814,7 @@ con la decisión por fila:
 | dominio de n8n del cliente | `tests/conftest.py`, `pruebas/reproducir_casos.py`, `pruebas/verificar_webhooks.py` (valor por defecto) | **sin valor por defecto**: sin `N8N_URL` las pruebas conducidas se saltan |
 | ídem | `n8n/copiloto-mantenimiento.json` (URL de las dos sondas), afirmado por `tests/test_mantenimiento.py` | marcador `https://n8n.ejemplo.test` y un paso de sustitución al importar, documentado en `docs/sp3-operacion.md`; la prueba afirma el marcador; **el export deja de ser idéntico byte a byte al desplegado**, y se dice |
 | ídem | notas de los tres workflows, `docs/sp2-despliegue.md`, `docs/sp3-operacion.md`, spec y plan de SP3 | sustitución mecánica |
-| red Docker del cliente | `servidor/docker-compose.yml`: la clave de la red lleva el nombre del cliente, y el nombre por defecto de `${RED_N8N:-…}` también | clave `red_n8n`; **`RED_N8N` obligatoria** (el compose falla sin ella); la guía de despliegue lo dice; requiere redesplegar el contenedor en el VPS (`down`/`up`) |
+| red Docker del cliente | `servidor/docker-compose.yml`: la clave de la red y el nombre por defecto de `${RED_N8N:-…}` identifican al cliente | clave `red_n8n`; **`RED_N8N` obligatoria** (el compose falla sin ella); la guía de despliegue lo dice; requiere redesplegar el contenedor en el VPS (`down`/`up`) |
 | contenedores, pila de mensajería y bots del cliente | `docs/sp2-despliegue.md` (lista de contenedores con sus nombres, su pila de mensajería), `docs/sp3-operacion.md`, spec SP3 (el bot del cliente y una credencial con nombre propio), `tests/test_flujo_profesional.py`, `servidor/docker-compose.yml` | «los N contenedores ajenos», marcadores neutros |
 | nombres del equipo, la universidad como filiación personal | spec SP1, `notebooks/eda_rsna.ipynb`, «Windows de …» en `docs/sp3-operacion.md`, «máquina de …» en el plan SP4, este spec | «el equipo», «la máquina de desarrollo». La universidad se conserva **solo** como institución del curso en el README (decisión explícita; se puede quitar) |
 | usuario de Windows en rutas absolutas | `pruebas/puntuaciones.py`, `pruebas/seleccionar_casos.py`, `tests/test_contrato_mcp.py` (código que se ejecuta) y 10 ficheros de docs y planes | variable **`RSNA_RAIZ` sin valor por defecto**; las pruebas que la usan se saltan sin ella; en docs, `<RSNA_RAIZ>`. Rutas relativas es además lo que pide la rúbrica |
@@ -825,8 +828,8 @@ con la decisión por fila:
 `tests/anonimato/huellas.txt` con una huella SHA-256 por **token**.
 Tokenización, idéntica para la lista y para los ficheros: minúsculas, sin
 tildes, partición por cualquier carácter que no sea `[a-z0-9]` (una URL aporta
-esquema, host y ruta troceados; `${RED_N8N:-x_y_network}` aporta `x`, `y`,
-`network`; `C:\Users\u` aporta `c`, `users`, `u`). La lista en claro se
+esquema, host y ruta troceados; `${VARIABLE:-uno_dos}` aporta `variable`,
+`uno`, `dos`; `C:\Users\u` aporta `c`, `users`, `u`). La lista en claro se
 tokeniza igual y cada token da una huella; al regenerar se quitan a mano los
 tokens genéricos que salgan (`https`, `com`, `users`, `network`, `n8n`). La
 prueba recorre todos los ficheros de texto versionados, los tokeniza y falla

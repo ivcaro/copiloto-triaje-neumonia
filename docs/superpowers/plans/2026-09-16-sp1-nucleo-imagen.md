@@ -1,5 +1,10 @@
 # SP1 — Núcleo de imagen: plan de implementación
 
+> **Nota (29-sep-2026).** En este documento los identificadores se
+> sustituyeron por marcadores entre `<` y `>` (plan
+> `2026-09-29-sp5b2-anonimizacion.md`). `<institución y programa>` es la
+> institución del curso, que se nombra solo en el `README.md`.
+
 > **Para trabajadores agénticos:** SUB-SKILL REQUERIDA: usar `superpowers:subagent-driven-development` (recomendado) o `superpowers:executing-plans` para implementar este plan tarea por tarea. Los pasos usan casillas (`- [ ]`) para seguimiento.
 
 **Objetivo:** convertir el dataset RSNA descargado en una CNN de clasificación binaria entrenada, con partición por paciente verificada sin fuga y métricas medidas de forma honesta.

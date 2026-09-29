@@ -2,7 +2,7 @@
 
 **Proyecto:** Copiloto de triaje para neumonía en adultos (Telegram + MCP + LLM)
 **Sub-proyecto:** SP1, primero de cinco. Corresponde al hito **H3 (25 de septiembre de 2026)**.
-**Equipo:** el equipo.
+**Equipo:** dos integrantes.
 **Fecha:** 16 de septiembre de 2026.
 **Estado:** aprobado en chat el 16-sep-2026; pendiente de revisión escrita.
 

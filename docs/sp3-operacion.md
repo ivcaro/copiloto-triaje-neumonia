@@ -13,8 +13,10 @@ dos bots ya funcionando.
 | **n8n en el navegador** | credenciales y workflows |
 
 En las órdenes, `<raiz-del-repositorio>` es la carpeta de tu máquina donde
-está tu clon del repositorio, y `<RSNA_RAIZ>`, la del dataset preparado
-(la variable de entorno `RSNA_RAIZ`). Se sustituyen antes de pegar la orden.
+está tu clon del repositorio; `<RSNA_RAIZ>`, la del dataset preparado (la
+variable de entorno `RSNA_RAIZ`); `usuario@vps`, el usuario y la dirección con
+los que entras por `ssh` al servidor; y `<IP-del-contenedor>`, la que da la
+orden que la precede. Se sustituyen antes de pegar la orden.
 
 ---
 
@@ -197,7 +199,8 @@ perfectamente vivo. **Un skip aquí se ve verde**: nada en pantalla dice que las
 diez aserciones del §10 del spec —la forma de `structuredContent`, la posición
 del código de error, los dos límites de tamaño y las cotas de la razón de
 verosimilitud— se quedaron sin comprobar. Medido: con `/mcp` puesta, `10
-skipped`; sin ella, `10 passed`.
+skipped`; sin ella, `10 passed` (con `RSNA_RAIZ` y los pesos puestos; con el
+servidor solo, 2 pasan y 8 se saltan).
 
 Así que: **para las pruebas de contrato, no pongas `COPILOTO_URL`** y deja el
 valor por defecto. Si tienes que apuntarlas a otro sitio, pásale el origen a
@@ -205,17 +208,20 @@ secas y córrelas con `pytest -rs`, que es lo único que enseña los skips.
 
 **Sin bots** — no toca n8n, ni Telegram, ni la base. Llama al copiloto y
 redacta el mensaje con el código del propio workflow. Es lo que se puede correr
-sin el túnel ni los secretos, y tarda un minuto:
+sin el túnel ni los secretos, y tarda un minuto. Necesita `RSNA_RAIZ`, porque
+las placas salen del dataset:
 
 ```powershell
 cd "<raiz-del-repositorio>"; C:\venv-copiloto\Scripts\python.exe pruebas/reproducir_casos.py --sin-bots
 ```
 
 **Con los dos bots** — conduce las 49 conversaciones de verdad. Hacen falta el
-túnel de la base (§3) y cuatro variables; **son secretos y no se escriben en
-ningún fichero del repositorio**:
+túnel de la base (§3), `RSNA_RAIZ` y cinco variables más: la dirección de n8n,
+que el repositorio ya no lleva escrita, y cuatro que **son secretos y no se
+escriben en ningún fichero del repositorio**:
 
 ```powershell
+$env:N8N_URL = "<dirección base de n8n, con https://>"
 $env:COPILOTO_BD_DSN = "host=127.0.0.1 port=15433 dbname=copiloto user=copiloto password=..."
 $env:TELEGRAM_SECRET_PRUEBA = "..."
 $env:TELEGRAM_TOKEN_PROFESIONAL = "..."
@@ -481,6 +487,9 @@ setx TELEGRAM_TOKEN_AVISOS (Read-Host 'token del bot de pruebas y avisos')
 setx COPILOTO_CHAT_EQUIPO (Read-Host 'chat_id del equipo')
 ```
 
+`setx` vale para las consolas que se abran después: abre una nueva antes de
+seguir.
+
 **Son cinco y hacen tres cosas distintas**, que conviene no confundir cuando
 una falte:
 
@@ -519,7 +528,8 @@ que arreglar, y **eso es todo lo que dice**: el script devuelve 1 también cuand
 **no ha mandado nada** —porque falten `COPILOTO_CHAT_EQUIPO` o
 `TELEGRAM_TOKEN_AVISOS`, o porque falte el token de un bot y no lo haya podido
 comprobar— y cuando el envío por Telegram **falló**. Un 1 no garantiza que el
-aviso haya salido.
+aviso haya salido. Y devuelve 1 sin haber comprobado ningún webhook si falta
+`N8N_URL`.
 
 Lo que sí lo dice es la salida del script, no su código: la línea del final es
 «aviso por Telegram: enviado.» o «NO se pudo enviar (…)». Si la tarea lleva días
@@ -573,6 +583,13 @@ Las tres nos costaron tiempo:
 | Pruebas y avisos | `bot-avisos` | `🩺 Copiloto Triaje: Mantenimiento` (solo para mandar los avisos) |
 | Base de datos | `copiloto-bd` | el del paciente, el del profesional y el de mantenimiento |
 
+La segunda columna es el **marcador** con el que el repositorio nombra cada
+credencial de Telegram, no el nombre que tiene que llevar en n8n. El nombre
+real es el que tenga en la instancia, con una condición que pone la
+herramienta de los marcadores: no puede ser un marcador, ni contener uno, ni
+ser un trozo de uno. `bot-paciente`, `Telegram` o `Bot` no valen; `Triaje
+pacientes` sí.
+
 **No se toca ninguna otra credencial de Telegram.** La credencial de Telegram
 del cliente la usan cinco workflows suyos, y un token de Telegram admite **un
 solo webhook**: apuntarle un flujo nuestro lo dejaría mudo sin ningún error
@@ -586,7 +603,8 @@ esa instancia es del cliente y **no se modifica**.
 Los tres exports de `n8n/` se versionan con **marcadores** en lugar de los
 valores de la instancia donde corren. Por eso **un export del repositorio ya
 no es idéntico byte a byte al workflow desplegado**: se diferencian en estas
-cadenas, y solo en ellas.
+cadenas y, el de mantenimiento, en el `chat_equipo` del nodo `Configuracion`,
+que en el repositorio va vacío (§5, paso 1).
 
 | Marcador | Qué es en la instancia |
 | :--- | :--- |
@@ -640,20 +658,32 @@ Una descarga de n8n trae más de lo que se versiona: el `id` del workflow, su
 (`pinData`) y etiquetas. Identifican la instancia, como el dominio. Al retirar,
 la herramienta se queda con las cinco claves que se versionan (`name`,
 `active`, `nodes`, `connections` y `settings`), escribe el fichero como los de
-`n8n/` y dice qué claves quitó.
+`n8n/` y dice qué claves quitó. Y vacía el `chat_equipo` del workflow de
+mantenimiento, que identifica a una persona: lo dice, sin repetir el valor.
+Por eso, **después de importar ese workflow desde el repositorio hay que
+volver a rellenarlo en n8n** (§5, paso 1): hasta entonces no llega ningún
+aviso.
 
 Después, `git diff n8n/` tiene que enseñar solo lo que se cambió a propósito
 en el workflow, y estas dos pruebas tienen que pasar:
 
 ```powershell
-C:\venv-copiloto\Scripts\python.exe -m pytest tests/test_marcadores_n8n.py tests/test_anonimato.py
+C:\venv-copiloto\Scripts\python.exe -m pytest -rs tests/test_marcadores_n8n.py tests/test_anonimato.py
 ```
 
-La segunda mira el árbol entero contra las huellas: caza lo que la herramienta
-no conoce, como el dominio escrito con otro subdominio o el `id` de una
-credencial que se volvió a crear y no está en `valores.local.json`. Si el
-`git diff` enseña de más, no se versiona hasta entender por qué. Al terminar se
-borra la carpeta temporal.
+La primera caza lo que la herramienta no conoce y tiene forma de
+identificador: el `id` de una credencial que se volvió a crear y no está en
+`valores.local.json` (en los workflows versionados las credenciales solo
+pueden ser marcadores, y cada marcador aparece las veces previstas). La
+segunda mira el árbol entero contra las huellas: caza lo que la lista conoce
+y está escrito de otra forma, como el dominio con otro subdominio. En el
+repositorio publicado `huellas.txt` lleva solo la huella del centinela y esa
+parte **se salta** (lo dice el `-rs` de la orden): allí la comprobación del
+árbol es `scripts/verificar_anonimato.py` con las huellas del repositorio de
+desarrollo (`tests/anonimato/README.md`). Ninguna de las dos caza un
+identificador nuevo que nadie haya puesto en la lista: para eso está el
+`git diff`. Si enseña de más, no se versiona hasta entender por qué. Al
+terminar se borra la carpeta temporal.
 
 La primera vez que se exporte un workflow que no se ha desplegado todavía desde
 el repositorio, sus notas llevan aún el texto de antes de los marcadores. En el
@@ -694,13 +724,15 @@ los bots en BotFather.
 El repositorio dejó de llevar escritos la dirección de n8n, el nombre de la
 red y los identificadores de las credenciales. Lo desplegado **sigue
 funcionando como está**; estos pasos hacen falta la próxima vez que se
-despliegue o se opere desde el repositorio, y se hacen fuera de las fechas
-de la sesión con el médico.
+despliegue o se opere desde el repositorio —el 2, antes—, y se hacen fuera
+de las fechas de la sesión con el médico (`docs/sp5-sesion.md`).
 
 1. **En el servidor, antes del próximo despliegue:** `RED_N8N` en
    `servidor/.env`, y el primer redespliegue, que vuelve a crear los dos
    contenedores (la clave de la red cambió de nombre en el compose) sin tocar
-   el volumen de la base. El procedimiento, orden a orden, está en
+   el volumen de la base. Mientras se recrean, alrededor de un minuto, los
+   bots no contestan: se hace cuando no haya consultas en curso. El
+   procedimiento, orden a orden, está en
    `docs/sp2-despliegue.md`, apartado «El primer redespliegue con `RED_N8N`
    obligatoria»: se sigue ese, no se improvisa otro.
 
@@ -708,6 +740,10 @@ de la sesión con el médico.
    `pruebas/verificar_webhooks.py` necesita `N8N_URL` en su entorno (§5,
    «Paso 2»). Sin ella el script no comprueba nada: lo dice, avisa por el
    canal de avisos si lo tiene configurado, y devuelve un código de error.
+   **Esto no espera a «la próxima vez»:** la tarea corre desde el clon de esa
+   máquina, y desde que el clon tiene este cambio devuelve 1 y avisa cada
+   mañana de que falta `N8N_URL`, sin que haya nada roto. La variable se pone
+   antes de traer el cambio a ese clon; si ya está traído, ya.
 
 3. **En la máquina de desarrollo:** `n8n/valores.local.json`, con los valores
    reales de cada marcador. Si no existe, se crea a partir de
@@ -719,10 +755,14 @@ de la sesión con el médico.
    por el de mantenimiento, que no atiende a nadie, y mirar en n8n, nodo a
    nodo, que cada workflow usa la credencial de SU bot antes de activarlo: un
    valor cruzado en `valores.local.json` haría contestar a un bot con la
-   cuenta de otro.
+   cuenta de otro. En el de mantenimiento, además, volver a rellenar
+   `chat_equipo` (§5, paso 1).
 
-5. **Para correr la suite completa**, `RSNA_RAIZ` (y `N8N_URL`, con los
-   secretos de siempre, para las pruebas conducidas). Un salto se ve verde:
-   conviene correr con `-rs` y leer qué se saltó.
+5. **Para correr la suite completa y el arnés**, `RSNA_RAIZ` (y `N8N_URL`,
+   con los secretos del arnés —los de la tabla «Variables de entorno» del
+   `README.md`—, para las pruebas conducidas y para el arnés con bots). Un
+   salto se ve verde: conviene correr con `-rs` y leer qué se saltó.
 
        setx RSNA_RAIZ "<RSNA_RAIZ>"
+
+   `setx` vale para las consolas que se abran después: abre una nueva.
