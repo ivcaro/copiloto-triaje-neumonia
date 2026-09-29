@@ -216,14 +216,19 @@ def test_no_hay_ningun_secreto_ni_ningun_chat_id_en_el_repositorio(flujo):
     identificador de una persona real-."""
     crudo = FLUJO.read_text(encoding="utf-8")
     import re
-    assert not re.search(r"\d{8,12}:[A-Za-z0-9_-]{30,}", crudo), "parece un token"
+    # Las tres, sobre un booleano: si fallan, pytest no enseña lo que caso
+    # (el token), el chat_id que lleve la configuracion ni un `chatId` escrito
+    # a mano en el nodo que avisa.
+    parece_un_token = re.search(r"\d{8,12}:[A-Za-z0-9_-]{30,}", crudo) is not None
+    assert not parece_un_token, "parece un token"
     config = nodo(flujo, "Configuracion")["parameters"]["assignments"]["assignments"]
     assert [a["name"] for a in config] == ["chat_equipo"]
-    # sobre un booleano: si falla, pytest no enseña el chat_id que lleve
     vacio = config[0]["value"] == ""
     assert vacio, "el chat del equipo no se versiona"
-    assert (nodo(flujo, "Avisar al equipo")["parameters"]["chatId"]
-            == "={{ $('Configuracion').first().json.chat_equipo }}")
+    lee_la_configuracion = (nodo(flujo, "Avisar al equipo")["parameters"]["chatId"]
+                            == "={{ $('Configuracion').first().json.chat_equipo }}")
+    assert lee_la_configuracion, ("el chatId de «Avisar al equipo» no es la "
+                                  "expresion que lee `chat_equipo` de Configuracion")
 
 
 def test_las_credenciales_son_las_de_sp3(flujo):

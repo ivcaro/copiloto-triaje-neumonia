@@ -7,13 +7,21 @@ media entre los dos, sin n8n y sin red: con valores inventados.
 """
 import importlib.util
 import json
+import os
 import pathlib
+import stat
 
 import pytest
 
 RAIZ = pathlib.Path(__file__).resolve().parents[1]
 N8N = RAIZ / "n8n"
 EJEMPLO = N8N / "valores.ejemplo.json"
+
+# Las pruebas que comparan lo escrito con lo versionado lo hacen sobre un
+# booleano: pytest enseñaria la linea que difiere, y si en lo versionado se
+# colara un valor (un `chat_equipo` relleno) saldria en la salida.
+IGUAL_A_LO_VERSIONADO = ("lo escrito no es letra por letra lo versionado: "
+                         "miralo con git diff")
 
 
 def _cargar():
@@ -337,6 +345,28 @@ def test_escribir_no_deja_el_destino_a_medias(mn, tmp_path):
     assert [p.name for p in tmp_path.iterdir()] == ["flujo.json"]
 
 
+def test_con_el_destino_de_solo_lectura_el_temporal_no_se_queda(mn, tmp_path, monkeypatch):
+    """Al PONER valores, el temporal lleva los valores reales: si la escritura
+    falla, no puede quedarse en la carpeta. Windows se niega a reemplazar un
+    fichero de solo lectura, y el temporal, que copio sus permisos, tampoco se
+    dejaba borrar. En los demas sistemas el reemplazo pisaria el fichero: alli
+    se simula la negativa."""
+    destino = tmp_path / "flujo.json"
+    destino.write_bytes(b'{"antes": true}\n')
+    os.chmod(destino, stat.S_IREAD)
+    if os.name != "nt":
+        def negarse(*a, **k):
+            raise PermissionError("el destino es de solo lectura")
+        monkeypatch.setattr(mn.os, "replace", negarse)
+    try:
+        with pytest.raises(OSError):
+            mn.escribir(destino, '{"despues": "valor-real"}\n')
+        assert [p.name for p in tmp_path.iterdir()] == ["flujo.json"]
+        assert destino.read_bytes() == b'{"antes": true}\n'
+    finally:
+        os.chmod(destino, stat.S_IREAD | stat.S_IWRITE)
+
+
 def test_la_cli_dice_el_error_si_lo_retirado_no_se_puede_escribir(
         mn, carpeta, valores, capsys):
     """Una descarga con un sustituto suelto escapado (`\\ud800`) en una nota:
@@ -574,7 +604,10 @@ def test_retirar_una_descarga_de_n8n_quita_lo_que_es_de_la_instancia(
                     "--entrada", str(tmp_path / "descarga.json"),
                     "--salida", str(tmp_path / "versionable.json")]) == 0
 
-    assert mn.leer(tmp_path / "versionable.json") == versionado
+    # sobre un booleano: pytest enseñaria la linea que difiere, y en lo
+    # versionado podria ir un valor (un chat_equipo relleno)
+    igual = mn.leer(tmp_path / "versionable.json") == versionado
+    assert igual, IGUAL_A_LO_VERSIONADO
     dicho = capsys.readouterr().out
     assert "quitadas: id, meta, pinData, tags, versionId" in dicho
     for de_la_instancia in ("wf-de-la-instancia", "version-de-la-instancia",
@@ -617,7 +650,8 @@ def test_retirar_el_mantenimiento_vacia_el_chat_del_equipo(mn, valores, tmp_path
                     "--salida", str(tmp_path / "versionable.json")]) == 0
 
     escrito = mn.leer(tmp_path / "versionable.json")
-    assert escrito == mn.leer(N8N / "copiloto-mantenimiento.json")
+    igual = escrito == mn.leer(N8N / "copiloto-mantenimiento.json")
+    assert igual, IGUAL_A_LO_VERSIONADO
     dicho = capsys.readouterr()
     assert "chat_equipo: vaciado" in dicho.out
     assert chat not in escrito and chat not in dicho.out + dicho.err
@@ -663,6 +697,94 @@ def test_retirar_con_otros_valores_que_los_de_la_descarga_no_escribe(
     assert telegram in dicho.err
     if fichero == "copiloto-mantenimiento.json":
         assert "Webhook del paciente" in dicho.err
+
+
+# Una sola clave anticuada cada vez: el marcador cuyo valor esta mal en los
+# valores con los que se retira, la frase del error de ESA condicion y un nodo
+# que la lleva. Si una de las condiciones se quitara, su caso caeria.
+ANTICUADAS = [
+    ("copiloto-paciente.json", "CRED_POSTGRES_COPILOTO",
+     "el id de su credencial postgres", "Leer sesion"),
+    ("copiloto-paciente.json", "CRED_SECRETO_PACIENTE",
+     "el id de su credencial httpHeaderAuth", "Webhook Telegram (paciente)"),
+    ("copiloto-paciente.json", "CRED_TELEGRAM_PACIENTE",
+     "el id de su credencial telegramApi", "Pedir consentimiento"),
+    ("copiloto-paciente.json", "bot-paciente",
+     "el nombre de su credencial telegramApi", "Pedir consentimiento"),
+    # la URL solo esta en la nota del nodo webhook
+    ("copiloto-paciente.json", "https://n8n.ejemplo.test",
+     "la URL de su webhook", "Webhook Telegram (paciente)"),
+    ("copiloto-profesional.json", "CRED_POSTGRES_COPILOTO",
+     "el id de su credencial postgres", "Leer sesion y permiso"),
+    ("copiloto-profesional.json", "CRED_SECRETO_PROFESIONAL",
+     "el id de su credencial httpHeaderAuth", "Webhook Telegram (profesional)"),
+    ("copiloto-profesional.json", "CRED_TELEGRAM_PROFESIONAL",
+     "el id de su credencial telegramApi", "Pedir codigo"),
+    ("copiloto-profesional.json", "bot-profesional",
+     "el nombre de su credencial telegramApi", "Pedir codigo"),
+    ("copiloto-profesional.json", "https://n8n.ejemplo.test",
+     "la URL de su webhook", "Webhook Telegram (profesional)"),
+    ("copiloto-mantenimiento.json", "CRED_POSTGRES_COPILOTO",
+     "el id de su credencial postgres", "Limpieza"),
+    ("copiloto-mantenimiento.json", "CRED_TELEGRAM_AVISOS",
+     "el id de su credencial telegramApi", "Avisar al equipo"),
+    ("copiloto-mantenimiento.json", "bot-avisos",
+     "el nombre de su credencial telegramApi", "Avisar al equipo"),
+    ("copiloto-mantenimiento.json", "https://n8n.ejemplo.test",
+     "la URL de su webhook", "Webhook del paciente"),
+]
+
+
+@pytest.mark.parametrize("fichero, marcador, frase, nodo", ANTICUADAS,
+                         ids=[f"{f.split('-')[1][:-5]}-{m}" for f, m, _, _ in ANTICUADAS])
+def test_retirar_con_una_sola_clave_anticuada_no_escribe(
+        mn, fichero, marcador, frase, nodo, valores, tmp_path, capsys):
+    """El `valores.local.json` anticuado de verdad: todo bien menos UN valor
+    (una credencial que se volvio a crear, una errata en la URL). Lo que no se
+    sustituye se quedaria en `n8n/`: la herramienta se niega, sin escribir,
+    diciendo la condicion y el nodo, y ningun valor."""
+    anticuados = dict(valores)
+    anticuados[marcador] = ("https://anticuada.inventado.test"
+                            if marcador == mn.URL_N8N else "valor-99-anticuado")
+    (tmp_path / "valores.json").write_text(json.dumps(anticuados), encoding="utf-8")
+    (tmp_path / "descarga.json").write_text(
+        json.dumps(_descarga(mn, fichero, valores), indent=4), encoding="utf-8")
+
+    assert mn.main(["--valores", str(tmp_path / "valores.json"), "--retirar",
+                    "--entrada", str(tmp_path / "descarga.json"),
+                    "--salida", str(tmp_path / "versionable.json")]) == 1
+
+    assert not (tmp_path / "versionable.json").exists()
+    dicho = capsys.readouterr()
+    con_valores = [m for m, v in list(valores.items()) + list(anticuados.items())
+                   if v in dicho.out + dicho.err]
+    assert con_valores == [], "la salida lleva el valor de estos marcadores"
+    assert f"«{nodo}»: {frase}" in dicho.err
+
+
+@pytest.mark.parametrize("fichero, nodo", [
+    ("copiloto-paciente.json", "Webhook Telegram (paciente)"),
+    ("copiloto-mantenimiento.json", "Webhook del paciente"),
+])
+def test_una_url_que_solo_empieza_como_el_marcador_no_es_el_marcador(
+        mn, fichero, nodo, valores, tmp_path, capsys):
+    """El marcador va seguido de `/webhook/`: un host que solo EMPIEZA como el
+    del marcador es otro host."""
+    otro_host = "https://n8n.ejemplo.test.otro"
+    texto = mn.aplicar(mn.leer(N8N / fichero), valores).replace(
+        valores[mn.URL_N8N], otro_host)
+    (tmp_path / "valores.json").write_text(json.dumps(valores), encoding="utf-8")
+    (tmp_path / "descarga.json").write_text(texto, encoding="utf-8")
+
+    assert mn.main(["--valores", str(tmp_path / "valores.json"), "--retirar",
+                    "--entrada", str(tmp_path / "descarga.json"),
+                    "--salida", str(tmp_path / "versionable.json")]) == 1
+
+    assert not (tmp_path / "versionable.json").exists()
+    dicho = capsys.readouterr()
+    assert f"«{nodo}»: la URL de su webhook" in dicho.err
+    sin_el_host = "ejemplo.test.otro" not in dicho.out + dicho.err
+    assert sin_el_host
 
 
 @pytest.mark.parametrize("entrada, dice", [
@@ -720,5 +842,6 @@ def test_la_cli_da_la_vuelta_a_un_workflow_entero(mn, fichero, tmp_path):
     assert mn.main(valores + ["--retirar",
                               "--entrada", str(tmp_path / "puesto.json"),
                               "--salida", str(tmp_path / "vuelta.json")]) == 0
-    assert (tmp_path / "vuelta.json").read_text(encoding="utf-8") \
+    igual = (tmp_path / "vuelta.json").read_text(encoding="utf-8") \
         == mn.leer(N8N / fichero)
+    assert igual, IGUAL_A_LO_VERSIONADO

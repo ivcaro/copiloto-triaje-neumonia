@@ -41,6 +41,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 import tempfile
 import urllib.parse
@@ -238,10 +239,23 @@ def leer(ruta) -> str:
         return f.read().replace("\r\n", "\n")
 
 
+def _borrar(temporal) -> None:
+    """Borra el temporal aunque haya copiado el solo lectura del destino: en
+    Windows un fichero de solo lectura no se deja borrar."""
+    try:
+        os.chmod(temporal, stat.S_IREAD | stat.S_IWRITE)
+    except OSError:
+        pass
+    try:
+        os.unlink(temporal)
+    except OSError:
+        pass  # el error que cuenta es el de la escritura, que se relanza
+
+
 def escribir(ruta, texto: str) -> None:
     """Escribe a un temporal junto al destino y lo pone en su sitio al final:
     si la escritura falla, el destino queda como estaba y el temporal se
-    borra."""
+    borra siempre (al poner valores, lleva los reales)."""
     ruta = Path(ruta)
     ruta.parent.mkdir(parents=True, exist_ok=True)
     fd, temporal = tempfile.mkstemp(dir=ruta.parent, prefix=f".{ruta.name}.",
@@ -257,10 +271,7 @@ def escribir(ruta, texto: str) -> None:
             os.chmod(temporal, 0o644)
         os.replace(temporal, ruta)
     except BaseException:
-        try:
-            os.unlink(temporal)
-        except OSError:
-            pass
+        _borrar(temporal)
         raise
 
 
@@ -306,11 +317,33 @@ def _vaciar_chat_equipo(datos: dict) -> bool:
     return vaciado
 
 
+# Una URL hasta su `/webhook/`, en cualquier texto de un nodo (la URL de una
+# sonda, la nota de un webhook con su orden de `setWebhook`...). No cruza
+# blancos, comillas ni los signos que la cierran en una orden o en Markdown.
+_URL_HASTA_EL_WEBHOOK = re.compile(
+    r"https?://[^\s\"'`<>()\[\]{}|\\^]*?/webhook/", re.IGNORECASE)
+
+
+def _textos(valor):
+    """Todas las cadenas de un valor de JSON: claves y valores, a cualquier
+    profundidad."""
+    if isinstance(valor, str):
+        yield valor
+    elif isinstance(valor, dict):
+        for clave, dentro in valor.items():
+            yield from _textos(clave)
+            yield from _textos(dentro)
+    elif isinstance(valor, list):
+        for dentro in valor:
+            yield from _textos(dentro)
+
+
 def _lo_que_no_es_marcador(datos: dict) -> list:
     """De un workflow ya retirado, lo que sigue siendo de la instancia: una
     credencial cuyo `id` no es un marcador conocido (y en las de Telegram, su
-    `name`), o una URL de webhook de un nodo HTTP que no empieza por el
-    marcador de la URL. Se dice el nodo y que es, nunca el valor."""
+    `name`), o una URL de webhook, en cualquier texto del nodo, que no es el
+    marcador de la URL seguido de `/webhook/`. Se dice el nodo y que es, nunca
+    el valor."""
     hallados = []
     for nodo in datos.get("nodes") or []:
         if not isinstance(nodo, dict):
@@ -322,11 +355,10 @@ def _lo_que_no_es_marcador(datos: dict) -> list:
                 hallados.append(f"«{nombre}»: el id de su credencial {tipo}")
             if tipo == "telegramApi" and credencial.get("name") not in MARCADORES:
                 hallados.append(f"«{nombre}»: el nombre de su credencial {tipo}")
-        if nodo.get("type") == "n8n-nodes-base.httpRequest":
-            url = (nodo.get("parameters") or {}).get("url")
-            if (isinstance(url, str) and "/webhook/" in url
-                    and not url.startswith(URL_N8N + "/")):
-                hallados.append(f"«{nombre}»: la URL de su webhook")
+        if any(m.group(0) != URL_N8N + "/webhook/"
+               for texto in _textos(nodo)
+               for m in _URL_HASTA_EL_WEBHOOK.finditer(texto)):
+            hallados.append(f"«{nombre}»: la URL de su webhook")
     return hallados
 
 
