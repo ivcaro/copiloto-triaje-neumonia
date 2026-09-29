@@ -169,8 +169,8 @@ en comentarios ni en nombres de fichero. Por eso:
 ### Tarea 1: `N8N_URL` sin valor por defecto
 
 **Ficheros:**
-- Modificar: `pruebas/verificar_webhooks.py` (el docstring, la línea 54, una función nueva `avisar_al_equipo` y `main()`)
-- Modificar: `tests/test_mantenimiento.py` (el bloque de las pruebas de `diagnosticar`, líneas 496-550, y cinco pruebas nuevas al final)
+- Modificar: `pruebas/verificar_webhooks.py` (el docstring, la línea 54, el encabezado de `mensaje_para_telegram`, una función nueva `avisar_al_equipo` y `main()`)
+- Modificar: `tests/test_mantenimiento.py` (el bloque de las pruebas de `diagnosticar`, líneas 496-550, dos aserciones en la prueba del aviso y seis pruebas nuevas al final)
 - Modificar: `tests/conftest.py` (el docstring del módulo, líneas 8-19, y la fixture `webhook_n8n`, líneas 37-38)
 - Crear: `tests/test_fijadores.py`
 - Modificar: `pruebas/reproducir_casos.py` (la línea 61 del docstring, una función nueva `base_de_n8n` y dos puntos de `main()`)
@@ -188,10 +188,13 @@ Los números de línea son los del commit `1f328da`, salvo los de
   - `BASE_N8N: str` — `N8N_URL` sin espacios ni barra final; **cadena vacía** si la variable falta.
     El módulo se importa sin la variable.
   - `SIN_N8N_URL: str` — el mensaje, con su «Qué hacer», que nombra `N8N_URL`.
-  - `avisar_al_equipo(problemas: list) -> None` — el bloque que antes vivía al final de `main()`:
-    manda `problemas` por Telegram si están `COPILOTO_CHAT_EQUIPO` y `TELEGRAM_TOKEN_AVISOS`,
-    e imprime qué hizo.
-  - `main() -> int` — con `BASE_N8N` vacía imprime `SIN_N8N_URL`, llama a `avisar_al_equipo` y
+  - `avisar_al_equipo(problemas: list, comprobado: bool = True) -> None` — el bloque que antes
+    vivía al final de `main()`: manda `problemas` por Telegram si están `COPILOTO_CHAT_EQUIPO` y
+    `TELEGRAM_TOKEN_AVISOS`, e imprime qué hizo.
+  - `mensaje_para_telegram(problemas, comprobado=True) -> str` — con `comprobado` en `False` el
+    encabezado dice que los webhooks NO se han comprobado; el de siempre no cambia.
+  - `main() -> int` — con `BASE_N8N` vacía imprime `SIN_N8N_URL`, llama a
+    `avisar_al_equipo([SIN_N8N_URL], comprobado=False)` y
     devuelve 1 **sin pedir ningún token, sin hablar con Telegram para leer nada y sin tocar la
     memoria** de la lectura anterior.
 - Produce, en `tests/conftest.py`: la fixture `webhook_n8n` hace `pytest.skip` si `N8N_URL` falta,
@@ -272,6 +275,24 @@ que no miran `BASE_N8N`, y no les cambia nada.
 
 - [ ] **Paso 3: Añadir las pruebas nuevas**
 
+En la prueba que ya estaba,
+`test_el_aviso_de_la_tarea_programada_lleva_los_problemas_y_no_el_token`, las pruebas guardaban
+la URL a la que se llamó y no la miraban. Busca:
+
+```python
+    assert ok is True, detalle
+    assert enviados["cuerpo"]["chat_id"] == "987"
+```
+
+y sustitúyelo por (el token es inventado):
+
+```python
+    assert ok is True, detalle
+    assert enviados["url"] == "https://api.telegram.org/botT0K3N/sendMessage"
+    assert enviados["cuerpo"]["chat_id"] == "987"
+    assert "el webhook de Telegram no está como debe" in enviados["cuerpo"]["text"]
+```
+
 Al final de `tests/test_mantenimiento.py`, después de
 `test_un_token_revocado_se_distingue_de_un_problema_de_url`, añade (con dos líneas en blanco de
 separación):
@@ -311,8 +332,45 @@ def _main_que_no_toca_nada(monkeypatch):
     monkeypatch.setattr(vw, "BASE_N8N", "")
 
 
-def test_el_script_se_importa_sin_N8N_URL_y_no_trae_ninguna_por_defecto(monkeypatch):
-    monkeypatch.delenv("N8N_URL", raising=False)
+def _canal_de_avisos_falso(monkeypatch):
+    """El canal de avisos puesto, y un Telegram que contesta que si. Devuelve
+    donde queda lo que `main()` le mande: la URL a la que llamo y el cuerpo."""
+    import urllib.parse
+
+    monkeypatch.setenv("COPILOTO_CHAT_EQUIPO", "987")
+    monkeypatch.setenv("TELEGRAM_TOKEN_AVISOS", "T0K3N")
+    enviados = {}
+
+    def falso(pet, timeout=0):
+        enviados["url"] = pet.full_url
+        enviados["cuerpo"] = dict(urllib.parse.parse_qsl(pet.data.decode()))
+
+        class R:
+            def read(self_inner):
+                return b'{"ok":true,"result":{}}'
+
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *a):
+                return False
+        return R()
+
+    monkeypatch.setattr(vw.urllib.request, "urlopen", falso)
+    return enviados
+
+
+@pytest.mark.parametrize("valor", [None, "", "   "],
+                         ids=["ausente", "vacia", "en-blanco"])
+def test_el_script_se_importa_sin_N8N_URL_y_no_trae_ninguna_por_defecto(
+        valor, monkeypatch):
+    """Vacia o con solo espacios es lo mismo que ausente: si pasara por una
+    base, `main()` pediria los tokens y daria los dos webhooks por mal
+    apuntados."""
+    if valor is None:
+        monkeypatch.delenv("N8N_URL", raising=False)
+    else:
+        monkeypatch.setenv("N8N_URL", valor)
     assert _script_recien_importado().BASE_N8N == ""
 
 
@@ -348,54 +406,77 @@ def test_sin_N8N_URL_main_sale_con_un_mensaje_y_no_pide_ningun_token(
 def test_sin_N8N_URL_la_tarea_programada_avisa_por_telegram(monkeypatch, capsys):
     """La tarea programada que se quede sin la variable no puede callar: es el
     silencio que el script existe para romper. Con el canal de avisos puesto, el
-    motivo llega al mismo hilo que los demas."""
-    import urllib.parse
-
+    motivo llega al mismo hilo que los demas, y dice que NO se comprobo nada:
+    con el encabezado de siempre, quien lea solo la notificacion iria a
+    registrar otra vez un webhook que estaba bien."""
     _main_que_no_toca_nada(monkeypatch)
-    monkeypatch.setenv("COPILOTO_CHAT_EQUIPO", "987")
-    monkeypatch.setenv("TELEGRAM_TOKEN_AVISOS", "T0K3N")
-    enviados = {}
-
-    def falso(pet, timeout=0):
-        enviados["url"] = pet.full_url
-        enviados["cuerpo"] = dict(urllib.parse.parse_qsl(pet.data.decode()))
-
-        class R:
-            def read(self_inner):
-                return b'{"ok":true,"result":{}}'
-
-            def __enter__(self_inner):
-                return self_inner
-
-            def __exit__(self_inner, *a):
-                return False
-        return R()
-
-    monkeypatch.setattr(vw.urllib.request, "urlopen", falso)
+    enviados = _canal_de_avisos_falso(monkeypatch)
 
     assert vw.main() == 1
 
+    assert enviados["url"] == "https://api.telegram.org/botT0K3N/sendMessage"
     assert enviados["cuerpo"]["chat_id"] == "987"
-    assert "N8N_URL" in enviados["cuerpo"]["text"]
-    assert "T0K3N" not in enviados["cuerpo"]["text"]
+    texto = enviados["cuerpo"]["text"]
+    assert "N8N_URL" in texto and "T0K3N" not in texto
+    assert "los webhooks de Telegram NO se han comprobado" in texto
+    assert "no está como debe" not in texto
     assert "aviso por Telegram: enviado." in capsys.readouterr().out
+
+
+def test_los_problemas_de_una_lectura_de_verdad_llegan_al_canal_de_avisos(
+        monkeypatch, capsys):
+    """El final de `main()`: con la base puesta y un webhook mal apuntado, el
+    aviso sale. Si esa llamada se perdiera, la tarea programada seguiria
+    devolviendo 1 a un log que nadie abre."""
+    monkeypatch.setenv("TELEGRAM_TOKEN_PACIENTE", "tok-paciente")
+    monkeypatch.setenv("TELEGRAM_TOKEN_PROFESIONAL", "tok-profesional")
+    monkeypatch.setattr(
+        vw.getpass, "getpass",
+        lambda *a, **k: pytest.fail("los tokens estaban en el entorno"))
+    # los dos bots entregan en la ruta del profesional: el del paciente esta mal
+    lecturas = {"tok-paciente": {"url": f"{BASE}/webhook/copiloto-profesional",
+                                 "pending_update_count": 0},
+                "tok-profesional": {"url": f"{BASE}/webhook/copiloto-profesional",
+                                    "pending_update_count": 2}}
+    monkeypatch.setattr(vw, "pedir_api", lambda token, metodo: (True, lecturas[token]))
+    monkeypatch.setattr(vw, "_memoria_leer", lambda: {})
+    escrita = {}
+    monkeypatch.setattr(vw, "_memoria_escribir", escrita.update)
+    enviados = _canal_de_avisos_falso(monkeypatch)
+
+    assert vw.main() == 1
+
+    assert escrita == {"paciente": 0, "profesional": 2}
+    assert enviados["url"] == "https://api.telegram.org/botT0K3N/sendMessage"
+    texto = enviados["cuerpo"]["text"]
+    assert "el webhook de Telegram no está como debe" in texto
+    assert "el OTRO bot" in texto and "bot del paciente" in texto
+    assert "bot del profesional" not in texto
+    for secreto in ("tok-paciente", "tok-profesional", "T0K3N"):
+        assert secreto not in texto
+    salida = capsys.readouterr().out
+    assert "1 cosas que arreglar." in salida
+    assert "aviso por Telegram: enviado." in salida
 ```
 
 - [ ] **Paso 4: Correr las pruebas y ver que fallan**
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_mantenimiento.py`
-Esperado: `3 failed, 30 passed`. Fallan:
-- `test_el_script_se_importa_sin_N8N_URL_y_no_trae_ninguna_por_defecto`: `BASE_N8N` trae la URL
-  por defecto en vez de `""`;
+Esperado: `4 failed, 32 passed`. Fallan:
+- `test_el_script_se_importa_sin_N8N_URL_y_no_trae_ninguna_por_defecto`, en dos de sus tres
+  casos: con la variable ausente `BASE_N8N` trae la URL por defecto en vez de `""`, y con la
+  variable en blanco se queda con los espacios (el caso de la variable vacía ya pasa);
 - `test_sin_N8N_URL_main_sale_con_un_mensaje_y_no_pide_ningun_token` y
   `test_sin_N8N_URL_la_tarea_programada_avisa_por_telegram`: las dos con
   `AssertionError: main() siguió adelante sin N8N_URL`, lanzado desde el `getpass` falso.
 
-Las del diagnóstico ya pasan: la fixture las ha desacoplado.
+Las del diagnóstico ya pasan: la fixture las ha desacoplado. Y
+`test_los_problemas_de_una_lectura_de_verdad_llegan_al_canal_de_avisos` también pasa: fija lo
+que el final de `main()` ya hacía y ninguna prueba vigilaba.
 
 - [ ] **Paso 5: Quitar el valor por defecto de `pruebas/verificar_webhooks.py`**
 
-Cuatro ediciones.
+Cinco ediciones.
 
 (1) En el docstring del módulo, después de la línea 36
 (`Devuelve 0 si los dos webhooks estan como deben, y 1 si hay algo que arreglar.`) y de la línea en
@@ -433,14 +514,15 @@ de `main()`, antes de su primera línea (`memoria = _memoria_leer()`), la guarda
 `main()` queda así:
 
 ```python
-def avisar_al_equipo(problemas):
+def avisar_al_equipo(problemas, comprobado=True):
     """El canal de la tarea programada: sin esto, lo que se imprime acaba en un
-    log que nadie abre. Hacen falta las dos variables; con una sola se dice."""
+    log que nadie abre. Hacen falta las dos variables; con una sola se dice.
+    `comprobado` es el de `mensaje_para_telegram`."""
     chat = os.environ.get("COPILOTO_CHAT_EQUIPO", "").strip()
     token_avisos = os.environ.get("TELEGRAM_TOKEN_AVISOS", "").strip()
     if problemas and chat and token_avisos:
         enviado, detalle = avisar_por_telegram(
-            token_avisos, chat, mensaje_para_telegram(problemas))
+            token_avisos, chat, mensaje_para_telegram(problemas, comprobado))
         print("\naviso por Telegram: "
               + ("enviado." if enviado else f"NO se pudo enviar ({detalle})."))
     elif problemas and (chat or token_avisos):
@@ -453,7 +535,7 @@ def main() -> int:
         # Antes de pedir ningun token y de tocar la memoria: sin la base no hay
         # con que comparar, y una lectura a medias borraria la de ayer.
         print(SIN_N8N_URL)
-        avisar_al_equipo([SIN_N8N_URL])
+        avisar_al_equipo([SIN_N8N_URL], comprobado=False)
         return 1
     memoria = _memoria_leer()
 ```
@@ -486,13 +568,46 @@ y sustitúyelo por:
     avisar_al_equipo(problemas_todos)
 ```
 
+(5) El encabezado del aviso. Sin `N8N_URL` no se ha comprobado ningún webhook, y el aviso no
+puede decir que uno «no está como debe»: quien lea solo la notificación iría a registrar otra
+vez un webhook que estaba bien. En `mensaje_para_telegram`, busca:
+
+```python
+def mensaje_para_telegram(problemas):
+    """El mismo formato que el aviso del workflow: encabezado, y cada problema
+    con su «Que hacer». Recortado al limite de Telegram, que son 4096."""
+    cabeza = ("\U0001fa7a Copiloto Triaje — el webhook de Telegram no está como "
+              "debe\n\n(lo dice pruebas/verificar_webhooks.py, que es la mitad "
+              "de la sexta comprobación del §16 que no cabe dentro de n8n)\n")
+```
+
+y sustitúyelo por:
+
+```python
+def mensaje_para_telegram(problemas, comprobado=True):
+    """El mismo formato que el aviso del workflow: encabezado, y cada problema
+    con su «Que hacer». Recortado al limite de Telegram, que son 4096.
+
+    Con `comprobado` en False el encabezado dice que NO se comprobo nada: si
+    no se llego a mirar ningun webhook, el aviso no puede decir que uno no
+    esta como debe, o quien lea solo la notificacion ira a registrar otra
+    vez un webhook que estaba bien."""
+    titulo = ("el webhook de Telegram no está como debe" if comprobado
+              else "los webhooks de Telegram NO se han comprobado")
+    cabeza = (f"\U0001fa7a Copiloto Triaje — {titulo}\n\n(lo dice "
+              "pruebas/verificar_webhooks.py, que es la mitad de la sexta "
+              "comprobación del §16 que no cabe dentro de n8n)\n")
+```
+
+El encabezado de siempre no cambia ni una letra.
+
 - [ ] **Paso 6: Correr las pruebas y ver que pasan, con la variable y sin ella**
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_mantenimiento.py`
-Esperado: `33 passed`.
+Esperado: `36 passed`.
 
 Run (bash): `N8N_URL=https://otro.ejemplo.test C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_mantenimiento.py`
-Esperado: `33 passed` (en el paso 1 eran 4 fallos).
+Esperado: `36 passed` (en el paso 1 eran 4 fallos).
 
 Run (bash): `env -u N8N_URL C:/venv-copiloto/Scripts/python.exe -B pruebas/verificar_webhooks.py; echo "codigo=$?"`
 Esperado: el script no pide ningún token; imprime las dos líneas de `SIN_N8N_URL` («Falta N8N_URL:
@@ -802,7 +917,7 @@ Run: `git grep -n -E "environ\.get\(.N8N_URL., *.http" -- pruebas tests scripts 
 Esperado: ninguna línea (el `grep` sale con 1).
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_mantenimiento.py tests/test_fijadores.py tests/test_reproducir_casos.py tests/test_flujo_paciente.py tests/test_flujo_profesional.py`
-Esperado: `113 passed, 15 skipped` (eran `101 passed, 15 skipped`: las 12 de más son las 5 nuevas de
+Esperado: `116 passed, 15 skipped` (eran `101 passed, 15 skipped`: las 15 de más son las 8 nuevas de
 mantenimiento, las 4 de los fijadores y las 3 del arnés). El mismo resultado con
 `N8N_URL=https://otro.ejemplo.test` delante de la orden.
 
@@ -3496,7 +3611,7 @@ comillas angulares), pasa a ser:
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_marcadores_n8n.py tests/test_mantenimiento.py tests/test_flujo_paciente.py tests/test_flujo_profesional.py`
 
-Esperado: `15 failed, 101 passed, 20 skipped`. Los quince:
+Esperado: `15 failed, 104 passed, 20 skipped`. Los quince:
 - once de `tests/test_marcadores_n8n.py`: `test_las_credenciales_de_los_workflows_son_marcadores` (los tres
   ficheros), `test_las_url_de_los_nodos_http_son_el_marcador_o_la_interna[copiloto-mantenimiento.json]`,
   `test_las_dos_sondas_apuntan_al_marcador`, `test_la_nota_del_webhook_registra_con_el_marcador` (los dos),
@@ -3780,7 +3895,7 @@ filas con la misma cuenta puede variar), y ninguna fila más:
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_marcadores_n8n.py tests/test_mantenimiento.py tests/test_flujo_paciente.py tests/test_flujo_profesional.py tests/test_sql_de_los_nodos.py`
 
-Esperado: `118 passed, 20 skipped` (45 de ellas son las de `tests/test_marcadores_n8n.py`).
+Esperado: `121 passed, 20 skipped` (45 de ellas son las de `tests/test_marcadores_n8n.py`).
 
 - [ ] **Paso 10: Commit**
 
@@ -3836,7 +3951,7 @@ Esperado: código de salida 0. La última línea de `decidir.mjs`, `mantenimient
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_marcadores_n8n.py tests/test_mantenimiento.py tests/test_flujo_paciente.py tests/test_flujo_profesional.py tests/test_sql_de_los_nodos.py`
 
-Esperado: `118 passed, 20 skipped`.
+Esperado: `121 passed, 20 skipped`.
 
 - [ ] **Paso 13: Commit**
 
@@ -3968,8 +4083,8 @@ git commit -m "docs(anonimato): poner los valores reales antes de desplegar y qu
 
 Run: `C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/test_marcadores_n8n.py tests/test_mantenimiento.py tests/test_flujo_paciente.py tests/test_flujo_profesional.py tests/test_sql_de_los_nodos.py`
 
-Esperado: `118 passed, 20 skipped`. Antes de la tarea, esos mismos ficheros (sin el nuevo) daban
-`73 passed, 20 skipped`: las 45 de diferencia son las de `tests/test_marcadores_n8n.py`, y no hay
+Esperado: `121 passed, 20 skipped`. Antes de la tarea, esos mismos ficheros (sin el nuevo) daban
+`76 passed, 20 skipped`: las 45 de diferencia son las de `tests/test_marcadores_n8n.py`, y no hay
 ninguna prueba que pasara y haya dejado de pasar.
 
 Run: `node tests/decidir.mjs && node tests/formulario.mjs && node tests/mantenimiento.mjs && node tests/profesional.mjs`
