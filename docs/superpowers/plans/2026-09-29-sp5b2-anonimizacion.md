@@ -986,7 +986,7 @@ pesos (`servidor/pesos_modelo_cpu.pt`) y la caché de puntuaciones
 | Máquina de desarrollo SIN la variable (pesos y caché sí) | 4 pasan, 5 se saltan («falta RSNA_RAIZ») | 2 pasan, 8 se saltan |
 | `RSNA_RAIZ` puesta con el dataset, sin pesos (con o sin caché) | 4 pasan, 5 se saltan («faltan los pesos desplegados») | 8 pasan, 2 se saltan (las del recorte) |
 | `RSNA_RAIZ` puesta con el dataset y pesos, sin caché | 9 pasan; la primera vez infiere sobre las 3 811 imágenes (minutos) | 10 pasan, igual |
-| `RSNA_RAIZ` apunta a una carpeta que no tiene el dataset | con pesos y caché, falla `test_todos_los_ficheros_existen` | 6 ERROR con `FileNotFoundError` y la ruta que falta |
+| `RSNA_RAIZ` apunta a una carpeta que no tiene el dataset | con pesos y caché, falla `test_todos_los_ficheros_existen` | con pesos, 8 ERROR con `FileNotFoundError` y la ruta que falta; sin pesos, 6 (las dos del recorte se saltan antes) |
 
 La última fila es a propósito: una variable mal escrita tiene que verse, no
 saltarse. Sin servidor, `tests/test_contrato_mcp.py` sigue saltándose entero
@@ -1226,6 +1226,11 @@ def test_sin_los_pesos_se_salta_diciendo_cuales_faltan(tmp_path, monkeypatch):
     mensaje = str(salto.value)
     assert "SIN VERIFICAR" in mensaje
     assert "pesos_modelo_cpu.pt" in mensaje
+    # los tres grupos de pruebas que piden los pesos, y de dónde salen
+    for grupo in ("la selección de casos", "las dos pruebas del recorte",
+                  "del bot del profesional que suben una placa"):
+        assert grupo in " ".join(mensaje.split()), grupo
+    assert "README" in mensaje
 
 
 def test_con_los_pesos_se_devuelve_su_ruta(tmp_path, monkeypatch):
@@ -1356,18 +1361,26 @@ def test_el_modulo_no_guarda_ninguna_ruta_del_dataset():
     assert not hasattr(seleccionar_casos, "CRUDO")
 
 
-def test_los_dos_modulos_se_importan_sin_rsna_raiz():
-    """En un proceso aparte, porque en este ya estan importados. Los importan
-    sin dataset `tests/test_sesion.py` (por `UMBRAL`), `tests/test_puntuaciones.py`
-    y `pruebas/reproducir_casos.py`: si la variable se leyera al importar, esos
-    ficheros darian error de coleccion en un clon limpio."""
+def test_lo_que_llega_al_dataset_se_importa_sin_rsna_raiz():
+    """En un proceso aparte, porque en este ya estan importados. Van los cinco
+    ficheros desde los que se llega a `raiz_rsna()`: los dos modulos que la
+    llaman, los dos que los importan y el script de la sesion. Si alguno leyera
+    la variable al importarse, las pruebas que lo importan darian error de
+    coleccion en un clon limpio; y en la maquina de desarrollo, que tiene la
+    variable puesta, no se veria."""
     import os
     import subprocess
     entorno = {k: v for k, v in os.environ.items() if k != "RSNA_RAIZ"}
-    r = subprocess.run(
-        [sys.executable, "-B", "-c",
-         "import pruebas.puntuaciones, pruebas.seleccionar_casos; print('importados')"],
-        cwd=REPO, env=entorno, capture_output=True, text=True, timeout=300)
+    codigo = "\n".join((
+        "import importlib.util",
+        "import pruebas.puntuaciones, pruebas.seleccionar_casos",
+        "import pruebas.reproducir_casos, pruebas.caracterizar_conjunto",
+        "spec = importlib.util.spec_from_file_location(",
+        "    'preparar_sesion', 'scripts/preparar_sesion.py')",
+        "spec.loader.exec_module(importlib.util.module_from_spec(spec))",
+        "print('importados')"))
+    r = subprocess.run([sys.executable, "-B", "-c", codigo], cwd=REPO, env=entorno,
+                       capture_output=True, text=True, timeout=300)
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == "importados"
 ```
@@ -1538,10 +1551,12 @@ def pesos_desplegados_o_salta():
             " pesos desplegados, servidor/pesos_modelo_cpu.pt, que no se"
             " versionan. Sin ellos no se puede inferir ni validar la caché de"
             " puntuaciones del conjunto de prueba, así que se quedan sin"
-            " comprobar la selección de casos y las dos pruebas del recorte de"
-            " la razón de verosimilitud. Para verificarlo, copia los pesos a"
-            " esa ruta y repite; la primera vez, sin caché, infiere sobre las"
-            " 3 811 imágenes de prueba y tarda minutos.")
+            " comprobar la selección de casos, las dos pruebas del recorte de"
+            " la razón de verosimilitud y las consultas conducidas del bot del"
+            " profesional que suben una placa. Para verificarlo, copia los"
+            " pesos a esa ruta (salen del entrenamiento: README, «Reproducir"
+            " desde cero») y repite; la primera vez, sin caché, infiere sobre"
+            " las 3 811 imágenes de prueba y tarda minutos.")
     return puntuaciones.PESOS
 
 
@@ -1947,7 +1962,9 @@ motivos.
 
 Define `RSNA_RAIZ` en el entorno del usuario con la carpeta del dataset
 preparado (en Windows, `setx RSNA_RAIZ "<RSNA_RAIZ>"` y abrir una consola
-nueva; el valor no se escribe en ningún fichero del repositorio) y corre:
+nueva; el valor no se escribe en ningún fichero del repositorio) y corre.
+Definirla de forma permanente es de quien usa la máquina: quien ejecuta el
+plan la pone solo delante de la orden (`RSNA_RAIZ="<RSNA_RAIZ>" …`):
 
 ```bash
 C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q -rs tests/test_seleccion_casos.py tests/test_contrato_mcp.py
