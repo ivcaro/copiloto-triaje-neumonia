@@ -129,7 +129,9 @@ def test_el_compose_exige_RED_N8N_y_no_le_pone_valor_por_defecto():
 
 
 def test_los_dos_servicios_van_a_la_red_externa_red_n8n():
-    yaml = pytest.importorskip("yaml")
+    yaml = pytest.importorskip(
+        "yaml", reason="sin PyYAML no se lee el compose: se queda sin verificar que "
+                       "los dos servicios van a la red externa `red_n8n`")
     compose = yaml.safe_load(
         (RAIZ / "servidor" / "docker-compose.yml").read_text(encoding="utf-8"))
     # Una sola red, con clave neutra, externa, y con el nombre por entorno.
@@ -147,7 +149,38 @@ def test_el_env_de_ejemplo_declara_RED_N8N_con_un_valor_de_ejemplo():
 
 def test_la_guia_de_despliegue_no_promete_un_valor_por_defecto_para_la_red():
     guia = (RAIZ / "docs" / "sp2-despliegue.md").read_text(encoding="utf-8")
-    assert "${RED_N8N:-" not in guia
+    assert "${RED_N8N:-" not in guia and "${RED_N8N-" not in guia
     assert "${RED_N8N:?" in guia
     # La fila de la tabla de variables (paso 10) lo dice con todas las letras.
     assert "| `RED_N8N` | **ninguno: es obligatoria** |" in guia
+
+
+def test_el_primer_redespliegue_no_baja_el_servicio_antes_de_construir():
+    """El apartado lo sigue una persona en un servidor que comparte con otros
+    servicios. La orden que redespliega construye y recrea sin bajar nada, y
+    espera a los dos contenedores; la unica bajada que queda escrita es la de
+    reserva, que va por nombre de proyecto, sin volumenes y DESPUES de
+    construir; y la base se apunta antes y se compara despues."""
+    guia = (RAIZ / "docs" / "sp2-despliegue.md").read_text(encoding="utf-8")
+    inicio = guia.index("### El primer redespliegue con `RED_N8N` obligatoria")
+    apartado = guia[inicio:guia.index("\n## 7. ", inicio)]
+    ordenes = re.findall(r"```bash\n(.*?)```", apartado, flags=re.S)
+    redespliegue = [o for o in ordenes if "up -d --build" in o and "down" not in o]
+    assert any("for c in copiloto-bd copiloto-mcp" in o for o in redespliegue), (
+        "la orden que redespliega espera a los dos contenedores")
+    assert not any(re.search(r"up -d --build +copiloto-", o) for o in redespliegue), (
+        "y no nombra un servicio: tiene que recrear los dos")
+    bajadas = [o for o in ordenes if re.search(r"\bdown\b", o)]
+    assert len(bajadas) == 1, "una sola bajada escrita, la de reserva"
+    for orden in bajadas:
+        assert not re.search(r"\s-v\b|--volumes", orden), "un `down` con volumenes borra la base"
+        assert "docker compose -p copiloto-mcp down" in orden
+        assert orden.index(" build") < orden.index(" down") < orden.index(" up -d")
+    # como esta la base, antes y despues
+    assert apartado.count("select count(*) from consultas") == 2
+    assert apartado.count("{{.CreatedAt}}") == 2
+    # el .env se guarda antes de tocarlo, y la linea se ANADE
+    assert apartado.index("cp -p servidor/.env") < apartado.index(">> /opt/copiloto/servidor/.env")
+    assert not re.search(r"[^>]> /opt/copiloto/servidor/\.env", apartado)
+    # y esta escrito como se vuelve
+    assert "git checkout --detach <commit del punto 1>" in apartado
