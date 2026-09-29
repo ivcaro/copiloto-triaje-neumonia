@@ -378,6 +378,30 @@ def test_elegir_otra_vez_sin_forzar_no_pisa_la_clave_definitiva(sesion_elegida):
     assert (salida / "formulario" / "datos_lectura2.js").is_file()
 
 
+def test_elegir_sin_las_placas_no_borra_lo_de_la_eleccion_anterior(tmp_path, monkeypatch):
+    """Con `RSNA_RAIZ` en una carpeta sin los PNG, la fase de elegir se
+    detiene ANTES de borrar lo de una eleccion anterior. Antes lo borraba y
+    despues descubria que faltaba el primero: se quedaban una clave y unos
+    casos viejos sin placas ni mensajes."""
+    preparar = _preparar()
+    rsna = tmp_path / "rsna"
+    (rsna / "png").mkdir(parents=True)
+    monkeypatch.setenv("RSNA_RAIZ", str(rsna))
+    salida = tmp_path / "sesion"
+    anteriores = ([salida / r for r in preparar.DE_UNA_ELECCION_ANTERIOR]
+                  + [salida / "formulario" / "placas" / "de-antes.png", salida / "clave.json"])
+    for ruta in anteriores:
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        ruta.write_text('{"fase": "mensajes"}', encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="RSNA_RAIZ"):
+        preparar.fase_elegir(salida, semilla=20261006, forzar=True)
+
+    siguen = [r.relative_to(salida).as_posix() for r in anteriores
+              if r.is_file() and r.read_text(encoding="utf-8") == '{"fase": "mensajes"}']
+    assert siguen == [r.relative_to(salida).as_posix() for r in anteriores]
+
+
 def test_sin_rsna_raiz_el_script_lo_dice(monkeypatch):
     preparar = _preparar()
     monkeypatch.delenv("RSNA_RAIZ", raising=False)

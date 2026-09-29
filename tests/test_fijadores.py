@@ -44,6 +44,24 @@ def test_sin_N8N_URL_el_fijador_salta_y_dice_que_se_queda_sin_correr(
     assert "pruebas conducidas" in motivo
 
 
+@pytest.mark.parametrize("valor", [
+    "n8n.inventado.test", "https://n8n.inventado.test/webhook/copiloto-paciente",
+    '"https://n8n.inventado.test"', "https://n8n. inventado.test", "/"])
+def test_con_N8N_URL_mal_puesta_el_fijador_falla_diciendo_por_que(monkeypatch, valor):
+    """Mal puesta no se SALTA: un salto se ve verde, y quien la puso quiere
+    correr las pruebas conducidas. Falla, diciendo por que, sin repetir el
+    valor y sin salir a la red."""
+    monkeypatch.setenv("N8N_URL", valor)
+    _sin_red(monkeypatch)
+
+    with pytest.raises(pytest.fail.Exception) as fallo:
+        fijador()
+
+    motivo = str(fallo.value)
+    assert "N8N_URL" in motivo and "mal puesta" in motivo
+    assert "inventado" not in motivo
+
+
 def test_con_N8N_URL_el_fijador_habla_con_esa_url_y_con_ninguna_otra(monkeypatch):
     monkeypatch.setenv("N8N_URL", "https://otro.ejemplo.test/")
     pedidas = []

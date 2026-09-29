@@ -10,6 +10,8 @@ ahi se cambiaron. La justificacion de cada cambio esta en
 from __future__ import annotations
 
 import os
+import re
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,13 +27,55 @@ def raiz_rsna() -> Path:
     cada llamada y nunca al importar, para que los modulos que la usan se
     puedan importar en una maquina sin dataset; quien la necesita la llama
     dentro de la funcion que de verdad va a leer el disco. No comprueba que la
-    carpeta exista: eso lo dice, con la ruta, quien intente abrir el fichero.
+    carpeta exista: lo comprueba quien la usa, antes de tocar nada (la
+    seleccion de casos mira la carpeta de los DICOM; la fase de elegir de la
+    sesion, los PNG).
     """
     raiz = os.environ.get("RSNA_RAIZ", "").strip()
     if not raiz:
         raise SystemExit("falta RSNA_RAIZ: la raíz del dataset preparado, sin valor "
                          "por defecto (spec de SP5 §6.1)")
     return Path(raiz)
+
+
+def url_base_n8n(valor: str) -> str:
+    """La URL base de n8n a partir de lo que alguien escribio en `N8N_URL`.
+
+    Es esquema (`http` o `https`) y host, con su puerto si lo lleva, y nada
+    mas: se quitan los blancos de los extremos y la barra final, y el host se
+    devuelve en minusculas. Si no es eso -sin esquema, sin host, con una ruta,
+    una consulta o un fragmento (lo que sale de copiar la barra del
+    navegador), con usuario, entre comillas o con blancos dentro- lanza
+    `ValueError` con el motivo, que no repite el valor: acaba en la consola,
+    en un log o en un aviso por Telegram.
+
+    Recibe el valor y no lee el entorno: que hacer si la variable falta lo
+    decide cada quien la lee (el vigilante avisa, el arnes se detiene, las
+    pruebas conducidas se saltan); mal puesta, ninguno la da por buena.
+    """
+    texto = valor.strip()
+    if not texto:
+        raise ValueError("esta vacia")
+    if re.search(r"[\"'`]", texto):
+        raise ValueError("lleva comillas: se escribe sin ellas")
+    if re.search(r"\s", texto):
+        raise ValueError("lleva blancos dentro")
+    texto = texto.rstrip("/")
+    try:
+        partes = urllib.parse.urlsplit(texto)
+        partes.port  # un puerto que no es un numero lanza ValueError
+    except ValueError:
+        raise ValueError("el puerto no es un numero") from None
+    if partes.scheme not in ("http", "https"):
+        raise ValueError("no lleva delante el esquema, http:// o https://")
+    if not partes.hostname:
+        raise ValueError("no lleva host")
+    if "@" in partes.netloc:
+        raise ValueError("lleva usuario o contraseña: se quitan")
+    if partes.path or partes.query or partes.fragment or re.search(r"[?#]", texto):
+        raise ValueError("lleva una ruta, una consulta o un fragmento detras del "
+                         "host: la URL base es solo el esquema y el host")
+    return f"{partes.scheme}://{partes.netloc.lower()}"
 
 
 @dataclass(frozen=True)

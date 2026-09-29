@@ -61,8 +61,10 @@ ENTORNO
     N8N_URL                      OBLIGATORIA con los bots, y sin valor por
                                  defecto: la URL base del n8n que los sirve
                                  (por ejemplo https://n8n.ejemplo.test). Si
-                                 falta, el arnes sale diciendolo antes de
-                                 empezar. Con --sin-bots no hace falta
+                                 falta o esta mal puesta (sin esquema, con
+                                 una ruta detras...), el arnes sale
+                                 diciendolo antes de empezar. Con --sin-bots
+                                 no hace falta
     COPILOTO_BD_DSN              formato CLAVE-VALOR, no URL (ver conftest.py)
     TELEGRAM_SECRET_PRUEBA       el secret_token del §4.2
     TELEGRAM_TOKEN_PROFESIONAL   el token del bot del PROFESIONAL, no el de
@@ -111,7 +113,9 @@ import uuid
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(REPO / "src"))
 
+from copiloto_triaje.config import url_base_n8n  # noqa: E402
 from pruebas.seleccionar_casos import seleccionar  # noqa: E402
 
 CORPUS = REPO / "pruebas" / "corpus"
@@ -1338,7 +1342,9 @@ def _conectar(dsn):
 def base_de_n8n() -> str:
     """La URL base del n8n de los bots. Sale de `N8N_URL` y de ningun otro
     sitio: el repositorio no lleva la de ningun despliegue, y un valor por
-    defecto mandaria las conversaciones de prueba a un n8n que nadie eligio."""
+    defecto mandaria las conversaciones de prueba a un n8n que nadie eligio.
+    Mal puesta tambien se detiene: si no, el primer mensaje moria con una
+    traza despues de abrir la base y de dar de alta el chat de pruebas."""
     base = os.environ.get("N8N_URL", "").strip()
     if not base:
         raise SystemExit(
@@ -1346,7 +1352,16 @@ def base_de_n8n() -> str:
             "contra un n8n, y no hay ninguno por defecto.\n"
             "Pon en N8N_URL la URL base del n8n que sirve a los dos bots (por "
             "ejemplo https://n8n.ejemplo.test), o corre con --sin-bots.")
-    return base
+    try:
+        return url_base_n8n(base)
+    except ValueError as e:
+        # el motivo, y no el valor
+        raise SystemExit(
+            f"N8N_URL está mal puesta ({e}): con los bots el arnés conduce "
+            "las conversaciones contra esa dirección.\n"
+            "Pon en N8N_URL solo la URL base del n8n que sirve a los dos bots "
+            "(por ejemplo https://n8n.ejemplo.test), o corre con --sin-bots."
+        ) from None
 
 
 def main() -> int:

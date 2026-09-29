@@ -25,6 +25,8 @@ import urllib.request
 
 import pytest
 
+from copiloto_triaje.config import url_base_n8n
+
 
 @pytest.fixture
 def webhook_n8n():
@@ -35,15 +37,27 @@ def webhook_n8n():
     nada mas: el webhook es publico, asi que el `chat_id` del cuerpo lo aporta
     quien llama y no prueba nada por si solo.
 
-    Sin `N8N_URL` la prueba que lo pide se salta: no hay n8n por defecto.
+    Sin `N8N_URL` la prueba que lo pide se salta: no hay n8n por defecto. Mal
+    puesta, FALLA diciendo por que: un salto se ve verde, y quien la puso
+    quiere correr las pruebas conducidas.
     """
-    base = os.environ.get("N8N_URL", "").strip().rstrip("/")
+    base = os.environ.get("N8N_URL", "").strip()
     if not base:
         pytest.skip(
             "sin N8N_URL no se sabe a qué n8n hablar: las pruebas conducidas "
             "de los dos bots se quedan sin correr. Para correrlas, pon en "
             "N8N_URL la URL base del n8n que los sirve, además de los secretos "
             "de cada prueba")
+    try:
+        base = url_base_n8n(base)
+    except ValueError as e:
+        # el motivo, y no el valor: la salida de las pruebas tambien se publica
+        pytest.fail(
+            f"N8N_URL está mal puesta ({e}): las pruebas conducidas no se "
+            "pueden correr contra ella. Pon en N8N_URL solo la URL base del "
+            "n8n que sirve a los dos bots (por ejemplo "
+            "https://n8n.ejemplo.test), o quítala para saltarlas",
+            pytrace=False)
 
     def enviar(ruta: str, cuerpo: dict, secreto: str | None = None):
         cabeceras = {"Content-Type": "application/json"}

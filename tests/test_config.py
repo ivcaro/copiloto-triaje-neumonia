@@ -1,6 +1,6 @@
 import pytest
 from pathlib import Path
-from copiloto_triaje.config import Config, raiz_rsna
+from copiloto_triaje.config import Config, raiz_rsna, url_base_n8n
 
 
 def test_config_usa_valores_por_defecto_del_spec():
@@ -107,3 +107,50 @@ def test_sin_rsna_raiz_se_detiene_y_nombra_la_variable(valor, monkeypatch):
         monkeypatch.setenv("RSNA_RAIZ", valor)
     with pytest.raises(SystemExit, match="RSNA_RAIZ"):
         raiz_rsna()
+
+
+def test_raiz_rsna_no_mira_el_disco(tmp_path, monkeypatch):
+    """Lo comprueba quien va a leer el dataset, antes de tocar nada."""
+    monkeypatch.setenv("RSNA_RAIZ", str(tmp_path / "no-existe"))
+    assert raiz_rsna() == tmp_path / "no-existe"
+
+
+# --------------------------------------------------------------------------
+# `N8N_URL`: la escribe una persona, y mal puesta no puede pasar por buena
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("valor, base", [
+    ("https://n8n.inventado.test", "https://n8n.inventado.test"),
+    ("https://n8n.inventado.test/", "https://n8n.inventado.test"),
+    ("  https://N8N.Inventado.TEST/  ", "https://n8n.inventado.test"),
+    ("HTTPS://n8n.inventado.test", "https://n8n.inventado.test"),
+    ("http://localhost:5678", "http://localhost:5678"),
+])
+def test_url_base_n8n_devuelve_la_base(valor, base):
+    assert url_base_n8n(valor) == base
+
+
+@pytest.mark.parametrize("valor, dice", [
+    ("", "vacia"),
+    ("n8n.inventado.test", "esquema"),
+    ("n8n.inventado.test:5678", "esquema"),
+    ("ftp://n8n.inventado.test", "esquema"),
+    ("/", "esquema"),
+    ("https://", "host"),
+    ("https:/n8n.inventado.test", "host"),
+    # lo que sale de copiar la barra del navegador
+    ("https://n8n.inventado.test/webhook/copiloto-paciente", "ruta"),
+    ("https://n8n.inventado.test/n8n/", "ruta"),
+    ("https://n8n.inventado.test?x=1", "consulta"),
+    ("https://n8n.inventado.test#arriba", "fragmento"),
+    ('"https://n8n.inventado.test"', "comillas"),
+    ("'https://n8n.inventado.test'", "comillas"),
+    ("https://n8n. inventado.test", "blancos"),
+    ("https://n8n.inventado.test/\tx", "blancos"),
+    ("https://alguien@n8n.inventado.test", "usuario"),
+    ("https://n8n.inventado.test:puerto", "puerto"),
+])
+def test_url_base_n8n_rechaza_lo_que_no_es_una_url_base(valor, dice):
+    with pytest.raises(ValueError, match=dice) as e:
+        url_base_n8n(valor)
+    # el motivo no repite el valor: acaba en la consola, en un log o en Telegram
+    assert "inventado" not in str(e.value)

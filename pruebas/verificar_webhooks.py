@@ -38,9 +38,11 @@ Devuelve 0 si los dos webhooks estan como deben, y 1 si hay algo que arreglar.
 `N8N_URL` ES OBLIGATORIA y no tiene valor por defecto: es la URL base del n8n
 que sirve a los dos bots (por ejemplo `https://n8n.ejemplo.test`), y con ella se
 calcula donde tendria que estar entregando Telegram. El repositorio no lleva la
-de ningun despliegue. Sin ella el script no pide ningun token ni comprueba nada:
-dice que falta, lo manda por Telegram si el canal de avisos esta puesto, y
-devuelve 1.
+de ningun despliegue. Sin ella, o mal puesta (sin esquema, con una ruta detras,
+entre comillas...), el script no pide ningun token ni comprueba nada: dice que
+falta o que esta mal, lo manda por Telegram si el canal de avisos esta puesto,
+y devuelve 1. Mal puesta, compararla con lo que devuelve Telegram daria por mal
+apuntado un webhook que esta bien.
 
 PARA LA TAREA PROGRAMADA DIARIA (§5 del manual de operacion) hacen falta dos
 variables mas: `COPILOTO_CHAT_EQUIPO` y `TELEGRAM_TOKEN_AVISOS` -el token del bot
@@ -58,17 +60,50 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
+
+from copiloto_triaje.config import url_base_n8n  # noqa: E402
+
+
+def _base_de_n8n():
+    """(base, motivo): la URL base de `N8N_URL`, o "" y por que no vale. Sin
+    la variable el motivo va vacio: ausente y mal puesta se dicen distinto."""
+    valor = os.environ.get("N8N_URL", "").strip()
+    if not valor:
+        return "", ""
+    try:
+        return url_base_n8n(valor), ""
+    except ValueError as e:
+        return "", str(e)
+
+
 # Sin valor por defecto, y sin fallar al importar: `tests/test_mantenimiento.py`
 # importa este modulo para probar el diagnostico, y tiene que poder hacerlo en
-# una maquina que no sabe de ningun n8n. Quien se niega a seguir es `main()`.
-BASE_N8N = os.environ.get("N8N_URL", "").strip().rstrip("/")
+# una maquina que no sabe de ningun n8n, o que la tiene mal puesta. Quien se
+# niega a seguir es `main()`.
+BASE_N8N, N8N_URL_MAL_PUESTA = _base_de_n8n()
+
+# Donde se pone, dicho para la tarea programada: una tarea de Windows no tiene
+# variables propias, lee las del perfil del usuario que la corre.
+DONDE_SE_PONE = (
+    "en el entorno de quien corre el script; si lo corre la tarea programada, "
+    "con `setx N8N_URL` en el perfil del usuario que la corre (manual de "
+    "operación, §5, paso 2).")
 
 SIN_N8N_URL = (
     "Falta N8N_URL: sin ella no se sabe en qué URL tendría que estar "
     "entregando Telegram, y no se ha comprobado ningún webhook.\n"
     "   Qué hacer: pon en N8N_URL la URL base del n8n que sirve a los dos bots "
-    "(por ejemplo https://n8n.ejemplo.test), en el entorno de quien corre el "
-    "script; si lo corre la tarea programada, en la tarea.")
+    "(por ejemplo https://n8n.ejemplo.test), " + DONDE_SE_PONE)
+
+# El motivo, y nunca el valor: el mensaje viaja por Telegram.
+N8N_URL_MAL = (
+    "N8N_URL está mal puesta ({motivo}): con ella no se sabe en qué URL "
+    "tendría que estar entregando Telegram, y no se ha comprobado ningún "
+    "webhook.\n"
+    "   Qué hacer: pon en N8N_URL solo la URL base del n8n que sirve a los dos "
+    "bots, con su esquema y sin nada detrás del host (por ejemplo "
+    "https://n8n.ejemplo.test), " + DONDE_SE_PONE)
 
 BOTS = [
     ("paciente", "TELEGRAM_TOKEN_PACIENTE", "copiloto-paciente",
@@ -255,9 +290,13 @@ def avisar_al_equipo(problemas, comprobado=True):
 def main() -> int:
     if not BASE_N8N:
         # Antes de pedir ningun token y de tocar la memoria: sin la base no hay
-        # con que comparar, y una lectura a medias borraria la de ayer.
-        print(SIN_N8N_URL)
-        avisar_al_equipo([SIN_N8N_URL], comprobado=False)
+        # con que comparar, y una lectura a medias borraria la de ayer. Mal
+        # puesta es lo mismo: compararla daria por mal apuntados los dos
+        # webhooks y mandaria registrarlos en una direccion equivocada.
+        mensaje = (N8N_URL_MAL.format(motivo=N8N_URL_MAL_PUESTA)
+                   if N8N_URL_MAL_PUESTA else SIN_N8N_URL)
+        print(mensaje)
+        avisar_al_equipo([mensaje], comprobado=False)
         return 1
     memoria = _memoria_leer()
     nueva = {}

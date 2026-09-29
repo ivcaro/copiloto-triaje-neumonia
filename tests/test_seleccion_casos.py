@@ -82,8 +82,9 @@ def con_puntuaciones_de_mentira(monkeypatch):
 def test_las_rutas_cuelgan_de_rsna_raiz(con_puntuaciones_de_mentira, tmp_path,
                                         monkeypatch):
     monkeypatch.setenv("RSNA_RAIZ", str(tmp_path))
-    casos = con_puntuaciones_de_mentira.seleccionar(n_por_perfil=2)
     crudo = tmp_path / "crudo" / "stage_2_train_images"
+    crudo.mkdir(parents=True)   # la carpeta tiene que existir; los DICOM, no
+    casos = con_puntuaciones_de_mentira.seleccionar(n_por_perfil=2)
     alta = casos["positiva_clara"][0]
     assert alta["ruta_dcm"] == str(crudo / f"{alta['patientId']}.dcm")
     for nombre, perfil in casos.items():
@@ -97,6 +98,25 @@ def test_sin_rsna_raiz_seleccionar_se_detiene_nombrandola(
     monkeypatch.delenv("RSNA_RAIZ", raising=False)
     with pytest.raises(SystemExit, match="RSNA_RAIZ"):
         con_puntuaciones_de_mentira.seleccionar(n_por_perfil=2)
+
+
+def test_con_rsna_raiz_en_otra_carpeta_seleccionar_se_detiene_al_principio(
+        tmp_path, monkeypatch):
+    """Una `RSNA_RAIZ` que no es el dataset daba 45 rutas que no existen, y
+    el arnes moria mas tarde, con una traza, despues de haber tocado cosas.
+    Ahora se detiene al principio, antes de leer las puntuaciones, nombrando
+    la variable y la carpeta que falta."""
+    from pruebas import seleccionar_casos
+
+    def no_se_llama():
+        raise AssertionError("seleccionar() siguió sin mirar la carpeta")
+
+    monkeypatch.setattr(seleccionar_casos, "puntuaciones_de_prueba", no_se_llama)
+    monkeypatch.setenv("RSNA_RAIZ", str(tmp_path))
+    with pytest.raises(SystemExit) as salida:
+        seleccionar_casos.seleccionar(n_por_perfil=2)
+    assert "RSNA_RAIZ" in str(salida.value)
+    assert "stage_2_train_images" in str(salida.value)
 
 
 def test_el_modulo_no_guarda_ninguna_ruta_del_dataset():

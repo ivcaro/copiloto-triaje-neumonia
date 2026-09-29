@@ -118,6 +118,16 @@ def fase_elegir(salida: pathlib.Path, semilla: int, forzar: bool = False):
     ordenes = sesion.ordenes(casos, np.random.default_rng(semilla + 1))
     preparacion = f"{semilla}-{datetime.datetime.now().strftime('%Y%m%dT%H%M%S')}"
 
+    # Todas las placas, ANTES de borrar nada de una eleccion anterior: si no,
+    # quedarian una clave y unos casos viejos sin placas ni mensajes.
+    faltan = [c["patientId"] for c in casos + practica
+              if not (raiz / "png" / f"{c['patientId']}.png").is_file()]
+    if faltan:
+        raise SystemExit(
+            f"faltan {len(faltan)} de las {len(casos + practica)} placas en "
+            f"{raiz / 'png'} (la primera, {faltan[0]}.png): ¿apunta RSNA_RAIZ "
+            "al dataset preparado? No se ha borrado nada de la elección anterior.")
+
     for relativa in DE_UNA_ELECCION_ANTERIOR:
         (salida / relativa).unlink(missing_ok=True)
     if (salida / "formulario" / "placas").is_dir():

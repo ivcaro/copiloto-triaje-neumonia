@@ -665,6 +665,8 @@ def _main_que_no_toca_nada(monkeypatch):
                      "COPILOTO_CHAT_EQUIPO", "TELEGRAM_TOKEN_AVISOS"):
         monkeypatch.delenv(variable, raising=False)
     monkeypatch.setattr(vw, "BASE_N8N", "")
+    # y sin el motivo de una `N8N_URL` mal puesta que hubiera al coleccionar
+    monkeypatch.setattr(vw, "N8N_URL_MAL_PUESTA", "")
 
 
 def _canal_de_avisos_falso(monkeypatch):
@@ -756,6 +758,65 @@ def test_sin_N8N_URL_la_tarea_programada_avisa_por_telegram(monkeypatch, capsys)
     assert "los webhooks de Telegram NO se han comprobado" in texto
     assert "no está como debe" not in texto
     assert "aviso por Telegram: enviado." in capsys.readouterr().out
+
+
+def test_sin_N8N_URL_el_mensaje_dice_donde_se_pone_para_la_tarea_programada():
+    """Una tarea programada de Windows no tiene variables propias: la variable
+    va en el perfil del usuario que la corre, con `setx`, como dice el paso 2
+    del §5 del manual. «En la tarea» mandaba a buscar donde no hay."""
+    assert "setx N8N_URL" in vw.SIN_N8N_URL
+    assert "§5" in vw.SIN_N8N_URL and "paso 2" in vw.SIN_N8N_URL
+    assert "en la tarea." not in vw.SIN_N8N_URL
+
+
+# Mal puestas, con un host inventado que no sale en ningun mensaje: el mensaje
+# no repite el valor (va por Telegram).
+N8N_URL_MAL_PUESTAS = [
+    "n8n.inventado.test",                                   # sin esquema
+    "https://n8n.inventado.test/webhook/copiloto-paciente",  # con una ruta
+    '"https://n8n.inventado.test"',                          # entre comillas
+    "https://n8n. inventado.test",                           # con un blanco
+    "https://alguien@n8n.inventado.test",                    # con usuario
+    "/",
+]
+
+
+@pytest.mark.parametrize("valor", N8N_URL_MAL_PUESTAS)
+def test_con_N8N_URL_mal_puesta_el_script_se_importa_y_no_la_da_por_buena(
+        valor, monkeypatch):
+    monkeypatch.setenv("N8N_URL", valor)
+    modulo = _script_recien_importado()
+    assert modulo.BASE_N8N == ""
+    assert modulo.N8N_URL_MAL_PUESTA, "el motivo"
+    assert "inventado" not in modulo.N8N_URL_MAL_PUESTA
+
+
+@pytest.mark.parametrize("valor", N8N_URL_MAL_PUESTAS)
+def test_con_N8N_URL_mal_puesta_main_avisa_sin_comprobar_nada(valor, monkeypatch, capsys):
+    """Antes daba por mal apuntados los dos webhooks, que estaban bien, y
+    mandaba registrarlos en la direccion mal escrita. Ahora sigue el camino de
+    la variable ausente, con su propio mensaje: no pide tokens, no toca la
+    memoria, avisa diciendo que NO se comprobo nada y devuelve 1."""
+    _main_que_no_toca_nada(monkeypatch)
+    enviados = _canal_de_avisos_falso(monkeypatch)
+    monkeypatch.setenv("N8N_URL", valor)
+    modulo = _script_recien_importado()
+
+    def no_se_llama(*a, **k):
+        raise AssertionError("main() siguió adelante con N8N_URL mal puesta")
+
+    monkeypatch.setattr(modulo, "pedir_api", no_se_llama)
+    monkeypatch.setattr(modulo, "_memoria_escribir", no_se_llama)
+
+    assert modulo.main() == 1
+
+    texto = enviados["cuerpo"]["text"]
+    assert "los webhooks de Telegram NO se han comprobado" in texto
+    assert "N8N_URL" in texto and "mal puesta" in texto and "Qué hacer" in texto
+    assert "Vuelve a registrarlo" not in texto
+    salida = capsys.readouterr().out
+    assert "mal puesta" in salida and "aviso por Telegram: enviado." in salida
+    assert "inventado" not in texto + salida
 
 
 def test_los_problemas_de_una_lectura_de_verdad_llegan_al_canal_de_avisos(

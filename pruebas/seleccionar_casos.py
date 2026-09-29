@@ -28,9 +28,17 @@ def seleccionar(n_por_perfil: int = 10) -> dict:
     """Los casos de cada perfil, con la ruta de su DICOM bajo `RSNA_RAIZ`.
 
     La variable se lee aqui y no al importar: este modulo lo importan, solo
-    por `UMBRAL` o de paso, ficheros que corren sin dataset.
+    por `UMBRAL` o de paso, ficheros que corren sin dataset. Y se comprueba al
+    principio que apunta al dataset: si no, saldrian rutas que no existen, y
+    quien las usa moriria mas tarde, con una traza, despues de haber tocado
+    cosas.
     """
     crudo = raiz_rsna() / "crudo" / "stage_2_train_images"
+    if not crudo.is_dir():
+        raise SystemExit(
+            f"RSNA_RAIZ no apunta al dataset preparado: no existe {crudo}, la "
+            "carpeta de los DICOM. Pon en RSNA_RAIZ la carpeta que tiene dentro "
+            "manifiestos/, png/ y crudo/stage_2_train_images/.")
     df = puntuaciones_de_prueba()
     meta = pd.read_csv(REPO / "docs" / "eda" / "metadatos_eda.csv")
     edades = dict(zip(meta.patientId, meta.edad_num))

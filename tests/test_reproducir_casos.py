@@ -801,7 +801,7 @@ def test_la_base_de_n8n_sale_de_N8N_URL_y_de_ningun_otro_sitio(monkeypatch):
     from pruebas.reproducir_casos import base_de_n8n
 
     monkeypatch.setenv("N8N_URL", " https://otro.ejemplo.test/ ")
-    assert base_de_n8n() == "https://otro.ejemplo.test/"
+    assert base_de_n8n() == "https://otro.ejemplo.test"
     for vacia in ("", "   "):
         monkeypatch.setenv("N8N_URL", vacia)
         with pytest.raises(SystemExit) as salida:
@@ -825,6 +825,26 @@ def test_con_los_bots_y_sin_N8N_URL_el_arnes_sale_antes_de_empezar(
 
     assert "N8N_URL" in str(salida.value)
     assert salida.value.code != 0
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("valor", [
+    "n8n.inventado.test", "https://n8n.inventado.test/webhook/copiloto-paciente",
+    '"https://n8n.inventado.test"', "https://n8n. inventado.test", "/"])
+def test_con_los_bots_y_N8N_URL_mal_puesta_el_arnes_sale_antes_de_empezar(
+        valor, monkeypatch, tmp_path):
+    """Mal puesta, el primer POST moria con «unknown url type» despues de abrir
+    la base y de dar de alta el chat de pruebas. Ahora se detiene donde la
+    ausente: antes del copiloto, de elegir los casos y de abrir la base. Y el
+    mensaje no repite el valor."""
+    rc, _ = _entorno_con_bots(monkeypatch, tmp_path)
+    monkeypatch.setenv("N8N_URL", valor)
+
+    with pytest.raises(SystemExit) as salida:
+        rc.main()
+
+    assert "N8N_URL" in str(salida.value) and "mal puesta" in str(salida.value)
+    assert "inventado" not in str(salida.value)
     assert list(tmp_path.iterdir()) == []
 
 
