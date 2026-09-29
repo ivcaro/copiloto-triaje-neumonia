@@ -1131,3 +1131,42 @@ def test_la_cli_sin_lista_dice_que_variable_falta(tmp_path, monkeypatch):
         va.main(["--regenerar", "--huellas", str(tmp_path / "h.txt")])
     assert "ANONIMATO_LISTA" in str(salida.value)
     assert not (tmp_path / "h.txt").exists()
+
+
+# --------------------------------------------------------------------------
+# El arbol de verdad. Exige la anonimizacion hecha (tareas 1 a 6 del plan).
+# --------------------------------------------------------------------------
+def _por_fichero(hallazgos, que):
+    """`fichero: N (lineas a, b, c)`, sin tokens ni secretos."""
+    agrupados = {}
+    for h in hallazgos:
+        agrupados.setdefault(h["fichero"], []).append(h)
+    lineas = []
+    for fichero, suyos in sorted(agrupados.items()):
+        donde = sorted({h["linea"] for h in suyos})
+        corte = 12 if que == "huella" else None
+        clases = sorted({h[que][:corte] for h in suyos})
+        lineas.append(f"  {fichero}: {len(suyos)} "
+                      f"(lineas {', '.join(map(str, donde))}; "
+                      f"{que} {', '.join(clases)})")
+    return lineas
+
+
+@pytest.mark.skipif(solo_el_centinela(), reason=SIN_LA_LISTA)
+def test_el_arbol_esta_limpio():
+    """En el repositorio que se publica `huellas.txt` lleva solo la del
+    centinela (D9) y esta prueba se salta diciendolo: alli no comprobaria
+    nada. Y un recorrido vacio no es un arbol limpio."""
+    huellas = va.huellas_de_la_lista(va.leer_huellas(HUELLAS))
+    recorridos = len(va.ficheros_versionados(RAIZ))
+    assert recorridos > 100, "no se ha recorrido el arbol"
+    de_huella = va.buscar_huellas(RAIZ, huellas)
+    de_secreto = va.buscar_secretos(RAIZ, huellas)
+    if de_huella or de_secreto:
+        ficheros = len({h["fichero"] for h in de_huella})
+        pytest.fail("\n".join(
+            [f"El arbol no se puede publicar: {len(de_huella)} huellas en "
+             f"{ficheros} ficheros y {len(de_secreto)} secretos. La linea 0 "
+             "es el nombre del fichero."]
+            + _por_fichero(de_huella, "huella")
+            + _por_fichero(de_secreto, "clase")), pytrace=False)
