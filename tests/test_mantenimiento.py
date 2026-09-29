@@ -184,7 +184,9 @@ def test_las_sondas_de_webhook_no_llevan_el_secreto_ni_disparan_los_bots(flujo):
     for nombre, ruta in (("Webhook del paciente", "copiloto-paciente"),
                          ("Webhook del profesional", "copiloto-profesional")):
         p = nodo(flujo, nombre)["parameters"]
-        assert p["url"] == f"https://n8n.ejemplo.test/webhook/{ruta}"
+        # si falla se dice la sonda y no la URL que lleva
+        al_marcador = p["url"] == f"https://n8n.ejemplo.test/webhook/{ruta}"
+        assert al_marcador, nombre
         assert p["method"] == "POST"
         assert not p.get("sendHeaders"), nombre
         assert "authentication" not in p, nombre
@@ -231,7 +233,9 @@ def test_las_credenciales_son_las_de_sp3(flujo):
     for n in flujo["nodes"]:
         for tipo, c in (n.get("credentials") or {}).items():
             usadas.setdefault(tipo, set()).add(c["id"])
-    assert usadas == {"postgres": {CRED_BD}, "telegramApi": {CRED_AVISOS}}, usadas
+    # si falla se dicen los tipos de credencial y cuantas hay de cada uno, no cuales
+    las_de_sp3 = usadas == {"postgres": {CRED_BD}, "telegramApi": {CRED_AVISOS}}
+    assert las_de_sp3, {tipo: len(ids) for tipo, ids in usadas.items()}
 
 
 def test_el_aviso_va_en_texto_plano(flujo):

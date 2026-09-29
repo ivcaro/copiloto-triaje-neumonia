@@ -487,7 +487,10 @@ def test_solo_se_usa_la_credencial_del_bot_del_profesional():
               for n in _flujo()["nodes"]
               for t, c in (n.get("credentials") or {}).items()
               if t == "telegramApi"}
-    assert usadas == {"CRED_TELEGRAM_PROFESIONAL"}, usadas   # el marcador (SP5 §6.1)
+    # El marcador (SP5 §6.1). Si falla se dice cuantas credenciales distintas
+    # hay y no cuales: lo que imprime una prueba tambien se puede publicar.
+    solo_la_suya = usadas == {"CRED_TELEGRAM_PROFESIONAL"}
+    assert solo_la_suya, f"{len(usadas)} credenciales de Telegram distintas"
     paciente = {c["id"]
                 for n in _flujo(FLUJO_PACIENTE)["nodes"]
                 for t, c in (n.get("credentials") or {}).items()

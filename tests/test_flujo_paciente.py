@@ -450,11 +450,15 @@ def test_ningun_secreto_viaja_en_el_JSON_exportado():
 def test_solo_se_usa_la_credencial_del_bot_del_paciente():
     """D9 y la regla dura 2: reutilizar una credencial de Telegram del cliente
     le robaria el webhook a un bot suyo y lo dejaria mudo sin error visible."""
-    usadas = {c["id"]
-              for n in _flujo()["nodes"]
-              for t, c in (n.get("credentials") or {}).items()
-              if t == "telegramApi"}
-    assert usadas == {"CRED_TELEGRAM_PACIENTE"}, usadas    # el marcador (SP5 §6.1)
+    con_telegram = [(n["name"], c["id"])
+                    for n in _flujo()["nodes"]
+                    for t, c in (n.get("credentials") or {}).items()
+                    if t == "telegramApi"]
+    # El marcador (SP5 §6.1). Si falla se dicen los nodos y no la credencial
+    # que llevan: lo que imprime una prueba tambien se puede publicar.
+    con_otra = [nodo for nodo, c in con_telegram if c != "CRED_TELEGRAM_PACIENTE"]
+    solo_la_suya = bool(con_telegram) and not con_otra
+    assert solo_la_suya, con_otra
 
 
 def test_el_workflow_no_guarda_los_datos_de_ejecucion():

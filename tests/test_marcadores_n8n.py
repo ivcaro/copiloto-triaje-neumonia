@@ -160,6 +160,24 @@ def test_un_marcador_desconocido_en_los_valores_es_un_error(mn, valores):
         mn.aplicar(TEXTO, valores)
 
 
+def test_con_los_valores_al_reves_el_error_no_imprime_ninguno(mn, valores):
+    """El despiste natural es escribir {valor real: marcador}, que es el
+    sentido en que trabaja `retirar`. El error no puede repetir las claves:
+    serian todos los valores reales, en la consola de quien despliega."""
+    al_reves = {v: m for m, v in valores.items()}
+    for funcion in (mn.aplicar, mn.retirar):
+        with pytest.raises(mn.ErrorDeMarcadores, match="al reves") as e:
+            funcion(TEXTO, al_reves)
+        for valor in valores.values():
+            assert valor not in str(e.value)
+        assert f"{len(valores)} claves que no son marcadores" in str(e.value)
+    # una errata entre valores reales: se dice la errata, y de lo demas, cuantas
+    mezcla = dict(al_reves, CRED_TELEGRAM_PACIENT="errata")
+    with pytest.raises(mn.ErrorDeMarcadores, match="CRED_TELEGRAM_PACIENT") as e:
+        mn.aplicar(TEXTO, mezcla)
+    assert all(valor not in str(e.value) for valor in valores.values())
+
+
 @pytest.mark.parametrize("url", [
     "https://flujos.inventado.test/", "flujos.inventado.test", "ftp://x.test"])
 def test_la_url_va_con_esquema_y_sin_barra_final(mn, valores, url):
@@ -217,6 +235,30 @@ def test_la_cli_no_pone_valores_reales_encima_de_la_entrada(mn, carpeta, capsys)
     assert (carpeta / "entrada.json").read_bytes() == antes
 
 
+def test_la_cli_no_pone_valores_reales_dentro_del_repositorio(
+        mn, carpeta, monkeypatch, capsys):
+    """Ni encima de otro export ni en un fichero nuevo: lo que se escribe
+    dentro del repositorio esta a un `git add` de distancia. El repositorio
+    de esta prueba es una carpeta temporal: si la guarda faltara, la prueba
+    escribiria ahi y no en el de verdad."""
+    repositorio = carpeta / "repositorio"
+    (repositorio / "n8n").mkdir(parents=True)
+    (repositorio / "n8n" / "otro-export.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(mn, "REPO", repositorio)
+    for destino in (repositorio / "n8n" / "otro-export.json",
+                    repositorio / "n8n" / "nuevo.json", repositorio / "nuevo.json"):
+        antes = destino.read_bytes() if destino.exists() else None
+        assert mn.main(["--valores", str(carpeta / "valores.json"),
+                        "--entrada", str(carpeta / "entrada.json"),
+                        "--salida", str(destino)]) == 1
+        assert "FUERA del repositorio" in capsys.readouterr().err
+        assert (destino.read_bytes() if destino.exists() else None) == antes
+    # fuera del repositorio, si
+    assert mn.main(["--valores", str(carpeta / "valores.json"),
+                    "--entrada", str(carpeta / "entrada.json"),
+                    "--salida", str(carpeta / "fuera.json")]) == 0
+
+
 def test_la_cli_retira_encima_de_la_entrada(mn, carpeta, valores):
     (carpeta / "export.json").write_text(mn.aplicar(TEXTO, valores), encoding="utf-8")
     assert mn.main(["--valores", str(carpeta / "valores.json"), "--retirar",
@@ -248,6 +290,17 @@ def test_la_cli_no_escribe_nada_si_hay_un_error(mn, carpeta, valores, capsys):
                     "--entrada", str(carpeta / "roto.json"),
                     "--salida", str(carpeta / "salida.json")]) == 1
     assert "no es un JSON valido" in capsys.readouterr().err
+
+
+def test_la_cli_dice_el_error_si_un_fichero_no_se_puede_leer(mn, carpeta, capsys):
+    argumentos = ["--valores", str(carpeta / "valores.json"),
+                  "--salida", str(carpeta / "salida.json")]
+    assert mn.main(argumentos + ["--entrada", str(carpeta / "no-existe.json")]) == 1
+    assert capsys.readouterr().err.startswith("ERROR: FileNotFoundError")
+    (carpeta / "latin1.json").write_bytes('{"nota": "señal"}'.encode("latin-1"))
+    assert mn.main(argumentos + ["--entrada", str(carpeta / "latin1.json")]) == 1
+    assert capsys.readouterr().err.startswith("ERROR: UnicodeDecodeError")
+    assert not (carpeta / "salida.json").exists()
 
 
 def test_los_valores_por_defecto_son_los_locales_y_git_los_ignora(mn):
@@ -288,6 +341,21 @@ CREDENCIALES = {
     },
 }
 
+# Cuantas veces aparece cada marcador en cada workflow. Un marcador de mas es
+# una cadena nueva que `aplicar` sustituiria sin avisar al desplegar: si cae
+# en el `jsCode` de un nodo, cambia el programa del bot.
+VECES = {
+    "copiloto-paciente.json": {
+        "https://n8n.ejemplo.test": 1, "CRED_TELEGRAM_PACIENTE": 12,
+        "CRED_POSTGRES_COPILOTO": 5, "CRED_SECRETO_PACIENTE": 1, "bot-paciente": 12},
+    "copiloto-profesional.json": {
+        "https://n8n.ejemplo.test": 1, "CRED_TELEGRAM_PROFESIONAL": 9,
+        "CRED_POSTGRES_COPILOTO": 5, "CRED_SECRETO_PROFESIONAL": 1, "bot-profesional": 9},
+    "copiloto-mantenimiento.json": {
+        "https://n8n.ejemplo.test": 2, "CRED_TELEGRAM_AVISOS": 1,
+        "CRED_POSTGRES_COPILOTO": 4, "bot-avisos": 2},
+}
+
 # Lo que no es de la instancia y por eso se queda como esta: el copiloto se
 # llama por el nombre de su servicio en la red de Docker.
 URL_INTERNA = "http://copiloto-mcp:8000/"
@@ -299,16 +367,38 @@ def _nodos(fichero):
 
 @pytest.mark.parametrize("fichero", FLUJOS)
 def test_las_credenciales_de_los_workflows_son_marcadores(mn, fichero):
+    # Si falla se dice el nodo, y no la credencial que lleva: lo que imprime
+    # una prueba tambien se puede publicar.
     vistas = {}
     for n in _nodos(fichero):
         for tipo, c in (n.get("credentials") or {}).items():
-            assert set(c) == {"id", "name"}, (n["name"], c)
-            vistas.setdefault(tipo, []).append((c["id"], c["name"]))
+            assert set(c) == {"id", "name"}, (n["name"], sorted(c))
+            vistas.setdefault(tipo, []).append((n["name"], c["id"], c["name"]))
     esperadas = CREDENCIALES[fichero]
     assert set(vistas) == set(esperadas)
     for tipo, (ident, nombre, cuantos) in esperadas.items():
-        assert vistas[tipo] == [(ident, nombre)] * cuantos, (fichero, tipo)
+        con_otra = [nodo for nodo, i, nm in vistas[tipo] if (i, nm) != (ident, nombre)]
+        assert con_otra == [], (fichero, tipo)
+        nodos = len(vistas[tipo])
+        assert nodos == cuantos, (fichero, tipo)
         assert ident in mn.MARCADORES
+
+
+@pytest.mark.parametrize("fichero", FLUJOS)
+def test_cada_marcador_aparece_las_veces_previstas(mn, fichero):
+    texto = mn.leer(N8N / fichero)
+    assert {m: texto.count(m) for m in mn.marcadores_de(texto)} == VECES[fichero]
+
+
+@pytest.mark.parametrize("fichero", FLUJOS)
+def test_los_workflows_se_versionan_solo_con_sus_cinco_claves(mn, fichero):
+    """Una descarga de n8n trae ademas el `id` del workflow, su `versionId`,
+    la huella de la instancia (`meta`), `pinData` y `tags`: son de la
+    instancia, como el dominio. Y lo versionado esta escrito de una sola
+    manera, la de `como_se_versiona`."""
+    texto = mn.leer(N8N / fichero)
+    assert tuple(json.loads(texto)) == mn.CLAVES_DEL_WORKFLOW
+    assert mn.como_se_versiona(json.loads(texto)) == (texto, [])
 
 
 @pytest.mark.parametrize("fichero", FLUJOS)
@@ -317,8 +407,9 @@ def test_las_url_de_los_nodos_http_son_el_marcador_o_la_interna(mn, fichero):
         if n["type"] != "n8n-nodes-base.httpRequest":
             continue
         url = n["parameters"]["url"]
-        assert (url.startswith(mn.URL_N8N + "/webhook/")
-                or url.startswith(URL_INTERNA)), (fichero, n["name"], url)
+        conocida = (url.startswith(mn.URL_N8N + "/webhook/")
+                    or url.startswith(URL_INTERNA))
+        assert conocida, (fichero, n["name"])
 
 
 def test_las_dos_sondas_apuntan_al_marcador(mn):
@@ -326,10 +417,13 @@ def test_las_dos_sondas_apuntan_al_marcador(mn):
               for n in _nodos("copiloto-mantenimiento.json")
               if n["type"] == "n8n-nodes-base.httpRequest"
               and "/webhook/" in n["parameters"]["url"]}
-    assert sondas == {
+    esperadas = {
         "Webhook del paciente": "https://n8n.ejemplo.test/webhook/copiloto-paciente",
         "Webhook del profesional": "https://n8n.ejemplo.test/webhook/copiloto-profesional",
     }
+    assert sorted(sondas) == sorted(esperadas)
+    a_otro_sitio = [nombre for nombre in esperadas if sondas[nombre] != esperadas[nombre]]
+    assert a_otro_sitio == []
 
 
 @pytest.mark.parametrize("fichero, ruta, token", [
@@ -340,8 +434,9 @@ def test_las_dos_sondas_apuntan_al_marcador(mn):
 def test_la_nota_del_webhook_registra_con_el_marcador(fichero, ruta, token):
     (nota,) = [n["notes"] for n in _nodos(fichero)
                if n["type"] == "n8n-nodes-base.webhook"]
-    assert (f'"https://api.telegram.org/bot{token}/setWebhook" '
-            f"-d url=https://n8n.ejemplo.test/webhook/{ruta} ") in nota
+    con_el_marcador = (f'"https://api.telegram.org/bot{token}/setWebhook" '
+                       f"-d url=https://n8n.ejemplo.test/webhook/{ruta} ") in nota
+    assert con_el_marcador, fichero
 
 
 def test_cada_marcador_aparece_en_algun_workflow_y_al_reves(mn):
@@ -368,6 +463,43 @@ def test_ida_y_vuelta_con_los_valores_de_ejemplo(mn, fichero):
     assert mn.marcadores_de(puesto) == set()
     assert len(json.loads(puesto)["nodes"]) == len(json.loads(texto)["nodes"])
     assert mn.retirar(puesto, ejemplo) == texto
+
+
+@pytest.mark.parametrize("fichero", FLUJOS)
+def test_retirar_una_descarga_de_n8n_quita_lo_que_es_de_la_instancia(
+        mn, fichero, tmp_path, capsys):
+    """Como lo descarga n8n: con su id, su version, la huella de la instancia,
+    datos de una ejecucion y etiquetas; con las claves en otro orden y con
+    otra sangria. Lo que sale es, letra por letra, lo versionado."""
+    ejemplo = mn.leer_valores(EJEMPLO)
+    versionado = mn.leer(N8N / fichero)
+    desplegado = json.loads(mn.aplicar(versionado, ejemplo))
+    descarga = {"id": "wf-de-la-instancia", "versionId": "version-de-la-instancia",
+                "meta": {"instanceId": "huella-de-la-instancia"},
+                "pinData": {"Un nodo": [{"json": {"dato": "de-una-ejecucion"}}]},
+                "tags": [{"id": "etiqueta-de-la-instancia", "name": "produccion"}]}
+    descarga.update({c: desplegado[c] for c in reversed(mn.CLAVES_DEL_WORKFLOW)})
+    (tmp_path / "descarga.json").write_text(
+        json.dumps(descarga, ensure_ascii=False, indent=4), encoding="utf-8")
+
+    assert mn.main(["--valores", str(EJEMPLO), "--retirar",
+                    "--entrada", str(tmp_path / "descarga.json"),
+                    "--salida", str(tmp_path / "versionable.json")]) == 0
+
+    assert mn.leer(tmp_path / "versionable.json") == versionado
+    dicho = capsys.readouterr().out
+    assert "quitadas: id, meta, pinData, tags, versionId" in dicho
+    for de_la_instancia in ("wf-de-la-instancia", "version-de-la-instancia",
+                            "huella-de-la-instancia", "de-una-ejecucion",
+                            "etiqueta-de-la-instancia"):
+        assert de_la_instancia not in dicho
+        assert de_la_instancia not in mn.leer(tmp_path / "versionable.json")
+
+
+def test_lo_que_no_es_un_workflow_se_retira_sin_reescribirlo(mn, carpeta, valores):
+    """Sin `nodes` no es un workflow: se sustituye texto y nada mas."""
+    assert mn.como_se_versiona(json.loads(TEXTO)) == (None, [])
+    assert mn.como_se_versiona(["una", "lista"]) == (None, [])
 
 
 @pytest.mark.parametrize("fichero", FLUJOS)

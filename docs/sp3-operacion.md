@@ -609,6 +609,15 @@ el workflow no funciona: sus nodos apuntan a credenciales que no existen en la
 instancia, y las dos sondas del mantenimiento preguntan a un dominio que no
 existe.
 
+**Después de importar, mirar en n8n que cada workflow usa SU bot.** El
+repositorio ya no puede vigilarlo: qué credencial real hay detrás de cada
+marcador lo dice `valores.local.json`, y si ahí se cruzan dos `id` —o se cuela
+el de una credencial que no es del proyecto— la herramienta los pone sin
+rechistar. Abre un nodo de Telegram de cada workflow y comprueba que la
+credencial es la del bot del paciente en el del paciente, la del profesional en
+el del profesional y la de pruebas y avisos en el de mantenimiento. La primera
+vez, empieza por el de mantenimiento, que no atiende a nadie.
+
 **Quitar los valores reales, ANTES de versionar un export.** El workflow se
 descarga de n8n a la carpeta temporal y se deja en `n8n/` ya con marcadores:
 
@@ -616,15 +625,39 @@ descarga de n8n a la carpeta temporal y se deja en `n8n/` ya con marcadores:
 C:\venv-copiloto\Scripts\python.exe scripts/marcadores_n8n.py --retirar --entrada $env:TEMP\n8n-real\export.json --salida n8n/copiloto-mantenimiento.json
 ```
 
+Una descarga de n8n trae más de lo que se versiona: el `id` del workflow, su
+`versionId`, la huella de la instancia (`meta`), datos de ejecuciones
+(`pinData`) y etiquetas. Identifican la instancia, como el dominio. Al retirar,
+la herramienta se queda con las cinco claves que se versionan (`name`,
+`active`, `nodes`, `connections` y `settings`), escribe el fichero como los de
+`n8n/` y dice qué claves quitó.
+
 Después, `git diff n8n/` tiene que enseñar solo lo que se cambió a propósito
-en el workflow, y `C:\venv-copiloto\Scripts\python.exe -m pytest tests/test_marcadores_n8n.py`
-tiene que pasar. Al terminar se borra la carpeta temporal.
+en el workflow, y estas dos pruebas tienen que pasar:
+
+```powershell
+C:\venv-copiloto\Scripts\python.exe -m pytest tests/test_marcadores_n8n.py tests/test_anonimato.py
+```
+
+La segunda mira el árbol entero contra las huellas: caza lo que la herramienta
+no conoce, como el dominio escrito con otro subdominio o el `id` de una
+credencial que se volvió a crear y no está en `valores.local.json`. Si el
+`git diff` enseña de más, no se versiona hasta entender por qué. Al terminar se
+borra la carpeta temporal.
+
+La primera vez que se exporte un workflow que no se ha desplegado todavía desde
+el repositorio, sus notas llevan aún el texto de antes de los marcadores. En el
+del profesional eso se ve en dos sitios —la nota del webhook y un comentario
+del nodo `Desenlace`—, donde el `git diff` enseñará un texto distinto del
+versionado: se corrige a mano con el del repositorio, o se despliega antes
+desde el repositorio y se exporta después.
 
 El script se niega —sin escribir nada— si en `valores.local.json` falta un
 marcador, si dos marcadores comparten valor, si al poner los valores la salida
-es el propio fichero de entrada, o si tras retirar queda algún valor real
-escrito de otra forma (en mayúsculas, o el dominio sin el `https://`); en ese
-último caso dice la línea, y se corrige a mano.
+es el propio fichero de entrada o cae dentro del repositorio, o si tras retirar
+queda algún valor real escrito de otra forma (en mayúsculas, o el dominio sin
+el `https://`); en ese último caso dice la línea, y se corrige a mano. Ningún
+mensaje suyo repite un valor real: dice el marcador y la línea.
 
 ---
 

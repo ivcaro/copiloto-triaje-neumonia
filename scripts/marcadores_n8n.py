@@ -17,8 +17,13 @@ Los valores salen de `n8n/valores.local.json` (ignorado por git: marcador ->
 valor real), que se crea copiando `n8n/valores.ejemplo.json` y cambiando los
 valores de ejemplo por los de la instancia. Con `--valores` se lee otro.
 
-No reformatea: sustituye texto y deja lo demas como estaba, con los finales de
-linea en LF. No usa la red ni habla con n8n.
+Al poner los valores no reformatea: sustituye texto y deja lo demas como
+estaba, con los finales de linea en LF. Al retirarlos de un workflow, ademas,
+lo deja como se versiona: solo con las cinco claves que se versionan (`name`,
+`active`, `nodes`, `connections`, `settings`) y escrito como los de `n8n/`.
+Una descarga de n8n trae tambien el `id` del workflow, su `versionId`, la
+huella de la instancia (`meta`), datos de ejecuciones (`pinData`) y etiquetas:
+identifican la instancia y no se versionan. No usa la red ni habla con n8n.
 """
 from __future__ import annotations
 
@@ -47,8 +52,17 @@ MARCADORES = (
     "bot-avisos",
 )
 
+# Lo que se versiona de un workflow, y en este orden. Lo demas que trae una
+# descarga de n8n es de la instancia.
+CLAVES_DEL_WORKFLOW = ("name", "active", "nodes", "connections", "settings")
+
 # Un valor con alguno de estos caracteres romperia el JSON al sustituirlo.
 _PROHIBIDOS = re.compile(r'["\\\x00-\x1f]')
+
+# La forma de un marcador. Una clave de los valores que NO la tiene no se
+# repite en ningun mensaje: puede ser un valor real.
+_FORMA_DE_MARCADOR = re.compile(
+    r"CRED_[A-Z0-9_]+|bot-[a-z]+|https?://[A-Za-z0-9.-]*ejemplo\.test")
 
 
 class ErrorDeMarcadores(ValueError):
@@ -70,8 +84,20 @@ def _validar(valores: dict) -> None:
                                 "{marcador: valor}")
     desconocidos = set(valores) - set(MARCADORES)
     if desconocidos:
-        raise ErrorDeMarcadores(
-            f"marcadores desconocidos en los valores: {_nombres(desconocidos)}")
+        # Solo se repiten las claves con forma de marcador (una errata). Las
+        # demas pueden ser valores reales: con el fichero escrito al reves,
+        # {valor real: marcador}, el mensaje los imprimiria todos.
+        erratas = {d for d in desconocidos
+                   if isinstance(d, str) and _FORMA_DE_MARCADOR.fullmatch(d)}
+        mensaje = "marcadores desconocidos en los valores: "
+        mensaje += _nombres(erratas) if erratas else "ninguno tiene forma de marcador"
+        otras = len(desconocidos) - len(erratas)
+        if otras:
+            mensaje += (f" ({otras} claves que no son marcadores y no se "
+                        "repiten aqui: las claves son los marcadores y los "
+                        "valores, los de la instancia; ¿esta el fichero al "
+                        "reves?)")
+        raise ErrorDeMarcadores(mensaje)
     for marcador, valor in valores.items():
         if not isinstance(valor, str) or not valor.strip():
             raise ErrorDeMarcadores(f"el valor de {marcador} esta vacio")
@@ -191,22 +217,51 @@ def leer_valores(ruta) -> dict:
         raise ErrorDeMarcadores(f"{ruta} no es un JSON valido: {e}") from e
 
 
+def como_se_versiona(datos) -> tuple:
+    """(texto, claves quitadas) de un workflow tal como se versiona: solo con
+    `CLAVES_DEL_WORKFLOW`, en ese orden, y escrito como los de `n8n/`. Lo que
+    no es un workflow (no tiene `nodes`) no se toca: devuelve (None, [])."""
+    if not isinstance(datos, dict) or "nodes" not in datos:
+        return None, []
+    sobran = sorted(set(datos) - set(CLAVES_DEL_WORKFLOW))
+    limpio = {c: datos[c] for c in CLAVES_DEL_WORKFLOW if c in datos}
+    return json.dumps(limpio, ensure_ascii=False, indent=2) + "\n", sobran
+
+
+def _dentro_del_repositorio(ruta: Path) -> bool:
+    try:
+        ruta.resolve().relative_to(REPO)
+    except ValueError:
+        return False
+    return True
+
+
 def convertir(entrada, salida, valores: dict, quitar: bool = False) -> dict:
     """Lee `entrada`, pone o quita los valores y escribe `salida`. Devuelve
-    {marcador: veces} de lo sustituido."""
+    {marcador: veces} de lo sustituido; al retirar, ademas, en la clave
+    `"claves quitadas"`, las del nivel superior que no se versionan."""
     entrada, salida = Path(entrada), Path(salida)
     if not quitar and entrada.resolve() == salida.resolve():
         raise ErrorDeMarcadores(
             "la salida no puede ser la entrada al poner los valores reales: "
             "el export versionado se quedaria con ellos")
+    if not quitar and _dentro_del_repositorio(salida):
+        raise ErrorDeMarcadores(
+            "al poner los valores reales la salida tiene que quedar FUERA del "
+            "repositorio (una carpeta temporal): dentro estaria a un `git "
+            "add` de distancia")
     texto = leer(entrada)
     try:
-        json.loads(texto)
+        datos = json.loads(texto)
     except json.JSONDecodeError as e:
         raise ErrorDeMarcadores(f"{entrada} no es un JSON valido: {e}") from e
     if quitar:
+        versionable, quitadas = como_se_versiona(datos)
+        if versionable is not None:
+            texto = versionable
         resultado = retirar(texto, valores)
         veces = {m: texto.count(v) for m, v in valores.items() if v in texto}
+        veces["claves quitadas"] = quitadas
     else:
         resultado = aplicar(texto, valores)
         veces = {m: texto.count(m) for m in marcadores_de(texto)}
@@ -233,10 +288,18 @@ def main(argv=None) -> int:
     except ErrorDeMarcadores as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
+    except (OSError, UnicodeDecodeError) as e:
+        # un fichero que no existe, que no se puede escribir o que no es UTF-8
+        print(f"ERROR: {type(e).__name__}: {e}", file=sys.stderr)
+        return 1
+    quitadas = veces.pop("claves quitadas", [])
     verbo = "retirados" if a.retirar else "puestos"
     for marcador in MARCADORES:
         if marcador in veces:
             print(f"{marcador}: {veces[marcador]}")
+    if quitadas:
+        print("claves de la instancia que no se versionan, quitadas: "
+              + ", ".join(quitadas))
     print(f"valores {verbo}: {sum(veces.values())} sustituciones -> {a.salida}")
     return 0
 
