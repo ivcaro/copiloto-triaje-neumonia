@@ -1,6 +1,6 @@
 import pytest
 from pathlib import Path
-from copiloto_triaje.config import Config
+from copiloto_triaje.config import Config, raiz_rsna
 
 
 def test_config_usa_valores_por_defecto_del_spec():
@@ -79,3 +79,31 @@ def test_un_margen_negativo_se_rechaza(tmp_path):
     with pytest.raises(ValueError, match="margen_especificidad"):
         Config(raiz_datos=tmp_path, zip_rsna=tmp_path / "r.zip",
                margen_especificidad=-0.01)
+
+
+def test_raiz_rsna_devuelve_la_carpeta_de_la_variable(tmp_path, monkeypatch):
+    monkeypatch.setenv("RSNA_RAIZ", str(tmp_path))
+    assert raiz_rsna() == tmp_path
+    assert isinstance(raiz_rsna(), Path)
+
+
+def test_raiz_rsna_se_lee_en_cada_llamada_y_no_al_importar(tmp_path, monkeypatch):
+    """Perezosa: quien cambia la variable despues de importar el modulo ve el
+    valor nuevo. Si se leyera al importar, los modulos que la usan no se
+    podrian ni importar en una maquina sin dataset."""
+    monkeypatch.setenv("RSNA_RAIZ", str(tmp_path / "una"))
+    assert raiz_rsna() == tmp_path / "una"
+    monkeypatch.setenv("RSNA_RAIZ", str(tmp_path / "otra"))
+    assert raiz_rsna() == tmp_path / "otra"
+
+
+@pytest.mark.parametrize("valor", [None, "", "   "])
+def test_sin_rsna_raiz_se_detiene_y_nombra_la_variable(valor, monkeypatch):
+    """No hay valor por defecto (spec de SP5 §6.1): una ruta por defecto seria
+    la de una maquina concreta."""
+    if valor is None:
+        monkeypatch.delenv("RSNA_RAIZ", raising=False)
+    else:
+        monkeypatch.setenv("RSNA_RAIZ", valor)
+    with pytest.raises(SystemExit, match="RSNA_RAIZ"):
+        raiz_rsna()

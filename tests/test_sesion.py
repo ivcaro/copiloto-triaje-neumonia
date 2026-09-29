@@ -383,3 +383,10 @@ def test_sin_rsna_raiz_el_script_lo_dice(monkeypatch):
     monkeypatch.delenv("RSNA_RAIZ", raising=False)
     with pytest.raises(SystemExit, match="RSNA_RAIZ"):
         preparar.raiz_rsna()
+
+
+def test_el_script_no_tiene_un_lector_propio_de_rsna_raiz():
+    """Un solo lector de la variable, el de `copiloto_triaje.config`: con dos
+    copias, una acaba ganando un valor por defecto y la otra no."""
+    from copiloto_triaje import config
+    assert _preparar().raiz_rsna is config.raiz_rsna

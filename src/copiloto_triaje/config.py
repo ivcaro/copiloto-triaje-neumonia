@@ -9,10 +9,29 @@ ahi se cambiaron. La justificacion de cada cambio esta en
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 ARQUITECTURAS = ("densenet121", "mobilenet_v3_large", "efficientnet_b0")
+
+
+def raiz_rsna() -> Path:
+    """La raiz del dataset preparado, leida de la variable `RSNA_RAIZ`.
+
+    Es la carpeta que tiene dentro `manifiestos/`, `png/` y
+    `crudo/stage_2_train_images/`. No hay valor por defecto: una ruta por
+    defecto seria la de una maquina concreta (spec de SP5 §6.1). Se lee en
+    cada llamada y nunca al importar, para que los modulos que la usan se
+    puedan importar en una maquina sin dataset; quien la necesita la llama
+    dentro de la funcion que de verdad va a leer el disco. No comprueba que la
+    carpeta exista: eso lo dice, con la ruta, quien intente abrir el fichero.
+    """
+    raiz = os.environ.get("RSNA_RAIZ", "").strip()
+    if not raiz:
+        raise SystemExit("falta RSNA_RAIZ: la raíz del dataset preparado, sin valor "
+                         "por defecto (spec de SP5 §6.1)")
+    return Path(raiz)
 
 
 @dataclass(frozen=True)
