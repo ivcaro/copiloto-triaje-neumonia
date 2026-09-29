@@ -362,7 +362,7 @@ ok("/start sin sesion -> saludo, paso 1", await (async () => {
 })());
 ok("/START y /start@Bot tambien", await (async () => {
   const a = await decidir(await normalizar(msg("/START")), sinSesion);
-  const b = await decidir(await normalizar(msg("/start@[retirado]")), sinSesion);
+  const b = await decidir(await normalizar(msg("/start@BotDeEjemplo")), sinSesion);
   return a.accion === "saludo" && b.accion === "saludo";
 })());
 for (const p of [2, 3, 4, 5, 6]) {
@@ -1614,7 +1614,7 @@ console.log("\nL4. EL SEGUNDO MENSAJE: una linea mia en la posicion 0, y su text
 // mas: si el paciente no puede fabricar el limite del mensaje, **tampoco puede
 // ponerse delante del primer byte**. Y sin cabecera, en las superficies donde la
 // burbuja se ve SOLA -notificacion push, lista de chats, reenvio, cita, fijado,
-// busqueda- la atribucion era CERO y la interfaz la rotulaba «[retirado]».
+// busqueda- la atribucion era CERO y la interfaz la rotulaba «<bot del profesional>».
 //
 // LA INVARIANTE: el mensaje es EXACTAMENTE la cabecera mas el texto recortado.
 // Nada entre medias, nada detras, y la cabecera en la POSICION 0.

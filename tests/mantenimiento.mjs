@@ -143,7 +143,7 @@ console.log("A. ocho dias seguidos con todo bien: habla una vez y calla seis");
 console.log("\nB. el copiloto caido (el escenario del brief: apagarlo)");
 {
   const roto = bien({
-    "Salud del copiloto": { error: "connect ECONNREFUSED 172.18.0.9:8000" },
+    "Salud del copiloto": { error: "connect ECONNREFUSED 172.18.0.2:8000" },
   });
   const m = {};
   const caido = await evaluar(roto, m, enIso(T0));
