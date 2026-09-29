@@ -5,18 +5,18 @@
 integracion: mas lentas que las unitarias, y con efectos que se ven desde
 fuera.
 
-OJO, QUE ESTE DOCSTRING DECIA LO CONTRARIO: `webhook_n8n` **no salta** por
-`N8N_URL`. Esa variable solo elige a que n8n se habla, y sin ella se habla al
-de produccion (`https://n8n.[retirado].com`). Lo que hace que la suite corra en una
-maquina sin acceso son los `pytest.skip` de cada prueba por sus SECRETOS
+`webhook_n8n` SALTA SIN `N8N_URL`. La variable dice a que n8n se habla y no
+tiene valor por defecto: el repositorio no lleva la URL de ningun despliegue,
+asi que sin ella las pruebas conducidas se saltan, y lo dicen. Es la primera
+guarda. La segunda son los `skipif` de cada clase de pruebas por sus SECRETOS
 -`TELEGRAM_SECRET_PRUEBA`, `TELEGRAM_TOKEN_PROFESIONAL`,
 `CHAT_SUBIDA_PLACAS`-: sin el secreto no se pasa la puerta del secret_token del
 §4.2, asi que la peticion no llega a ningun sitio. El fijador `bd_sp3` de abajo
-si salta solo, por `COPILOTO_BD_DSN`.
+salta por `COPILOTO_BD_DSN`.
 
-La diferencia importa: creer que el fijador salta invita a anadir una prueba que
-use `webhook_n8n` sin guardar su secreto, y esa prueba mandaria trafico al n8n
-del cliente desde cualquier maquina que corra la suite.
+Las dos guardas hacen falta. En la maquina que SI tiene `N8N_URL` el fijador no
+salta, y una prueba nueva que use `webhook_n8n` sin guardar su secreto mandaria
+trafico a ese n8n cada vez que alguien corra la suite alli.
 """
 import json
 import os
@@ -34,8 +34,16 @@ def webhook_n8n():
     la que Telegram manda y la que los flujos de SP3 comprueban ANTES de mirar
     nada mas: el webhook es publico, asi que el `chat_id` del cuerpo lo aporta
     quien llama y no prueba nada por si solo.
+
+    Sin `N8N_URL` la prueba que lo pide se salta: no hay n8n por defecto.
     """
-    base = os.environ.get("N8N_URL", "https://n8n.[retirado].com").rstrip("/")
+    base = os.environ.get("N8N_URL", "").strip().rstrip("/")
+    if not base:
+        pytest.skip(
+            "sin N8N_URL no se sabe a qué n8n hablar: las pruebas conducidas "
+            "de los dos bots se quedan sin correr. Para correrlas, pon en "
+            "N8N_URL la URL base del n8n que los sirve, además de los secretos "
+            "de cada prueba")
 
     def enviar(ruta: str, cuerpo: dict, secreto: str | None = None):
         cabeceras = {"Content-Type": "application/json"}
