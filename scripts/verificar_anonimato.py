@@ -8,8 +8,9 @@ Uso, desde la raiz del repositorio:
 
 Mira lo que se publicaria: la copia de trabajo (en un repositorio, lo que
 tiene seguimiento y lo que no lo tiene ni esta ignorado), lo preparado en el
-indice que no es lo que hay en disco y, con --commit, el arbol de ese commit.
-Busca dos cosas:
+indice que no es lo que hay en disco y, con --commit (o --un-solo-commit,
+que lo implica), el arbol de ese commit, su autor, quien lo confirma y su
+mensaje, y los nombres de las ramas y de las etiquetas. Busca dos cosas:
 
 1. HUELLAS. La lista de cadenas que identifican al cliente, a la empresa, a la
    maquina o a los integrantes NO vive en el repositorio. El repositorio lleva
@@ -24,13 +25,15 @@ Busca dos cosas:
    claves). Un enlace simbolico o un submodulo es un hallazgo `no_recorrido`.
 
 Ninguna salida lleva el token ni el secreto en claro: fichero, linea y huella
-o clase. Los nombres de fichero que llevan un token salen tapados, y las
-rutas salen relativas a la raiz que se recorre (la de las huellas, como se
-paso).
+o clase. En los nombres (de fichero, de rama, de etiqueta, la revision) el
+token sale tapado por el principio de su huella y el secreto por
+`<secreto>`; las rutas salen relativas a la raiz que se recorre (la de las
+huellas, como se paso).
 
 Sale con 0 si no hay hallazgos y con 1 si los hay, si no se ha recorrido
-ningun fichero o si las huellas son solo la del centinela. Lo usa
-`tests/test_anonimato.py`, que lo carga por ruta.
+ningun fichero o si las huellas son solo la del centinela. Con binarios sin
+recorrer, la ultima linea no dice «limpio» a secas: se revisan a mano. Lo
+usa `tests/test_anonimato.py`, que lo carga por ruta.
 """
 import argparse
 import codecs
@@ -73,18 +76,37 @@ CABECERA = """\
 # --------------------------------------------------------------------------
 # Tokens y huellas
 # --------------------------------------------------------------------------
-def _sin_tildes(texto):
-    """Normalizacion de compatibilidad (NFKD: descompone las tildes y el
-    ancho completo) sin las marcas de combinacion (Mn) y sin los caracteres
-    de formato (Cf: U+200B, U+00AD...), que se BORRAN en vez de partir el
-    token."""
-    return "".join(c for c in unicodedata.normalize("NFKD", texto)
-                   if unicodedata.category(c) not in ("Mn", "Cf"))
+def _normalizados(texto):
+    """El texto con la normalizacion de compatibilidad (NFKD: descompone las
+    tildes y el ancho completo) y sin las marcas de combinacion (Mn).
+
+    Los caracteres de formato (Cf: U+200B, U+00AD...) se tratan de las dos
+    maneras, y se devuelven los dos textos: BORRADOS (`to<U+200B>ken` da
+    `token`) y como SEPARADOR (`alfa<U+200B>token` da `token`).
+    """
+    if texto.isascii():                 # ni Mn ni Cf: nada que normalizar
+        return (texto,)
+    borrados, partidos, hay_formato = [], [], False
+    for c in unicodedata.normalize("NFKD", texto):
+        categoria = unicodedata.category(c)
+        if categoria == "Mn":
+            continue
+        if categoria == "Cf":
+            hay_formato = True
+            partidos.append(" ")
+            continue
+        borrados.append(c)
+        partidos.append(c)
+    if hay_formato:
+        return "".join(borrados), "".join(partidos)
+    return ("".join(borrados),)
 
 
 def _partir(texto):
-    texto = BASE64.sub(" ", texto)
-    return set(NO_TOKEN.split(_sin_tildes(texto).lower())) - {""}
+    hallados = set()
+    for normal in _normalizados(BASE64.sub(" ", texto)):
+        hallados |= set(NO_TOKEN.split(normal.lower()))
+    return hallados - {""}
 
 
 # Los escapes pegan letras al token: `\n` delante da `n...`, `%20` da `20...`,
@@ -263,12 +285,13 @@ def _sin_seguimiento(raiz):
     return None if salida is None else _partir_z(salida)
 
 
-def _arbol_del_commit(raiz, revision):
+def _arbol_del_commit(raiz, revision, huellas=()):
     """{nombre: (modo, sha)} del arbol de `revision`, bajo `raiz`."""
     salida = _git(raiz, "ls-tree", "-r", "-z", revision, "--")
     if salida is None:
-        raise SystemExit(f"No se pudo leer el árbol del commit {revision}: "
-                         "¿es un repositorio de git con commits?")
+        raise SystemExit("No se pudo leer el árbol del commit "
+                         f"{_publicable(revision, huellas)}: ¿es un "
+                         "repositorio de git con commits?")
     arbol = {}
     for linea in _partir_z(salida):
         cabecera, nombre = linea.split("\t", 1)
@@ -415,7 +438,7 @@ class _Pieza(NamedTuple):
 ENLACE_SIMBOLICO, SUBMODULO = "120000", "160000"
 
 
-def _piezas(raiz, commit=None):
+def _piezas(raiz, commit=None, huellas=()):
     """Lo que se publicaria bajo `raiz`, sin recorrer dos veces un contenido.
 
     1. La copia de trabajo (en un repositorio, lo que tiene seguimiento y lo
@@ -426,11 +449,13 @@ def _piezas(raiz, commit=None):
 
     Un enlace simbolico, un submodulo (o otro repositorio dentro, sin
     seguimiento) y un contenido que git no entrega no se recorren, pero no
-    en silencio: son piezas con `recorrida=False`.
+    en silencio: son piezas con `recorrida=False`. Las `huellas` solo sirven
+    para tapar la revision en un mensaje de error.
     """
     raiz = Path(raiz)
     en_git = _en_git(raiz)
-    arbol = _arbol_del_commit(raiz, commit) if commit is not None else {}
+    arbol = ({} if commit is None
+             else _arbol_del_commit(raiz, commit, huellas))
     if en_git is None:
         indice = {}
         ficheros, enlaces = _recorrer_carpeta(raiz)
@@ -525,18 +550,60 @@ def buscar_huellas(raiz, huellas, commit=None):
     La linea 0 es el nombre del fichero. El token en claro no sale nunca.
     Con `commit`, tambien el arbol de ese commit.
     """
-    return _huellas_en(_piezas(raiz, commit), huellas)
+    return _huellas_en(_piezas(raiz, commit, huellas), huellas)
+
+
+def _tapar_tokens(parte, huellas):
+    """El componente con cada token de la lista cambiado por `<huella-...>`,
+    el principio de su huella; lo demas se queda (`informe-<huella-...>.md`),
+    para que dos nombres distintos no salgan iguales.
+
+    Recorre el texto original: los caracteres que normalizados dan
+    `[a-z0-9]` forman el token; los que no dan nada (marcas, formato) van
+    dentro; cualquier otro lo corta.
+    """
+    salida, tramo, token = [], [], []
+
+    def cerrar():
+        if tramo:
+            una = huella("".join(token))
+            salida.append(f"<huella-{una[:12]}>" if una in huellas
+                          else "".join(tramo))
+            tramo.clear()
+            token.clear()
+
+    for c in parte:
+        normal = _normalizados(c)[0].lower()
+        if not normal:
+            (tramo if tramo else salida).append(c)
+        elif NO_TOKEN.search(normal) is None:
+            tramo.append(c)
+            token.append(normal)
+        else:
+            cerrar()
+            salida.append(c)
+    cerrar()
+    return "".join(salida)
 
 
 def _publicable(fichero, huellas):
-    """El nombre que puede salir en una salida: cada componente de la ruta
-    que lleva un token de la lista pasa a `<huella-...>`, el principio de la
-    huella de ese token (de todos, si lleva varios)."""
+    """El nombre que puede salir en una salida: en cada componente de la
+    ruta, el token de la lista pasa a `<huella-...>` (ver `_tapar_tokens`) y
+    el secreto a `<secreto>`.
+
+    Si aun asi el componente da un token o un secreto (uno que solo se ve
+    desescapado, por ejemplo), se tapa el componente entero.
+    """
+    huellas = set(huellas)
     partes = []
     for parte in fichero.split("/"):
-        suyas = sorted({huella(t) for t in tokens(parte)} & set(huellas))
-        partes.append("<huella-" + "+".join(h[:12] for h in suyas) + ">"
-                      if suyas else parte)
+        tapada = _tapar_tokens(_tapar_secretos(parte), huellas)
+        quedan = sorted({huella(t) for t in tokens(tapada)} & huellas)
+        if quedan:
+            tapada = "<huella-" + "+".join(h[:12] for h in quedan) + ">"
+        elif _clases_de_secreto(tapada):
+            tapada = "<secreto>"
+        partes.append(tapada)
     return "/".join(partes)
 
 
@@ -570,10 +637,13 @@ PATRONES_DE_SECRETO = {
         r"[A-Za-z0-9._~+/=-]{20,}"),
 }
 
-# Esquema, dos barras, usuario (puede ir vacio), dos puntos, contrasena,
-# arroba y host.
+# Esquema, dos barras, usuario (puede ir vacio), dos puntos, contrasena
+# (puede llevar `/`: la de base64 casi siempre la lleva), arroba y host.
 URL_CON_CONTRASENA = re.compile(
-    r"[A-Za-z][A-Za-z0-9+.-]*://[^\s/:@]*:([^\s/@]+)@")
+    r"[A-Za-z][A-Za-z0-9+.-]*://[^\s/:@]*:([^\s@]+)@")
+# Lo que en esa forma no es una contrasena sino un puerto y una ruta
+# (`https://ejemplo.test:8443/ruta/@ambito`).
+PUERTO_Y_RUTA = re.compile(r"\d{1,5}/.*")
 
 # Los valores de ejemplo que se permiten, en una URL o en una asignacion. Las
 # palabras salen del inventario del arbol (28-sep): `prueba` es la del
@@ -587,49 +657,107 @@ CONTRASENAS_DE_EJEMPLO = ("prueba", "cambiar-esto", "clave", "token",
 CONTRASENA_MARCADOR = re.compile(
     r"<[^<>:/@]+>|\$[A-Z_][A-Z0-9_]*|\$\{[A-Z_][A-Z0-9_]*[^{}]*\}")
 
-# Una clave que nombra un secreto, `=` o `:`, y su valor: entre comillas,
-# `${...}` entero, o suelto hasta el primer blanco, comilla, coma o `;`.
+# Una clave que nombra un secreto (lleva `password`, `passwd`, `secret`,
+# `token` o `api_key`, o acaba en `_key`), y su valor: detras de `=` o `:`
+# (tambien con subindice, `os.environ["X_PASSWORD"] = ...`), o, si la clave
+# va entre comillas, detras de una coma (`setenv("X_PASSWORD", ...)`). El
+# valor va entre comillas, es `${...}` entero, o va suelto hasta el primer
+# blanco, comilla, coma o `;`.
 ASIGNACION = re.compile(
-    r"(?i)(?<![A-Za-z0-9_])"
-    r"[A-Za-z0-9_.-]*(?:password|passwd|secret|token|api[_-]?key)"
-    r"[A-Za-z0-9_.-]*[\"']?\s*[:=]\s*"
-    r"(?:\"([^\"]*)\"|'([^']*)'|(\$\{[^{}]*\})|([^\s\"',;]+))")
+    r"(?i)(?<![A-Za-z0-9_])(?P<comilla>[\"'])?"
+    r"[A-Za-z0-9_.-]*(?:(?:password|passwd|secret|token|api[_-]?key)"
+    r"[A-Za-z0-9_.-]*|_key(?![A-Za-z0-9_.-]))"
+    r"(?:[\"']?\s*\]?\s*[:=]|(?(comilla)(?P=comilla)\s*,|(?!)))\s*"
+    r"(?:\"(?P<doble>[^\"]*)\"|'(?P<simple>[^']*)'"
+    r"|(?P<llaves>\$\{[^{}]*\})|(?P<suelto>[^\s\"',;]+))")
+VALOR_DE_LA_ASIGNACION = ("doble", "simple", "llaves", "suelto")
 # Lo que parece un secreto en una asignacion: 8 o mas caracteres, con letras
-# Y cifras. Deja pasar los nombres de variable, el codigo (`os.environ...`),
-# las palabras de ejemplo (`cambiar-esto`, `verifica`) y los ids de ejemplo;
-# y tambien, sin remedio, una contrasena hecha solo de letras.
+# Y cifras. Deja pasar los nombres de variable, las palabras de ejemplo
+# (`cambiar-esto`, `verifica`) y los ids de ejemplo; y tambien, sin remedio,
+# una contrasena hecha solo de letras.
 LITERAL_QUE_PARECE_SECRETO = re.compile(
     r"(?=.*[A-Za-z])(?=.*[0-9]).{8,}")
+# Una expresion no es un literal: una llamada, un subindice, una expresion
+# de n8n (`={{ ... }}`).
+EXPRESION = re.compile(r"[()\[\]{}]")
+# `${NOMBRE:-valor}` (o `-`, `:=`, `=`): lo de detras es un literal.
+CON_VALOR_POR_DEFECTO = re.compile(
+    r"\$\{[A-Za-z_][A-Za-z0-9_]*:?[-=](?P<valor>[^{}]*)\}")
 
 FICHEROS_PROHIBIDOS = (".env*", "*.env", "kaggle.json", "credentials.json",
+                       "client_secret*.json", ".pgpass", ".netrc",
+                       ".git-credentials",
                        "*.pem", "*.key", "*.p12", "*.pfx", "*.ppk",
                        "id_rsa*", "id_dsa*", "id_ecdsa*", "id_ed25519*")
 FICHEROS_PERMITIDOS = (".env.ejemplo",)
 
 
 def _es_de_ejemplo(contrasena):
+    por_defecto = CON_VALOR_POR_DEFECTO.fullmatch(contrasena)
+    if por_defecto is not None:
+        return _es_de_ejemplo(por_defecto.group("valor"))
     return (contrasena.lower() in CONTRASENAS_DE_EJEMPLO
             or CONTRASENA_MARCADOR.fullmatch(contrasena) is not None)
 
 
-def _asigna_un_secreto(linea):
+def _es_un_literal_secreto(valor):
+    """El valor de una asignacion es un secreto si es un LITERAL (no una
+    variable ni una expresion) que no es de ejemplo y lo parece."""
+    por_defecto = CON_VALOR_POR_DEFECTO.fullmatch(valor)
+    if por_defecto is not None:
+        valor = por_defecto.group("valor")
+    return (LITERAL_QUE_PARECE_SECRETO.fullmatch(valor) is not None
+            and EXPRESION.search(valor) is None
+            and not _es_de_ejemplo(valor))
+
+
+def _secretos_de_la_linea(linea):
+    """(clase, inicio, fin) de cada secreto de la linea; el tramo es el del
+    secreto (en una URL o en una asignacion, el del valor)."""
+    for clase, patron in PATRONES_DE_SECRETO.items():
+        for m in patron.finditer(linea):
+            yield clase, m.start(), m.end()
+    for m in URL_CON_CONTRASENA.finditer(linea):
+        contrasena = m.group(1)
+        if not (_es_de_ejemplo(contrasena)
+                or PUERTO_Y_RUTA.fullmatch(contrasena)):
+            yield "contrasena_en_url", m.start(1), m.end(1)
     for m in ASIGNACION.finditer(linea):
-        valor = next(v for v in m.groups() if v is not None)
-        if (LITERAL_QUE_PARECE_SECRETO.fullmatch(valor)
-                and not _es_de_ejemplo(valor)):
-            return True
-    return False
+        grupo = next(g for g in VALOR_DE_LA_ASIGNACION
+                     if m.group(g) is not None)
+        if _es_un_literal_secreto(m.group(grupo)):
+            yield "asignacion_de_secreto", m.start(grupo), m.end(grupo)
 
 
 def _clases_de_secreto(linea):
-    clases = [clase for clase, patron in PATRONES_DE_SECRETO.items()
-              if patron.search(linea)]
-    if any(not _es_de_ejemplo(m.group(1))
-           for m in URL_CON_CONTRASENA.finditer(linea)):
-        clases.append("contrasena_en_url")
-    if _asigna_un_secreto(linea):
-        clases.append("asignacion_de_secreto")
+    """Las clases de secreto de una linea, sin repetir. Tambien con `\\"`
+    convertido en `"`: el texto de un JSON escapado (una celda de un
+    notebook, el codigo de un nodo de n8n)."""
+    variantes = [linea]
+    if '\\"' in linea:
+        variantes.append(linea.replace('\\"', '"'))
+    clases = []
+    for texto in variantes:
+        for clase, _inicio, _fin in _secretos_de_la_linea(texto):
+            if clase not in clases:
+                clases.append(clase)
     return clases
+
+
+def _tapar_secretos(texto):
+    """El texto con cada secreto cambiado por `<secreto>`."""
+    tramos = sorted((inicio, fin) for _clase, inicio, fin
+                    in _secretos_de_la_linea(texto))
+    salida, hasta = [], 0
+    for inicio, fin in tramos:
+        if inicio >= hasta:
+            salida.append(texto[hasta:inicio])
+            salida.append("<secreto>")
+            hasta = fin
+        elif fin > hasta:                       # tramos que se solapan
+            hasta = fin
+    salida.append(texto[hasta:])
+    return "".join(salida)
 
 
 def _prohibido(nombre):
@@ -645,20 +773,21 @@ def _secretos_en(piezas, huellas):
     hallazgos = []
     for pieza in piezas:
         fichero = _publicable(pieza.nombre, huellas)
-        if not pieza.recorrida:
-            # Enlace simbolico, submodulo o contenido ilegible: lo que no se
-            # ha mirado no puede darse por limpio.
-            hallazgos.append({"fichero": fichero, "linea": 0,
-                              "clase": "no_recorrido",
-                              "origen": pieza.origen})
-            continue
-        if _prohibido(pieza.nombre.rsplit("/", 1)[-1]):
-            if pieza.primera:
-                hallazgos.append({"fichero": fichero, "linea": 0,
-                                  "clase": "fichero_prohibido",
-                                  "origen": pieza.origen})
-            continue
-        if pieza.texto is None:
+        prohibido = (pieza.recorrida
+                     and _prohibido(pieza.nombre.rsplit("/", 1)[-1]))
+        # La linea 0 es el fichero entero: lo que no se ha mirado (enlace
+        # simbolico, submodulo, ilegible) no puede darse por limpio; y el
+        # nombre, que tambien viaja, puede ser el de un fichero prohibido o
+        # llevar un secreto.
+        clases = [] if pieza.recorrida else ["no_recorrido"]
+        if pieza.primera:
+            clases += ["fichero_prohibido"] if prohibido else []
+            for parte in pieza.nombre.split("/"):
+                clases += [c for c in _clases_de_secreto(parte)
+                           if c not in clases]
+        hallazgos += [{"fichero": fichero, "linea": 0, "clase": clase,
+                       "origen": pieza.origen} for clase in clases]
+        if not pieza.recorrida or prohibido or pieza.texto is None:
             continue
         for n, linea in enumerate(pieza.texto.splitlines(), 1):
             for clase in _clases_de_secreto(linea):
@@ -678,7 +807,7 @@ def buscar_secretos(raiz, huellas=None, commit=None):
     """
     if huellas is None:
         huellas = huellas_de_la_lista(leer_huellas(HUELLAS_POR_DEFECTO))
-    return _secretos_en(_piezas(raiz, commit), huellas)
+    return _secretos_en(_piezas(raiz, commit, huellas), huellas)
 
 
 # --------------------------------------------------------------------------
@@ -689,10 +818,12 @@ CAMPOS_DEL_COMMIT = ("autor", "correo_de_autor", "quien_confirma",
 
 
 def verificar_commit(raiz, revision="HEAD", huellas=None):
-    """Autor, quien confirma, sus correos y el mensaje, contra las huellas.
+    """Autor, quien confirma, sus correos y el mensaje, contra las huellas y
+    contra los patrones de secretos.
 
-    Devuelve `campo`, `linea` (la del mensaje; 0 en los demas) y `huella`.
-    Sin `huellas`, las del repositorio donde vive el script.
+    Devuelve `campo`, `linea` (la del mensaje; 0 en los demas) y `huella`
+    o `clase` (la del secreto). Sin `huellas`, las del repositorio donde
+    vive el script.
     """
     if huellas is None:
         huellas = huellas_de_la_lista(leer_huellas(HUELLAS_POR_DEFECTO))
@@ -700,18 +831,54 @@ def verificar_commit(raiz, revision="HEAD", huellas=None):
     salida = _git(raiz, "log", "-1",
                   "--format=%an%x00%ae%x00%cn%x00%ce%x00%B", revision, "--")
     if salida is None:
-        raise SystemExit(f"No se pudo leer el commit {revision} del árbol "
-                         "que se comprueba: ¿es un repositorio de git con "
-                         "commits?")
+        raise SystemExit("No se pudo leer el commit "
+                         f"{_publicable(revision, huellas)} del árbol que se "
+                         "comprueba: ¿es un repositorio de git con commits?")
     valores = salida.decode("utf-8", errors="replace").split("\0", 4)
     hallazgos = []
     for campo, valor in zip(CAMPOS_DEL_COMMIT, valores):
         lineas = valor.splitlines() if campo == "mensaje" else [valor]
         for n, linea in enumerate(lineas, 1):
+            donde = n if campo == "mensaje" else 0
             for una in sorted({huella(t) for t in tokens(linea)} & huellas):
-                hallazgos.append({"campo": campo,
-                                  "linea": n if campo == "mensaje" else 0,
+                hallazgos.append({"campo": campo, "linea": donde,
                                   "huella": una})
+            for clase in _clases_de_secreto(linea):
+                hallazgos.append({"campo": campo, "linea": donde,
+                                  "clase": clase})
+    return hallazgos
+
+
+def _nombres_de_referencias(raiz):
+    """[(referencia, nombre)]: las ramas (con la de HEAD, aunque aun no
+    tenga commits) y las etiquetas. Sus nombres se publican con el push."""
+    nombres = [("rama", r[len("refs/heads/"):])
+               for r in _referencias(raiz, "refs/heads/")]
+    cabeza = _git(raiz, "symbolic-ref", "-q", "HEAD")
+    if cabeza is not None:
+        rama = cabeza.decode("utf-8", errors="replace").strip()
+        if rama.startswith("refs/heads/"):
+            rama = ("rama", rama[len("refs/heads/"):])
+            if rama not in nombres:
+                nombres.append(rama)
+    nombres += [("etiqueta", r[len("refs/tags/"):])
+                for r in _referencias(raiz, "refs/tags/")]
+    return nombres
+
+
+def verificar_referencias(raiz, huellas):
+    """Los nombres de las ramas y de las etiquetas, contra las huellas.
+
+    Devuelve `referencia` (`rama` o `etiqueta`), `nombre` (el publicable,
+    con el token tapado) y `huella`.
+    """
+    huellas = set(huellas)
+    hallazgos = []
+    for referencia, nombre in _nombres_de_referencias(raiz):
+        for una in sorted({huella(t) for t in tokens(nombre)} & huellas):
+            hallazgos.append({"referencia": referencia,
+                              "nombre": _publicable(nombre, huellas),
+                              "huella": una})
     return hallazgos
 
 
@@ -761,12 +928,13 @@ def _argumentos(argv):
                                  f"{HUELLAS_MOSTRADAS})")
     analizador.add_argument("--commit", nargs="?", const="HEAD", default=None,
                             metavar="REV",
-                            help="comprueba también autor, correo, quien "
-                                 "confirma y mensaje de ese commit (HEAD)")
+                            help="comprueba también el árbol, el autor, "
+                                 "quien confirma y el mensaje de ese commit "
+                                 "(HEAD), y los nombres de ramas y etiquetas")
     analizador.add_argument("--un-solo-commit", action="store_true",
                             help="exige que el repositorio entero tenga un "
                                  "solo commit, una sola rama y ninguna "
-                                 "etiqueta")
+                                 "etiqueta; implica --commit HEAD")
     analizador.add_argument("--regenerar", action="store_true",
                             help="escribe el fichero de huellas desde la "
                                  f"lista en claro ({VARIABLE_DE_LA_LISTA} o "
@@ -836,27 +1004,37 @@ def main(argv=None):
         return _regenerar(args)
 
     huellas = _huellas_de_la_cli(*_las_huellas(args))
-    piezas = _piezas(args.raiz, args.commit)
+    if args.un_solo_commit and args.commit is None:
+        args.commit = "HEAD"            # lo que se publica es ese commit
+    revision = (None if args.commit is None
+                else _publicable(args.commit, huellas))
+    piezas = _piezas(args.raiz, args.commit, huellas)
     de_huella = _huellas_en(piezas, huellas)
     de_secreto = _secretos_en(piezas, huellas)
 
     def de_donde(h):
         return "" if h["origen"] == COPIA else f" ({h['origen']})"
 
-    for h in de_huella:
-        print(f"{h['fichero']}:{h['linea']}: huella {h['huella'][:12]}"
-              + de_donde(h))
-    for h in de_secreto:
-        print(f"{h['fichero']}:{h['linea']}: {h['clase']}" + de_donde(h))
+    def que(h):
+        return (f"huella {h['huella'][:12]}" if "huella" in h
+                else h["clase"])
 
-    del_commit = []
+    for h in de_huella:
+        print(f"{h['fichero']}:{h['linea']}: {que(h)}" + de_donde(h))
+    for h in de_secreto:
+        print(f"{h['fichero']}:{h['linea']}: {que(h)}" + de_donde(h))
+
+    del_commit, de_referencia = [], []
     if args.commit is not None:
         del_commit = verificar_commit(args.raiz, args.commit, huellas=huellas)
         for h in del_commit:
             donde = (f"{h['campo']}:{h['linea']}" if h["linea"]
                      else h["campo"])
-            print(f"commit {args.commit}: {donde}: "
-                  f"huella {h['huella'][:12]}")
+            print(f"commit {revision}: {donde}: {que(h)}")
+        # El nombre de las ramas y de las etiquetas se publica con el push.
+        de_referencia = verificar_referencias(args.raiz, huellas)
+        for h in de_referencia:
+            print(f"{h['referencia']} {h['nombre']}: {que(h)}")
 
     recorridas = [p for p in piezas if p.texto is not None]
     sin_recorrer = [p for p in piezas if p.recorrida and p.texto is None]
@@ -879,9 +1057,11 @@ def main(argv=None):
         por_clase[h["clase"]] = por_clase.get(h["clase"], 0) + 1
     detalle = ", ".join(f"{c}: {n}" for c, n in sorted(por_clase.items()))
     print(f"secretos: {len(de_secreto)}" + (f" ({detalle})" if detalle else ""))
-    mal = len(de_huella) + len(de_secreto) + len(del_commit)
+    mal = (len(de_huella) + len(de_secreto) + len(del_commit)
+           + len(de_referencia))
     if args.commit is not None:
-        print(f"commit {args.commit}: {len(del_commit)}")
+        print(f"commit {revision}: {len(del_commit)}")
+        print(f"nombres de ramas y etiquetas: {len(de_referencia)}")
     if args.un_solo_commit:
         # Un commit, una rama y ninguna etiqueta: lo que sobre, es hallazgo.
         cuantos, cuantas, sueltas = (commits(args.raiz), ramas(args.raiz),
@@ -894,8 +1074,19 @@ def main(argv=None):
         print("NO publicar: no se recorrió ningún fichero de texto, y lo que "
               "no se ha mirado no está limpio")
         return 1
-    print("limpio" if not mal else "NO publicar: hay hallazgos")
-    return 1 if mal else 0
+    if mal:
+        print("NO publicar: hay hallazgos")
+        return 1
+    if sin_recorrer:
+        # Lo que no se ha recorrido no se da por limpio: se revisa a mano.
+        n = len(sin_recorrer)
+        print(f"limpio lo recorrido; {n} "
+              + ("binario sin recorrer, que se revisa" if n == 1
+                 else "binarios sin recorrer, que se revisan")
+              + " a mano")
+    else:
+        print("limpio")
+    return 0
 
 
 if __name__ == "__main__":

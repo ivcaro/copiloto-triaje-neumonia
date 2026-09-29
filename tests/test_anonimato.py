@@ -102,6 +102,10 @@ def test_los_escapes_no_pegan_letras_al_token(tmp_path, texto):
     pytest.param(CENTINELA[:9] + "­" + CENTINELA[9:],
                  id="guion_blando"),
     pytest.param("﻿" + CENTINELA, id="marca_de_orden_pegada"),
+    # R7: el caracter de formato tambien hace de separador (union).
+    pytest.param("alfa​" + CENTINELA, id="formato_como_separador"),
+    pytest.param(CENTINELA[:5] + "​" + CENTINELA[5:],
+                 id="formato_dentro_del_token"),
 ])
 def test_compatibilidad_y_caracteres_de_formato(texto):
     # NFKD descompone tambien el ancho completo; los caracteres de formato
@@ -325,9 +329,45 @@ def test_el_nombre_del_fichero_tambien_se_tokeniza(tmp_path):
     assert [h["linea"] for h in hallazgos] == [0, 2]
     assert CENTINELA not in repr(hallazgos)
     # El nombre que sale es el publicable, el mismo en todos los hallazgos:
-    # el componente que lleva el token pasa al principio de su huella.
-    publicable = f"docs/<huella-{va.huella(CENTINELA)[:12]}>"
+    # el TOKEN dentro del componente pasa al principio de su huella (R6).
+    publicable = f"docs/<huella-{va.huella(CENTINELA)[:12]}>.md"
     assert [h["fichero"] for h in hallazgos] == [publicable, publicable]
+
+
+def test_tres_hermanos_con_el_mismo_token_no_chocan(tmp_path, capsys):
+    raiz = _arbol_limpio(tmp_path / "arbol")
+    for nombre in (f"informe-{OTRO}.md", f"notas_{OTRO.upper()}.md",
+                   f"{OTRO}.txt"):
+        (raiz / "docs" / nombre).write_text("nada\n", encoding="utf-8")
+    tapada = f"<huella-{va.huella(OTRO)[:12]}>"
+    hallazgos = va.buscar_huellas(raiz, {va.huella(OTRO)})
+    assert sorted(h["fichero"] for h in hallazgos) == sorted([
+        f"docs/informe-{tapada}.md", f"docs/notas_{tapada}.md",
+        f"docs/{tapada}.txt"])
+    assert va.main(["--raiz", str(raiz),
+                    "--huellas", str(_huellas_de_juguete(tmp_path))]) == 1
+    salida = capsys.readouterr().out
+    assert "huellas: 3 en 3 ficheros" in salida
+    assert OTRO not in salida.lower()
+
+
+def test_un_secreto_en_el_nombre_del_fichero_es_un_hallazgo(tmp_path):
+    raiz = _arbol_limpio(tmp_path / "arbol")
+    clave = _secretos()["clave_de_api_akia"]
+    (raiz / "docs" / f"config-{clave}.txt").write_text("x\n",
+                                                       encoding="utf-8")
+    (raiz / "figura-{}.png".format(clave)).write_bytes(b"\x89PNG\x00")
+    hallazgos = va.buscar_secretos(raiz, huellas=set())
+    assert hallazgos == [
+        {"fichero": "docs/config-<secreto>.txt", "linea": 0,
+         "clase": "clave_de_api_akia", "origen": COPIA},
+        {"fichero": "figura-<secreto>.png", "linea": 0,
+         "clase": "clave_de_api_akia", "origen": COPIA}]
+    codigo, salida = _cli("--raiz", str(raiz),
+                          "--huellas", str(_huellas_de_juguete(tmp_path)))
+    assert codigo == 1
+    assert clave not in salida
+    assert "  figura-<secreto>.png" in salida
 
 
 def test_el_nombre_publicable_tambien_en_los_secretos(tmp_path):
@@ -780,6 +820,30 @@ _VARIANTES = [
      "postgresql://u" + ":" + "$uperS3creta9" + "@" + "bd.ejemplo.test/b"),
     ("url_con_angulos_que_no_son_marcador", "contrasena_en_url",
      "postgresql://u" + ":" + "<S3:creta>" + "@" + "bd.ejemplo.test/b"),
+    # R4: las formas de este proyecto que no saltaban.
+    ("url_con_barra_en_la_contrasena", "contrasena_en_url",
+     "postgresql://u" + ":" + "S3cr/eta+9w==" + "@" + "bd.ejemplo.test/b"),
+    ("url_con_valor_por_defecto", "contrasena_en_url",
+     "postgresql://u" + ":" + "${PGPASS:-S3creta!}" + "@" + "bd.ejemplo.test"),
+    ("asignacion_con_subindice", "asignacion_de_secreto",
+     'os.environ["COPILOTO_BD_' + 'PASSWORD"] = "' + "a1B2c3D4e5F6g7H8" + '"'),
+    ("asignacion_con_llamada", "asignacion_de_secreto",
+     'monkeypatch.setenv("COPILOTO_BD_' + 'PASSWORD", "' + "a1B2c3D4e5F6g7H8"
+     + '")'),
+    ("clave_que_acaba_en_key_con_subindice", "asignacion_de_secreto",
+     # El valor, por una llamada: con las comillas mezcladas, el propio
+     # codigo de la prueba formaria un literal.
+     "os.environ['KAGGLE" + "_KEY'] = '" + "".join(["0123456789abcdef"] * 2)
+     + "'"),
+    ("clave_que_acaba_en_key", "asignacion_de_secreto",
+     "AWS_ACCESS" + "_KEY=" + "a1B2c3D4e5F6g7H8"),
+    ("clave_privada_en_una_variable", "asignacion_de_secreto",
+     "PRIVATE" + "_KEY: " + "a1B2c3D4e5F6g7H8"),
+    ("asignacion_en_json_escapado", "asignacion_de_secreto",
+     '"source": ["pass' + 'word=\\"' + "a1B2c3D4e5F6g7H8" + '\\"\\n"]'),
+    ("valor_por_defecto_de_una_variable", "asignacion_de_secreto",
+     "COPILOTO_BD_PASS" + "WORD: ${COPILOTO_BD_PASSWORD:-" + "a1B2c3D4e5F6g7H8"
+     + "}"),
 ]
 
 
@@ -825,6 +889,8 @@ def test_una_url_sin_contrasena_no_es_un_hallazgo(tmp_path):
     "privada.key", "id_rsa", "id_rsa.pub", "certificado.p12",
     "id_ed25519", "id_ecdsa", "id_dsa.pub", "produccion.env", ".envrc",
     "putty.ppk", "certificado.pfx", "credentials.json",
+    ".pgpass", ".netrc", ".git-credentials",
+    "client_secret_1234.apps.googleusercontent.com.json",
     # Los nombres no distinguen mayusculas.
     ".ENV", "servidor.PEM", "Kaggle.json", "ID_RSA"])
 def test_los_ficheros_prohibidos_son_hallazgos(tmp_path, nombre):
@@ -858,6 +924,14 @@ def test_lo_que_este_proyecto_escribe_de_tokens_y_contrasenas_no_salta(
         'api_key = config["api_key"]',
         "secretos: 2 (clave_de_api_akia: 1)",
         "X-Telegram-Bot-Api-Secret-Token: {{ $json.secreto }}",
+        # R4: una expresion no es un literal; ni una variable.
+        "token = partes[1]",
+        "token = sys.argv[1]",
+        '"token": "={{ $env.X_2 }}"',
+        "Authorization: Bearer <TOKEN_DEL_BOT>",
+        "COPILOTO_BD_PASSWORD: ${COPILOTO_BD_PASSWORD:-cambiar-esto}",
+        # Un puerto y una ruta con arroba no son una contrasena.
+        "https://ejemplo.test:8443/paquete/@ambito/x",
     ]) + "\n", encoding="utf-8")
     assert va.buscar_secretos(raiz) == []
 
@@ -901,6 +975,20 @@ def test_la_cli_sale_con_0_sobre_un_arbol_limpio(tmp_path, capsys):
     assert "huellas: 0" in salida and "secretos: 0" in salida
     assert "binarios sin recorrer: 1" in salida
     assert "figura.png" in salida
+
+
+def test_con_binarios_sin_recorrer_no_dice_limpio_a_secas(tmp_path, capsys):
+    raiz = _arbol_limpio(tmp_path / "arbol")          # con figura.png
+    huellas = str(_huellas_de_juguete(tmp_path))
+    assert va.main(["--raiz", str(raiz), "--huellas", huellas]) == 0
+    ultima = capsys.readouterr().out.splitlines()[-1]
+    assert ultima != "limpio"
+    assert ultima.startswith("limpio lo recorrido")
+    assert "1 binario" in ultima and "a mano" in ultima
+
+    (raiz / "figura.png").unlink()
+    assert va.main(["--raiz", str(raiz), "--huellas", huellas]) == 0
+    assert capsys.readouterr().out.splitlines()[-1] == "limpio"
 
 
 def test_la_cli_sale_con_1_y_resume_por_clase(tmp_path, capsys):
@@ -1020,10 +1108,11 @@ def test_la_cli_no_imprime_el_token_ni_en_los_nombres(tmp_path):
     assert OTRO not in salida.lower()
     assert _secretos()["clave_de_api_akia"] not in salida
     tapada = f"<huella-{va.huella(OTRO)[:12]}>"
-    assert f"{tapada}/{tapada}:0: huella " in salida
-    assert f"{tapada}/{tapada}:2: huella " in salida
-    assert f"{tapada}/{tapada}:3: clave_de_api_akia" in salida
-    assert f"  {tapada}/figura.png" in salida
+    nota = f"Informes-{tapada}/nota_{tapada}.md"
+    assert f"{nota}:0: huella " in salida
+    assert f"{nota}:2: huella " in salida
+    assert f"{nota}:3: clave_de_api_akia" in salida
+    assert f"  Informes-{tapada}/figura.png" in salida
     # La nota da dos hallazgos (nombre y linea 2) y la figura uno (su
     # carpeta): tres, en dos ficheros distintos.
     assert "huellas: 3 en 2 ficheros" in salida
@@ -1083,6 +1172,90 @@ def test_un_solo_commit_no_admite_etiquetas(tmp_path, capsys):
     salida = capsys.readouterr().out
     assert "commits: 1" in salida and "ramas: 1" in salida
     assert "etiquetas: 1" in salida
+
+
+@hay_git
+@pytest.mark.parametrize("referencia", ["rama", "etiqueta"])
+def test_los_nombres_de_ramas_y_etiquetas_se_comparan_con_las_huellas(
+        tmp_path, capsys, referencia):
+    raiz = _repositorio(tmp_path)
+    _git(raiz, "commit", "-q", "-m", "arbol")
+    nombre = f"informe-{OTRO}"
+    if referencia == "rama":
+        _git(raiz, "branch", "-m", nombre)      # la unica, a la que va HEAD
+    else:
+        _git(raiz, "tag", nombre)
+    tapada = f"informe-<huella-{va.huella(OTRO)[:12]}>"
+    assert va.verificar_referencias(raiz, {va.huella(OTRO)}) == [
+        {"referencia": referencia, "nombre": tapada,
+         "huella": va.huella(OTRO)}]
+    huellas = str(_huellas_de_juguete(tmp_path))
+    codigo, salida = _cli("--raiz", str(raiz), "--huellas", huellas,
+                          "--commit", "HEAD", "--un-solo-commit")
+    assert codigo == 1
+    assert OTRO not in salida.lower()
+    assert f"{referencia} {tapada}: huella {va.huella(OTRO)[:12]}" in salida
+
+    # La revision que se pasa a --commit sale tapada (R6), exista o no.
+    assert va.main(["--raiz", str(raiz), "--huellas", huellas,
+                    "--commit", nombre]) == 1
+    salida = capsys.readouterr().out
+    assert f"commit {tapada}: 0" in salida
+    assert OTRO not in salida.lower()
+    with pytest.raises(SystemExit) as error:
+        va.main(["--raiz", str(raiz), "--huellas", huellas,
+                 "--commit", f"inexistente-{OTRO}"])
+    assert OTRO not in str(error.value).lower()
+    assert "inexistente-<huella-" in str(error.value)
+
+
+@hay_git
+def test_un_secreto_en_el_commit_es_un_hallazgo(tmp_path):
+    raiz = _repositorio(tmp_path)
+    huellas = str(_huellas_de_juguete(tmp_path))
+    bot = _token_de_bot()
+    _git(raiz, "commit", "-q", "-m", "arbol", "-m", f"el bot es {bot}")
+    assert va.verificar_commit(raiz, huellas=set()) == [
+        {"campo": "mensaje", "linea": 3, "clase": "token_de_bot_de_telegram"}]
+    codigo, salida = _cli("--raiz", str(raiz), "--huellas", huellas,
+                          "--commit", "HEAD")
+    assert codigo == 1
+    assert bot not in salida
+    assert "commit HEAD: mensaje:3: token_de_bot_de_telegram" in salida
+
+    literal = "a1B2c3D4e5F6g7H8"
+    clave = _secretos()["clave_de_api_akia"]
+    _git(raiz, "commit", "-q", "--allow-empty", "-m", "otro",
+         "-m", "PASS" + "WORD=" + literal, GIT_AUTHOR_NAME=clave)
+    assert [(h["campo"], h["linea"], h["clase"])
+            for h in va.verificar_commit(raiz, huellas=set())] == [
+        ("autor", 0, "clave_de_api_akia"),
+        ("mensaje", 3, "asignacion_de_secreto")]
+    codigo, salida = _cli("--raiz", str(raiz), "--huellas", huellas,
+                          "--commit", "HEAD")
+    assert codigo == 1
+    assert literal not in salida and clave not in salida
+    assert "commit HEAD: autor: clave_de_api_akia" in salida
+
+
+@hay_git
+def test_un_solo_commit_mira_el_arbol_del_commit(tmp_path, capsys):
+    raiz = _repositorio(tmp_path)
+    nota = raiz / "nota.md"
+    nota.write_text(f"{OTRO}\n", encoding="utf-8")
+    _git(raiz, "add", "nota.md")
+    _git(raiz, "commit", "-q", "-m", "arbol")
+    nota.write_text("limpia\n", encoding="utf-8")
+    _git(raiz, "add", "nota.md")            # copia e indice, limpios
+    huellas = str(_huellas_de_juguete(tmp_path))
+    assert va.main(["--raiz", str(raiz), "--huellas", huellas]) == 0
+    capsys.readouterr()
+    assert va.main(["--raiz", str(raiz), "--huellas", huellas,
+                    "--un-solo-commit"]) == 1
+    salida = capsys.readouterr().out
+    assert f"nota.md:1: huella {va.huella(OTRO)[:12]} (commit)" in salida
+    assert "commits: 1" in salida and "ramas: 1" in salida
+    assert "etiquetas: 0" in salida
 
 
 def test_la_cli_regenera_desde_la_variable_o_desde_lista(tmp_path, capsys,
