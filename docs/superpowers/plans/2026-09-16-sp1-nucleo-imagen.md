@@ -1757,7 +1757,7 @@ print('reporte y checkpoints guardados en', PERSISTENTE)
 ```markdown
 # Copiloto de triaje para neumonía en adultos — núcleo de imagen (SP1)
 
-Primer sub-proyecto del Proyecto Integrador (UEES, Maestría en IA). Entrena una
+Primer sub-proyecto del Proyecto Integrador (<institución y programa>). Entrena una
 CNN de clasificación binaria sobre radiografías de tórax de adultos del dataset
 RSNA, con partición por paciente verificada sin fuga de datos.
 

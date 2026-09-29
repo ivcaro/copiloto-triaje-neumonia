@@ -102,6 +102,8 @@ instalación, no los copies: léelos):
 
 ```
 NAMES           IMAGE                STATUS       PORTS
+n8n             n8nio/n8n:...        Up 3 weeks   5678/tcp
+nginx           nginx:...            Up 3 weeks   0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp
 (los contenedores ajenos: no se tocan)
 ```
 
@@ -186,7 +188,7 @@ docker network inspect <RED_N8N> --format '{{range .Containers}}{{println .Name}
 ```
 
 Esperado en el VPS: una lista que **incluya el contenedor de n8n**, junto a
-nginx, `api-ajena` y lo que haya. Un nombre por línea.
+nginx, los contenedores ajenos y lo que haya. Un nombre por línea.
 
 Si n8n no aparece, pregúntaselo a n8n en vez de adivinarlo:
 
@@ -327,7 +329,7 @@ Antes de empezar, sustituye en todos los comandos:
 | :--- | :--- |
 | `usuario@vps` | tu usuario y el host o IP del VPS, p. ej. `root@203.0.113.10` |
 | `/opt/copiloto` | el directorio del VPS donde quieras dejar esto |
-| `<url-del-repositorio>` | `github-copiloto:<cuenta>/copiloto-triaje.git` — el repositorio, por el alias SSH del 3.2. Por HTTPS sería `https://github.com/<cuenta>/copiloto-triaje.git`, pero entonces el VPS pide usuario en cada `pull` |
+| `<url-del-repositorio>` | `github-copiloto:<cuenta>/copiloto-triaje.git` — el repositorio, por el alias SSH del 3.2. Por HTTPS sería `https://github.com/<cuenta>/copiloto-triaje.git`, pero entonces, si el repositorio es privado, el VPS pide usuario en cada `pull` |
 | `<cuenta>` | la cuenta u organización de GitHub dueña del repositorio |
 | `<raiz-del-repositorio>` | la carpeta de tu máquina donde está tu clon del repositorio, entre comillas si lleva espacios |
 | `<RSNA_RAIZ>` | la raíz del dataset de RSNA preparado, la de la variable `RSNA_RAIZ`: la carpeta con `crudo/` y `corridas/` dentro |
@@ -1341,7 +1343,7 @@ el contenedor que responde ya es el de SP4.
 | el estado pasa a `unhealthy` | el proceso murió al arrancar | `docker compose logs copiloto-mcp` |
 | `can't open file '/app/C:/Program Files/Git/modelo/...'` | Git Bash convirtió la ruta | `MSYS_NO_PATHCONV=1` delante del comando |
 | `curl http://localhost:8000/salud` desde el host no responde | **es lo correcto**: no hay `ports` publicados | usar `docker compose exec`, o un contenedor en la misma red |
-| el `git pull` del VPS se queda colgado sin decir nada | está esperando usuario y contraseña: el repositorio es privado | la llave de despliegue del paso 3.2. **No** metas un token en la URL |
+| el `git pull` del VPS se queda colgado sin decir nada | está esperando usuario y contraseña: el repositorio es privado, o la URL del remoto no es la suya | la llave de despliegue del paso 3.2 (o corregir la URL). **No** metas un token en la URL |
 | desplegaste, el `git pull` trajo cambios, y el servicio sigue comportándose igual que antes | se levantó **sin `--build`**: el tag `copiloto-mcp:0.1.0` es fijo, Compose vio la imagen y no reconstruyó | `up -d --build`. No da ningún error, por eso hay que saberlo |
 | `untracked working tree files would be overwritten by merge` al hacer `git pull` | desplegaste antes por el camino B y ahora el repositorio trae un fichero que ya existía suelto | borra el fichero suelto que nombre el error y repite el `pull` |
 

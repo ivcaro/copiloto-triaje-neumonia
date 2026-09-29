@@ -2488,7 +2488,7 @@ apuntando `COPILOTO_URL` al contenedor:
 
 1. Leer el export: `python -c` que imprima `parameters.jsCode` de `A base64`,
    `Leer respuesta` y `Desenlace` de `n8n/copiloto-profesional.json`.
-2. `n8n_update_partial_workflow` sobre el workflow `[retirado]`
+2. `n8n_update_partial_workflow` sobre el workflow `<id-del-workflow-profesional>`
    (`🩺 Copiloto Triaje: Profesional`) con tres operaciones `updateNode`, una por
    nodo, que pongan `parameters.jsCode` al valor del export. Nada más del
    workflow se toca (restricción 10).

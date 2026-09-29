@@ -78,7 +78,7 @@ const SALUD_OK = JSON.stringify({
 
 const bien = (cambios = {}) => Object.assign({
   Configuracion: { chat_equipo: "987654321" },
-  // MEDIDO contra el n8n real el 25-09-2026 (ejecucion 34140): una consulta de
+  // MEDIDO contra el n8n real el 25-09-2026: una consulta de
   // solo DELETE sin RETURNING sale del nodo como `{success: true}`. ESO ES EL
   // CASO BUENO. El `{}` que deja «Always Output Data» cuando no hay ni eso se
   // prueba aparte, mas abajo.

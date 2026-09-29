@@ -8,9 +8,13 @@ dos bots ya funcionando.
 
 | Dónde | Qué va ahí |
 | :--- | :--- |
-| **El VPS** (donde el prompt dice `usuario@vps`) | todo lo de `docker` |
+| **El VPS** (donde el prompt es el del servidor, p. ej. `root@…`) | todo lo de `docker` |
 | **Tu Windows, PowerShell** | el túnel, las pruebas, los scripts |
 | **n8n en el navegador** | credenciales y workflows |
+
+En las órdenes, `<raiz-del-repositorio>` es la carpeta de tu máquina donde
+está tu clon del repositorio, y `<RSNA_RAIZ>`, la del dataset preparado
+(la variable de entorno `RSNA_RAIZ`). Se sustituyen antes de pegar la orden.
 
 ---
 
@@ -26,7 +30,7 @@ donde se lee el identificador.
 **2. Averiguar su `chat_id`.** Con el túnel abierto (§3) y el DSN puesto:
 
 ```powershell
-cd <raiz-del-repositorio>; C:\venv-copiloto\Scripts\python.exe pruebas/profesionales.py
+cd "<raiz-del-repositorio>"; C:\venv-copiloto\Scripts\python.exe pruebas/profesionales.py
 ```
 
 Lista los intentos no autorizados más recientes **y te imprime el comando de
@@ -204,7 +208,7 @@ redacta el mensaje con el código del propio workflow. Es lo que se puede correr
 sin el túnel ni los secretos, y tarda un minuto:
 
 ```powershell
-cd <raiz-del-repositorio>; C:\venv-copiloto\Scripts\python.exe pruebas/reproducir_casos.py --sin-bots
+cd "<raiz-del-repositorio>"; C:\venv-copiloto\Scripts\python.exe pruebas/reproducir_casos.py --sin-bots
 ```
 
 **Con los dos bots** — conduce las 49 conversaciones de verdad. Hacen falta el
@@ -558,7 +562,7 @@ Las tres nos costaron tiempo:
 
 ## 7. Credenciales y workflows
 
-| Rol | Credencial en n8n | Workflow |
+| Rol | Credencial en n8n (su marcador) | Workflow |
 | :--- | :--- | :--- |
 | Paciente | `bot-paciente` | `🩺 Copiloto Triaje: Paciente (Telegram)` |
 | Profesional | `bot-profesional` | `🩺 Copiloto Triaje: Profesional (Telegram)` |
