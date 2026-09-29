@@ -70,7 +70,7 @@ Medidos, no recordados. Cada fila es una restricción que el diseño obedece.
 | Hay **dos** límites de tamaño distintos | Ver §10.4 |
 | Un token de Telegram admite **un** webhook | D9 |
 | n8n 2.35.4 soporta el marco de evaluaciones completo | §13 |
-| Un Telegram Trigger es un webhook público en `https://n8n.[retirado].com/webhook/...` | §4.2 |
+| Un Telegram Trigger es un webhook público en `https://n8n.ejemplo.test/webhook/...` | §4.2 |
 | `callback_data` de Telegram está limitado a 64 bytes | No caben las respuestas: hace falta estado en base de datos (§5.1) |
 | Latencia del copiloto en el VPS: mediana 143 ms, peor 225 ms | El presupuesto de 4 s de H4 sigue holgado dentro del bot |
 
@@ -90,7 +90,7 @@ Ejemplos reales, medidos contra el contenedor el 24-sep-2026:
 | Pieza | Qué es | Nueva |
 | :--- | :--- | :--- |
 | `copiloto-mcp` | inferencia, ya desplegado | no, **no se toca** |
-| `copiloto-bd` | PostgreSQL 16, en `[retirado]_[retirado]_network`, sin puertos | sí |
+| `copiloto-bd` | PostgreSQL 16, en `<RED_N8N>`, sin puertos | sí |
 | `🩺 Copiloto Triaje: Paciente (Telegram)` | workflow | sí |
 | `🩺 Copiloto Triaje: Profesional (Telegram)` | workflow | sí |
 | `🩺 Copiloto Triaje: Mantenimiento` | workflow, disparador programado diario | sí |
@@ -109,7 +109,7 @@ siendo un solo `docker compose -p copiloto-mcp down`.
 Esto no estaba en el primer borrador y es lo que más expone el sistema.
 
 Cada Telegram Trigger registra un **webhook público** en
-`https://n8n.[retirado].com/webhook/<id>`, alcanzable desde internet a través del
+`https://n8n.ejemplo.test/webhook/<id>`, alcanzable desde internet a través del
 `nginx-proxy-manager` del cliente. Telegram hace POST ahí; **cualquiera que
 conozca la URL también puede**.
 
@@ -1045,18 +1045,18 @@ no le robamos el webhook a un bot del cliente (D9):
 
 | Rol | Credencial en n8n | id |
 | :--- | :--- | :--- |
-| Paciente | `[retirado]` | `[retirado]` |
-| Profesional | `[retirado]` | `[retirado]` |
-| Pruebas | `[retirado]` | `[retirado]` |
+| Paciente | `bot-paciente` | `CRED_TELEGRAM_PACIENTE` |
+| Profesional | `bot-profesional` | `CRED_TELEGRAM_PROFESIONAL` |
+| Pruebas | `bot-avisos` | `CRED_TELEGRAM_AVISOS` |
 
-Las del cliente que **no se tocan**: `[retirado]` (5 workflows) y
-`Telegram account` (2). Existe además una credencial `[retirado]` sin uso,
-anterior a `[retirado]` y hoy redundante.
+Las del cliente que **no se tocan**: la credencial de Telegram del cliente (5 workflows) y
+`Telegram account` (2). Existe además una credencial de pruebas sin uso,
+anterior a `bot-avisos` y hoy redundante.
 
 | Secreto | Dónde vive | Si se filtra |
 | :--- | :--- | :--- |
-| Token del bot del paciente | credencial `[retirado]` | revocar en BotFather, crear otro, actualizar la credencial |
-| Token del bot del profesional | credencial `[retirado]` | igual |
+| Token del bot del paciente | credencial `bot-paciente` | revocar en BotFather, crear otro, actualizar la credencial |
+| Token del bot del profesional | credencial `bot-profesional` | igual |
 | `secret_token` del webhook (§4.2) | credencial de n8n | rotarlo y volver a llamar a `setWebhook` |
 | Contraseña de `copiloto-bd` | variable de entorno del compose, en un `.env` del VPS | rotar y recrear el contenedor |
 | Contraseña del dashboard | credencial de n8n | rotar |
@@ -1147,7 +1147,7 @@ en cada cambio. Nunca un volcado completo de la instancia.
 1. **No se modifica ningún workflow existente** del cliente. Los nuestros son
    nuevos y llevan el prefijo `🩺 Copiloto Triaje:`, **los tres**.
 2. **No se reutiliza ninguna credencial de Telegram existente** (D9).
-3. **No se crea ni se borra** `[retirado]_[retirado]_network`, ni se tocan sus otros
+3. **No se crea ni se borra** `<RED_N8N>`, ni se tocan sus otros
    contenedores.
 4. **No se toca `copiloto-mcp`.** Si SP3 necesitara algo del servidor, se para y
    se decide: es otro sub-proyecto con su propia revisión.

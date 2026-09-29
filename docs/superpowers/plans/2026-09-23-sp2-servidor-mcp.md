@@ -528,8 +528,8 @@ Ejecuta:
 
 ```bash
 C:/venv-copiloto/Scripts/python.exe scripts/ajustar_calibrador.py \
-  --corrida "C:/Users/[retirado]/datasets/rsna-pneumonia/trabajo/corridas/efficientnet_b0_320px_lote24_4+20ep" \
-  --raiz "C:/Users/[retirado]/datasets/rsna-pneumonia/trabajo"
+  --corrida "<RSNA_RAIZ>/corridas/efficientnet_b0_320px_lote24_4+20ep" \
+  --raiz "<RSNA_RAIZ>"
 ```
 
 Esperado: tarda unos 5 minutos y termina con
@@ -1262,7 +1262,7 @@ networks:
 - [ ] **Paso 4: copiar los artefactos del modelo y construir**
 
 ```bash
-cp "C:/Users/[retirado]/datasets/rsna-pneumonia/trabajo/corridas/efficientnet_b0_320px_lote24_4+20ep/checkpoints/pesos_modelo_cpu.pt" servidor/pesos_modelo_cpu.pt
+cp "<RSNA_RAIZ>/corridas/efficientnet_b0_320px_lote24_4+20ep/checkpoints/pesos_modelo_cpu.pt" servidor/pesos_modelo_cpu.pt
 cd servidor && docker compose build
 ```
 
@@ -1295,7 +1295,7 @@ la máquina de desarrollo:
 Copia primero un DICOM real del conjunto de prueba al contenedor:
 
 ```bash
-docker compose cp "C:/Users/[retirado]/datasets/rsna-pneumonia/trabajo/crudo/stage_2_train_images/<id>.dcm" copiloto-mcp:/modelo/ejemplo.dcm
+docker compose cp "<RSNA_RAIZ>/crudo/stage_2_train_images/<id>.dcm" copiloto-mcp:/modelo/ejemplo.dcm
 ```
 
 Y mide, dentro del contenedor, por las dos puertas:

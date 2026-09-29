@@ -13,7 +13,7 @@
 ## Restricciones globales
 
 - **Intérprete obligatorio: `C:\venv-copiloto\Scripts\python.exe`.** No usar el Python del sistema. Motivo verificado: el Python de Microsoft Store tiene una ruta base tan larga que instalar torchvision falla con `WinError 206` (nombre de archivo demasiado largo). El entorno virtual en ruta corta ya está creado y con todas las dependencias instaladas.
-- **Datos crudos: `C:\Users\[retirado]\datasets\rsna-pneumonia\`** — fuera del repositorio y fuera de OneDrive. El zip `rsna-pneumonia-detection-challenge.zip` (3,66 GB) ya está ahí. Nunca versionar datos.
+- **Datos crudos: `<carpeta-de-descarga>\`** — fuera del repositorio y fuera de OneDrive. El zip `rsna-pneumonia-detection-challenge.zip` (3,66 GB) ya está ahí. Nunca versionar datos.
 - **Nombres de funciones, variables y archivos en español**, coherente con el resto del proyecto.
 - **Semilla por defecto: 42.** Toda función con aleatoriedad la recibe explícitamente; ninguna usa el generador global.
 - **Hechos verificados del dataset** (medidos el 16-sep-2026, no suponer otros): 26 684 imágenes de entrenamiento, **una por paciente**; `patientId` coincide con el nombre del archivo DICOM; 6 012 positivos (22,5%); DICOM de 1024×1024 **uint8** `MONOCHROME2`, por lo que la conversión a PNG es directa y no necesita ventaneo; los metadatos `PatientAge`, `PatientSex` y `ViewPosition` (PA/AP) están presentes.
@@ -1429,8 +1429,8 @@ Esperado: 4 passed
 
 Uso:
     C:\\venv-copiloto\\Scripts\\python.exe scripts/preparar_datos.py ^
-        --zip "C:\\Users\\[retirado]\\datasets\\rsna-pneumonia\\rsna-pneumonia-detection-challenge.zip" ^
-        --raiz "C:\\Users\\[retirado]\\datasets\\rsna-pneumonia\\trabajo" ^
+        --zip "<carpeta-de-descarga>\\rsna-pneumonia-detection-challenge.zip" ^
+        --raiz "<RSNA_RAIZ>" ^
         [--limite 200]
 
 Es idempotente: descomprimir y convertir se saltan si ya estan hechos.
@@ -1516,7 +1516,7 @@ if __name__ == "__main__":
 
 Ejecutar:
 ```bash
-C:\venv-copiloto\Scripts\python.exe scripts/preparar_datos.py --zip "C:\Users\[retirado]\datasets\rsna-pneumonia\rsna-pneumonia-detection-challenge.zip" --raiz "C:\Users\[retirado]\datasets\rsna-pneumonia\trabajo" --limite 200
+C:\venv-copiloto\Scripts\python.exe scripts/preparar_datos.py --zip "<carpeta-de-descarga>\rsna-pneumonia-detection-challenge.zip" --raiz "<RSNA_RAIZ>" --limite 200
 ```
 Esperado: termina con `LISTO. Sin fuga de datos entre particiones.` y los tres manifiestos escritos. La descompresión completa tarda varios minutos la primera vez.
 
