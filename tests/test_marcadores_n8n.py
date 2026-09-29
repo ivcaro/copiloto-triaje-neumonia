@@ -41,6 +41,22 @@ TEXTO = ('{\n  "url": "https://n8n.ejemplo.test/webhook/copiloto-paciente",\n'
          '  "credentials": {"telegramApi": {"id": "CRED_TELEGRAM_PACIENTE", '
          '"name": "bot-paciente"}}\n}\n')
 
+# Lo mismo que TEXTO, pero con forma de workflow y escrito como se versiona:
+# es lo que `--retirar` acepta (TEXTO no es un workflow).
+FLUJO = json.dumps({
+    "name": "flujo de juguete",
+    "active": False,
+    "nodes": [
+        {"name": "Sonda", "type": "n8n-nodes-base.httpRequest",
+         "parameters": {"url": "https://n8n.ejemplo.test/webhook/copiloto-paciente"}},
+        {"name": "Responder", "type": "n8n-nodes-base.telegram",
+         "credentials": {"telegramApi": {"id": "CRED_TELEGRAM_PACIENTE",
+                                         "name": "bot-paciente"}}},
+    ],
+    "connections": {},
+    "settings": {},
+}, ensure_ascii=False, indent=2) + "\n"
+
 
 # --------------------------------------------------------------------------
 # Las tres funciones
@@ -154,10 +170,20 @@ def test_un_valor_que_no_es_texto_no_se_acepta(mn, valores):
         mn.aplicar(TEXTO, ["lista"])
 
 
-def test_un_marcador_desconocido_en_los_valores_es_un_error(mn, valores):
-    valores["CRED_TELEGRAM_PACIENT"] = "errata"
-    with pytest.raises(mn.ErrorDeMarcadores, match="desconocidos.*CRED_TELEGRAM_PACIENT"):
+@pytest.mark.parametrize("errata, parecido", [
+    ("CRED_TELEGRAM_PACEINTE", "CRED_TELEGRAM_PACIENTE"),
+    ("bot-pacinete", "bot-paciente"),
+])
+def test_un_marcador_desconocido_en_los_valores_es_un_error(mn, valores, errata, parecido):
+    """Se dice cuantas claves no son marcadores y, de las que tienen forma de
+    marcador, el conocido mas parecido; nunca la clave tal como viene: una con
+    forma `bot-...` puede ser el nombre real de un bot."""
+    valores[errata] = "errata"
+    with pytest.raises(mn.ErrorDeMarcadores, match="desconocid") as e:
         mn.aplicar(TEXTO, valores)
+    assert parecido in str(e.value)
+    assert "1 clave" in str(e.value)
+    assert errata not in str(e.value)
 
 
 def test_con_los_valores_al_reves_el_error_no_imprime_ninguno(mn, valores):
@@ -171,19 +197,34 @@ def test_con_los_valores_al_reves_el_error_no_imprime_ninguno(mn, valores):
         for valor in valores.values():
             assert valor not in str(e.value)
         assert f"{len(valores)} claves que no son marcadores" in str(e.value)
-    # una errata entre valores reales: se dice la errata, y de lo demas, cuantas
-    mezcla = dict(al_reves, CRED_TELEGRAM_PACIENT="errata")
-    with pytest.raises(mn.ErrorDeMarcadores, match="CRED_TELEGRAM_PACIENT") as e:
+    # una errata entre valores reales: se dice el marcador que se parece a la
+    # errata, y de lo demas, cuantas; ni la errata ni los valores
+    mezcla = dict(al_reves, CRED_TELEGRAM_PACEINTE="errata")
+    with pytest.raises(mn.ErrorDeMarcadores, match="CRED_TELEGRAM_PACIENTE") as e:
         mn.aplicar(TEXTO, mezcla)
     assert all(valor not in str(e.value) for valor in valores.values())
+    assert "CRED_TELEGRAM_PACEINTE" not in str(e.value)
+    assert f"{len(valores)} claves que no son marcadores" in str(e.value)
 
 
 @pytest.mark.parametrize("url", [
-    "https://flujos.inventado.test/", "flujos.inventado.test", "ftp://x.test"])
+    "https://flujos.inventado.test/", "flujos.inventado.test", "ftp://x.test",
+    # esquema y host, y nada mas: una ruta acabaria delante de /webhook/
+    "https://flujos.inventado.test/n8n", "https://flujos.inventado.test/n8n/",
+    "https://flujos.inventado.test?x=1", "https://flujos.inventado.test#arriba",
+    "https://", "https://:5678", "https://flujos inventado.test",
+    "https://alguien@flujos.inventado.test"])
 def test_la_url_va_con_esquema_y_sin_barra_final(mn, valores, url):
     valores[mn.URL_N8N] = url
     with pytest.raises(mn.ErrorDeMarcadores, match="URL base"):
         mn.aplicar(TEXTO, valores)
+
+
+@pytest.mark.parametrize("url", [
+    "https://flujos.inventado.test", "http://flujos.inventado.test:5678"])
+def test_la_url_con_esquema_host_y_puerto_se_acepta(mn, valores, url):
+    valores[mn.URL_N8N] = url
+    assert f'"url": "{url}/webhook/copiloto-paciente"' in mn.aplicar(TEXTO, valores)
 
 
 def test_un_valor_no_puede_confundirse_con_un_marcador_ni_con_otro_valor(mn, valores):
@@ -204,7 +245,7 @@ def test_un_valor_no_puede_confundirse_con_un_marcador_ni_con_otro_valor(mn, val
 @pytest.fixture()
 def carpeta(tmp_path, valores):
     (tmp_path / "valores.json").write_text(json.dumps(valores), encoding="utf-8")
-    (tmp_path / "entrada.json").write_bytes(TEXTO.replace("\n", "\r\n").encode("utf-8"))
+    (tmp_path / "entrada.json").write_bytes(FLUJO.replace("\n", "\r\n").encode("utf-8"))
     return tmp_path
 
 
@@ -217,13 +258,25 @@ def test_la_cli_pone_y_quita_y_escribe_en_lf(mn, carpeta, valores, capsys):
     assert "valores puestos: 3 sustituciones" in dicho
     crudo = (carpeta / "sub" / "puesto.json").read_bytes()
     assert b"\r" not in crudo
-    assert crudo.decode("utf-8") == mn.aplicar(TEXTO, valores)
+    assert crudo.decode("utf-8") == mn.aplicar(FLUJO, valores)
 
     assert mn.main(argumentos + ["--retirar",
                                  "--entrada", str(carpeta / "sub" / "puesto.json"),
                                  "--salida", str(carpeta / "vuelta.json")]) == 0
     assert "valores retirados: 3 sustituciones" in capsys.readouterr().out
-    assert (carpeta / "vuelta.json").read_bytes() == TEXTO.encode("utf-8")
+    assert (carpeta / "vuelta.json").read_bytes() == FLUJO.encode("utf-8")
+
+
+def test_la_cli_lee_ficheros_con_marca_de_orden_de_bytes(mn, carpeta, valores, capsys):
+    """PowerShell 5.1 escribe los JSON con la marca (`Out-File`, `Set-Content
+    -Encoding utf8`): los valores y la entrada se leen igual con ella."""
+    (carpeta / "valores-bom.json").write_text(json.dumps(valores), encoding="utf-8-sig")
+    (carpeta / "entrada-bom.json").write_text(FLUJO, encoding="utf-8-sig")
+    assert mn.main(["--valores", str(carpeta / "valores-bom.json"),
+                    "--entrada", str(carpeta / "entrada-bom.json"),
+                    "--salida", str(carpeta / "puesto.json")]) == 0, capsys.readouterr().err
+    assert (carpeta / "puesto.json").read_bytes() == mn.aplicar(FLUJO, valores).encode("utf-8")
+    assert mn.leer_valores(carpeta / "valores-bom.json") == valores
 
 
 def test_la_cli_no_pone_valores_reales_encima_de_la_entrada(mn, carpeta, capsys):
@@ -260,11 +313,46 @@ def test_la_cli_no_pone_valores_reales_dentro_del_repositorio(
 
 
 def test_la_cli_retira_encima_de_la_entrada(mn, carpeta, valores):
-    (carpeta / "export.json").write_text(mn.aplicar(TEXTO, valores), encoding="utf-8")
+    (carpeta / "export.json").write_text(mn.aplicar(FLUJO, valores), encoding="utf-8")
     assert mn.main(["--valores", str(carpeta / "valores.json"), "--retirar",
                     "--entrada", str(carpeta / "export.json"),
                     "--salida", str(carpeta / "export.json")]) == 0
-    assert (carpeta / "export.json").read_bytes() == TEXTO.encode("utf-8")
+    assert (carpeta / "export.json").read_bytes() == FLUJO.encode("utf-8")
+
+
+def test_escribir_no_deja_el_destino_a_medias(mn, tmp_path):
+    """Se escribe a un temporal junto al destino y se pone en su sitio al
+    final: si la escritura falla, el destino queda como estaba y el temporal
+    no se queda en la carpeta. Un sustituto suelto no se puede escribir en
+    UTF-8."""
+    destino = tmp_path / "flujo.json"
+    destino.write_bytes(b'{"antes": true}\n')
+    with pytest.raises(UnicodeEncodeError):
+        mn.escribir(destino, '{"nota": "a medias \ud800"}\n')
+    assert destino.read_bytes() == b'{"antes": true}\n'
+    assert [p.name for p in tmp_path.iterdir()] == ["flujo.json"]
+
+    mn.escribir(destino, '{"despues": true}\n')
+    assert destino.read_bytes() == b'{"despues": true}\n'
+    assert [p.name for p in tmp_path.iterdir()] == ["flujo.json"]
+
+
+def test_la_cli_dice_el_error_si_lo_retirado_no_se_puede_escribir(
+        mn, carpeta, valores, capsys):
+    """Una descarga con un sustituto suelto escapado (`\\ud800`) en una nota:
+    al reescribirla como se versiona sale el caracter, que no cabe en UTF-8.
+    La orden sale con 1 y el destino, que existia, sigue como estaba."""
+    flujo = json.loads(mn.aplicar(FLUJO, valores))
+    flujo["nodes"][0]["notes"] = "a medias \ud800"
+    (carpeta / "descarga.json").write_text(json.dumps(flujo), encoding="utf-8")
+    (carpeta / "destino.json").write_bytes(b"lo de antes\n")
+    assert mn.main(["--valores", str(carpeta / "valores.json"), "--retirar",
+                    "--entrada", str(carpeta / "descarga.json"),
+                    "--salida", str(carpeta / "destino.json")]) == 1
+    assert capsys.readouterr().err.startswith("ERROR: UnicodeEncodeError")
+    assert (carpeta / "destino.json").read_bytes() == b"lo de antes\n"
+    assert sorted(p.name for p in carpeta.iterdir()) == [
+        "descarga.json", "destino.json", "entrada.json", "valores.json"]
 
 
 def test_la_cli_dice_que_hacer_si_no_hay_fichero_de_valores(mn, carpeta, capsys):
@@ -496,10 +584,132 @@ def test_retirar_una_descarga_de_n8n_quita_lo_que_es_de_la_instancia(
         assert de_la_instancia not in mn.leer(tmp_path / "versionable.json")
 
 
-def test_lo_que_no_es_un_workflow_se_retira_sin_reescribirlo(mn, carpeta, valores):
-    """Sin `nodes` no es un workflow: se sustituye texto y nada mas."""
-    assert mn.como_se_versiona(json.loads(TEXTO)) == (None, [])
-    assert mn.como_se_versiona(["una", "lista"]) == (None, [])
+def _descarga(mn, fichero, valores, **en_la_instancia):
+    """Un workflow versionado como lo descarga n8n de una instancia con estos
+    `valores`: puestos, con las claves de la instancia y lo que se le pase."""
+    desplegado = json.loads(mn.aplicar(mn.leer(N8N / fichero), valores))
+    desplegado.update({"id": "wf-de-la-instancia",
+                       "versionId": "version-de-la-instancia"}, **en_la_instancia)
+    return desplegado
+
+
+def _chat_equipo(flujo):
+    """Las asignaciones `chat_equipo` del nodo `Configuracion`."""
+    return [a for n in flujo["nodes"] if n["name"] == "Configuracion"
+            for a in n["parameters"]["assignments"]["assignments"]
+            if a["name"] == "chat_equipo"]
+
+
+def test_retirar_el_mantenimiento_vacia_el_chat_del_equipo(mn, valores, tmp_path, capsys):
+    """Desplegado, `chat_equipo` va relleno en n8n (§5 del manual): es el
+    chat_id de una persona y no se versiona. Al retirar se vacia, y la orden
+    lo dice sin repetirlo."""
+    chat = "4455667788"   # inventado
+    descarga = _descarga(mn, "copiloto-mantenimiento.json", valores)
+    (asignacion,) = _chat_equipo(descarga)
+    asignacion["value"] = chat
+    (tmp_path / "valores.json").write_text(json.dumps(valores), encoding="utf-8")
+    (tmp_path / "descarga.json").write_text(json.dumps(descarga, indent=4),
+                                            encoding="utf-8")
+
+    assert mn.main(["--valores", str(tmp_path / "valores.json"), "--retirar",
+                    "--entrada", str(tmp_path / "descarga.json"),
+                    "--salida", str(tmp_path / "versionable.json")]) == 0
+
+    escrito = mn.leer(tmp_path / "versionable.json")
+    assert escrito == mn.leer(N8N / "copiloto-mantenimiento.json")
+    dicho = capsys.readouterr()
+    assert "chat_equipo: vaciado" in dicho.out
+    assert chat not in escrito and chat not in dicho.out + dicho.err
+
+
+def test_el_chat_del_equipo_del_mantenimiento_versionado_va_vacio():
+    """El manual manda correr este fichero despues de retirar un export: asi
+    caza un `chat_equipo` relleno sin tener que nombrar
+    `tests/test_mantenimiento.py`. Si falla no enseña el valor."""
+    flujo = json.loads((N8N / "copiloto-mantenimiento.json").read_text(encoding="utf-8"))
+    asignaciones = _chat_equipo(flujo)
+    assert len(asignaciones) == 1
+    vacio = asignaciones[0]["value"] == ""
+    assert vacio, ("chat_equipo va relleno en n8n/copiloto-mantenimiento.json: "
+                   "retira el export con scripts/marcadores_n8n.py, que lo vacia")
+
+
+@pytest.mark.parametrize("fichero", FLUJOS)
+def test_retirar_con_otros_valores_que_los_de_la_descarga_no_escribe(
+        mn, fichero, valores, tmp_path, capsys):
+    """Con unos valores que no son los de la instancia (los de ejemplo, un
+    `valores.local.json` anticuado) no se sustituye nada, y el workflow se
+    escribiria en `n8n/` con los identificadores de la instancia. Tras
+    retirar, las credenciales y las URL de los webhooks tienen que ser
+    marcadores: si no, no se escribe, y el error dice el nodo y no el valor."""
+    ejemplo = mn.leer_valores(EJEMPLO)
+    (tmp_path / "descarga.json").write_text(
+        json.dumps(_descarga(mn, fichero, valores), indent=4), encoding="utf-8")
+
+    assert mn.main(["--valores", str(EJEMPLO), "--retirar",
+                    "--entrada", str(tmp_path / "descarga.json"),
+                    "--salida", str(tmp_path / "versionable.json")]) == 1
+
+    assert not (tmp_path / "versionable.json").exists()
+    dicho = capsys.readouterr()
+    for valor in list(valores.values()) + list(ejemplo.values()):
+        assert valor not in dicho.err + dicho.out
+    assert "no son marcadores" in dicho.err
+    # el nodo, que es del workflow versionado
+    telegram = {"copiloto-paciente.json": "Pedir consentimiento",
+                "copiloto-profesional.json": "Pedir codigo",
+                "copiloto-mantenimiento.json": "Avisar al equipo"}[fichero]
+    assert telegram in dicho.err
+    if fichero == "copiloto-mantenimiento.json":
+        assert "Webhook del paciente" in dicho.err
+
+
+@pytest.mark.parametrize("entrada, dice", [
+    ([], "una lista"),
+    (["un workflow", "otro"], "una lista"),
+    ({"name": "sin nodos", "connections": {}}, "no es un workflow"),
+    (json.loads(TEXTO), "no es un workflow"),
+])
+def test_lo_que_no_es_un_workflow_no_se_retira(mn, carpeta, entrada, dice, capsys):
+    """La linea de ordenes de n8n exporta una LISTA de workflows; y un JSON
+    sin `nodes` no es un workflow. `--retirar` no los reescribe ni los pasa
+    por buenos: se niega, dice que se pase un workflow cada vez, y no escribe
+    nada."""
+    (carpeta / "export.json").write_text(json.dumps(entrada), encoding="utf-8")
+    assert mn.main(["--valores", str(carpeta / "valores.json"), "--retirar",
+                    "--entrada", str(carpeta / "export.json"),
+                    "--salida", str(carpeta / "salida.json")]) == 1
+    error = capsys.readouterr().err
+    assert dice in error and "un workflow cada vez" in error
+    assert not (carpeta / "salida.json").exists()
+    # `como_se_versiona` no los toca
+    assert mn.como_se_versiona(entrada) == (None, [])
+
+
+# Las claves de `settings` que llevan hoy los tres workflows. Una que la
+# instancia añada al descargar no pasa sin que alguien lo decida: la de
+# `errorWorkflow`, por ejemplo, lleva el `id` de otro workflow de la instancia.
+CLAVES_DE_SETTINGS = {
+    "executionOrder", "executionTimeout", "saveDataErrorExecution",
+    "saveDataSuccessExecution", "saveExecutionProgress", "saveManualExecutions",
+    "timezone"}
+
+
+def _settings_que_sobran(flujo):
+    """Los NOMBRES de las claves de `settings` que no estan en la lista; los
+    valores no, que pueden ser de la instancia."""
+    return sorted(set(flujo["settings"]) - CLAVES_DE_SETTINGS)
+
+
+@pytest.mark.parametrize("fichero", FLUJOS)
+def test_las_claves_de_settings_son_las_de_hoy(fichero):
+    flujo = json.loads((N8N / fichero).read_text(encoding="utf-8"))
+    assert _settings_que_sobran(flujo) == [], fichero
+    # y la comprobacion caza la que lleva el id de otro workflow
+    con_error = dict(flujo, settings=dict(flujo["settings"],
+                                          errorWorkflow="wf-de-la-instancia"))
+    assert _settings_que_sobran(con_error) == ["errorWorkflow"]
 
 
 @pytest.mark.parametrize("fichero", FLUJOS)

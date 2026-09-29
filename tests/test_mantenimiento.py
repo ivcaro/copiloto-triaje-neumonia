@@ -219,7 +219,9 @@ def test_no_hay_ningun_secreto_ni_ningun_chat_id_en_el_repositorio(flujo):
     assert not re.search(r"\d{8,12}:[A-Za-z0-9_-]{30,}", crudo), "parece un token"
     config = nodo(flujo, "Configuracion")["parameters"]["assignments"]["assignments"]
     assert [a["name"] for a in config] == ["chat_equipo"]
-    assert config[0]["value"] == "", "el chat del equipo no se versiona"
+    # sobre un booleano: si falla, pytest no enseña el chat_id que lleve
+    vacio = config[0]["value"] == ""
+    assert vacio, "el chat del equipo no se versiona"
     assert (nodo(flujo, "Avisar al equipo")["parameters"]["chatId"]
             == "={{ $('Configuracion').first().json.chat_equipo }}")
 

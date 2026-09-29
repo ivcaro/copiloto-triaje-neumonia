@@ -23,15 +23,27 @@ lo deja como se versiona: solo con las cinco claves que se versionan (`name`,
 `active`, `nodes`, `connections`, `settings`) y escrito como los de `n8n/`.
 Una descarga de n8n trae tambien el `id` del workflow, su `versionId`, la
 huella de la instancia (`meta`), datos de ejecuciones (`pinData`) y etiquetas:
-identifican la instancia y no se versionan. No usa la red ni habla con n8n.
+identifican la instancia y no se versionan. Tambien vacia el `chat_equipo` del
+nodo `Configuracion` (el chat_id de una persona, que se rellena en n8n).
+
+`--retirar` trabaja con UN workflow cada vez: una lista (como exporta la linea
+de ordenes de n8n) o un JSON sin `nodes` no se retiran. Y no escribe si, tras
+retirar, queda una credencial o una URL de webhook que no es un marcador: es
+que los valores no son los de la instancia de la que viene la descarga. No usa
+la red ni habla con n8n.
 """
 from __future__ import annotations
 
 import argparse
+import difflib
 import io
 import json
+import os
 import re
+import shutil
 import sys
+import tempfile
+import urllib.parse
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -78,25 +90,52 @@ def _nombres(marcadores) -> str:
     return ", ".join(sorted(marcadores))
 
 
+def _es_url_base(url: str) -> bool:
+    """Esquema `http` o `https` y host (con su puerto, si lo lleva), y nada
+    mas: ni ruta, ni consulta, ni fragmento, ni barra final, ni usuario, ni
+    blancos."""
+    if re.search(r"[\s?#]", url) or url.endswith("/"):
+        return False
+    try:
+        partes = urllib.parse.urlsplit(url)
+        partes.port  # un puerto que no es un numero lanza ValueError
+    except ValueError:
+        return False
+    return (partes.scheme in ("http", "https") and bool(partes.hostname)
+            and "@" not in partes.netloc and not partes.path)
+
+
 def _validar(valores: dict) -> None:
     if not isinstance(valores, dict):
         raise ErrorDeMarcadores("los valores tienen que ser un objeto JSON "
                                 "{marcador: valor}")
     desconocidos = set(valores) - set(MARCADORES)
     if desconocidos:
-        # Solo se repiten las claves con forma de marcador (una errata). Las
-        # demas pueden ser valores reales: con el fichero escrito al reves,
-        # {valor real: marcador}, el mensaje los imprimiria todos.
-        erratas = {d for d in desconocidos
-                   if isinstance(d, str) and _FORMA_DE_MARCADOR.fullmatch(d)}
-        mensaje = "marcadores desconocidos en los valores: "
-        mensaje += _nombres(erratas) if erratas else "ninguno tiene forma de marcador"
-        otras = len(desconocidos) - len(erratas)
+        # Ninguna clave se repite: con el fichero escrito al reves, {valor
+        # real: marcador}, el mensaje los imprimiria todos, y una clave con
+        # forma de marcador (`bot-...`) tambien puede ser un nombre real. De
+        # las que tienen esa forma se dice el marcador conocido mas parecido.
+        erratas = [d for d in desconocidos
+                   if isinstance(d, str) and _FORMA_DE_MARCADOR.fullmatch(d)]
+        n = len(desconocidos)
+        mensaje = (f"marcadores desconocidos en los valores: {n} "
+                   + ("clave desconocida, que no se repite"
+                      if n == 1 else "claves desconocidas, que no se repiten")
+                   + " aqui")
+        if erratas:
+            parecidos = sorted({m for d in erratas
+                                for m in difflib.get_close_matches(d, MARCADORES, n=1)})
+            mensaje += (f"; {len(erratas)} con forma de marcador"
+                        + (f", ¿erratas de {_nombres(parecidos)}?" if parecidos
+                           else ", sin ningun marcador conocido parecido"))
+        otras = n - len(erratas)
         if otras:
-            mensaje += (f" ({otras} claves que no son marcadores y no se "
-                        "repiten aqui: las claves son los marcadores y los "
-                        "valores, los de la instancia; ¿esta el fichero al "
-                        "reves?)")
+            mensaje += (f"; {otras} "
+                        + ("clave que no es un marcador ni lo parece"
+                           if otras == 1 else
+                           "claves que no son marcadores ni lo parecen")
+                        + ": las claves son los marcadores y los valores, "
+                        "los de la instancia; ¿esta el fichero al reves?")
         raise ErrorDeMarcadores(mensaje)
     for marcador, valor in valores.items():
         if not isinstance(valor, str) or not valor.strip():
@@ -106,11 +145,11 @@ def _validar(valores: dict) -> None:
                 f"el valor de {marcador} lleva espacios en los extremos, "
                 "comillas, barras invertidas o caracteres de control")
     url = valores.get(URL_N8N)
-    if url is not None and (not re.match(r"https?://[^/]+", url)
-                            or url.endswith("/")):
+    if url is not None and not _es_url_base(url):
         raise ErrorDeMarcadores(
-            f"el valor de {URL_N8N} tiene que ser la URL base de n8n, con "
-            "esquema y sin barra final")
+            f"el valor de {URL_N8N} tiene que ser la URL base de n8n: esquema "
+            "(http o https) y host, sin ruta, consulta, fragmento ni barra "
+            "final")
     por_valor = {}
     for marcador, valor in valores.items():
         por_valor.setdefault(valor.lower(), []).append(marcador)
@@ -193,16 +232,36 @@ def retirar(texto: str, valores: dict) -> str:
 
 
 def leer(ruta) -> str:
-    """El fichero en UTF-8 con los finales de linea en LF, venga como venga."""
-    with io.open(ruta, encoding="utf-8", newline="") as f:
+    """El fichero en UTF-8 con los finales de linea en LF, venga como venga, y
+    sin la marca de orden de bytes si la lleva (PowerShell 5.1 la pone)."""
+    with io.open(ruta, encoding="utf-8-sig", newline="") as f:
         return f.read().replace("\r\n", "\n")
 
 
 def escribir(ruta, texto: str) -> None:
+    """Escribe a un temporal junto al destino y lo pone en su sitio al final:
+    si la escritura falla, el destino queda como estaba y el temporal se
+    borra."""
     ruta = Path(ruta)
     ruta.parent.mkdir(parents=True, exist_ok=True)
-    with io.open(ruta, "w", encoding="utf-8", newline="\n") as f:
-        f.write(texto)
+    fd, temporal = tempfile.mkstemp(dir=ruta.parent, prefix=f".{ruta.name}.",
+                                    suffix=".tmp")
+    try:
+        with io.open(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(texto)
+        # el temporal nace legible solo por su propietario: el fichero
+        # conserva los permisos que tenia, o los de uno nuevo
+        if ruta.exists():
+            shutil.copymode(ruta, temporal)
+        else:
+            os.chmod(temporal, 0o644)
+        os.replace(temporal, ruta)
+    except BaseException:
+        try:
+            os.unlink(temporal)
+        except OSError:
+            pass
+        raise
 
 
 def leer_valores(ruta) -> dict:
@@ -228,6 +287,49 @@ def como_se_versiona(datos) -> tuple:
     return json.dumps(limpio, ensure_ascii=False, indent=2) + "\n", sobran
 
 
+def _vaciar_chat_equipo(datos: dict) -> bool:
+    """Vacia el `value` de la asignacion `chat_equipo` del nodo
+    `Configuracion`: es el chat_id de una persona, se rellena en n8n y no se
+    versiona. Devuelve si llevaba algo. Sin ese nodo no hace nada."""
+    vaciado = False
+    for nodo in datos.get("nodes") or []:
+        if not isinstance(nodo, dict) or nodo.get("name") != "Configuracion":
+            continue
+        asignaciones = (((nodo.get("parameters") or {}).get("assignments")
+                         or {}).get("assignments") or [])
+        for asignacion in asignaciones:
+            if (isinstance(asignacion, dict)
+                    and asignacion.get("name") == "chat_equipo"
+                    and asignacion.get("value") != ""):
+                asignacion["value"] = ""
+                vaciado = True
+    return vaciado
+
+
+def _lo_que_no_es_marcador(datos: dict) -> list:
+    """De un workflow ya retirado, lo que sigue siendo de la instancia: una
+    credencial cuyo `id` no es un marcador conocido (y en las de Telegram, su
+    `name`), o una URL de webhook de un nodo HTTP que no empieza por el
+    marcador de la URL. Se dice el nodo y que es, nunca el valor."""
+    hallados = []
+    for nodo in datos.get("nodes") or []:
+        if not isinstance(nodo, dict):
+            continue
+        nombre = nodo.get("name")
+        for tipo, credencial in (nodo.get("credentials") or {}).items():
+            credencial = credencial if isinstance(credencial, dict) else {}
+            if credencial.get("id") not in MARCADORES:
+                hallados.append(f"«{nombre}»: el id de su credencial {tipo}")
+            if tipo == "telegramApi" and credencial.get("name") not in MARCADORES:
+                hallados.append(f"«{nombre}»: el nombre de su credencial {tipo}")
+        if nodo.get("type") == "n8n-nodes-base.httpRequest":
+            url = (nodo.get("parameters") or {}).get("url")
+            if (isinstance(url, str) and "/webhook/" in url
+                    and not url.startswith(URL_N8N + "/")):
+                hallados.append(f"«{nombre}»: la URL de su webhook")
+    return hallados
+
+
 def _dentro_del_repositorio(ruta: Path) -> bool:
     try:
         ruta.resolve().relative_to(REPO)
@@ -239,7 +341,8 @@ def _dentro_del_repositorio(ruta: Path) -> bool:
 def convertir(entrada, salida, valores: dict, quitar: bool = False) -> dict:
     """Lee `entrada`, pone o quita los valores y escribe `salida`. Devuelve
     {marcador: veces} de lo sustituido; al retirar, ademas, en la clave
-    `"claves quitadas"`, las del nivel superior que no se versionan."""
+    `"claves quitadas"`, las del nivel superior que no se versionan, y en
+    `"chat_equipo vaciado"`, si se vacio."""
     entrada, salida = Path(entrada), Path(salida)
     if not quitar and entrada.resolve() == salida.resolve():
         raise ErrorDeMarcadores(
@@ -256,12 +359,29 @@ def convertir(entrada, salida, valores: dict, quitar: bool = False) -> dict:
     except json.JSONDecodeError as e:
         raise ErrorDeMarcadores(f"{entrada} no es un JSON valido: {e}") from e
     if quitar:
-        versionable, quitadas = como_se_versiona(datos)
-        if versionable is not None:
-            texto = versionable
+        if isinstance(datos, list):
+            raise ErrorDeMarcadores(
+                f"{entrada} es una lista, no un workflow (asi exporta la linea "
+                "de ordenes de n8n): --retirar trabaja con un workflow cada "
+                "vez; pasa cada uno en su fichero, como lo descarga el editor "
+                "de n8n")
+        if not isinstance(datos, dict) or "nodes" not in datos:
+            raise ErrorDeMarcadores(
+                f"{entrada} no es un workflow (no tiene `nodes`): --retirar "
+                "trabaja con un workflow cada vez, como lo descarga el editor "
+                "de n8n")
+        chat_vaciado = _vaciar_chat_equipo(datos)
+        texto, quitadas = como_se_versiona(datos)
         resultado = retirar(texto, valores)
+        restos = _lo_que_no_es_marcador(json.loads(resultado))
+        if restos:
+            raise ErrorDeMarcadores(
+                "tras retirar quedan en el workflow cosas que no son "
+                "marcadores, y no se escribe nada (¿son los valores los de la "
+                "instancia de la que viene la descarga?): " + "; ".join(restos))
         veces = {m: texto.count(v) for m, v in valores.items() if v in texto}
         veces["claves quitadas"] = quitadas
+        veces["chat_equipo vaciado"] = chat_vaciado
     else:
         resultado = aplicar(texto, valores)
         veces = {m: texto.count(m) for m in marcadores_de(texto)}
@@ -288,11 +408,13 @@ def main(argv=None) -> int:
     except ErrorDeMarcadores as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
-    except (OSError, UnicodeDecodeError) as e:
-        # un fichero que no existe, que no se puede escribir o que no es UTF-8
+    except (OSError, UnicodeError) as e:
+        # un fichero que no existe, que no se puede escribir, que no es UTF-8
+        # o un texto que no cabe en UTF-8 (un sustituto suelto)
         print(f"ERROR: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
     quitadas = veces.pop("claves quitadas", [])
+    chat_vaciado = veces.pop("chat_equipo vaciado", False)
     verbo = "retirados" if a.retirar else "puestos"
     for marcador in MARCADORES:
         if marcador in veces:
@@ -300,6 +422,9 @@ def main(argv=None) -> int:
     if quitadas:
         print("claves de la instancia que no se versionan, quitadas: "
               + ", ".join(quitadas))
+    if chat_vaciado:
+        print("chat_equipo: vaciado (se rellena en n8n; manual de operacion, "
+              "§5, paso 1)")
     print(f"valores {verbo}: {sum(veces.values())} sustituciones -> {a.salida}")
     return 0
 
