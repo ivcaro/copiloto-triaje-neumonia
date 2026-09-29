@@ -24,7 +24,9 @@ El export versionado lleva MARCADORES en vez de los valores de la instancia
 asi que ya no es identico byte a byte al desplegado: entre uno y otro media
 `scripts/marcadores_n8n.py`, que se prueba en `test_marcadores_n8n.py`.
 """
+import io
 import json
+import os
 import pathlib
 import shutil
 import subprocess
@@ -772,6 +774,76 @@ def test_sin_N8N_URL_el_mensaje_dice_donde_se_pone_para_la_tarea_programada():
     assert "setx N8N_URL" in vw.SIN_N8N_URL
     assert "§5" in vw.SIN_N8N_URL and "paso 2" in vw.SIN_N8N_URL
     assert "en la tarea." not in vw.SIN_N8N_URL
+
+
+# --------------------------------------------------------------------------
+# Sin consola no se pide nada por teclado
+# --------------------------------------------------------------------------
+class _Entrada(io.StringIO):
+    """Un `sys.stdin` de pega que dice si es una consola."""
+
+    def __init__(self, consola):
+        super().__init__("")
+        self._consola = consola
+
+    def isatty(self):
+        return self._consola
+
+
+def test_sin_consola_y_sin_token_el_vigilante_no_espera_y_lo_cuenta(monkeypatch, capsys):
+    """§5 del manual: sin el token de un bot en el entorno, la tarea
+    programada «no comprueba ese bot y lo cuenta como problema». La tarea corre
+    sin consola, y `getpass` se quedaba esperando un teclado que nadie va a
+    usar: la tarea no acababa y no avisaba de nada."""
+    _main_que_no_toca_nada(monkeypatch)       # sin tokens, sin canal, sin red
+    monkeypatch.setattr(vw, "BASE_N8N", BASE)
+
+    def pide(*a, **k):
+        raise AssertionError("pidió el token por teclado sin consola")
+
+    monkeypatch.setattr(vw.getpass, "getpass", pide)
+    monkeypatch.setattr(vw.sys, "stdin", _Entrada(consola=False))
+    monkeypatch.setattr(vw, "_memoria_leer", lambda: {})
+    monkeypatch.setattr(vw, "_memoria_escribir", lambda datos: None)
+
+    assert vw.main() == 1
+
+    salida = capsys.readouterr().out
+    for quien in ("paciente", "profesional"):
+        assert f"{quien}: sin token, no se puede comprobar. SALTADO" in salida
+    assert "2 cosas que arreglar." in salida
+
+
+def test_la_entrada_desde_el_dispositivo_nulo_no_es_una_consola(monkeypatch):
+    """En Windows, una entrada redirigida desde `NUL` dice que es una
+    consola (`isatty()` da True: es un dispositivo de caracteres), y `getpass`
+    se quedaba esperando igual. Una tarea lanzada con `< NUL` no tiene a nadie
+    al teclado."""
+    with open(os.devnull, encoding="utf-8") as nulo:
+        monkeypatch.setattr(vw.sys, "stdin", nulo)
+        assert vw._hay_consola() is False
+
+
+def test_con_consola_y_sin_token_el_vigilante_lo_pide_por_teclado(monkeypatch):
+    """A mano, con consola, no cambia nada: el token se pide por teclado."""
+    _main_que_no_toca_nada(monkeypatch)
+    monkeypatch.setattr(vw, "BASE_N8N", BASE)
+    pedidos, usados = [], []
+    monkeypatch.setattr(vw.getpass, "getpass",
+                        lambda prompt="": pedidos.append(prompt) or " tok-de-teclado ")
+    monkeypatch.setattr(vw.sys, "stdin", _Entrada(consola=True))
+
+    def pedir(token, metodo):
+        usados.append(token)
+        return False, "respuesta de pega"
+
+    monkeypatch.setattr(vw, "pedir_api", pedir)
+    monkeypatch.setattr(vw, "_memoria_leer", lambda: {})
+    monkeypatch.setattr(vw, "_memoria_escribir", lambda datos: None)
+
+    assert vw.main() == 1
+    assert len(pedidos) == 2
+    assert usados == ["tok-de-teclado", "tok-de-teclado"]
 
 
 # Mal puestas, con un host inventado que no sale en ningun mensaje: el mensaje

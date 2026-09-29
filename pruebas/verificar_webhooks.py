@@ -27,6 +27,8 @@ lado de Telegram:
 
 Los tokens NO se escriben en ningun sitio: se piden por teclado, o se leen del
 entorno si ya estan (`TELEGRAM_TOKEN_PACIENTE`, `TELEGRAM_TOKEN_PROFESIONAL`).
+Sin consola -como corre la tarea programada- no se piden: el bot sin token en
+el entorno no se comprueba y se cuenta como problema.
 Salen siempre de BotFather (`/token`); el que esta en una credencial de n8n no se
 puede volver a leer desde la interfaz.
 
@@ -287,6 +289,32 @@ def avisar_al_equipo(problemas, comprobado=True):
               "TELEGRAM_TOKEN_AVISOS (hacen falta las dos).")
 
 
+def _hay_consola() -> bool:
+    """Si hay alguien al teclado. La tarea programada corre sin consola, y ahi
+    `getpass` se quedaria esperando un token que nadie va a teclear.
+
+    En Windows `isatty()` no basta: una entrada redirigida desde `NUL` es un
+    dispositivo de caracteres y dice que si. Alli se pregunta ademas a la
+    consola por su modo, que solo lo tiene una consola de verdad."""
+    try:
+        if sys.stdin is None or not sys.stdin.isatty():
+            return False
+    except (AttributeError, ValueError, OSError):
+        return False
+    if os.name != "nt":
+        return True
+    try:
+        import msvcrt
+        manejador = msvcrt.get_osfhandle(sys.stdin.fileno())
+    except (AttributeError, ValueError, OSError):
+        # una entrada sin descriptor que dice ser una consola: se le cree
+        return True
+    import ctypes
+    modo = ctypes.c_ulong()
+    return bool(ctypes.windll.kernel32.GetConsoleMode(
+        ctypes.c_void_p(manejador), ctypes.byref(modo)))
+
+
 def main() -> int:
     if not BASE_N8N:
         # Antes de pedir ningun token y de tocar la memoria: sin la base no hay
@@ -303,8 +331,10 @@ def main() -> int:
     problemas_todos = []
     problemas_totales = 0
     for quien, variable, ruta, flujo in BOTS:
-        token = os.environ.get(variable) or getpass.getpass(
-            f"token del bot del {quien} (de BotFather, no se muestra): ").strip()
+        token = os.environ.get(variable)
+        if not token and _hay_consola():
+            token = getpass.getpass(
+                f"token del bot del {quien} (de BotFather, no se muestra): ").strip()
         if not token:
             print(f"{quien}: sin token, no se puede comprobar. SALTADO")
             problemas_todos.append(

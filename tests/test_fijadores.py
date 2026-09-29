@@ -50,14 +50,21 @@ def test_sin_N8N_URL_el_fijador_salta_y_dice_que_se_queda_sin_correr(
 def test_con_N8N_URL_mal_puesta_el_fijador_falla_diciendo_por_que(monkeypatch, valor):
     """Mal puesta no se SALTA: un salto se ve verde, y quien la puso quiere
     correr las pruebas conducidas. Falla, diciendo por que, sin repetir el
-    valor y sin salir a la red."""
+    valor y sin salir a la red. Se recogen las dos excepciones: si el fijador
+    se saltara, `pytest.raises` no lo recogeria, el salto se propagaria y esta
+    misma prueba saldria saltada, en verde."""
     monkeypatch.setenv("N8N_URL", valor)
     _sin_red(monkeypatch)
 
-    with pytest.raises(pytest.fail.Exception) as fallo:
+    try:
         fijador()
+    except pytest.skip.Exception:
+        raise AssertionError("se saltó en vez de fallar") from None
+    except pytest.fail.Exception as fallo:
+        motivo = str(fallo)
+    else:
+        raise AssertionError("el fijador siguió adelante con N8N_URL mal puesta")
 
-    motivo = str(fallo.value)
     assert "N8N_URL" in motivo and "mal puesta" in motivo
     assert "inventado" not in motivo
 
