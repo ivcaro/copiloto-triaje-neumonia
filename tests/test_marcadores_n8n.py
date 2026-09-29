@@ -260,3 +260,123 @@ def test_los_valores_de_ejemplo_son_validos_y_cubren_todos_los_marcadores(mn):
     ejemplo = mn.leer_valores(EJEMPLO)
     assert set(ejemplo) == set(mn.MARCADORES)
     assert mn.retirar(mn.aplicar(TEXTO, ejemplo), ejemplo) == TEXTO
+
+
+# --------------------------------------------------------------------------
+# Los tres workflows versionados
+# --------------------------------------------------------------------------
+FLUJOS = ("copiloto-paciente.json", "copiloto-profesional.json",
+          "copiloto-mantenimiento.json")
+
+# Por fichero y por tipo de credencial: (id, name, cuantos nodos la usan).
+CREDENCIALES = {
+    "copiloto-paciente.json": {
+        "telegramApi": ("CRED_TELEGRAM_PACIENTE", "bot-paciente", 12),
+        "postgres": ("CRED_POSTGRES_COPILOTO", "copiloto-bd", 5),
+        "httpHeaderAuth": ("CRED_SECRETO_PACIENTE",
+                           "copiloto-paciente: secret_token del webhook", 1),
+    },
+    "copiloto-profesional.json": {
+        "telegramApi": ("CRED_TELEGRAM_PROFESIONAL", "bot-profesional", 9),
+        "postgres": ("CRED_POSTGRES_COPILOTO", "copiloto-bd", 5),
+        "httpHeaderAuth": ("CRED_SECRETO_PROFESIONAL",
+                           "copiloto-profesional: secret_token del webhook", 1),
+    },
+    "copiloto-mantenimiento.json": {
+        "telegramApi": ("CRED_TELEGRAM_AVISOS", "bot-avisos", 1),
+        "postgres": ("CRED_POSTGRES_COPILOTO", "copiloto-bd", 4),
+    },
+}
+
+# Lo que no es de la instancia y por eso se queda como esta: el copiloto se
+# llama por el nombre de su servicio en la red de Docker.
+URL_INTERNA = "http://copiloto-mcp:8000/"
+
+
+def _nodos(fichero):
+    return json.loads((N8N / fichero).read_text(encoding="utf-8"))["nodes"]
+
+
+@pytest.mark.parametrize("fichero", FLUJOS)
+def test_las_credenciales_de_los_workflows_son_marcadores(mn, fichero):
+    vistas = {}
+    for n in _nodos(fichero):
+        for tipo, c in (n.get("credentials") or {}).items():
+            assert set(c) == {"id", "name"}, (n["name"], c)
+            vistas.setdefault(tipo, []).append((c["id"], c["name"]))
+    esperadas = CREDENCIALES[fichero]
+    assert set(vistas) == set(esperadas)
+    for tipo, (ident, nombre, cuantos) in esperadas.items():
+        assert vistas[tipo] == [(ident, nombre)] * cuantos, (fichero, tipo)
+        assert ident in mn.MARCADORES
+
+
+@pytest.mark.parametrize("fichero", FLUJOS)
+def test_las_url_de_los_nodos_http_son_el_marcador_o_la_interna(mn, fichero):
+    for n in _nodos(fichero):
+        if n["type"] != "n8n-nodes-base.httpRequest":
+            continue
+        url = n["parameters"]["url"]
+        assert (url.startswith(mn.URL_N8N + "/webhook/")
+                or url.startswith(URL_INTERNA)), (fichero, n["name"], url)
+
+
+def test_las_dos_sondas_apuntan_al_marcador(mn):
+    sondas = {n["name"]: n["parameters"]["url"]
+              for n in _nodos("copiloto-mantenimiento.json")
+              if n["type"] == "n8n-nodes-base.httpRequest"
+              and "/webhook/" in n["parameters"]["url"]}
+    assert sondas == {
+        "Webhook del paciente": "https://n8n.ejemplo.test/webhook/copiloto-paciente",
+        "Webhook del profesional": "https://n8n.ejemplo.test/webhook/copiloto-profesional",
+    }
+
+
+@pytest.mark.parametrize("fichero, ruta, token", [
+    ("copiloto-paciente.json", "copiloto-paciente", "<TOKEN>"),
+    ("copiloto-profesional.json", "copiloto-profesional",
+     "<TOKEN_DEL_BOT_DEL_PROFESIONAL>"),
+])
+def test_la_nota_del_webhook_registra_con_el_marcador(fichero, ruta, token):
+    (nota,) = [n["notes"] for n in _nodos(fichero)
+               if n["type"] == "n8n-nodes-base.webhook"]
+    assert (f'"https://api.telegram.org/bot{token}/setWebhook" '
+            f"-d url=https://n8n.ejemplo.test/webhook/{ruta} ") in nota
+
+
+def test_cada_marcador_aparece_en_algun_workflow_y_al_reves(mn):
+    import re
+    ejemplo = mn.leer_valores(EJEMPLO)
+    presentes, con_forma_de_marcador = set(), set()
+    for fichero in FLUJOS:
+        texto = mn.leer(N8N / fichero)
+        presentes |= mn.marcadores_de(texto)
+        con_forma_de_marcador |= set(re.findall(r"\bCRED_[A-Z0-9_]+", texto))
+        con_forma_de_marcador |= set(
+            re.findall(r"https?://[A-Za-z0-9.-]*ejemplo\.test", texto))
+        con_forma_de_marcador |= set(re.findall(r"\bbot-[a-z]+", texto))
+    assert presentes == set(mn.MARCADORES) == set(ejemplo)
+    assert con_forma_de_marcador == set(mn.MARCADORES)
+
+
+@pytest.mark.parametrize("fichero", FLUJOS)
+def test_ida_y_vuelta_con_los_valores_de_ejemplo(mn, fichero):
+    ejemplo = mn.leer_valores(EJEMPLO)
+    texto = mn.leer(N8N / fichero)
+    puesto = mn.aplicar(texto, ejemplo)
+    assert puesto != texto
+    assert mn.marcadores_de(puesto) == set()
+    assert len(json.loads(puesto)["nodes"]) == len(json.loads(texto)["nodes"])
+    assert mn.retirar(puesto, ejemplo) == texto
+
+
+@pytest.mark.parametrize("fichero", FLUJOS)
+def test_la_cli_da_la_vuelta_a_un_workflow_entero(mn, fichero, tmp_path):
+    valores = ["--valores", str(EJEMPLO)]
+    assert mn.main(valores + ["--entrada", str(N8N / fichero),
+                              "--salida", str(tmp_path / "puesto.json")]) == 0
+    assert mn.main(valores + ["--retirar",
+                              "--entrada", str(tmp_path / "puesto.json"),
+                              "--salida", str(tmp_path / "vuelta.json")]) == 0
+    assert (tmp_path / "vuelta.json").read_text(encoding="utf-8") \
+        == mn.leer(N8N / fichero)

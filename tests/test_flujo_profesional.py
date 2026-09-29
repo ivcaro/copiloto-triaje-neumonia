@@ -160,10 +160,10 @@ def _foto(chat):
 def _subir_dicom(ruta, chat=None):
     """Sube el DICOM con el bot del PROFESIONAL y devuelve su `file_id`.
 
-    Con el bot del profesional y no con `[retirado]`, aunque el brief diga
+    Con el bot del profesional y no con el de pruebas y avisos, aunque el brief diga
     otra cosa: en Telegram un `file_id` solo lo puede resolver **el bot que lo
     obtuvo**. Un `file_id` conseguido subiendo el fichero al bot de pruebas haria
-    que el `getFile` del flujo -que usa la credencial de `[retirado]`-
+    que el `getFile` del flujo -que usa la credencial `bot-profesional`-
     respondiera `wrong file identifier`, y la prueba estaria midiendo eso y no el
     flujo.
 
@@ -482,12 +482,12 @@ def test_el_webhook_rechaza_por_cabecera_antes_de_ejecutar_nada():
 def test_solo_se_usa_la_credencial_del_bot_del_profesional():
     """D9 y la regla dura 2: reutilizar una credencial de Telegram del cliente le
     robaria el webhook a un bot suyo y lo dejaria mudo sin error visible.
-    `[retirado]` la usan cinco workflows del cliente."""
+    La credencial de Telegram del cliente la usan cinco workflows suyos."""
     usadas = {c["id"]
               for n in _flujo()["nodes"]
               for t, c in (n.get("credentials") or {}).items()
               if t == "telegramApi"}
-    assert usadas == {"[retirado]"}, usadas            # [retirado]
+    assert usadas == {"CRED_TELEGRAM_PROFESIONAL"}, usadas   # el marcador (SP5 §6.1)
     paciente = {c["id"]
                 for n in _flujo(FLUJO_PACIENTE)["nodes"]
                 for t, c in (n.get("credentials") or {}).items()
@@ -791,7 +791,7 @@ def test_el_segundo_mensaje_no_lleva_ni_un_caracter_del_sistema():
     byte**: la posición 0 es tan del sistema como el límite. Y sin cabecera, en las
     superficies donde la burbuja se ve sola —notificación push, lista de chats,
     reenvío, cita, fijado, búsqueda— la atribución era **cero** y la interfaz la
-    rotulaba «[retirado]»; el camino realista al daño es que el clínico reenvíe
+    rotulaba «<bot del profesional>»; el camino realista al daño es que el clínico reenvíe
     esa burbuja a un colega.
 
     Estructura final: **una línea literal en la posición 0, y nada más. Sin

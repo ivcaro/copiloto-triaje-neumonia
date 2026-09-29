@@ -65,7 +65,7 @@
       },
       "credentials": {
         "postgres": {
-          "id": "[retirado]",
+          "id": "CRED_POSTGRES_COPILOTO",
           "name": "copiloto-bd"
         }
       },
@@ -93,7 +93,7 @@
       },
       "credentials": {
         "postgres": {
-          "id": "[retirado]",
+          "id": "CRED_POSTGRES_COPILOTO",
           "name": "copiloto-bd"
         }
       },
@@ -153,7 +153,7 @@
       },
       "credentials": {
         "postgres": {
-          "id": "[retirado]",
+          "id": "CRED_POSTGRES_COPILOTO",
           "name": "copiloto-bd"
         }
       },
@@ -181,7 +181,7 @@
       },
       "credentials": {
         "postgres": {
-          "id": "[retirado]",
+          "id": "CRED_POSTGRES_COPILOTO",
           "name": "copiloto-bd"
         }
       },
@@ -204,7 +204,7 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "https://n8n.[retirado].com/webhook/copiloto-paciente",
+        "url": "https://n8n.ejemplo.test/webhook/copiloto-paciente",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -240,7 +240,7 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "https://n8n.[retirado].com/webhook/copiloto-profesional",
+        "url": "https://n8n.ejemplo.test/webhook/copiloto-profesional",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -335,15 +335,15 @@
       },
       "credentials": {
         "telegramApi": {
-          "id": "[retirado]",
-          "name": "[retirado]"
+          "id": "CRED_TELEGRAM_AVISOS",
+          "name": "bot-avisos"
         }
       },
       "executeOnce": true,
       "retryOnFail": true,
       "maxTries": 3,
       "waitBetweenTries": 5000,
-      "notes": "Con la credencial de `[retirado]`, que existia ya sin usarla ningun workflow (§12): el token sale de la credencial y no se escribe en ningun nodo.\n\nPor que ese bot y no uno de los dos de produccion: los avisos quedan en su propio hilo -no intercalados en la conversacion clinica del bot del profesional-, y el canal del aviso no depende de los tokens de produccion, que son justamente lo que a veces hay que revocar.\n\nEl equipo tiene que haberle escrito a ese bot alguna vez: un bot no puede iniciar una conversacion. El chat_id es el mismo para todos los bots (es el id del usuario de Telegram), asi que el que da `pruebas/profesionales.py` sirve.\n\nSin parse_mode, como el resto del sistema: el texto lleva comandos con `backticks`, guiones bajos y porcentajes, y con MarkdownV2 cualquiera de ellos rompe el mensaje o lo deja sin enviar. Un aviso que no llega es peor que uno sin negritas."
+      "notes": "Con la credencial de `bot-avisos`, que existia ya sin usarla ningun workflow (§12): el token sale de la credencial y no se escribe en ningun nodo.\n\nPor que ese bot y no uno de los dos de produccion: los avisos quedan en su propio hilo -no intercalados en la conversacion clinica del bot del profesional-, y el canal del aviso no depende de los tokens de produccion, que son justamente lo que a veces hay que revocar.\n\nEl equipo tiene que haberle escrito a ese bot alguna vez: un bot no puede iniciar una conversacion. El chat_id es el mismo para todos los bots (es el id del usuario de Telegram), asi que el que da `pruebas/profesionales.py` sirve.\n\nSin parse_mode, como el resto del sistema: el texto lleva comandos con `backticks`, guiones bajos y porcentajes, y con MarkdownV2 cualquiera de ellos rompe el mensaje o lo deja sin enviar. Un aviso que no llega es peor que uno sin negritas."
     }
   ],
   "connections": {

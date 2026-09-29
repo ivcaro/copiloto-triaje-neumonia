@@ -454,7 +454,7 @@ def test_solo_se_usa_la_credencial_del_bot_del_paciente():
               for n in _flujo()["nodes"]
               for t, c in (n.get("credentials") or {}).items()
               if t == "telegramApi"}
-    assert usadas == {"[retirado]"}, usadas    # [retirado]
+    assert usadas == {"CRED_TELEGRAM_PACIENTE"}, usadas    # el marcador (SP5 §6.1)
 
 
 def test_el_workflow_no_guarda_los_datos_de_ejecucion():

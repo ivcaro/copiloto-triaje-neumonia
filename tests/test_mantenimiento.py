@@ -18,6 +18,11 @@ Tres mitades, y ninguna necesita el VPS:
 - El `jsCode` de `Evaluar` ejecutado de verdad, en `tests/mantenimiento.mjs`:
   ahi se comprueba el TEXTO del aviso y la regla de cuando se calla, que es lo
   que de verdad se entrega.
+
+El export versionado lleva MARCADORES en vez de los valores de la instancia
+-la URL de n8n y los ids y nombres de las credenciales (spec de SP5 §6.1)-,
+asi que ya no es identico byte a byte al desplegado: entre uno y otro media
+`scripts/marcadores_n8n.py`, que se prueba en `test_marcadores_n8n.py`.
 """
 import json
 import pathlib
@@ -33,10 +38,11 @@ RAIZ = pathlib.Path(__file__).resolve().parents[1]
 FLUJO = RAIZ / "n8n" / "copiloto-mantenimiento.json"
 LIMPIEZA = RAIZ / "bd" / "limpieza.sql"
 
-# Los ids de §12. Escritos a mano aqui para que sean un testigo independiente:
-# si alguien apunta el workflow a una credencial del cliente, esto lo ve.
-CRED_BD = "[retirado]"
-CRED_AVISOS = "[retirado]"
+# Los marcadores de las credenciales (spec de SP5 §6.1), y no sus ids en la
+# instancia. Escritos a mano aqui para que sean un testigo independiente: si
+# alguien versiona un export con los ids reales o con otra credencial, se ve.
+CRED_BD = "CRED_POSTGRES_COPILOTO"
+CRED_AVISOS = "CRED_TELEGRAM_AVISOS"
 
 # Las comprobaciones del §16, por el nodo que las mide. La lista esta aqui y no
 # se deduce del JSON: si alguien borra un nodo, la prueba falla en vez de
@@ -178,7 +184,7 @@ def test_las_sondas_de_webhook_no_llevan_el_secreto_ni_disparan_los_bots(flujo):
     for nombre, ruta in (("Webhook del paciente", "copiloto-paciente"),
                          ("Webhook del profesional", "copiloto-profesional")):
         p = nodo(flujo, nombre)["parameters"]
-        assert p["url"] == f"https://n8n.[retirado].com/webhook/{ruta}"
+        assert p["url"] == f"https://n8n.ejemplo.test/webhook/{ruta}"
         assert p["method"] == "POST"
         assert not p.get("sendHeaders"), nombre
         assert "authentication" not in p, nombre
