@@ -178,10 +178,12 @@ def pesos_desplegados_o_salta():
             " pesos desplegados, servidor/pesos_modelo_cpu.pt, que no se"
             " versionan. Sin ellos no se puede inferir ni validar la caché de"
             " puntuaciones del conjunto de prueba, así que se quedan sin"
-            " comprobar la selección de casos y las dos pruebas del recorte de"
-            " la razón de verosimilitud. Para verificarlo, copia los pesos a"
-            " esa ruta y repite; la primera vez, sin caché, infiere sobre las"
-            " 3 811 imágenes de prueba y tarda minutos.")
+            " comprobar la selección de casos, las dos pruebas del recorte de"
+            " la razón de verosimilitud y las consultas conducidas del bot del"
+            " profesional que suben una placa. Para verificarlo, copia los"
+            " pesos a esa ruta (salen del entrenamiento: README, «Reproducir"
+            " desde cero») y repite; la primera vez, sin caché, infiere sobre"
+            " las 3 811 imágenes de prueba y tarda minutos.")
     return puntuaciones.PESOS
 
 

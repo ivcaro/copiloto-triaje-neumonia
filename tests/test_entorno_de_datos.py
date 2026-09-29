@@ -42,6 +42,11 @@ def test_sin_los_pesos_se_salta_diciendo_cuales_faltan(tmp_path, monkeypatch):
     mensaje = str(salto.value)
     assert "SIN VERIFICAR" in mensaje
     assert "pesos_modelo_cpu.pt" in mensaje
+    # los tres grupos de pruebas que piden los pesos, y de dónde salen
+    for grupo in ("la selección de casos", "las dos pruebas del recorte",
+                  "del bot del profesional que suben una placa"):
+        assert grupo in " ".join(mensaje.split()), grupo
+    assert "README" in mensaje
 
 
 def test_con_los_pesos_se_devuelve_su_ruta(tmp_path, monkeypatch):

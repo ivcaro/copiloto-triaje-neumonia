@@ -105,17 +105,25 @@ def test_el_modulo_no_guarda_ninguna_ruta_del_dataset():
     assert not hasattr(seleccionar_casos, "CRUDO")
 
 
-def test_los_dos_modulos_se_importan_sin_rsna_raiz():
-    """En un proceso aparte, porque en este ya estan importados. Los importan
-    sin dataset `tests/test_sesion.py` (por `UMBRAL`), `tests/test_puntuaciones.py`
-    y `pruebas/reproducir_casos.py`: si la variable se leyera al importar, esos
-    ficheros darian error de coleccion en un clon limpio."""
+def test_lo_que_llega_al_dataset_se_importa_sin_rsna_raiz():
+    """En un proceso aparte, porque en este ya estan importados. Van los cinco
+    ficheros desde los que se llega a `raiz_rsna()`: los dos modulos que la
+    llaman, los dos que los importan y el script de la sesion. Si alguno leyera
+    la variable al importarse, las pruebas que lo importan darian error de
+    coleccion en un clon limpio; y en la maquina de desarrollo, que tiene la
+    variable puesta, no se veria."""
     import os
     import subprocess
     entorno = {k: v for k, v in os.environ.items() if k != "RSNA_RAIZ"}
-    r = subprocess.run(
-        [sys.executable, "-B", "-c",
-         "import pruebas.puntuaciones, pruebas.seleccionar_casos; print('importados')"],
-        cwd=REPO, env=entorno, capture_output=True, text=True, timeout=300)
+    codigo = "\n".join((
+        "import importlib.util",
+        "import pruebas.puntuaciones, pruebas.seleccionar_casos",
+        "import pruebas.reproducir_casos, pruebas.caracterizar_conjunto",
+        "spec = importlib.util.spec_from_file_location(",
+        "    'preparar_sesion', 'scripts/preparar_sesion.py')",
+        "spec.loader.exec_module(importlib.util.module_from_spec(spec))",
+        "print('importados')"))
+    r = subprocess.run([sys.executable, "-B", "-c", codigo], cwd=REPO, env=entorno,
+                       capture_output=True, text=True, timeout=300)
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == "importados"
