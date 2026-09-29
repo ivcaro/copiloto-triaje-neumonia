@@ -102,10 +102,7 @@ instalación, no los copies: léelos):
 
 ```
 NAMES           IMAGE                STATUS       PORTS
-n8n             n8nio/n8n:...        Up 3 weeks   5678/tcp
-nginx           nginx:...            Up 3 weeks   0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp
-[retirado]-api    [retirado]-api:...     Up 5 days    3001/tcp
-[retirado]-db     postgres:16-alpine   Up 3 weeks
+(los contenedores ajenos: no se tocan)
 ```
 
 **Guarda esa lista**: es tu punto de comparación para el final (paso 12).
@@ -189,7 +186,7 @@ docker network inspect <RED_N8N> --format '{{range .Containers}}{{println .Name}
 ```
 
 Esperado en el VPS: una lista que **incluya el contenedor de n8n**, junto a
-nginx, `[retirado]-api` y lo que haya. Un nombre por línea.
+nginx, `api-ajena` y lo que haya. Un nombre por línea.
 
 Si n8n no aparece, pregúntaselo a n8n en vez de adivinarlo:
 
@@ -288,8 +285,8 @@ espacio primero; no empieces la construcción a ver si cabe.
   del dataset RSNA, de un paciente **de 18 a 100 años** (ver el paso 7).
 - El código y los pesos **puestos en el VPS**, que es el apartado 3.1.
 - Si vas a redesplegar con `git pull`: una **llave de despliegue de solo
-  lectura** en el VPS, que es el apartado 3.2. El repositorio es privado, así
-  que sin ella el `git pull` se cuelga pidiendo usuario.
+  lectura** en el VPS, que es el apartado 3.2. Si el repositorio es privado,
+  sin ella el `git pull` se cuelga pidiendo usuario.
 
 ### 3.1. Llevar el código y los pesos al VPS
 
@@ -305,7 +302,7 @@ y el que te toque depende de si el VPS puede hablar con el repositorio:
 
 | | Cuándo usarlo | Qué hace |
 | :--- | :--- | :--- |
-| **Camino A: `git clone`** | el repositorio privado existe **y** el VPS tiene llave de despliegue | clona `main` y copia los pesos aparte |
+| **Camino A: `git clone`** | el repositorio existe **y** el VPS tiene llave de despliegue | clona `main` y copia los pesos aparte |
 | **Camino B: `git archive` + `tar`** | no hay remoto, o el VPS no tiene llave | empaqueta la rama y la copia por `scp` |
 
 El camino A es el bueno si vas a redesplegar más de una vez, porque deja un
@@ -314,7 +311,7 @@ repositorio de verdad en `/opt/copiloto` y a partir de ahí actualizar es un
 repositorio: cada actualización vuelve a ser un tar entero.
 
 **Una cosa que el camino A necesita y el B no: credenciales en una máquina que
-no es tuya.** El repositorio es privado, así que un `git pull` en el VPS se
+no es tuya.** Si el repositorio es privado, un `git pull` en el VPS se
 queda colgado pidiendo usuario y contraseña. Se resuelve con una **llave de
 despliegue de solo lectura acotada a este repositorio**, nunca con un token
 dentro de la URL (`https://usuario:token@github.com/...`): ese token queda **en
@@ -330,7 +327,10 @@ Antes de empezar, sustituye en todos los comandos:
 | :--- | :--- |
 | `usuario@vps` | tu usuario y el host o IP del VPS, p. ej. `root@203.0.113.10` |
 | `/opt/copiloto` | el directorio del VPS donde quieras dejar esto |
-| `<url-del-repositorio>` | `github-copiloto:[retirado]/copiloto-triaje.git` — el repositorio privado, por el alias SSH del 3.2. Por HTTPS sería `https://github.com/[retirado]/copiloto-triaje.git`, pero entonces el VPS pide usuario en cada `pull` |
+| `<url-del-repositorio>` | `github-copiloto:<cuenta>/copiloto-triaje.git` — el repositorio, por el alias SSH del 3.2. Por HTTPS sería `https://github.com/<cuenta>/copiloto-triaje.git`, pero entonces el VPS pide usuario en cada `pull` |
+| `<cuenta>` | la cuenta u organización de GitHub dueña del repositorio |
+| `<raiz-del-repositorio>` | la carpeta de tu máquina donde está tu clon del repositorio, entre comillas si lleva espacios |
+| `<RSNA_RAIZ>` | la raíz del dataset de RSNA preparado, la de la variable `RSNA_RAIZ`: la carpeta con `crudo/` y `corridas/` dentro |
 
 El prefijo `[VPS]` marca los comandos que van **dentro** de la sesión `ssh`. No
 se escribe: es solo para que sepas en qué máquina estás en cada línea.
@@ -339,8 +339,8 @@ se escribe: es solo para que sepas en qué máquina estás en cada línea.
 así que se traen de la corrida que produjo el modelo:
 
 ```bash
-cd "C:/Users/[retirado]/OneDrive/Desktop/Claude/Proyecto Integrador/copiloto-triaje"
-cp "C:/Users/[retirado]/datasets/rsna-pneumonia/trabajo/corridas/efficientnet_b0_320px_lote24_4+20ep/checkpoints/pesos_modelo_cpu.pt" \
+cd <raiz-del-repositorio>
+cp "<RSNA_RAIZ>/corridas/efficientnet_b0_320px_lote24_4+20ep/checkpoints/pesos_modelo_cpu.pt" \
    servidor/pesos_modelo_cpu.pt
 sha256sum servidor/pesos_modelo_cpu.pt
 ```
@@ -354,7 +354,7 @@ bb985e1f792e1cfee150ec57bdc6d706f7484499fa999da3406a5798260e8d47
 Si no coincide, para aquí: estarías desplegando un modelo distinto del que esta
 guía certifica. Apunta ese hash, lo vuelves a usar en el paso 5.
 
-#### Camino A: clonar el repositorio privado
+#### Camino A: clonar el repositorio
 
 Se clona **`main`**, y se clona en superficie. Los dos detalles importan:
 
@@ -373,7 +373,7 @@ ssh usuario@vps "git clone --depth 1 <url-del-repositorio> /opt/copiloto"
 Ahora los pesos, que el clon no trajo:
 
 ```bash
-cd "C:/Users/[retirado]/OneDrive/Desktop/Claude/Proyecto Integrador/copiloto-triaje"
+cd <raiz-del-repositorio>
 scp servidor/pesos_modelo_cpu.pt usuario@vps:/opt/copiloto/servidor/
 ```
 
@@ -474,7 +474,7 @@ falta una **segunda**: GitHub no deja reutilizar la misma en dos repositorios
 Ese `ssh-keyscan` evita que el primer `git clone` se quede colgado esperando un
 "¿confías en este host?" que nadie va a contestar dentro de un script.
 
-Con el alias puesto, la URL del clon es `github-copiloto:[retirado]/copiloto-triaje.git`.
+Con el alias puesto, la URL del clon es `github-copiloto:<cuenta>/copiloto-triaje.git`.
 Para comprobar que la llave quedó bien y **sin permiso de escritura**:
 
 ```bash
@@ -769,8 +769,8 @@ Sin ese bloque, Docker escribe el log del contenedor **sin límite ni rotación*
 en `/var/lib/docker/containers/<id>/<id>-json.log`. Y hay una fuente que no
 para nunca: el `healthcheck` consulta `/salud` cada 30 s y uvicorn registra una
 línea por petición, o sea unas **2 880 líneas al día —del orden de 200 MB al
-año— antes de que pase un solo paciente**. En un VPS compartido con dos
-PostgreSQL, [retirado] y n8n, el disco que se llena no es solo tuyo.
+año— antes de que pase un solo paciente**. En un VPS compartido con los
+contenedores ajenos, el disco que se llena no es solo tuyo.
 
 Con `max-size: 10m` y `max-file: 3` el techo son 30 MB duros, y
 `docker logs --tail` sigue sirviendo igual para diagnosticar.
@@ -1120,8 +1120,7 @@ con la misma radiografía de 99 808 bytes y el mismo tope de dos núcleos:
 | MCP (`/mcp`) | **143 ms** | 225 ms | **28x** |
 
 **3,3 veces más lento que en desarrollo, y es lo esperado:** ese servidor tiene
-otros 23 contenedores encima —n8n, [retirado], [retirado], nginx, seis servicios
-de otro proyecto y dos PostgreSQL— compitiendo por la CPU. Los dos núcleos que
+encima los 23 contenedores ajenos compitiendo por la CPU. Los dos núcleos que
 el compose reserva son un techo, no una reserva: si la máquina está ocupada, se
 obtiene menos.
 

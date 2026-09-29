@@ -8,7 +8,7 @@ dos bots ya funcionando.
 
 | Dónde | Qué va ahí |
 | :--- | :--- |
-| **El VPS** (donde el prompt dice `root@ubuntu-…`) | todo lo de `docker` |
+| **El VPS** (donde el prompt dice `usuario@vps`) | todo lo de `docker` |
 | **Tu Windows, PowerShell** | el túnel, las pruebas, los scripts |
 | **n8n en el navegador** | credenciales y workflows |
 
@@ -26,7 +26,7 @@ donde se lee el identificador.
 **2. Averiguar su `chat_id`.** Con el túnel abierto (§3) y el DSN puesto:
 
 ```powershell
-cd "C:\Users\[retirado]\OneDrive\Desktop\Claude\Proyecto Integrador\copiloto-triaje"; C:\venv-copiloto\Scripts\python.exe pruebas/profesionales.py
+cd <raiz-del-repositorio>; C:\venv-copiloto\Scripts\python.exe pruebas/profesionales.py
 ```
 
 Lista los intentos no autorizados más recientes **y te imprime el comando de
@@ -108,10 +108,11 @@ crear.
 > número de historia. El riesgo está declarado en el §5.5 del spec, junto con lo
 > que haría falta para quitarlo.
 
-DICOM de prueba, cualquiera de aquí:
+DICOM de prueba, cualquiera de aquí (`<RSNA_RAIZ>` es la raíz del dataset de
+RSNA preparado, la de la variable `RSNA_RAIZ`):
 
 ```
-C:\Users\[retirado]\datasets\rsna-pneumonia\trabajo\crudo\stage_2_train_images\
+<RSNA_RAIZ>\crudo\stage_2_train_images\
 ```
 
 **Casos que merece la pena probar a propósito:**
@@ -203,7 +204,7 @@ redacta el mensaje con el código del propio workflow. Es lo que se puede correr
 sin el túnel ni los secretos, y tarda un minuto:
 
 ```powershell
-cd "C:\Users\[retirado]\OneDrive\Desktop\Claude\Proyecto Integrador\copiloto-triaje"; C:\venv-copiloto\Scripts\python.exe pruebas/reproducir_casos.py --sin-bots
+cd <raiz-del-repositorio>; C:\venv-copiloto\Scripts\python.exe pruebas/reproducir_casos.py --sin-bots
 ```
 
 **Con los dos bots** — conduce las 49 conversaciones de verdad. Hacen falta el
@@ -409,7 +410,7 @@ sin ninguna señal si además no falla nada.
 
 - El chat_id lo da `pruebas/profesionales.py` (§1), y es **el mismo para todos
   los bots**: es el id del usuario de Telegram.
-- Los avisos salen por **`[retirado]`** y no por los dos bots de producción:
+- Los avisos salen por **el bot de pruebas y avisos** y no por los dos bots de producción:
   así quedan en su propio hilo, y el canal del aviso no depende de un token que
   quizá haya que revocar. **Hay que haberle escrito a ese bot alguna vez**: un
   bot no puede iniciar una conversación.
@@ -460,7 +461,7 @@ la credencial de n8n. En los dos casos **el bot queda mudo y las sondas del
 workflow siguen viendo su 403 tan contentas**: desde fuera de Telegram todo está
 bien. Es el único agujero que queda del §16, y se tapa con el paso 2.
 
-### Paso 2: la tarea programada diaria (Windows de [retirado])
+### Paso 2: la tarea programada diaria (la máquina de desarrollo)
 
 Se decidió esto y no dos variables de entorno en el n8n del cliente: reiniciar
 **su** n8n por una comprobación nuestra no compensa mientras H5 esté abierto.
@@ -471,7 +472,7 @@ cuatro variables quedan en su perfil, no en el repositorio—:
 ```powershell
 setx TELEGRAM_TOKEN_PACIENTE (Read-Host 'token del bot del paciente')
 setx TELEGRAM_TOKEN_PROFESIONAL (Read-Host 'token del bot del profesional')
-setx TELEGRAM_TOKEN_AVISOS (Read-Host 'token de [retirado]')
+setx TELEGRAM_TOKEN_AVISOS (Read-Host 'token del bot de pruebas y avisos')
 setx COPILOTO_CHAT_EQUIPO (Read-Host 'chat_id del equipo')
 ```
 
@@ -494,7 +495,7 @@ aviso caiga **en el mismo hilo** que los otros.
 avisos en el mismo minuto):
 
 ```powershell
-$acc = New-ScheduledTaskAction -Execute 'C:\venv-copiloto\Scripts\python.exe' -Argument 'pruebas\verificar_webhooks.py' -WorkingDirectory 'C:\Users\[retirado]\OneDrive\Desktop\Claude\Proyecto Integrador\copiloto-triaje'
+$acc = New-ScheduledTaskAction -Execute 'C:\venv-copiloto\Scripts\python.exe' -Argument 'pruebas\verificar_webhooks.py' -WorkingDirectory '<raiz-del-repositorio>'
 $dis = New-ScheduledTaskTrigger -Daily -At 07:15
 Register-ScheduledTask -TaskName 'Copiloto Triaje: webhooks de Telegram' -Action $acc -Trigger $dis -Description 'La mitad del §16 que no cabe en n8n: getWebhookInfo de los dos bots.'
 ```
@@ -516,7 +517,7 @@ Lo que sí lo dice es la salida del script, no su código: la línea del final e
 «aviso por Telegram: enviado.» o «NO se pudo enviar (…)». Si la tarea lleva días
 devolviendo 1 y en el chat no ha aparecido nada, córrelo a mano en una consola y
 lee esa línea: lo más probable es que falte una de las dos variables del canal,
-o que nadie le haya escrito nunca a `[retirado]`.
+o que nadie le haya escrito nunca al bot de pruebas y avisos.
 
 ### Probarlo sin esperar a mañana
 
@@ -559,14 +560,15 @@ Las tres nos costaron tiempo:
 
 | Rol | Credencial en n8n | Workflow |
 | :--- | :--- | :--- |
-| Paciente | `[retirado]` | `🩺 Copiloto Triaje: Paciente (Telegram)` |
-| Profesional | `[retirado]` | `🩺 Copiloto Triaje: Profesional (Telegram)` |
-| Pruebas y avisos | `[retirado]` | `🩺 Copiloto Triaje: Mantenimiento` (solo para mandar los avisos) |
+| Paciente | `bot-paciente` | `🩺 Copiloto Triaje: Paciente (Telegram)` |
+| Profesional | `bot-profesional` | `🩺 Copiloto Triaje: Profesional (Telegram)` |
+| Pruebas y avisos | `bot-avisos` | `🩺 Copiloto Triaje: Mantenimiento` (solo para mandar los avisos) |
 | Base de datos | `copiloto-bd` | el del paciente, el del profesional y el de mantenimiento |
 
-**No se toca ninguna otra credencial de Telegram.** `[retirado]` la usan cinco
-workflows del cliente, y un token de Telegram admite **un solo webhook**:
-apuntarle un flujo nuestro lo dejaría mudo sin ningún error visible.
+**No se toca ninguna otra credencial de Telegram.** La credencial de Telegram
+del cliente la usan cinco workflows suyos, y un token de Telegram admite **un
+solo webhook**: apuntarle un flujo nuestro lo dejaría mudo sin ningún error
+visible.
 
 Los tres workflows llevan el prefijo `🩺 Copiloto Triaje:`. Cualquier otro de
 esa instancia es del cliente y **no se modifica**.
