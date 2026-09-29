@@ -583,5 +583,5 @@ los bots en BotFather.
 
 **Lo que no hay que teclear nunca en ese VPS:** `docker compose down` a secas
 (baja el proyecto del directorio donde estés, que puede ser el del cliente),
-`docker network rm [retirado]_[retirado]_network`, `docker network prune`, y
+`docker network rm <RED_N8N>`, `docker network prune`, y
 `git clean -xfd` en `/opt/copiloto`.

@@ -12,6 +12,7 @@ perdio una vez con `AUC_VALIDACION`-.
 Se ejecuta en un subproceso porque el fichero carga el modelo al importarse.
 """
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -104,3 +105,49 @@ def test_el_compose_declara_la_prevalencia_con_su_fuente():
     yaml = pytest.importorskip("yaml")
     servicios = yaml.safe_load(compose)["services"]
     assert servicios["copiloto-mcp"]["environment"]["PREVALENCIA_LOCAL"] == "0.1466"
+
+
+# --- La red externa de n8n (spec de SP5 §6.1) -------------------------------
+#
+# La clave de la red es neutra y su nombre real NO vive en el repositorio: lo
+# pone quien despliega, en `RED_N8N`. Sin valor por defecto a proposito: un
+# nombre por defecto es el nombre de la red de alguien, y ademas un compose
+# que arranca «con lo que haya» puede unirse a la red equivocada sin avisar.
+
+NOMBRE_DE_LA_RED = "${RED_N8N:?define RED_N8N con el nombre de la red externa de n8n}"
+
+
+def test_el_compose_exige_RED_N8N_y_no_le_pone_valor_por_defecto():
+    """Sobre el texto crudo, para que corra aunque no haya PyYAML."""
+    compose = (RAIZ / "servidor" / "docker-compose.yml").read_text(encoding="utf-8")
+    usos = re.findall(r"\$\{?RED_N8N[^}\s]*", compose)
+    assert usos, "el compose ya no lee RED_N8N"
+    # `:?` aborta si la variable falta O esta vacia. `:-` y `-` serian un valor
+    # por defecto; `?` a secas dejaria pasar la variable vacia.
+    assert all(uso.startswith("${RED_N8N:?") for uso in usos), usos
+    assert f"    name: {NOMBRE_DE_LA_RED}\n" in compose
+
+
+def test_los_dos_servicios_van_a_la_red_externa_red_n8n():
+    yaml = pytest.importorskip("yaml")
+    compose = yaml.safe_load(
+        (RAIZ / "servidor" / "docker-compose.yml").read_text(encoding="utf-8"))
+    # Una sola red, con clave neutra, externa, y con el nombre por entorno.
+    assert compose["networks"] == {
+        "red_n8n": {"external": True, "name": NOMBRE_DE_LA_RED}}
+    for servicio in ("copiloto-mcp", "copiloto-bd"):
+        assert compose["services"][servicio]["networks"] == ["red_n8n"], servicio
+
+
+def test_el_env_de_ejemplo_declara_RED_N8N_con_un_valor_de_ejemplo():
+    lineas = (RAIZ / "servidor" / ".env.ejemplo").read_text(
+        encoding="utf-8").splitlines()
+    assert "RED_N8N=cambiar-esto" in lineas
+
+
+def test_la_guia_de_despliegue_no_promete_un_valor_por_defecto_para_la_red():
+    guia = (RAIZ / "docs" / "sp2-despliegue.md").read_text(encoding="utf-8")
+    assert "${RED_N8N:-" not in guia
+    assert "${RED_N8N:?" in guia
+    # La fila de la tabla de variables (paso 10) lo dice con todas las letras.
+    assert "| `RED_N8N` | **ninguno: es obligatoria** |" in guia

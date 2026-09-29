@@ -122,10 +122,10 @@ una promesa: es consecuencia de cómo está escrito el compose.
 
 | Por qué no se toca nada | Dónde se ve |
 | :--- | :--- |
-| El compose define **un solo servicio**, `copiloto-mcp` | `servidor/docker-compose.yml` |
+| El compose define **dos servicios**, `copiloto-mcp` y, desde SP3, su base `copiloto-bd`; ninguno es de otro stack | `servidor/docker-compose.yml` |
 | La red se declara `external: true`: Compose **no la crea, no la modifica y no la borra** | el mismo fichero |
 | No hay `ports:`, así que no puede quitarle un puerto del host a nadie | el mismo fichero |
-| No hay `volumes:`, así que no monta ni escribe nada del host | el mismo fichero |
+| El único `volumes:` es un volumen con nombre que gestiona Docker, `copiloto_bd_datos`, para la base: no monta ni escribe ninguna carpeta del host | el mismo fichero |
 | El proyecto se llama `copiloto-mcp` (`name:` en el compose), así que `docker compose down` **solo** alcanza a este servicio | el mismo fichero, y paso 12 |
 
 Compruébalo tú, sin fiarte del párrafo anterior:
@@ -140,42 +140,52 @@ Salida literal:
 ```
 5:name: copiloto-mcp
 13:    container_name: copiloto-mcp
-47:    external: true
-51:    name: ${RED_N8N:-[retirado]_[retirado]_network}
+93:    container_name: copiloto-bd
+101:    volumes:
+124:    external: true
+133:    name: ${RED_N8N:?define RED_N8N con el nombre de la red externa de n8n}
+135:volumes:
 ```
 
-Cuatro líneas: el nombre del proyecto, el del contenedor, la red marcada como
-externa y el nombre de esa red. Y **ninguna** línea `ports:` ni `volumes:`, que
-es lo que querías comprobar.
+Siete líneas: el nombre del proyecto, los dos contenedores (el servicio y,
+desde SP3, su base de datos), la red marcada como externa y el nombre de esa
+red, que **no está escrito en el fichero**: lo pone quien despliega, en
+`RED_N8N` (paso 4). Los dos `volumes:` son el mismo volumen con nombre,
+`copiloto_bd_datos`, que gestiona Docker: no es una carpeta del host. Y
+**ninguna** línea `ports:`, que es lo que querías comprobar.
 
 ### 2.2. Que la red externa existe, y con qué nombre exacto
 
-El compose se une a una red que **ya tiene que existir**. Si el nombre no
-coincide carácter por carácter, Compose aborta antes de crear nada — que es el
-fallo seguro: mejor eso que dos contenedores levantados sin verse.
+El compose se une a una red que **ya tiene que existir**, y su nombre **no
+está en el repositorio**: se lo das tú en la variable `RED_N8N` (paso 4). Si el
+nombre no coincide carácter por carácter, Compose aborta antes de crear nada —
+que es el fallo seguro: mejor eso que dos contenedores levantados sin verse.
 
 ```bash
-docker network ls --filter name=[retirado]
+docker network ls
 ```
 
-Esperado:
+Esperado, entre las demás redes de la máquina, una línea como esta:
 
 ```
-NETWORK ID     NAME                    DRIVER    SCOPE
-[retirado]   [retirado]_[retirado]_network   bridge    local
+NETWORK ID       NAME        DRIVER    SCOPE
+<id-de-la-red>   <RED_N8N>   bridge    local
 ```
 
-Lo que importa es la columna `NAME`: tiene que decir exactamente
-`[retirado]_[retirado]_network`. Si en tu instalación se llama de otra forma, **no
-edites el compose**: se le pasa por entorno con `RED_N8N` (paso 4).
+Lo que importa es la columna `NAME`: **apunta el nombre exacto** de la red
+donde corre n8n. Si hay varias y no es evidente cuál es, el paso 2.3 lo
+resuelve preguntándoselo a n8n. Ese nombre es el valor de `RED_N8N`, y **no se
+escribe en el compose**: va en `servidor/.env` (paso 4).
 
 ### 2.3. Qué contenedores están ya en esa red
 
 Esto contesta la pregunta que de verdad importa: ¿está n8n ahí? Si no está,
 unirse a esa red no sirve para nada.
 
+Pon en lugar de `<RED_N8N>` el nombre que apuntaste en el paso 2.2:
+
 ```bash
-docker network inspect [retirado]_[retirado]_network --format '{{range .Containers}}{{println .Name}}{{end}}'
+docker network inspect <RED_N8N> --format '{{range .Containers}}{{println .Name}}{{end}}'
 ```
 
 Esperado en el VPS: una lista que **incluya el contenedor de n8n**, junto a
@@ -263,7 +273,7 @@ espacio primero; no empieces la construcción a ver si cabe.
 | :--- | :--- |
 | aparece un contenedor nuevo, `copiloto-mcp` | los contenedores que ya corrían |
 | aparece una imagen nueva, `copiloto-mcp:0.1.0` (~2 GB en disco) | las imágenes de los demás stacks |
-| ese contenedor se **une** a `[retirado]_[retirado]_network` | la red en sí: no se crea, ni se altera, ni se borra |
+| ese contenedor se **une** a la red externa de n8n, la que nombra `RED_N8N` | la red en sí: no se crea, ni se altera, ni se borra |
 | — | los puertos del host: no se publica ninguno |
 | — | volúmenes y datos: este servicio no tiene estado |
 
@@ -481,31 +491,66 @@ esa red**: la declara como `external`, es decir, "ya existe, solo me uno".
 
 ```yaml
 networks:
-  [retirado]_network:
+  red_n8n:
     external: true
-    name: ${RED_N8N:-[retirado]_[retirado]_network}
+    name: ${RED_N8N:?define RED_N8N con el nombre de la red externa de n8n}
 ```
 
-El nombre por defecto, `[retirado]_[retirado]_network`, es el de la red que ya declara
-la infraestructura del cliente, donde corre n8n.
+**`RED_N8N` es obligatoria y no tiene valor por defecto.** El nombre de la red
+es de la instalación donde corre n8n, no del repositorio. Si la variable falta
+o está vacía, **cualquier** `docker compose` que lea este fichero —`build`,
+`up`, `ps`, `exec`, `logs`, `stop`, `down`— aborta antes de hacer nada, con un
+mensaje que termina así:
+
+```
+required variable RED_N8N is missing a value: define RED_N8N con el nombre de la red externa de n8n
+```
+
+Es el fallo seguro, igual que el de la contraseña de la base: mejor no arrancar
+que arrancar unido a una red que no es.
+
+### Dónde se declara `RED_N8N`
+
+En **`servidor/.env`**, el fichero sin versionar que ya lleva la contraseña de
+la base (la plantilla es `servidor/.env.ejemplo`). Compose lo lee solo, porque
+está junto al `docker-compose.yml`: vale igual si lanzas la orden desde
+`servidor/` que si la lanzas desde la raíz con
+`-f servidor/docker-compose.yml`. Así **ningún comando de esta guía necesita
+llevar la variable delante**, y no hay forma de olvidarla en uno.
+
+Edita `servidor/.env` y añade la línea, con el nombre que apuntaste en el paso
+2.2 en lugar del marcador:
+
+```
+RED_N8N=<RED_N8N>
+```
+
+Y comprueba, sin levantar nada, que Compose ya la lee:
+
+```bash
+cd servidor
+docker compose config --quiet && echo "el compose se deja leer"
+```
+
+`config` solo lee e interpola: no crea, no arranca y no toca ningún contenedor.
+Si imprime el mensaje de `required variable`, la línea no está en `.env`, está
+vacía, o el `.env` no está en `servidor/`.
+
+Una variable `RED_N8N` exportada en la sesión **manda sobre la de `.env`**. Es
+lo que usa el caso B, y es también el motivo de no dejarla exportada en el VPS:
+haz `unset RED_N8N` si la pusiste a mano.
 
 ### Caso A: en el VPS, donde n8n ya corre
 
 **No se crea ni se toca nada.** La red ya existe y la posee la infraestructura
-del cliente. Solo confirma que está y que su nombre es el que espera el
-compose:
+del cliente. Solo confirma que está y cómo se llama:
 
 ```bash
 docker network ls
 ```
 
-Busca `[retirado]_[retirado]_network` en la lista. Si en tu instalación se llama de
-otra forma, **no edites el compose**: pásale el nombre por entorno, que para
-eso está la variable.
-
-```bash
-RED_N8N=el_nombre_real docker compose up -d
-```
+Ese nombre, tal cual, es el que va en `servidor/.env`. **No edites el
+compose**: para eso está la variable.
 
 Para averiguar con certeza en qué red está n8n, mírala desde su propio
 contenedor en vez de adivinar por el nombre:
@@ -516,15 +561,17 @@ docker inspect <nombre-del-contenedor-de-n8n> --format '{{json .NetworkSettings.
 
 ### Caso B: en local, para probar el despliegue desde cero
 
-Aquí n8n no corre (vive en el VPS), así que la red externa no existe y el
-compose fallaría con `network [retirado]_[retirado]_network declared as external, but
-could not be found`.
+Aquí n8n no corre (vive en el VPS), así que la red externa no existe: con el
+nombre de la red real en `RED_N8N`, el compose fallaría con `network <RED_N8N>
+declared as external, but could not be found`.
 
-Créate una red **con un nombre de tirar**, y pásasela por `RED_N8N`:
+Créate una red **con un nombre de tirar**, y pásasela por `RED_N8N`,
+exportándola para toda la sesión:
 
 ```bash
 docker network create copiloto-local
-RED_N8N=copiloto-local docker compose up -d
+export RED_N8N=copiloto-local
+docker compose up -d
 ```
 
 Y cuando acabes, primero baja el contenedor y luego borra **esa** red:
@@ -532,7 +579,12 @@ Y cuando acabes, primero baja el contenedor y luego borra **esa** red:
 ```bash
 docker compose down
 docker network rm copiloto-local
+unset RED_N8N
 ```
+
+El `export` no es un detalle: con `RED_N8N=copiloto-local` escrito solo delante
+del `up`, el `docker compose down` de después ya no tendría la variable y
+abortaría.
 
 El nombre de tirar no es remilgo: es para que el nombre de la red de producción
 **nunca aparezca en esta guía al lado de un `docker network rm`**. Si lo hiciera,
@@ -543,7 +595,7 @@ protección no es de fiar. Para eso está la variable.
 
 Recuerda que si levantas con `RED_N8N=copiloto-local`, **todos** los comandos
 posteriores que mencionen la red —el `docker run --network ...` del paso 6— usan
-también `copiloto-local`.
+también `copiloto-local`: con el `export` hecho, lo hacen solos.
 
 ## 5. Construir la imagen
 
@@ -652,14 +704,19 @@ Esto es lo que hará n8n, y conviene verificarlo sin n8n de por medio. Levanta
 un contenedor de usar y tirar en la misma red y pídele que resuelva el nombre:
 
 ```bash
-docker run --rm --network "${RED_N8N:-[retirado]_[retirado]_network}" python:3.12-slim python -c "import urllib.request,json; print(json.load(urllib.request.urlopen('http://copiloto-mcp:8000/salud')))"
+export RED_N8N="$(grep '^RED_N8N=' .env | cut -d= -f2-)"
+docker run --rm --network "${RED_N8N:?define RED_N8N con el nombre de la red externa de n8n}" python:3.12-slim python -c "import urllib.request,json; print(json.load(urllib.request.urlopen('http://copiloto-mcp:8000/salud')))"
+unset RED_N8N
 ```
 
 Es la **misma variable** con la que levantaste el compose, y por eso va aquí en
-vez del nombre literal: si arrancaste con `RED_N8N=copiloto-local`, exporta la
-variable en esta sesión (`export RED_N8N=copiloto-local`) y el comando usa
-`copiloto-local` solo; si no la declaraste, cae al mismo nombre por defecto que
-el compose. Un literal aquí obligaría a editarlo a mano cada vez y dejaría que
+vez del nombre literal. Pero esta orden no la ejecuta Compose, la ejecuta tu
+shell, y **el shell no lee `servidor/.env`**: la primera línea se la carga para
+esta sesión y la última la retira. Si arrancaste con `RED_N8N=copiloto-local`
+exportada (caso B del paso 4), sáltate esas dos líneas: el comando usa
+`copiloto-local` solo. Y si la variable no está, el `:?` hace que el comando
+aborte con el mismo mensaje que el compose en vez de probar suerte con otra
+red. Un literal aquí obligaría a editarlo a mano cada vez y dejaría que
 esta comprobación mirase una red distinta de la que se está usando —justo lo que
 esta comprobación existe para descartar.
 
@@ -748,7 +805,7 @@ camino A, es una sola orden:
 cd /opt/copiloto && git pull --ff-only && docker compose -f servidor/docker-compose.yml up -d --build copiloto-mcp && for i in $(seq 1 30); do e=$(docker inspect -f '{{.State.Health.Status}}' copiloto-mcp 2>/dev/null || echo ausente); [ "$e" = healthy ] && break; sleep 5; done && docker inspect -f '{{.State.Health.Status}}' copiloto-mcp && docker compose -f servidor/docker-compose.yml exec copiloto-mcp python -c "import urllib.request,json; print(json.load(urllib.request.urlopen('http://127.0.0.1:8000/salud')))"
 ```
 
-Cuatro cosas que esa línea tiene por un motivo:
+Cinco cosas que esa línea tiene, o no tiene, por un motivo:
 
 - **`--ff-only`.** Un directorio de despliegue nunca debe intentar fusionar. Si
   alguien editó algo a mano en `/opt/copiloto`, esto falla en vez de mezclar.
@@ -762,6 +819,10 @@ Cuatro cosas que esa línea tiene por un motivo:
   arrancando: un contenedor `Up` con los pesos mal cargados se ve idéntico a
   uno sano. Y `curl localhost:8000` **desde el host falla aunque todo esté
   perfecto**, porque el compose no publica puertos a propósito.
+- **No lleva `RED_N8N` delante, y no le hace falta.** Compose la lee de
+  `servidor/.env`, que está junto al compose aunque la orden se lance desde
+  `/opt/copiloto` (paso 4). Si esa línea falta en el `.env`, la orden aborta en
+  el primer `docker compose`, antes de reconstruir nada.
 
 **Primero el servidor, después el bot.** Cuando un cambio toca los dos (como
 SP4), se redespliega el servidor con esa línea y solo después se publican los
@@ -798,6 +859,74 @@ docker images --filter dangling=true --format '{{.ID}} {{.CreatedSince}} {{.Size
 > ahí: construye en local y mueve la imagen ya hecha con
 > `docker save copiloto-mcp:0.1.0 | gzip | ssh usuario@vps "gunzip | docker load"`,
 > y luego solo `up -d` sin `--build`.
+
+### El primer redespliegue con `RED_N8N` obligatoria: volver a crear los contenedores
+
+Hasta SP5 el compose traía escrito el nombre de la red. Desde que `RED_N8N` es
+obligatoria, **la clave de la red cambió en el compose** (ahora es `red_n8n`)
+y el nombre ya no viene en el fichero. Una instalación levantada con el
+compose anterior necesita, **una sola vez**, que los dos contenedores se
+vuelvan a crear. La base de datos **no se toca**: sus datos viven en el volumen
+`copiloto_bd_datos`, que sobrevive al `down` siempre que no lleve `-v`.
+
+Mientras dura, unos dos minutos, n8n no alcanza al copiloto ni a la base: los
+bots contestan con su mensaje de error. Hazlo cuando no haya consultas en curso.
+
+**1. Antes del `git pull`, declarar la variable.** El nombre es el de la red
+donde está hoy el contenedor; pregúntaselo a él:
+
+```bash
+docker inspect copiloto-mcp --format '{{range $red, $c := .NetworkSettings.Networks}}{{println $red}}{{end}}'
+```
+
+Añade a `/opt/copiloto/servidor/.env` la línea `RED_N8N=` seguida de ese
+nombre, y comprueba que quedó:
+
+```bash
+grep -c '^RED_N8N=.' /opt/copiloto/servidor/.env
+```
+
+Esperado: `1`.
+
+**2. Apuntar el volumen de la base**, para compararlo al final:
+
+```bash
+docker volume ls --filter name=copiloto_bd_datos
+```
+
+**3. Traer el código y comprobar que el compose nuevo se deja leer**, sin
+levantar nada:
+
+```bash
+cd /opt/copiloto && git pull --ff-only && docker compose -f servidor/docker-compose.yml config --quiet && echo "el compose se deja leer"
+```
+
+Si en vez de la frase sale `required variable RED_N8N is missing a value`,
+vuelve al punto 1: **no sigas**.
+
+**4. Bajar por nombre de proyecto y volver a levantar.** El `down` va **sin
+`-v` ni `--volumes`**: con cualquiera de los dos se borra la base.
+
+```bash
+docker compose -p copiloto-mcp down
+cd /opt/copiloto && docker compose -f servidor/docker-compose.yml up -d --build
+```
+
+**5. Comprobar** que el volumen es el mismo del punto 2, que los dos
+contenedores están `healthy` y que siguen en la red de n8n:
+
+```bash
+docker volume ls --filter name=copiloto_bd_datos
+docker compose -f servidor/docker-compose.yml ps
+docker inspect copiloto-mcp copiloto-bd --format '{{.Name}}: {{range $red, $c := .NetworkSettings.Networks}}{{$red}} {{end}}'
+```
+
+Y termina con la sonda de salud del paso 6 y con una consulta de prueba por el
+bot: que la base conserva lo que tenía se ve en que el historial sigue ahí
+(`docs/sp3-operacion.md`).
+
+A partir de aquí los redespliegues vuelven a ser la orden de una línea de
+arriba.
 
 ## 7. Medir la latencia dentro del contenedor
 
@@ -1052,7 +1181,7 @@ el modelo o hay un dato local de prevalencia (SP4).
 | `RUTA_PESOS` | `/modelo/pesos_modelo_cpu.pt` | dentro de la imagen |
 | `RUTA_CALIBRADOR` | `/modelo/calibrador.json` | dentro de la imagen |
 | `OMP_NUM_THREADS` | `2` | hilos que usa torch. **Tiene que valer lo mismo que `cpus`** del bloque de límites: torch no lee el cgroup y sin esto abriría un hilo por núcleo del host |
-| `RED_N8N` | `[retirado]_[retirado]_network` | nombre de la red externa de n8n. Se pasa en la línea de comandos, no se edita el fichero |
+| `RED_N8N` | **ninguno: es obligatoria** | nombre de la red externa de n8n. Se declara en `servidor/.env` (paso 4), no se edita el compose. Sin ella, cualquier `docker compose` aborta |
 
 `AUC_VALIDACION` viaja por entorno y no como literal en el código a propósito:
 es una afirmación de calidad sobre **los pesos**, no sobre el código. Si
@@ -1074,7 +1203,8 @@ el contenedor que responde ya es el de SP4.
 
 | Síntoma | Causa | Arreglo |
 | :--- | :--- | :--- |
-| `network [retirado]_[retirado]_network declared as external, but could not be found` | el nombre que espera el compose no es el de la red real | **primero**: averigua el nombre real con `docker network ls` y arranca con `RED_N8N=<nombre real> docker compose up -d`. Ver el recuadro de abajo |
+| `required variable RED_N8N is missing a value: define RED_N8N con el nombre de la red externa de n8n`, en **cualquier** `docker compose` | falta `RED_N8N` o está vacía: no está en `servidor/.env`, o el `.env` no está junto al compose | añadir la línea `RED_N8N=` con el nombre real a `servidor/.env` (paso 4). No tiene valor por defecto, a propósito |
+| `network <RED_N8N> declared as external, but could not be found` | el valor de `RED_N8N` no es el nombre de ninguna red que exista | **primero**: averigua el nombre real con `docker network ls` y corrige `RED_N8N` en `servidor/.env`. Ver el recuadro de abajo |
 | `"/servidor/pesos_modelo_cpu.pt": not found` al construir | no copiaste los pesos | ver el paso 3 |
 | `Conflict. The container name "/copiloto-mcp" is already in use` | ya hay un contenedor con ese nombre | el paso 2.4 lo detecta antes. Averigua de quién es con `docker ps -a --filter name=copiloto-mcp` **antes** de borrarlo |
 | `no space left on device` al construir | disco lleno | el paso 2.6 lo detecta antes. Libera espacio; no uses `docker system prune -a` en el VPS (paso 12) |
@@ -1094,10 +1224,11 @@ Este es el error que más tienta a hacer lo peor, así que va aparte.
 
 Cuando el compose dice que la red externa no existe, la reacción natural es
 crearla. **En el VPS eso es justo lo que no hay que hacer.** Si la red real se
-llama de otra forma, `docker network create [retirado]_[retirado]_network` te deja una
-red vacía, el contenedor arranca, el estado dice `healthy`, todo parece bien
-— y n8n no lo alcanza nunca, porque están en redes distintas. Es el fallo
-silencioso que el paso 2.2 existe para evitar, y lo habrías provocado tú.
+llama de otra forma, un `docker network create` con el nombre que pusiste en
+`RED_N8N` te deja una red vacía, el contenedor arranca, el estado dice
+`healthy`, todo parece bien — y n8n no lo alcanza nunca, porque están en redes
+distintas. Es el fallo silencioso que el paso 2.2 existe para evitar, y lo
+habrías provocado tú.
 
 El orden correcto es siempre este:
 
@@ -1108,8 +1239,9 @@ docker network ls
 # 2. si n8n no se deja adivinar por el nombre, preguntaselo
 docker inspect <nombre-del-contenedor-de-n8n> --format '{{range $red, $c := .NetworkSettings.Networks}}{{println $red}}{{end}}'
 
-# 3. arrancar con el nombre real, sin editar el compose
-RED_N8N=<nombre real> docker compose up -d
+# 3. corregir RED_N8N en servidor/.env con el nombre real, sin editar el
+#    compose, y arrancar
+docker compose up -d
 ```
 
 `docker network create` solo tiene sentido **en local**, con un nombre de tirar,
@@ -1158,9 +1290,10 @@ carpeta puede ser la del cliente. La única razón por la que `-p copiloto-mcp`
 funciona es la línea 5 del compose (`name: copiloto-mcp`); si alguien la quita
 en un commit futuro, este comando deja de identificar nada.
 
-Y no teclees nunca `-v` ni `--volumes` en ese `down`. Aquí es inofensivo —este
-servicio no declara volúmenes— pero esa memoria muscular, aplicada al stack de
-al lado, borra los datos del cliente.
+Y no teclees nunca `-v` ni `--volumes` en ese `down`. **Aquí no es
+inofensivo**: desde SP3 el proyecto tiene un volumen, `copiloto_bd_datos`, y
+con ese flag se borra la base de datos del copiloto. Aplicado al stack de al
+lado, borra los datos del cliente.
 
 Salida literal:
 
@@ -1175,7 +1308,7 @@ Cuatro líneas, las cuatro sobre `copiloto-mcp`. Si aparece el nombre de
 cualquier otro contenedor, para: `Ctrl+C` y vuelve al `docker compose ls`.
 
 `docker compose down` **no borra la red externa.** Comprobado: después del
-`down`, `docker network ls` sigue mostrando `[retirado]_[retirado]_network` intacta con
+`down`, `docker network ls` sigue mostrando la red de `RED_N8N` intacta, con
 n8n dentro. Compose no borra lo que no creó.
 
 ### Comprobar que no se rompió nada más
@@ -1223,13 +1356,13 @@ unos 2 minutos.
 
 | Comando | Qué rompería |
 | :--- | :--- |
-| `docker network rm [retirado]_[retirado]_network` | dejaría a n8n, a nginx y a la API del cliente sin red común. Esa red **no es nuestra** |
+| `docker network rm <RED_N8N>` | dejaría a n8n, a nginx y a la API del cliente sin red común. Esa red **no es nuestra** |
 | `docker system prune -a` | borraría imágenes de los demás stacks, no solo la nuestra |
 | `docker compose down` desde otro directorio | bajaría el stack de ese directorio, que puede ser el de producción |
 
-Añadir `-v` / `--volumes` al `down` es inofensivo **aquí** porque este servicio
-no tiene volúmenes, pero no cojas la costumbre: en el stack de al lado ese
-mismo flag borra la base de datos.
+Añadir `-v` / `--volumes` al `down` **tampoco es inofensivo aquí**: borra el
+volumen `copiloto_bd_datos`, que es la base del copiloto. Y en el stack de al
+lado ese mismo flag borra la base de datos del cliente.
 
 ### Volver a levantarlo
 

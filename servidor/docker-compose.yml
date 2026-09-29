@@ -69,8 +69,8 @@ services:
       # No es hipotetico: el `healthcheck` de arriba consulta /salud cada 30 s y
       # uvicorn registra una linea por peticion, asi que son ~2 880 lineas al
       # dia -unos 200 MB al anio- ANTES de que pase un solo paciente. Ese disco
-      # lo comparten dos PostgreSQL, [retirado] y n8n; cuando se llena, el que
-      # muere no es este servicio.
+      # lo comparten dos PostgreSQL, los contenedores ajenos y n8n; cuando se
+      # llena, el que muere no es este servicio.
       #
       # 10 MB x 3 ficheros = 30 MB como techo duro, y `docker logs --tail`
       # sigue funcionando igual para diagnosticar.
@@ -79,7 +79,7 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
-      - [retirado]_network
+      - red_n8n
 
   copiloto-bd:
     # Por digest y no por `postgres:16-alpine`: esa etiqueta es de un tercero y
@@ -117,15 +117,20 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
-      - [retirado]_network
+      - red_n8n
 
 networks:
-  [retirado]_network:
+  red_n8n:
     external: true
     # La red la posee la infraestructura del cliente, donde ya corre n8n. Este
     # servicio solo se une a ella: asi n8n lo alcanza por nombre de servicio y
     # la radiografia no sale de la maquina.
-    name: ${RED_N8N:-[retirado]_[retirado]_network}
+    #
+    # Sin valor por defecto a proposito: el nombre de esa red es de quien
+    # despliega y no vive en el repositorio. Se declara en `servidor/.env`
+    # (RED_N8N=...) o en el entorno de la sesion; si falta o esta vacia,
+    # Compose aborta con el mensaje de abajo antes de crear nada.
+    name: ${RED_N8N:?define RED_N8N con el nombre de la red externa de n8n}
 
 volumes:
   copiloto_bd_datos:
