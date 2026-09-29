@@ -188,12 +188,19 @@ def _memoria_escribir(datos):
         pass
 
 
-def mensaje_para_telegram(problemas):
+def mensaje_para_telegram(problemas, comprobado=True):
     """El mismo formato que el aviso del workflow: encabezado, y cada problema
-    con su «Que hacer». Recortado al limite de Telegram, que son 4096."""
-    cabeza = ("\U0001fa7a Copiloto Triaje — el webhook de Telegram no está como "
-              "debe\n\n(lo dice pruebas/verificar_webhooks.py, que es la mitad "
-              "de la sexta comprobación del §16 que no cabe dentro de n8n)\n")
+    con su «Que hacer». Recortado al limite de Telegram, que son 4096.
+
+    Con `comprobado` en False el encabezado dice que NO se comprobo nada: si
+    no se llego a mirar ningun webhook, el aviso no puede decir que uno no
+    esta como debe, o quien lea solo la notificacion ira a registrar otra
+    vez un webhook que estaba bien."""
+    titulo = ("el webhook de Telegram no está como debe" if comprobado
+              else "los webhooks de Telegram NO se han comprobado")
+    cabeza = (f"\U0001fa7a Copiloto Triaje — {titulo}\n\n(lo dice "
+              "pruebas/verificar_webhooks.py, que es la mitad de la sexta "
+              "comprobación del §16 que no cabe dentro de n8n)\n")
     cuerpo = "\n\n".join(f"{i}. {p}" for i, p in enumerate(problemas, 1))
     texto = f"{cabeza}\n{cuerpo}"
     if len(texto) > 3900:
@@ -229,14 +236,15 @@ def avisar_por_telegram(token, chat_id, texto):
         return False, str(e)
 
 
-def avisar_al_equipo(problemas):
+def avisar_al_equipo(problemas, comprobado=True):
     """El canal de la tarea programada: sin esto, lo que se imprime acaba en un
-    log que nadie abre. Hacen falta las dos variables; con una sola se dice."""
+    log que nadie abre. Hacen falta las dos variables; con una sola se dice.
+    `comprobado` es el de `mensaje_para_telegram`."""
     chat = os.environ.get("COPILOTO_CHAT_EQUIPO", "").strip()
     token_avisos = os.environ.get("TELEGRAM_TOKEN_AVISOS", "").strip()
     if problemas and chat and token_avisos:
         enviado, detalle = avisar_por_telegram(
-            token_avisos, chat, mensaje_para_telegram(problemas))
+            token_avisos, chat, mensaje_para_telegram(problemas, comprobado))
         print("\naviso por Telegram: "
               + ("enviado." if enviado else f"NO se pudo enviar ({detalle})."))
     elif problemas and (chat or token_avisos):
@@ -249,7 +257,7 @@ def main() -> int:
         # Antes de pedir ningun token y de tocar la memoria: sin la base no hay
         # con que comparar, y una lectura a medias borraria la de ayer.
         print(SIN_N8N_URL)
-        avisar_al_equipo([SIN_N8N_URL])
+        avisar_al_equipo([SIN_N8N_URL], comprobado=False)
         return 1
     memoria = _memoria_leer()
     nueva = {}

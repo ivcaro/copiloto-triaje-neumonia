@@ -592,7 +592,9 @@ def test_el_aviso_de_la_tarea_programada_lleva_los_problemas_y_no_el_token(monke
     texto = vw.mensaje_para_telegram(problemas)
     ok, detalle = vw.avisar_por_telegram("T0K3N", "987", texto)
     assert ok is True, detalle
+    assert enviados["url"] == "https://api.telegram.org/botT0K3N/sendMessage"
     assert enviados["cuerpo"]["chat_id"] == "987"
+    assert "el webhook de Telegram no está como debe" in enviados["cuerpo"]["text"]
     assert "mudo" in enviados["cuerpo"]["text"]
     assert "Qué hacer" in enviados["cuerpo"]["text"]
     assert "T0K3N" not in enviados["cuerpo"]["text"]
@@ -653,8 +655,45 @@ def _main_que_no_toca_nada(monkeypatch):
     monkeypatch.setattr(vw, "BASE_N8N", "")
 
 
-def test_el_script_se_importa_sin_N8N_URL_y_no_trae_ninguna_por_defecto(monkeypatch):
-    monkeypatch.delenv("N8N_URL", raising=False)
+def _canal_de_avisos_falso(monkeypatch):
+    """El canal de avisos puesto, y un Telegram que contesta que si. Devuelve
+    donde queda lo que `main()` le mande: la URL a la que llamo y el cuerpo."""
+    import urllib.parse
+
+    monkeypatch.setenv("COPILOTO_CHAT_EQUIPO", "987")
+    monkeypatch.setenv("TELEGRAM_TOKEN_AVISOS", "T0K3N")
+    enviados = {}
+
+    def falso(pet, timeout=0):
+        enviados["url"] = pet.full_url
+        enviados["cuerpo"] = dict(urllib.parse.parse_qsl(pet.data.decode()))
+
+        class R:
+            def read(self_inner):
+                return b'{"ok":true,"result":{}}'
+
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *a):
+                return False
+        return R()
+
+    monkeypatch.setattr(vw.urllib.request, "urlopen", falso)
+    return enviados
+
+
+@pytest.mark.parametrize("valor", [None, "", "   "],
+                         ids=["ausente", "vacia", "en-blanco"])
+def test_el_script_se_importa_sin_N8N_URL_y_no_trae_ninguna_por_defecto(
+        valor, monkeypatch):
+    """Vacia o con solo espacios es lo mismo que ausente: si pasara por una
+    base, `main()` pediria los tokens y daria los dos webhooks por mal
+    apuntados."""
+    if valor is None:
+        monkeypatch.delenv("N8N_URL", raising=False)
+    else:
+        monkeypatch.setenv("N8N_URL", valor)
     assert _script_recien_importado().BASE_N8N == ""
 
 
@@ -690,34 +729,54 @@ def test_sin_N8N_URL_main_sale_con_un_mensaje_y_no_pide_ningun_token(
 def test_sin_N8N_URL_la_tarea_programada_avisa_por_telegram(monkeypatch, capsys):
     """La tarea programada que se quede sin la variable no puede callar: es el
     silencio que el script existe para romper. Con el canal de avisos puesto, el
-    motivo llega al mismo hilo que los demas."""
-    import urllib.parse
-
+    motivo llega al mismo hilo que los demas, y dice que NO se comprobo nada:
+    con el encabezado de siempre, quien lea solo la notificacion iria a
+    registrar otra vez un webhook que estaba bien."""
     _main_que_no_toca_nada(monkeypatch)
-    monkeypatch.setenv("COPILOTO_CHAT_EQUIPO", "987")
-    monkeypatch.setenv("TELEGRAM_TOKEN_AVISOS", "T0K3N")
-    enviados = {}
-
-    def falso(pet, timeout=0):
-        enviados["url"] = pet.full_url
-        enviados["cuerpo"] = dict(urllib.parse.parse_qsl(pet.data.decode()))
-
-        class R:
-            def read(self_inner):
-                return b'{"ok":true,"result":{}}'
-
-            def __enter__(self_inner):
-                return self_inner
-
-            def __exit__(self_inner, *a):
-                return False
-        return R()
-
-    monkeypatch.setattr(vw.urllib.request, "urlopen", falso)
+    enviados = _canal_de_avisos_falso(monkeypatch)
 
     assert vw.main() == 1
 
+    assert enviados["url"] == "https://api.telegram.org/botT0K3N/sendMessage"
     assert enviados["cuerpo"]["chat_id"] == "987"
-    assert "N8N_URL" in enviados["cuerpo"]["text"]
-    assert "T0K3N" not in enviados["cuerpo"]["text"]
+    texto = enviados["cuerpo"]["text"]
+    assert "N8N_URL" in texto and "T0K3N" not in texto
+    assert "los webhooks de Telegram NO se han comprobado" in texto
+    assert "no está como debe" not in texto
     assert "aviso por Telegram: enviado." in capsys.readouterr().out
+
+
+def test_los_problemas_de_una_lectura_de_verdad_llegan_al_canal_de_avisos(
+        monkeypatch, capsys):
+    """El final de `main()`: con la base puesta y un webhook mal apuntado, el
+    aviso sale. Si esa llamada se perdiera, la tarea programada seguiria
+    devolviendo 1 a un log que nadie abre."""
+    monkeypatch.setenv("TELEGRAM_TOKEN_PACIENTE", "tok-paciente")
+    monkeypatch.setenv("TELEGRAM_TOKEN_PROFESIONAL", "tok-profesional")
+    monkeypatch.setattr(
+        vw.getpass, "getpass",
+        lambda *a, **k: pytest.fail("los tokens estaban en el entorno"))
+    # los dos bots entregan en la ruta del profesional: el del paciente esta mal
+    lecturas = {"tok-paciente": {"url": f"{BASE}/webhook/copiloto-profesional",
+                                 "pending_update_count": 0},
+                "tok-profesional": {"url": f"{BASE}/webhook/copiloto-profesional",
+                                    "pending_update_count": 2}}
+    monkeypatch.setattr(vw, "pedir_api", lambda token, metodo: (True, lecturas[token]))
+    monkeypatch.setattr(vw, "_memoria_leer", lambda: {})
+    escrita = {}
+    monkeypatch.setattr(vw, "_memoria_escribir", escrita.update)
+    enviados = _canal_de_avisos_falso(monkeypatch)
+
+    assert vw.main() == 1
+
+    assert escrita == {"paciente": 0, "profesional": 2}
+    assert enviados["url"] == "https://api.telegram.org/botT0K3N/sendMessage"
+    texto = enviados["cuerpo"]["text"]
+    assert "el webhook de Telegram no está como debe" in texto
+    assert "el OTRO bot" in texto and "bot del paciente" in texto
+    assert "bot del profesional" not in texto
+    for secreto in ("tok-paciente", "tok-profesional", "T0K3N"):
+        assert secreto not in texto
+    salida = capsys.readouterr().out
+    assert "1 cosas que arreglar." in salida
+    assert "aviso por Telegram: enviado." in salida
