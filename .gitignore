@@ -73,3 +73,7 @@ pruebas/sesion/
 # ids y nombres de las credenciales que `scripts/marcadores_n8n.py` pone en
 # los workflows antes de desplegarlos. El de ejemplo, de al lado, si se versiona.
 n8n/valores.local.json
+
+# La lista en claro del anonimato (spec de SP5 §6.1) vive FUERA del
+# repositorio. Por si alguien la copia aqui: tampoco se versiona.
+tests/anonimato/lista*.txt
