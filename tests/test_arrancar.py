@@ -155,32 +155,75 @@ def test_la_guia_de_despliegue_no_promete_un_valor_por_defecto_para_la_red():
     assert "| `RED_N8N` | **ninguno: es obligatoria** |" in guia
 
 
+PARAN_O_BORRAN = {"down", "stop", "kill", "rm", "restart", "pause", "prune"}
+
+
+def _las_que_paran(bloque):
+    """Las ordenes de docker de un bloque de shell que paran o borran algo.
+    El bloque se parte por `&&`, `||`, `;`, `|` y saltos de linea."""
+    paran = []
+    for orden in re.split(r"&&|\|\||;|\||\n", bloque):
+        if "docker" not in orden:
+            continue
+        palabras = orden[orden.index("docker"):].split()
+        if PARAN_O_BORRAN & set(palabras):
+            paran.append(" ".join(palabras))
+    return paran
+
+
 def test_el_primer_redespliegue_no_baja_el_servicio_antes_de_construir():
     """El apartado lo sigue una persona en un servidor que comparte con otros
-    servicios. La orden que redespliega construye y recrea sin bajar nada, y
-    espera a los dos contenedores; la unica bajada que queda escrita es la de
-    reserva, que va por nombre de proyecto, sin volumenes y DESPUES de
-    construir; y la base se apunta antes y se compara despues."""
+    servicios. Las ordenes que redespliegan construyen y recrean sin parar
+    nada antes, y esperan a los dos contenedores; la unica orden que para algo
+    es la bajada de reserva, que va por nombre de proyecto, sin volumenes y
+    DESPUES de construir; la base y los contenedores se apuntan antes y se
+    comparan despues; hay copia de la base; y la vuelta atras restaura el
+    `.env` antes de levantar."""
     guia = (RAIZ / "docs" / "sp2-despliegue.md").read_text(encoding="utf-8")
     inicio = guia.index("### El primer redespliegue con `RED_N8N` obligatoria")
     apartado = guia[inicio:guia.index("\n## 7. ", inicio)]
-    ordenes = re.findall(r"```bash\n(.*?)```", apartado, flags=re.S)
-    redespliegue = [o for o in ordenes if "up -d --build" in o and "down" not in o]
-    assert any("for c in copiloto-bd copiloto-mcp" in o for o in redespliegue), (
-        "la orden que redespliega espera a los dos contenedores")
-    assert not any(re.search(r"up -d --build +copiloto-", o) for o in redespliegue), (
-        "y no nombra un servicio: tiene que recrear los dos")
-    bajadas = [o for o in ordenes if re.search(r"\bdown\b", o)]
-    assert len(bajadas) == 1, "una sola bajada escrita, la de reserva"
-    for orden in bajadas:
-        assert not re.search(r"\s-v\b|--volumes", orden), "un `down` con volumenes borra la base"
-        assert "docker compose -p copiloto-mcp down" in orden
-        assert orden.index(" build") < orden.index(" down") < orden.index(" up -d")
-    # como esta la base, antes y despues
-    assert apartado.count("select count(*) from consultas") == 2
-    assert apartado.count("{{.CreatedAt}}") == 2
-    # el .env se guarda antes de tocarlo, y la linea se ANADE
-    assert apartado.index("cp -p servidor/.env") < apartado.index(">> /opt/copiloto/servidor/.env")
+    bloques = re.findall(r"```bash\n(.*?)```", apartado, flags=re.S)
+    # en todo el apartado, dentro o fuera de un bloque, nadie baja con los volumenes
+    assert not re.search(r"down\s+(-v\b|--volumes)", apartado)
+
+    # las dos ordenes que redespliegan: la del punto 5 y la de la vuelta atras
+    redespliegues = [b for b in bloques if "up -d --build" in b]
+    assert len(redespliegues) == 2
+    for orden in redespliegues:
+        assert _las_que_paran(orden) == [], "no para ni borra nada antes de construir"
+        assert ("docker compose -f servidor/docker-compose.yml up -d --build && "
+                "for c in copiloto-bd copiloto-mcp") in orden, (
+            "no nombra un servicio, y espera a los dos contenedores")
+
+    # la unica orden del apartado que para algo es la bajada de reserva
+    con_parada = [b for b in bloques if _las_que_paran(b)]
+    assert len(con_parada) == 1
+    reserva = con_parada[0]
+    assert _las_que_paran(reserva) == ["docker compose -p copiloto-mcp down"]
+    construir = "docker compose -f servidor/docker-compose.yml build"
+    levantar = "docker compose -f servidor/docker-compose.yml up -d"
+    assert reserva.index(construir) < reserva.index(" down") < reserva.index(levantar)
+    assert "for c in copiloto-bd copiloto-mcp" in reserva
+
+    # como estan la base y los contenedores, antes (punto 3) y despues (punto 6)
+    assert apartado.count("'volumen creado: {{.CreatedAt}}'") == 2
+    assert apartado.count("'{{.Name}} creado: {{.Created}}'") == 2
+    assert apartado.count("-tAc 'select count(*) from consultas'") == 3, (
+        "antes, despues y tras restaurar la copia")
+
+    # la copia de la base: antes de redesplegar, y un fallo no pasa por bueno
+    copias = [b for b in bloques if "pg_dump" in b]
+    assert len(copias) == 1
+    assert "set -o pipefail" in copias[0] and "umask 077" in copias[0]
+    assert apartado.index("pg_dump") < apartado.index("up -d --build")
+
+    # el .env se guarda antes de tocarlo, la linea se ANADE, y la vuelta
+    # atras lo restaura antes de levantar el commit anterior
+    guardar = "cp -p servidor/.env ~/copiloto.env.antes-de-red_n8n"
+    restaurar = "cp -p ~/copiloto.env.antes-de-red_n8n servidor/.env"
+    assert apartado.index(guardar) < apartado.index(">> /opt/copiloto/servidor/.env")
     assert not re.search(r"[^>]> /opt/copiloto/servidor/\.env", apartado)
-    # y esta escrito como se vuelve
-    assert "git checkout --detach <commit del punto 1>" in apartado
+    vuelta = [b for b in redespliegues if "git checkout --detach <commit del punto 1>" in b]
+    assert len(vuelta) == 1
+    assert (vuelta[0].index(restaurar) < vuelta[0].index("git checkout --detach")
+            < vuelta[0].index("up -d --build"))
