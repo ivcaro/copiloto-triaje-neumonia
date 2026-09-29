@@ -928,6 +928,17 @@ orden (ensayada: lo da aunque después se haya cambiado de commit a mano):
 git -C /opt/copiloto rev-parse 'main@{1}'
 ```
 
+Da el commit de antes del ÚLTIMO `pull`. Comprueba que es el bueno, cambiando
+`<commit>` por el que ha salido: su compose no tiene que llevar la variable
+obligatoria.
+
+```bash
+git -C /opt/copiloto show '<commit>:servidor/docker-compose.yml' | grep -c 'RED_N8N:?'
+```
+
+Tiene que dar `0`. Si da `1`, desde el compose anterior se ha hecho más de un
+`pull`: repite las dos órdenes con `'main@{2}'`, y así hasta que dé `0`.
+
 Sigue con este punto, pero no apuntes el commit que imprime su orden.
 
 El `.env` es el fichero que tiene la contraseña de la base: se guarda una

@@ -57,8 +57,10 @@ Repite la búsqueda de huellas sobre cualquier árbol y añade:
   etiqueta**, y que ese commit no lleve más cabeceras que su árbol, su autor
   y quien lo confirma: una firma lleva el identificador de la clave de quien
   firma, así que el commit único se hace con `git commit --no-gpg-sign`;
-- que el árbol que se publica **no lleve ninguna huella de la lista**: su
-  `huellas.txt` lleva solo la del centinela. La huella se busca entera y
+- que lo que se publica **no lleve ninguna huella de la lista**, ni en el
+  árbol —su `huellas.txt` lleva solo la del centinela—, ni en el commit (el
+  mensaje, el autor, quien confirma), ni en los nombres de las ramas y de
+  las etiquetas. La huella se busca entera y
   suelta, como cualquier token: pegada a otras letras o cifras, o escrita
   de otra forma, no se ve.
 
@@ -81,7 +83,8 @@ línea, y cada una es un token ya tokenizado: una entrada que no dé
 exactamente un token es un error, y no se escribe nada.
 
 El `huellas.txt` del repositorio que se publica, con solo la huella del
-centinela, se escribe sin lista:
+centinela, se escribe sin lista, y lleva su propia cabecera, que dice qué
+fichero es y dónde se hace la comprobación de verdad:
 
     python scripts/verificar_anonimato.py --regenerar --solo-centinela --huellas <árbol que se publica>/tests/anonimato/huellas.txt
 
