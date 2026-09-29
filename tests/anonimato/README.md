@@ -5,7 +5,7 @@ empresa, a una máquina ni a personas, ni ningún secreto. Lo vigilan dos
 comprobaciones y una revisión a mano. Aquí se dice qué hace cada una y, al
 final, **qué no puede ver ninguna de las tres**.
 
-## `tests/test_anonimato.py` (en la suite, siempre)
+## `tests/test_anonimato.py` (en la suite, en cada corrida)
 
 Tokeniza cada fichero de texto —minúsculas, sin tildes, partición por
 cualquier carácter que no sea `[a-z0-9]`— y falla si el SHA-256 de algún
@@ -15,6 +15,10 @@ letras a un token y lo esconda. Antes quita las tiradas de 120 o más
 caracteres de base64 (las imágenes incrustadas en los notebooks), que
 producirían tokens al azar. El texto que no es UTF-8 también se recorre.
 
+Otra prueba busca en el mismo recorrido los secretos y lo que no se ha podido
+mirar, también en los nombres de los ficheros y de las carpetas: lo que más
+abajo se describe con el script. Esa no necesita la lista y corre siempre.
+
 Recorre lo que se publicaría: los ficheros con seguimiento, los que no lo
 tienen ni están ignorados, y lo que está preparado en el índice de git y no
 es lo que hay en disco. Un recorrido vacío no cuenta como limpio.
@@ -22,11 +26,17 @@ es lo que hay en disco. Un recorrido vacío no cuenta como limpio.
 `huellas.txt` lleva una huella por línea. **La lista de lo prohibido no está
 en el repositorio**: solo sus huellas. Una de ellas es la del centinela
 público `centinelaanonimato7f3a`, con el que la prueba se comprueba a sí
-misma: lo escribe en un fichero temporal y exige detectarlo.
+misma: lo escribe en un fichero temporal y exige detectarlo. Es la única
+huella que no cuenta en el árbol: el centinela está escrito en claro en este
+documento y en la propia prueba.
 
-No hay lista blanca. Lo que se conserva —un huso horario, identificadores
-opacos de los webhooks, números de chat inventados, una IP del rango de
-documentación— se conserva porque no está en la lista, no porque se exceptúe.
+No hay lista blanca de huellas. Lo que se conserva —un huso horario,
+identificadores opacos de los webhooks, números de chat inventados, una IP
+del rango de documentación— se conserva porque no está en la lista, no porque
+se exceptúe. El buscador de secretos sí deja pasar lo que es de ejemplo: unas
+pocas palabras (`prueba`, `clave`, `token`, `cambiar-esto`), los marcadores
+entre `<` y `>`, las variables (`$NOMBRE`, `${NOMBRE}`) y el fichero
+`.env.ejemplo`.
 
 ## `scripts/verificar_anonimato.py` (antes de publicar)
 
@@ -44,23 +54,34 @@ Repite la búsqueda de huellas sobre cualquier árbol y añade:
 - los **nombres** de los ficheros, de las carpetas, de las ramas y de las
   etiquetas;
 - que el repositorio tenga **un solo commit, una sola rama y ninguna
-  etiqueta**.
+  etiqueta**, y que ese commit no lleve más cabeceras que su árbol, su autor
+  y quien lo confirma: una firma lleva el identificador de la clave de quien
+  firma, así que el commit único se hace con `git commit --no-gpg-sign`;
+- que el árbol que se publica **no lleve ninguna huella de la lista**: su
+  `huellas.txt` lleva solo la del centinela.
 
       python scripts/verificar_anonimato.py --raiz <árbol> --huellas <huellas> --un-solo-commit
 
 Sus hallazgos dicen fichero, línea y huella o clase: nunca el token ni el
 secreto, y el nombre de un fichero que lleve un token sale tapado. Sale con 1
-si hay hallazgos, si no ha recorrido ningún fichero o si las huellas que
-recibe son solo la del centinela.
+si hay hallazgos, si no ha recorrido ningún fichero de texto o si las huellas
+que recibe son solo la del centinela.
 
 ## Cómo se regeneran las huellas
 
 Quien mantiene la lista en claro, fuera del repositorio:
 
-    ANONIMATO_LISTA=<lista en claro> python scripts/verificar_anonimato.py --regenerar
+    python scripts/verificar_anonimato.py --regenerar --lista <lista en claro>
 
-Cada entrada de la lista es un token ya tokenizado; una entrada que no dé
+(o con la ruta de la lista en la variable de entorno `ANONIMATO_LISTA`, sin
+`--lista`). Las entradas van en la sección `[huellas]` de la lista, una por
+línea, y cada una es un token ya tokenizado: una entrada que no dé
 exactamente un token es un error, y no se escribe nada.
+
+El `huellas.txt` del repositorio que se publica, con solo la huella del
+centinela, se escribe sin lista:
+
+    python scripts/verificar_anonimato.py --regenerar --solo-centinela --huellas <árbol que se publica>/tests/anonimato/huellas.txt
 
 ## Lo que no es texto: revisión manual
 
@@ -70,13 +91,29 @@ La prueba de huellas no puede leer imágenes. Se revisaron a mano, una a una:
 | :--- | :--- | :--- |
 | los 6 PNG de `docs/eda/` | 28-sep-2026 | contenido (gráficos de datos agregados del dataset público, sin nombres, rutas, marcas de agua ni pies) y metadatos (solo `Software` y `dpi`) |
 | las 6 imágenes incrustadas en `notebooks/eda_rsna.ipynb` | 28-sep-2026 | son las mismas seis figuras; mismos metadatos |
-| los metadatos de los tres notebooks | 28-sep-2026 | solo `kernelspec`, `language_info` y, en uno, el nombre del propio notebook; los otros dos notebooks no tienen salidas |
-| las 10 figuras de `docs/validacion-semisintetica/` | al generarlas | las dibuja `scripts/validar_combinacion.py` desde `resultados_simulacion.json`; su título lleva el rótulo «simulación semisintética»; metadatos `Software`, `dpi`, `Title` y `Description` (la huella del JSON de resultados con el que se dibujó cada una) |
+| los metadatos de los tres notebooks | 29-sep-2026 | del notebook: `kernelspec` y `language_info` y, en el de Colab, `accelerator` y `colab` (con el nombre del propio notebook); de las celdas: en `eda_rsna.ipynb`, las horas de ejecución. Los otros dos notebooks no tienen salidas |
+| las 10 figuras de `docs/validacion-semisintetica/` | 29-sep-2026 | contenido (gráficos de la simulación, sin nombres, rutas, marcas de agua ni pies; el título lleva el rótulo «simulación semisintética») y metadatos (`Software`, `dpi`, `Title` y `Description`, que es la huella del JSON de resultados con el que `scripts/validar_combinacion.py` dibujó cada una) |
 
-La lista de binarios revisados está en `tests/test_anonimato.py`
-(`BINARIOS_REVISADOS`): un binario nuevo hace fallar la suite hasta que se
-revisa y se declara aquí. Cuando no hay hallazgos pero sí binarios, el
-script no dice «limpio» a secas: dice cuántos binarios quedan sin recorrer.
+Varias pruebas de `tests/test_anonimato.py` atan esa revisión:
+
+- `BINARIOS_REVISADOS` es la lista de los binarios revisados: un binario
+  nuevo hace fallar la suite hasta que se revisa y se declara aquí. Fuera de
+  un repositorio de git —una descarga en ZIP— no se sabe qué está
+  versionado, y la prueba se salta diciéndolo.
+- `IMAGENES_DE_LOS_NOTEBOOKS` fija, por su SHA-256, las imágenes incrustadas
+  en cada notebook: una imagen nueva, o una que cambie al volver a ejecutar
+  el notebook, hace fallar la suite hasta que se revisa.
+- Las claves de los metadatos de los PNG y de las imágenes incrustadas
+  tienen que estar en `METADATOS_PERMITIDOS`, y las de cada notebook y de sus
+  celdas, en las de la tabla (con `colab.provenance` vacío): un notebook
+  guardado de nuevo desde Colab o Kaggle hace fallar la suite hasta que se
+  revisa. Con la lista entera, los valores de los metadatos de las imágenes
+  se miran también contra las huellas; con solo la del centinela, esa parte
+  se salta diciéndolo.
+
+Cuando no hay hallazgos pero sí binarios, el script no dice «limpio» a secas:
+dice cuántos binarios quedan sin recorrer. Las imágenes incrustadas no las
+cuenta: para el script un notebook es texto.
 
 ## Lo que esto no protege
 
@@ -91,12 +128,18 @@ propios, identificadores de una instancia.
 letras o cifras (`prefijoTOKENsufijo`, `token2026`), partido por un salto de
 línea o por un guion de fin de línea, escrito con letras de otro alfabeto que
 se parecen, ni en un base64 corto. Una tirada de 120 o más caracteres del
-alfabeto de base64 se quita sin mirarla.
+alfabeto de base64 se quita sin mirarla: el contenido de una imagen
+incrustada solo lo ve la revisión a mano, y sus metadatos, la prueba que la
+fija (más arriba).
 
-**Los secretos se buscan por su forma.** Detrás de una clave, una contraseña
-de menos de ocho caracteres, o escrita solo con letras, o solo con cifras, no
-tiene forma de secreto y no salta. Lo que lleva paréntesis, corchetes o
-llaves se toma por una expresión, no por un literal.
+**Los secretos se buscan por su forma.** Una asignación solo se mira si el
+NOMBRE de la clave lleva `password`, `passwd`, `secret`, `token` o `api_key`,
+o acaba en `_KEY` en mayúsculas (o, en minúsculas, en una de unas pocas:
+`private_key`, `access_key`, `signing_key`…): una clave que se llame `clave`,
+`contrasena`, `pwd` o `auth` no se mira. Y solo salta si el valor tiene forma
+de secreto: ocho o más caracteres, con letras y cifras. Una contraseña corta,
+o sin cifras, o sin letras, no salta. Un valor escrito sin comillas que lleva
+paréntesis, corchetes o llaves se toma por una expresión, no por un literal.
 
 **No mira la carpeta `.git`.** La dirección del remoto, el historial de
 referencias y los commits que ya no alcanza ninguna rama viven ahí. El
@@ -113,10 +156,20 @@ palabra, un dominio de pocas letras— se adivina probando candidatos: quien
 tenga `huellas.txt` y un diccionario recupera buena parte de la lista. Por
 eso la lista completa de huellas vive **solo en el repositorio de
 desarrollo**, que es privado. En el repositorio que se publica,
-`huellas.txt` lleva únicamente la huella del centinela: allí la prueba del
-árbol se salta diciéndolo, las demás siguen comprobando que el mecanismo
-funciona, y la comprobación de verdad se hace antes de publicar, con
-`scripts/verificar_anonimato.py` y las huellas del repositorio de
-desarrollo. Por lo mismo, la salida de la prueba y la del script —que
-enseñan el principio de cada huella— tampoco se publican cuando hay
-hallazgos.
+`huellas.txt` lleva únicamente la huella del centinela: allí las pruebas que
+necesitan la lista entera se saltan diciéndolo, la búsqueda de secretos y las
+pruebas del mecanismo corren igual, y la comprobación de verdad se hace antes
+de publicar, con `scripts/verificar_anonimato.py` y las huellas del
+repositorio de desarrollo. Por lo mismo, la salida de la prueba y la del
+script —que enseñan el principio de cada huella— tampoco se publican cuando
+hay hallazgos.
+
+**No decide qué se cuenta.** Las fechas de las sesiones y de las tutorías, o
+la institución que nombra el `README.md`, no son cadenas de la lista: si se
+publican o no se decide al construir el repositorio que se publica.
+
+**Un salto se ve verde.** Si el `huellas.txt` del repositorio de desarrollo
+se quedara solo con la huella del centinela —porque alguien copió encima el
+del repositorio publicado—, la prueba de huellas del árbol se saltaría y la
+suite seguiría en verde. Se ve corriendo la suite con `-rs`, que lista lo que se
+salta y por qué; y el script, que no se salta nada, sale con 1.
