@@ -675,6 +675,8 @@ La primera caza lo que la herramienta no conoce y tiene forma de
 identificador: el `id` de una credencial que se volvió a crear y no está en
 `valores.local.json` (en los workflows versionados las credenciales solo
 pueden ser marcadores, y cada marcador aparece las veces previstas). La
+herramienta ya se niega a escribir un export así; la prueba es la segunda red,
+para lo que llegue a `n8n/` por otro camino. La
 segunda mira el árbol entero contra las huellas: caza lo que la lista conoce
 y está escrito de otra forma, como el dominio con otro subdominio. En el
 repositorio publicado `huellas.txt` lleva solo la huella del centinela y esa
@@ -693,11 +695,16 @@ versionado: se corrige a mano con el del repositorio, o se despliega antes
 desde el repositorio y se exporta después.
 
 El script se niega —sin escribir nada— si en `valores.local.json` falta un
-marcador, si dos marcadores comparten valor, si al poner los valores la salida
-es el propio fichero de entrada o cae dentro del repositorio, o si tras retirar
-queda algún valor real escrito de otra forma (en mayúsculas, o el dominio sin
-el `https://`); en ese último caso dice la línea, y se corrige a mano. Ningún
-mensaje suyo repite un valor real: dice el marcador y la línea.
+marcador, si dos marcadores comparten valor, si el valor de la URL de n8n lleva
+una ruta, si al poner los valores la salida es el propio fichero de entrada o
+cae dentro del repositorio, o si tras retirar queda algún valor real escrito de
+otra forma (en mayúsculas, o el dominio sin el `https://`); en ese último caso
+dice la línea, y se corrige a mano. Al retirar se niega además si la entrada no
+es UN workflow (la descarga de varios, que es una lista, se pasa de uno en
+uno), y si después de retirar queda una credencial o una URL de webhook que no
+es un marcador: los valores de `valores.local.json` no son los de esa
+descarga. Ningún mensaje suyo repite un valor real: dice el marcador, el nodo o
+la línea.
 
 ---
 
