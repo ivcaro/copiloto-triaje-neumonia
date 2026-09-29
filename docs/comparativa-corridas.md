@@ -67,11 +67,11 @@ Dos reservas que este informe no puede resolver por sí solo:
 
 | Corrida | Reporte leído |
 | :--- | :--- |
-| `kaggle_efficientnet_b0_320px_c2` | `C:\Users\[retirado]\datasets\rsna-pneumonia\trabajo\corridas\kaggle_efficientnet_b0_320px_c2\reporte_metricas.json` |
-| `kaggle_densenet121_320px_c1` | `C:\Users\[retirado]\datasets\rsna-pneumonia\trabajo\corridas\kaggle_densenet121_320px_c1\reporte_metricas.json` |
-| `kaggle_densenet121_320px_c2` | `C:\Users\[retirado]\datasets\rsna-pneumonia\trabajo\corridas\kaggle_densenet121_320px_c2\reporte_metricas.json` |
-| `kaggle_efficientnet_b0_320px_c1` | `C:\Users\[retirado]\datasets\rsna-pneumonia\trabajo\corridas\kaggle_efficientnet_b0_320px_c1\reporte_metricas.json` |
-| `kaggle_mobilenet_v3_large_320px_c1` | `C:\Users\[retirado]\datasets\rsna-pneumonia\trabajo\corridas\kaggle_mobilenet_v3_large_320px_c1\reporte_metricas.json` |
-| `efficientnet_b0_320px_lote24_4+20ep` | `C:\Users\[retirado]\datasets\rsna-pneumonia\trabajo\corridas\efficientnet_b0_320px_lote24_4+20ep\reporte_metricas.json` |
-| `kaggle_mobilenet_v3_large_320px_c2` | `C:\Users\[retirado]\datasets\rsna-pneumonia\trabajo\corridas\kaggle_mobilenet_v3_large_320px_c2\reporte_metricas.json` |
-| `corrida2_densenet121_320px` | `C:\Users\[retirado]\datasets\rsna-pneumonia\trabajo\corridas\colab_densenet121_320px\reporte_metricas.json` |
+| `kaggle_efficientnet_b0_320px_c2` | `kaggle_efficientnet_b0_320px_c2/reporte_metricas.json` |
+| `kaggle_densenet121_320px_c1` | `kaggle_densenet121_320px_c1/reporte_metricas.json` |
+| `kaggle_densenet121_320px_c2` | `kaggle_densenet121_320px_c2/reporte_metricas.json` |
+| `kaggle_efficientnet_b0_320px_c1` | `kaggle_efficientnet_b0_320px_c1/reporte_metricas.json` |
+| `kaggle_mobilenet_v3_large_320px_c1` | `kaggle_mobilenet_v3_large_320px_c1/reporte_metricas.json` |
+| `efficientnet_b0_320px_lote24_4+20ep` | `efficientnet_b0_320px_lote24_4+20ep/reporte_metricas.json` |
+| `kaggle_mobilenet_v3_large_320px_c2` | `kaggle_mobilenet_v3_large_320px_c2/reporte_metricas.json` |
+| `corrida2_densenet121_320px` | `colab_densenet121_320px/reporte_metricas.json` |

@@ -473,10 +473,25 @@ def _seccion_lectura(ordenadas: list[dict]) -> list[str]:
     return lineas
 
 
+def reporte_sin_ruta(ruta_json) -> str:
+    """`<carpeta de la corrida>/<fichero>`: los dos ultimos componentes.
+
+    El informe se versiona y se publica, y la ruta tal como se paso lleva
+    dentro el usuario y las carpetas de la maquina donde se genero (spec de
+    SP5 §6.1). La carpeta de la corrida y el nombre del fichero bastan para
+    saber que reporte se leyo. Siempre con `/`, para que el informe no cambie
+    segun el sistema donde se genere.
+    """
+    ruta_json = Path(ruta_json).resolve()
+    carpeta = ruta_json.parent.name
+    return f"{carpeta}/{ruta_json.name}" if carpeta else ruta_json.name
+
+
 def _seccion_procedencia(ordenadas: list[dict]) -> list[str]:
     lineas = ["## Procedencia", "", "| Corrida | Reporte leído |", "| :--- | :--- |"]
     for resumen in ordenadas:
-        lineas.append(f"| `{resumen['nombre']}` | `{resumen['ruta']}` |")
+        lineas.append(f"| `{resumen['nombre']}` "
+                      f"| `{reporte_sin_ruta(resumen['ruta'])}` |")
     if any(resumen["sin_bloque_corrida"] for resumen in ordenadas):
         lineas += ["",
                    "Alguno de estos reportes no trae el bloque `corrida`, que "
