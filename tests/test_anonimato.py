@@ -44,6 +44,29 @@ OTRO = "tokendeprueba9z"          # un segundo token inventado, para la CLI
 # De donde sale lo que se recorre (clave `origen` de cada hallazgo).
 COPIA, INDICE, COMMIT = "copia de trabajo", "indice", "commit"
 
+# Los binarios versionados, revisados A MANO uno a uno (tests/anonimato/README.md).
+# Un binario nuevo hace fallar la prueba hasta que alguien lo abre, lo mira y
+# lo añade aquí y a la declaración.
+BINARIOS_REVISADOS = (
+    "docs/eda/01_distribucion_clases.png",
+    "docs/eda/02_edad_y_atipicos.png",
+    "docs/eda/03_vista_confusor.png",
+    "docs/eda/04_sexo.png",
+    "docs/eda/05_correlaciones.png",
+    "docs/eda/06_cajas.png",
+    "docs/validacion-semisintetica/contencion_rejilla.png",
+    "docs/validacion-semisintetica/fiabilidad_0a.png",
+    "docs/validacion-semisintetica/fiabilidad_r1-000_r0-030.png",
+    "docs/validacion-semisintetica/fiabilidad_r1-000_r0-060.png",
+    "docs/validacion-semisintetica/fiabilidad_r1-030_r0-000.png",
+    "docs/validacion-semisintetica/fiabilidad_r1-030_r0-030.png",
+    "docs/validacion-semisintetica/fiabilidad_r1-060_r0-000.png",
+    "docs/validacion-semisintetica/fiabilidad_r1-060_r0-060.png",
+    "docs/validacion-semisintetica/horquilla_por_celda.png",
+    "docs/validacion-semisintetica/pendiente_rejilla.png",
+)
+METADATOS_PERMITIDOS = {"Software", "dpi", "Title", "Description"}
+
 
 # --------------------------------------------------------------------------
 # Tokenizacion y huellas
@@ -1343,3 +1366,27 @@ def test_el_arbol_esta_limpio():
              "es el nombre del fichero."]
             + _por_fichero(de_huella, "huella")
             + _por_fichero(de_secreto, "clase")), pytrace=False)
+
+
+# --------------------------------------------------------------------------
+# Lo que no es texto: revisado a mano y declarado
+# --------------------------------------------------------------------------
+def test_los_binarios_versionados_son_los_revisados():
+    """Lo que no es texto no lo recorre la prueba de huellas: se mira a mano y
+    se declara. Si esta prueba falla, hay un binario que nadie ha mirado (o
+    uno sin seguimiento y sin ignorar en la carpeta, que se publicaria con un
+    `git add -A`)."""
+    hallados = sorted(p.relative_to(RAIZ).as_posix() for p in va.binarios(RAIZ))
+    assert hallados == sorted(BINARIOS_REVISADOS)
+
+
+def test_los_png_no_llevan_metadatos_que_identifiquen():
+    from PIL import Image
+    huellas = va.huellas_de_la_lista(va.leer_huellas(HUELLAS))
+    for nombre in BINARIOS_REVISADOS:
+        with Image.open(RAIZ / nombre) as imagen:
+            assert imagen.format == "PNG", nombre
+            assert set(imagen.info) <= METADATOS_PERMITIDOS, (nombre, sorted(imagen.info))
+            texto = " ".join(str(v) for v in imagen.info.values())
+        con_huella = {va.huella(t) for t in va.tokens(texto)} & huellas
+        assert not con_huella, nombre
