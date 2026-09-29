@@ -156,9 +156,11 @@ def test_la_guia_de_despliegue_no_promete_un_valor_por_defecto_para_la_red():
 
 
 # La palabra entera, tambien pegada a un parentesis o a una comilla; `--rm`,
-# `rmi` o `ON_ERROR_STOP` no son ninguna de ellas.
+# `--remove-orphans` o `ON_ERROR_STOP` no son ninguna de ellas. `remove` es el
+# alias de `rm` (`docker volume remove`, `docker network remove`, `docker
+# container remove`), y `rmi` borra una imagen.
 PARAN_O_BORRAN = re.compile(
-    r"(?<![\w-])(down|stop|kill|rm|restart|pause|prune|disconnect)(?![\w-])")
+    r"(?<![\w-])(down|stop|kill|rm|remove|rmi|restart|pause|prune|disconnect)(?![\w-])")
 
 
 def _ordenes(bloque):
@@ -176,23 +178,55 @@ def _las_que_paran(bloque):
             if "docker" in orden and PARAN_O_BORRAN.search(orden)]
 
 
+_VALLA = re.compile(r"\s*(`{3,}|~{3,})")
+_CITA = re.compile(r"\s*(>\s?)+")
+_SANGRADA = re.compile(r"( {4,}|\t)")
+
+
 def _bloques(texto):
-    """[(apartado, bloque)]: el contenido de cada bloque con valla, con
-    lenguaje o sin el (```bash, ```sh, ```), y el titulo del apartado en el
-    que esta. Las vallas pueden ir sangradas, dentro de una lista; y las
-    lineas de un bloque que empiezan por `#` son comentarios, no titulos."""
-    bloques, apartado, dentro = [], "", None
+    """[(apartado, bloque)]: el contenido de cada bloque de la guia y el
+    titulo del apartado en el que esta. Cuentan los que van entre vallas de
+    acentos graves o de tildes, con lenguaje o sin el (```bash, ```, ~~~sh),
+    tambien sangradas dentro de una lista o dentro de una cita (`> ```bash`),
+    y los sangrados sin valla (cuatro espacios o un tabulador detras de una
+    linea en blanco): Markdown los pinta igual y se pegan igual. Las lineas de
+    un bloque que empiezan por `#` son comentarios, no titulos."""
+    bloques, apartado = [], ""
+    valla, en_cita, dentro = None, False, None   # el bloque con valla abierto
+    sangrado = None                              # el bloque sangrado abierto
+    en_blanco = True                             # la linea anterior, vacia
+
+    def cerrar_sangrado():
+        nonlocal sangrado
+        if sangrado is not None:
+            bloques.append((apartado, "\n".join(sangrado).rstrip("\n") + "\n"))
+            sangrado = None
+
     for linea in texto.splitlines():
-        if linea.lstrip().startswith("```"):
-            if dentro is None:
-                dentro = []
-            else:
+        cita = _CITA.match(linea)
+        if valla is not None:
+            contenido = linea[cita.end():] if en_cita and cita else linea
+            if contenido.lstrip().startswith(valla):
                 bloques.append((apartado, "\n".join(dentro) + "\n"))
-                dentro = None
-        elif dentro is not None:
-            dentro.append(linea)
-        elif re.match(r"#{1,6} ", linea):
-            apartado = linea.lstrip("#").strip()
+                valla, dentro = None, None
+            else:
+                dentro.append(contenido)
+            en_blanco = False
+            continue
+        abre = _VALLA.match(linea[cita.end():] if cita else linea)
+        if abre:
+            cerrar_sangrado()
+            valla, en_cita, dentro = abre.group(1), bool(cita), []
+        elif sangrado is not None and (not linea.strip() or _SANGRADA.match(linea)):
+            sangrado.append(linea)
+        else:
+            cerrar_sangrado()
+            if en_blanco and not cita and _SANGRADA.match(linea) and linea.strip():
+                sangrado = [linea]
+            elif not cita and re.match(r"#{1,6} ", linea):
+                apartado = linea.lstrip("#").strip()
+        en_blanco = not linea.strip()
+    cerrar_sangrado()
     return bloques
 
 
@@ -205,7 +239,10 @@ def _bloques(texto):
     ("docker compose \\\n  -p otro \\\n  stop\n", ["docker compose -p otro stop"]),
     ("cd /opt && docker compose up -d --build && docker logs --tail 50 copiloto-mcp\n", []),
     ("rm -f ~/copia\n", []),
-    ("docker run --rm x && docker rmi y\n", []),
+    ("docker compose -p x up -d --remove-orphans\n", []),
+    ("docker run --rm x\n", []),
+    ("docker rmi y\n", ["docker rmi y"]),
+    ("docker volume remove v\n", ["docker volume remove v"]),
 ])
 def test_las_que_paran_mira_el_trozo_entero(bloque, paran):
     assert _las_que_paran(bloque) == paran
@@ -228,27 +265,38 @@ EXCEPCIONES = {
 _COMPOSE = re.compile(r"docker(-|\s+)compose(?![\w-])")
 _POR_PROYECTO = re.compile(r"(?<![\w-])(-p\s+|--project-name[\s=]+)copiloto-mcp(?![\w-])")
 _CON_VOLUMENES = re.compile(r"(?<![\w-])(-[A-Za-z]*v[A-Za-z]*|--volumes)(?![\w-])")
-_BORRA_VOLUMEN = re.compile(r"docker\s+volume\s+rm(?![\w-])")
+_BORRA_VOLUMEN = re.compile(r"docker\s+volume\s+(rm|remove)(?![\w-])")
+_BORRA_IMAGEN = re.compile(r"docker\s+(rmi|image\s+(rm|remove))(?![\w-])")
+# La imagen del proyecto, la de la linea 12 del compose (la fija la prueba de
+# las lineas que cita la guia): borrarla solo cuesta reconstruirla.
+IMAGEN_DEL_PROYECTO = "copiloto-mcp:0.1.0"
 
 
 def _ordenes_que_no_valen(guia):
-    """Las ordenes de los bloques de la guia (con cualquier valla) que borran
-    datos o pueden parar lo ajeno: un `down` con `-v` o `--volumes` en
-    cualquier posicion, un `docker volume rm` o un `prune`, y cualquier orden
-    que pare, arranque o borre algo sin ser de Compose por nombre de proyecto
-    (`-p copiloto-mcp`), salvo las `EXCEPCIONES`. Devuelve [(apartado,
-    orden, por que)]; tambien, las excepciones que ya no estan en la guia."""
+    """Las ordenes de los bloques de la guia (de todas las clases que
+    reconoce `_bloques`) que borran datos o pueden parar lo ajeno: un `down`
+    con `-v` o `--volumes` en cualquier posicion, un `docker volume rm` (o
+    `remove`) o un `prune`, un `docker rmi` de una imagen que no es la del
+    proyecto, y cualquier orden que pare, arranque o borre algo sin ser de
+    Compose por nombre de proyecto (`-p copiloto-mcp`), salvo las
+    `EXCEPCIONES`. Devuelve [(apartado, orden, por que)]; tambien, las
+    excepciones que ya no estan en la guia."""
     malas, usadas = [], set()
     for apartado, bloque in _bloques(guia):
         for orden in _ordenes(bloque):
             orden = " ".join(orden.split())
             if "docker" not in orden:
                 continue
+            imagen = _BORRA_IMAGEN.search(orden)
             if (re.search(r"(?<![\w-])down(?![\w-])", orden)
                     and _CON_VOLUMENES.search(orden)):
                 malas.append((apartado, orden, "down con volumenes: borra la base"))
             elif _BORRA_VOLUMEN.search(orden) or re.search(r"(?<![\w-])prune(?![\w-])", orden):
                 malas.append((apartado, orden, "borra volumenes o imagenes"))
+            elif imagen:
+                borradas = [p for p in orden[imagen.end():].split() if not p.startswith("-")]
+                if not borradas or any(i != IMAGEN_DEL_PROYECTO for i in borradas):
+                    malas.append((apartado, orden, "borra una imagen que no es la del proyecto"))
             elif (PARAN_O_BORRAN.search(orden)
                   or re.search(r"(?<![\w-])start(?![\w-])", orden)):
                 if (apartado, orden) in EXCEPCIONES:
@@ -298,9 +346,24 @@ ORDEN_DE_SIEMPRE = ("docker compose -f servidor/docker-compose.yml up -d --build
     lambda g: g + "\n## 13. Otra cosa\n\n```bash\ndocker compose down\n```\n",
     lambda g: g + "\n```bash\ndocker system prune -a\n```\n",
     lambda g: g + "\n```bash\nsystemctl restart docker\n```\n",
+    # `remove`, el alias de `rm`
+    lambda g: g + "\n```bash\ndocker volume remove copiloto-mcp_copiloto_bd_datos\n```\n",
+    lambda g: g + "\n```bash\ndocker network remove otra-red\n```\n",
+    lambda g: g + "\n```bash\ndocker container remove -f n8n\n```\n",
+    # una imagen que no es la del proyecto
+    lambda g: g + "\n```bash\ndocker rmi n8nio/n8n\n```\n",
+    lambda g: g + "\n```bash\ndocker image rm copiloto-mcp:0.1.0 n8nio/n8n\n```\n",
+    # bloques que no van entre acentos graves, o que van dentro de una cita
+    lambda g: g + "\n~~~bash\ndocker volume rm copiloto-mcp_copiloto_bd_datos\n~~~\n",
+    lambda g: g + "\n> ```bash\n> docker stop n8n\n> ```\n",
+    lambda g: g + "\nPara pararlo todo:\n\n    docker stop n8n\n",
+    lambda g: g + "\n1. Si hace falta:\n\n\tdocker compose down --volumes\n",
 ], ids=["volume-rm-en-sh", "volumes-detras-sin-lenguaje", "stop-de-otro-contenedor",
         "down-v-en-la-orden-de-siempre", "excepcion-fuera-de-su-apartado",
-        "prune", "reiniciar-docker"])
+        "prune", "reiniciar-docker", "volume-remove", "network-remove",
+        "container-remove", "rmi-de-otra-imagen", "image-rm-de-otra-imagen",
+        "valla-de-tildes", "valla-en-una-cita", "sangrado-sin-valla",
+        "sangrado-con-tabulador"])
 def test_la_comprobacion_de_la_guia_caza_las_ordenes_peligrosas(mutar):
     guia = _guia()
     assert ORDEN_DE_SIEMPRE in guia
@@ -382,17 +445,52 @@ def test_el_primer_redespliegue_no_baja_el_servicio_antes_de_construir():
     seguido = " ".join(apartado.split())
     assert ("`git switch main`, y otra vez desde el punto 1. El commit de vuelta "
             "sigue siendo el que apuntaste la primera vez") in seguido
+    # y lo que significa lo que da la guarda: con la explicacion al reves, el
+    # segundo intento volveria a apuntar como commit de vuelta el nuevo
+    for dice in ("Si da `1`, el código nuevo ya está en el disco",
+                 "no es el de ahora",
+                 "(si el `grep` dio `0`)"):
+        assert dice in seguido, dice
 
-    # la copia de la base se restaura en una sola transaccion: si se
-    # interrumpe, la base se queda como estaba
+    # si el contenedor esta en dos redes: dicho entre la orden que las lista
+    # (punto 2) y la que mira si la variable ya esta en el `.env`
+    redes = ("docker inspect copiloto-mcp --format '{{range $red, $c := "
+             ".NetworkSettings.Networks}}{{println $red}}{{end}}'")
+    ya_esta = "grep -c '^RED_N8N='"
+    for dice in ("Si salen dos, para", "la pierde al recrearse"):
+        assert seguido.index(redes) < seguido.index(dice) < seguido.index(ya_esta), dice
+
+    # el camino B no se cubre a medias: se dice que no, y no hay copia del arbol
+    assert "no cubre el camino B" in seguido
+    assert "cp -a" not in apartado
+
+    # la copia de la base se comprueba entera al hacerla: una copia cortada
+    # no daria ningun error al restaurarla
+    (copia,) = copias
+    comprobar = "gunzip -t ~/copiloto-bd.antes-de-red_n8n.sql.gz"
+    assert copia.index("pg_dump") < copia.index(comprobar) < copia.index("ls -l")
+
+    # la copia de la base se restaura en una sola transaccion, y antes se
+    # comprueba que esta entera
     (restaura,) = [b for b in bloques if "gunzip -c ~/copiloto-bd.antes-de-red_n8n.sql.gz" in b]
     assert re.search(r"docker exec -i copiloto-bd psql .*(?<![\w-])-1(?![\w-])", restaura)
     assert "-v ON_ERROR_STOP=1" in restaura
+    assert restaura.index(comprobar) < restaura.index("gunzip -c")
 
     # las copias se borran con `rm -f`: tambien si una de las dos no llego a hacerse
     borrar = [b for b in bloques if "antes-de-red_n8n" in b and re.search(r"(?<![\w-])rm ", b)]
     assert [b.strip() for b in borrar] == [
         "rm -f ~/copiloto.env.antes-de-red_n8n ~/copiloto-bd.antes-de-red_n8n.sql.gz"]
+
+
+def test_la_plantilla_del_env_se_copia_sin_pisar_el_que_hay():
+    """El `.env` lleva la contraseña de la base: copiar encima la plantilla,
+    pegando la orden sin leer la condicion de delante, la perderia. Con `-n`,
+    `cp` no pisa un fichero que ya existe."""
+    copias = re.findall(r"\bcp\b([^`\n]*?)servidor/\.env\.ejemplo\s+servidor/\.env\b",
+                        _guia())
+    assert copias, "la guia ya no dice como nace servidor/.env"
+    assert all(re.search(r"(?<![\w-])-n\b", opciones) for opciones in copias), copias
 
 
 # --- Lo que sostiene la seguridad de la guia --------------------------------
