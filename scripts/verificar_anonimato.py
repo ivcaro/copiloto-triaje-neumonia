@@ -3,14 +3,16 @@
 Uso, desde la raiz del repositorio:
 
     python scripts/verificar_anonimato.py
-    python scripts/verificar_anonimato.py --raiz <arbol> --commit --un-solo-commit
-    ANONIMATO_LISTA=<lista en claro> python scripts/verificar_anonimato.py --regenerar
+    python scripts/verificar_anonimato.py --raiz <arbol> --huellas <huellas> --un-solo-commit
+    python scripts/verificar_anonimato.py --regenerar --lista <lista en claro>
+    python scripts/verificar_anonimato.py --regenerar --solo-centinela --huellas <destino>
 
 Mira lo que se publicaria: la copia de trabajo (en un repositorio, lo que
 tiene seguimiento y lo que no lo tiene ni esta ignorado), lo preparado en el
 indice que no es lo que hay en disco y, con --commit (o --un-solo-commit,
-que lo implica), el arbol de ese commit, su autor, quien lo confirma y su
-mensaje, y los nombres de las ramas y de las etiquetas. Busca dos cosas:
+que lo implica), el arbol de ese commit, su autor, quien lo confirma, su
+mensaje y sus cabeceras, y los nombres de las ramas y de las etiquetas.
+Busca:
 
 1. HUELLAS. La lista de cadenas que identifican al cliente, a la empresa, a la
    maquina o a los integrantes NO vive en el repositorio. El repositorio lleva
@@ -20,20 +22,35 @@ mensaje, y los nombres de las ramas y de las etiquetas. Busca dos cosas:
    tildes, particion por todo lo que no sea [a-z0-9], tambien desescapado) y
    se compara huella con huella.
 2. SECRETOS, por patron: token de bot de Telegram, claves de API, claves
-   privadas, cabeceras Authorization, asignaciones de contrasenas y tokens,
-   contrasena dentro de una URL, y ficheros que no deben viajar (`.env`,
-   claves). Un enlace simbolico o un submodulo es un hallazgo `no_recorrido`.
+   privadas, cabeceras Authorization, contrasena dentro de una URL,
+   asignaciones de contrasenas, tokens y claves, y ficheros que no deben
+   viajar (`.env`, claves). Una asignacion se reconoce por el NOMBRE de la
+   clave (lleva `password`, `passwd`, `secret`, `token` o `api_key`; o acaba
+   en `_KEY` escrito en mayusculas, o en `access_key`, `private_key`,
+   `encryption_key`, `signing_key`, `client_key` o `master_key`) y cuenta si
+   su valor es un literal con forma de secreto: entre comillas, salvo una
+   expresion (`{{`, `${`, `$(`, o `=` delante); suelto, si no lleva
+   parentesis, corchetes ni llaves; con subindice o detras de una coma, solo
+   entre comillas. Un enlace simbolico o un submodulo es un hallazgo
+   `no_recorrido`. Los nombres de las ramas y de las etiquetas se miran
+   tambien contra estos patrones.
+3. Con --commit, las CABECERAS del commit: la que no sea `tree`, `author` ni
+   `committer` es un hallazgo (una firma lleva el identificador de la clave
+   de quien firma); `parent`, solo con --un-solo-commit.
+4. Con --un-solo-commit (la orden de publicar), las HUELLAS PUBLICADAS: una
+   huella de la lista escrita en el arbol que se publica (su `huellas.txt`
+   tiene que llevar solo la del centinela: ver --solo-centinela).
 
 Ninguna salida lleva el token ni el secreto en claro: fichero, linea y huella
 o clase. En los nombres (de fichero, de rama, de etiqueta, la revision) el
-token sale tapado por el principio de su huella y el secreto por
-`<secreto>`; las rutas salen relativas a la raiz que se recorre (la de las
-huellas, como se paso).
+token sale tapado por el principio de su huella, el secreto por
+`<secreto>` y una huella de la lista por `<huella-publicada>`; las rutas
+salen relativas a la raiz que se recorre (la de las huellas, como se paso).
 
 Sale con 0 si no hay hallazgos y con 1 si los hay, si no se ha recorrido
-ningun fichero o si las huellas son solo la del centinela. Con binarios sin
-recorrer, la ultima linea no dice «limpio» a secas: se revisan a mano. Lo
-usa `tests/test_anonimato.py`, que lo carga por ruta.
+ningun fichero de texto o si las huellas son solo la del centinela. Con
+binarios sin recorrer, la ultima linea no dice «limpio» a secas: se revisan a
+mano. Lo usa `tests/test_anonimato.py`, que lo carga por ruta.
 """
 import argparse
 import codecs
@@ -209,6 +226,16 @@ def regenerar(lista, destino):
             f"{len(malas)} entradas de [huellas] no dan exactamente un token "
             f"(números de entrada: {', '.join(map(str, malas))}); pon un "
             "token por línea")
+    return _escribir_huellas(todas, destino)
+
+
+def regenerar_solo_centinela(destino):
+    """Escribe el `huellas.txt` del repositorio que se publica (D9): la
+    cabecera y la huella del centinela, sin lista."""
+    return _escribir_huellas({huella(CENTINELA)}, destino)
+
+
+def _escribir_huellas(todas, destino):
     destino = Path(destino)
     destino.parent.mkdir(parents=True, exist_ok=True)
     with open(destino, "w", encoding="utf-8", newline="\n") as salida:
@@ -553,10 +580,45 @@ def buscar_huellas(raiz, huellas, commit=None):
     return _huellas_en(_piezas(raiz, commit, huellas), huellas)
 
 
+# Un token de 64 hexadecimales: lo que es una huella escrita en un fichero.
+TOKEN_HEXADECIMAL = re.compile(r"(?<![A-Za-z0-9])[0-9A-Fa-f]{64}(?![A-Za-z0-9])")
+
+
+def _huellas_publicadas_en(piezas, huellas):
+    """Las huellas de la lista (`huellas`, ya sin la del centinela) escritas
+    en lo que se publica: fichero, linea, clase `huella_publicada` y origen.
+    La huella no sale nunca.
+
+    Solo para el arbol que se publica (--un-solo-commit): el de desarrollo
+    lleva su propio `huellas.txt` con la lista entera. Publicarlo es
+    publicar, para quien tenga un diccionario, buena parte de la lista (D9).
+    """
+    huellas = set(huellas)
+    hallazgos = []
+
+    def mirar(texto, fichero, linea, origen):
+        for m in TOKEN_HEXADECIMAL.finditer(texto):
+            if m.group().lower() in huellas:
+                hallazgos.append({"fichero": fichero, "linea": linea,
+                                  "clase": "huella_publicada",
+                                  "origen": origen})
+
+    for pieza in piezas:
+        fichero = _publicable(pieza.nombre, huellas)
+        if pieza.primera:
+            mirar(pieza.nombre, fichero, 0, pieza.origen)
+        if pieza.texto is None:
+            continue
+        for n, linea in enumerate(pieza.texto.splitlines(), 1):
+            mirar(linea, fichero, n, pieza.origen)
+    return hallazgos
+
+
 def _tapar_tokens(parte, huellas):
     """El componente con cada token de la lista cambiado por `<huella-...>`,
     el principio de su huella; lo demas se queda (`informe-<huella-...>.md`),
-    para que dos nombres distintos no salgan iguales.
+    para que dos nombres distintos no salgan iguales. Un token que ES una
+    huella de la lista pasa a `<huella-publicada>`: no se imprime.
 
     Recorre el texto original: los caracteres que normalizados dan
     `[a-z0-9]` forman el token; los que no dan nada (marcas, formato) van
@@ -567,8 +629,12 @@ def _tapar_tokens(parte, huellas):
     def cerrar():
         if tramo:
             una = huella("".join(token))
-            salida.append(f"<huella-{una[:12]}>" if una in huellas
-                          else "".join(tramo))
+            if una in huellas:
+                salida.append(f"<huella-{una[:12]}>")
+            elif "".join(token) in huellas:
+                salida.append("<huella-publicada>")
+            else:
+                salida.append("".join(tramo))
             tramo.clear()
             token.clear()
 
@@ -611,10 +677,11 @@ def _publicable(fichero, huellas):
 # Secretos
 # --------------------------------------------------------------------------
 PATRONES_DE_SECRETO = {
-    # Suelto, o pegado a `bot` como va en la URL de la API de Telegram.
+    # Suelto, o pegado a `bot` (o `Bot`, `BOT`) como va en la URL de la API
+    # de Telegram; los dos puntos, tal cual o escapados (`%3A`).
     "token_de_bot_de_telegram": re.compile(
-        r"(?:(?<=bot)|(?<![0-9A-Za-z]))\d{8,12}:[A-Za-z0-9_-]{35}"
-        r"(?![A-Za-z0-9_-])"),
+        r"(?:(?<=[bB][oO][tT])|(?<![0-9A-Za-z]))\d{8,12}(?::|%3[aA])"
+        r"[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])"),
     "clave_de_api_sk": re.compile(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}"),
     "clave_de_api_akia": re.compile(
         r"(?<![A-Z0-9])AKIA[0-9A-Z]{16}(?![0-9A-Z])"),
@@ -640,10 +707,14 @@ PATRONES_DE_SECRETO = {
 # Esquema, dos barras, usuario (puede ir vacio), dos puntos, contrasena
 # (puede llevar `/`: la de base64 casi siempre la lleva), arroba y host.
 URL_CON_CONTRASENA = re.compile(
-    r"[A-Za-z][A-Za-z0-9+.-]*://[^\s/:@]*:([^\s@]+)@")
+    r"[A-Za-z][A-Za-z0-9+.-]*://(?P<usuario>[^\s/:@]*):"
+    r"(?P<contrasena>[^\s@]+)@")
 # Lo que en esa forma no es una contrasena sino un puerto y una ruta
-# (`https://ejemplo.test:8443/ruta/@ambito`).
+# (`https://ejemplo.test:8443/ruta/@ambito`): cifras y `/`, detras de algo
+# que parece un host (lleva un punto, o es `localhost`). Detras de un
+# usuario, `u:2024/Secreta9x@host` es una contrasena que empieza por cifras.
 PUERTO_Y_RUTA = re.compile(r"\d{1,5}/.*")
+PARECE_UN_HOST = re.compile(r"(?i)localhost|[^.]+(?:\.[^.]+)+")
 
 # Los valores de ejemplo que se permiten, en una URL o en una asignacion. Las
 # palabras salen del inventario del arbol (28-sep): `prueba` es la del
@@ -657,20 +728,38 @@ CONTRASENAS_DE_EJEMPLO = ("prueba", "cambiar-esto", "clave", "token",
 CONTRASENA_MARCADOR = re.compile(
     r"<[^<>:/@]+>|\$[A-Z_][A-Z0-9_]*|\$\{[A-Z_][A-Z0-9_]*[^{}]*\}")
 
-# Una clave que nombra un secreto (lleva `password`, `passwd`, `secret`,
-# `token` o `api_key`, o acaba en `_key`), y su valor: detras de `=` o `:`
-# (tambien con subindice, `os.environ["X_PASSWORD"] = ...`), o, si la clave
-# va entre comillas, detras de una coma (`setenv("X_PASSWORD", ...)`). El
-# valor va entre comillas, es `${...}` entero, o va suelto hasta el primer
-# blanco, comilla, coma o `;`.
+# Una clave que nombra un secreto, y su valor.
+#
+# La clave lleva `password`, `passwd`, `secret`, `token` o `api_key` (sin
+# distinguir mayusculas), o ACABA en `_KEY` escrito en mayusculas (la
+# convencion de las variables de entorno: `KAGGLE_KEY`, `AWS_ACCESS_KEY`)
+# o, en minusculas, en uno de unos pocos nombres (`access_key`,
+# `private_key`, `encryption_key`, `signing_key`, `client_key`,
+# `master_key`). `cache_key`, `primary_key` o `model_key` no nombran un
+# secreto.
+#
+# El valor va detras de `=` o `:`; con subindice
+# (`os.environ["X_PASSWORD"] = ...`, grupo `subindice`); o, si la clave va
+# entre comillas, detras de una coma (`setenv("X_PASSWORD", ...)`, grupo
+# `coma`). Va entre comillas (`doble`, `simple`), es `${...}` entero
+# (`llaves`) o va suelto hasta el primer blanco, comilla, coma o `;`
+# (`suelto`). Con subindice o detras de una coma, solo cuenta entre
+# comillas: suelto es una variable (ver `_secretos_de_la_linea`).
 ASIGNACION = re.compile(
     r"(?i)(?<![A-Za-z0-9_])(?P<comilla>[\"'])?"
     r"[A-Za-z0-9_.-]*(?:(?:password|passwd|secret|token|api[_-]?key)"
-    r"[A-Za-z0-9_.-]*|_key(?![A-Za-z0-9_.-]))"
-    r"(?:[\"']?\s*\]?\s*[:=]|(?(comilla)(?P=comilla)\s*,|(?!)))\s*"
+    r"[A-Za-z0-9_.-]*"
+    r"|(?:(?:access|private|encryption|signing|client|master)_key"
+    r"|(?-i:_KEY))(?![A-Za-z0-9_.-]))"
+    r"(?:[\"']?\s*(?P<subindice>\])?\s*[:=]"
+    r"|(?(comilla)(?P=comilla)\s*(?P<coma>,)|(?!)))\s*"
     r"(?:\"(?P<doble>[^\"]*)\"|'(?P<simple>[^']*)'"
     r"|(?P<llaves>\$\{[^{}]*\})|(?P<suelto>[^\s\"',;]+))")
 VALOR_DE_LA_ASIGNACION = ("doble", "simple", "llaves", "suelto")
+# La linea que no lleva ninguna de estas palabras no puede llevar una
+# asignacion de secreto, y no se le aplica ASIGNACION: en una tirada larga de
+# letras, cifras, puntos y guiones su coste es cuadratico (A7).
+PALABRA_DE_LA_ASIGNACION = re.compile(r"(?i)password|passwd|secret|token|key")
 # Lo que parece un secreto en una asignacion: 8 o mas caracteres, con letras
 # Y cifras. Deja pasar los nombres de variable, las palabras de ejemplo
 # (`cambiar-esto`, `verifica`) y los ids de ejemplo; y tambien, sin remedio,
@@ -678,8 +767,11 @@ VALOR_DE_LA_ASIGNACION = ("doble", "simple", "llaves", "suelto")
 LITERAL_QUE_PARECE_SECRETO = re.compile(
     r"(?=.*[A-Za-z])(?=.*[0-9]).{8,}")
 # Una expresion no es un literal: una llamada, un subindice, una expresion
-# de n8n (`={{ ... }}`).
+# de n8n (`={{ ... }}`). Suelta, la delata cualquier parentesis, corchete o
+# llave; entre comillas, solo `{{`, `${`, `$(` o un `=` delante (la de
+# n8n): `"S3cr{eta}9x"` es un literal.
 EXPRESION = re.compile(r"[()\[\]{}]")
+EXPRESION_ENTRE_COMILLAS = re.compile(r"\{\{|\$\{|\$\(|^=")
 # `${NOMBRE:-valor}` (o `-`, `:=`, `=`): lo de detras es un literal.
 CON_VALOR_POR_DEFECTO = re.compile(
     r"\$\{[A-Za-z_][A-Za-z0-9_]*:?[-=](?P<valor>[^{}]*)\}")
@@ -700,14 +792,15 @@ def _es_de_ejemplo(contrasena):
             or CONTRASENA_MARCADOR.fullmatch(contrasena) is not None)
 
 
-def _es_un_literal_secreto(valor):
+def _es_un_literal_secreto(valor, entre_comillas=False):
     """El valor de una asignacion es un secreto si es un LITERAL (no una
     variable ni una expresion) que no es de ejemplo y lo parece."""
     por_defecto = CON_VALOR_POR_DEFECTO.fullmatch(valor)
     if por_defecto is not None:
         valor = por_defecto.group("valor")
+    expresion = EXPRESION_ENTRE_COMILLAS if entre_comillas else EXPRESION
     return (LITERAL_QUE_PARECE_SECRETO.fullmatch(valor) is not None
-            and EXPRESION.search(valor) is None
+            and expresion.search(valor) is None
             and not _es_de_ejemplo(valor))
 
 
@@ -717,15 +810,23 @@ def _secretos_de_la_linea(linea):
     for clase, patron in PATRONES_DE_SECRETO.items():
         for m in patron.finditer(linea):
             yield clase, m.start(), m.end()
-    for m in URL_CON_CONTRASENA.finditer(linea):
-        contrasena = m.group(1)
-        if not (_es_de_ejemplo(contrasena)
-                or PUERTO_Y_RUTA.fullmatch(contrasena)):
-            yield "contrasena_en_url", m.start(1), m.end(1)
+    if "://" in linea:                  # si no, no hay URL: no se busca (A7)
+        for m in URL_CON_CONTRASENA.finditer(linea):
+            contrasena = m.group("contrasena")
+            puerto = (PUERTO_Y_RUTA.fullmatch(contrasena)
+                      and PARECE_UN_HOST.fullmatch(m.group("usuario")))
+            if not (_es_de_ejemplo(contrasena) or puerto):
+                yield ("contrasena_en_url", m.start("contrasena"),
+                       m.end("contrasena"))
+    if PALABRA_DE_LA_ASIGNACION.search(linea) is None:
+        return
     for m in ASIGNACION.finditer(linea):
         grupo = next(g for g in VALOR_DE_LA_ASIGNACION
                      if m.group(g) is not None)
-        if _es_un_literal_secreto(m.group(grupo)):
+        entre_comillas = grupo in ("doble", "simple")
+        if (m.group("subindice") or m.group("coma")) and not entre_comillas:
+            continue                    # `os.environ["X"] = variable`
+        if _es_un_literal_secreto(m.group(grupo), entre_comillas):
             yield "asignacion_de_secreto", m.start(grupo), m.end(grupo)
 
 
@@ -849,6 +950,42 @@ def verificar_commit(raiz, revision="HEAD", huellas=None):
     return hallazgos
 
 
+# Las cabeceras que lleva un commit sin firma: su arbol, su autor y quien lo
+# confirma (y `parent`, si no es el unico).
+CABECERAS_DEL_COMMIT = ("tree", "author", "committer")
+
+
+def cabeceras_del_commit(raiz, revision="HEAD", huellas=None,
+                         un_solo_commit=False):
+    """Las cabeceras del commit en crudo (`git cat-file commit`) que no son
+    las de CABECERAS_DEL_COMMIT: `campo` (el NOMBRE de la cabecera, nunca su
+    valor), `linea` 0 y clase `cabecera_del_commit`.
+
+    Una firma (`gpgsig`) lleva el identificador de la clave de quien firma.
+    `parent` solo es hallazgo con `un_solo_commit`: un commit con padre no es
+    el unico. Sin `huellas`, las del repositorio donde vive el script (solo
+    tapan la revision y los nombres).
+    """
+    if huellas is None:
+        huellas = huellas_de_la_lista(leer_huellas(HUELLAS_POR_DEFECTO))
+    huellas = set(huellas)
+    crudo = _git(raiz, "cat-file", "commit", revision)
+    if crudo is None:
+        raise SystemExit("No se pudo leer el commit "
+                         f"{_publicable(revision, huellas)} del árbol que se "
+                         "comprueba: ¿es un repositorio de git con commits?")
+    permitidas = CABECERAS_DEL_COMMIT + (() if un_solo_commit else ("parent",))
+    hallazgos = []
+    for linea in crudo.split(b"\n\n", 1)[0].split(b"\n"):
+        if not linea or linea.startswith(b" "):     # la continuacion de otra
+            continue
+        nombre = linea.split(b" ", 1)[0].decode("utf-8", errors="replace")
+        if nombre not in permitidas:
+            hallazgos.append({"campo": _publicable(nombre, huellas),
+                              "linea": 0, "clase": "cabecera_del_commit"})
+    return hallazgos
+
+
 def _nombres_de_referencias(raiz):
     """[(referencia, nombre)]: las ramas (con la de HEAD, aunque aun no
     tenga commits) y las etiquetas. Sus nombres se publican con el push."""
@@ -867,18 +1004,26 @@ def _nombres_de_referencias(raiz):
 
 
 def verificar_referencias(raiz, huellas):
-    """Los nombres de las ramas y de las etiquetas, contra las huellas.
+    """Los nombres de las ramas y de las etiquetas, contra las huellas y
+    contra los patrones de secretos (cada componente, como el nombre de un
+    fichero).
 
     Devuelve `referencia` (`rama` o `etiqueta`), `nombre` (el publicable,
-    con el token tapado) y `huella`.
+    con el token y el secreto tapados) y `huella` o `clase`.
     """
     huellas = set(huellas)
     hallazgos = []
     for referencia, nombre in _nombres_de_referencias(raiz):
+        publicable = _publicable(nombre, huellas)
         for una in sorted({huella(t) for t in tokens(nombre)} & huellas):
             hallazgos.append({"referencia": referencia,
-                              "nombre": _publicable(nombre, huellas),
-                              "huella": una})
+                              "nombre": publicable, "huella": una})
+        clases = []
+        for parte in nombre.split("/"):
+            clases += [c for c in _clases_de_secreto(parte)
+                       if c not in clases]
+        hallazgos += [{"referencia": referencia, "nombre": publicable,
+                       "clase": clase} for clase in clases]
     return hallazgos
 
 
@@ -929,18 +1074,25 @@ def _argumentos(argv):
     analizador.add_argument("--commit", nargs="?", const="HEAD", default=None,
                             metavar="REV",
                             help="comprueba también el árbol, el autor, "
-                                 "quien confirma y el mensaje de ese commit "
-                                 "(HEAD), y los nombres de ramas y etiquetas")
+                                 "quien confirma, el mensaje y las cabeceras "
+                                 "de ese commit (HEAD), y los nombres de "
+                                 "ramas y etiquetas")
     analizador.add_argument("--un-solo-commit", action="store_true",
                             help="exige que el repositorio entero tenga un "
                                  "solo commit, una sola rama y ninguna "
-                                 "etiqueta; implica --commit HEAD")
+                                 "etiqueta, y que el árbol no lleve ninguna "
+                                 "huella de la lista; implica --commit HEAD")
     analizador.add_argument("--regenerar", action="store_true",
                             help="escribe el fichero de huellas desde la "
                                  f"lista en claro ({VARIABLE_DE_LA_LISTA} o "
                                  "--lista)")
     analizador.add_argument("--lista", type=Path, default=None,
                             help="la lista en claro, fuera del repositorio")
+    analizador.add_argument("--solo-centinela", action="store_true",
+                            help="con --regenerar, escribe en --huellas el "
+                                 "huellas.txt del repositorio que se publica: "
+                                 "la cabecera y la huella del centinela, sin "
+                                 "lista")
     return analizador.parse_args(argv)
 
 
@@ -952,7 +1104,30 @@ def _las_huellas(args):
     return Path(args.huellas), args.huellas
 
 
+def _solo_centinela(args):
+    """El `huellas.txt` del repositorio que se publica (D9). No lee ni
+    --lista ni ANONIMATO_LISTA. Exige --huellas: la de por defecto es la de
+    este repositorio, que en el de desarrollo lleva la lista entera."""
+    if args.lista is not None:
+        raise SystemExit("--solo-centinela no lleva lista: escribe solo la "
+                         "huella del centinela. Quita --lista.")
+    if args.huellas is None:
+        raise SystemExit(
+            "Con --solo-centinela, di dónde se escribe con --huellas (el "
+            "huellas.txt del árbol que se publica): el de este repositorio, "
+            "en el de desarrollo, lleva la lista entera.")
+    destino, mostrado = _las_huellas(args)
+    try:
+        regenerar_solo_centinela(destino)
+    except OSError:
+        raise SystemExit(f"No se pudieron escribir las huellas en {mostrado}.")
+    print(f"1 huella escrita en {mostrado} (solo la del centinela).")
+    return 0
+
+
 def _regenerar(args):
+    if args.solo_centinela:
+        return _solo_centinela(args)
     lista = args.lista or os.environ.get(VARIABLE_DE_LA_LISTA)
     if not lista:
         raise SystemExit(
@@ -1002,6 +1177,9 @@ def main(argv=None):
     args = _argumentos(argv)
     if args.regenerar:
         return _regenerar(args)
+    if args.solo_centinela:
+        raise SystemExit("--solo-centinela va con --regenerar: escribe el "
+                         "huellas.txt del repositorio que se publica.")
 
     huellas = _huellas_de_la_cli(*_las_huellas(args))
     if args.un_solo_commit and args.commit is None:
@@ -1011,6 +1189,9 @@ def main(argv=None):
     piezas = _piezas(args.raiz, args.commit, huellas)
     de_huella = _huellas_en(piezas, huellas)
     de_secreto = _secretos_en(piezas, huellas)
+    # En el arbol que se publica, ninguna huella de la lista (D9).
+    publicadas = (_huellas_publicadas_en(piezas, huellas)
+                  if args.un_solo_commit else [])
 
     def de_donde(h):
         return "" if h["origen"] == COPIA else f" ({h['origen']})"
@@ -1019,14 +1200,15 @@ def main(argv=None):
         return (f"huella {h['huella'][:12]}" if "huella" in h
                 else h["clase"])
 
-    for h in de_huella:
-        print(f"{h['fichero']}:{h['linea']}: {que(h)}" + de_donde(h))
-    for h in de_secreto:
+    for h in de_huella + de_secreto + publicadas:
         print(f"{h['fichero']}:{h['linea']}: {que(h)}" + de_donde(h))
 
     del_commit, de_referencia = [], []
     if args.commit is not None:
-        del_commit = verificar_commit(args.raiz, args.commit, huellas=huellas)
+        del_commit = (verificar_commit(args.raiz, args.commit, huellas=huellas)
+                      + cabeceras_del_commit(
+                          args.raiz, args.commit, huellas,
+                          un_solo_commit=args.un_solo_commit))
         for h in del_commit:
             donde = (f"{h['campo']}:{h['linea']}" if h["linea"]
                      else h["campo"])
@@ -1057,8 +1239,10 @@ def main(argv=None):
         por_clase[h["clase"]] = por_clase.get(h["clase"], 0) + 1
     detalle = ", ".join(f"{c}: {n}" for c, n in sorted(por_clase.items()))
     print(f"secretos: {len(de_secreto)}" + (f" ({detalle})" if detalle else ""))
-    mal = (len(de_huella) + len(de_secreto) + len(del_commit)
-           + len(de_referencia))
+    if args.un_solo_commit:
+        print(f"huellas publicadas: {len(publicadas)}")
+    mal = (len(de_huella) + len(de_secreto) + len(publicadas)
+           + len(del_commit) + len(de_referencia))
     if args.commit is not None:
         print(f"commit {revision}: {len(del_commit)}")
         print(f"nombres de ramas y etiquetas: {len(de_referencia)}")
