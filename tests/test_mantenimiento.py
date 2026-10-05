@@ -28,6 +28,7 @@ import io
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import time
@@ -740,7 +741,7 @@ def test_sin_N8N_URL_main_sale_con_un_mensaje_y_no_pide_ningun_token(
     monkeypatch.setattr(vw.urllib.request, "urlopen",
                         lambda *a, **k: pytest.fail("no había a quién avisar"))
 
-    assert vw.main() == 1
+    assert vw.main([]) == 1
 
     salida = capsys.readouterr().out
     assert "N8N_URL" in salida and "Qué hacer" in salida
@@ -756,7 +757,7 @@ def test_sin_N8N_URL_la_tarea_programada_avisa_por_telegram(monkeypatch, capsys)
     _main_que_no_toca_nada(monkeypatch)
     enviados = _canal_de_avisos_falso(monkeypatch)
 
-    assert vw.main() == 1
+    assert vw.main([]) == 1
 
     assert enviados["url"] == "https://api.telegram.org/botT0K3N/sendMessage"
     assert enviados["cuerpo"]["chat_id"] == "987"
@@ -791,10 +792,9 @@ class _Entrada(io.StringIO):
 
 
 def test_sin_consola_y_sin_token_el_vigilante_no_espera_y_lo_cuenta(monkeypatch, capsys):
-    """§5 del manual: sin el token de un bot en el entorno, la tarea
-    programada «no comprueba ese bot y lo cuenta como problema». La tarea corre
-    sin consola, y `getpass` se quedaba esperando un teclado que nadie va a
-    usar: la tarea no acababa y no avisaba de nada."""
+    """Sin consola (una entrada redirigida, un proceso sin consola) no hay a
+    quien pedirle el token: `getpass` se quedaria esperando un teclado que
+    nadie va a usar. El bot sin token se cuenta como problema."""
     _main_que_no_toca_nada(monkeypatch)       # sin tokens, sin canal, sin red
     monkeypatch.setattr(vw, "BASE_N8N", BASE)
 
@@ -806,12 +806,74 @@ def test_sin_consola_y_sin_token_el_vigilante_no_espera_y_lo_cuenta(monkeypatch,
     monkeypatch.setattr(vw, "_memoria_leer", lambda: {})
     monkeypatch.setattr(vw, "_memoria_escribir", lambda datos: None)
 
-    assert vw.main() == 1
+    assert vw.main([]) == 1
 
     salida = capsys.readouterr().out
     for quien in ("paciente", "profesional"):
         assert f"{quien}: sin token, no se puede comprobar. SALTADO" in salida
     assert "2 cosas que arreglar." in salida
+
+
+def test_con_sin_teclado_no_se_pide_nada_aunque_haya_consola(monkeypatch, capsys):
+    """§5 del manual: la tarea programada SI tiene consola -el Programador de
+    tareas se la da a python.exe aunque nadie la vea-, asi que mirar si hay
+    consola no basta: `getpass` se quedaria esperando en ella, sin avisar, y la
+    tarea no volveria a correr. Con `--sin-teclado`, `main()` no pide nada: el
+    bot sin token cuenta como problema, y el aviso sale."""
+    _main_que_no_toca_nada(monkeypatch)       # sin tokens y sin red
+    enviados = _canal_de_avisos_falso(monkeypatch)
+    monkeypatch.setattr(vw, "BASE_N8N", BASE)
+    monkeypatch.setattr(vw, "_hay_consola", lambda: True)
+
+    def pide(*a, **k):
+        raise AssertionError("pidió el token por teclado con --sin-teclado")
+
+    monkeypatch.setattr(vw.getpass, "getpass", pide)
+    monkeypatch.setattr(vw, "_memoria_leer", lambda: {})
+    monkeypatch.setattr(vw, "_memoria_escribir", lambda datos: None)
+
+    assert vw.main(["--sin-teclado"]) == 1
+
+    salida = capsys.readouterr().out
+    for quien, variable in (("paciente", "TELEGRAM_TOKEN_PACIENTE"),
+                            ("profesional", "TELEGRAM_TOKEN_PROFESIONAL")):
+        assert f"{quien}: sin token, no se puede comprobar. SALTADO" in salida
+        assert f"falta su token en {variable}" in enviados["cuerpo"]["text"]
+    assert "2 cosas que arreglar." in salida
+    assert "aviso por Telegram: enviado." in salida
+
+
+def test_sin_la_opcion_y_con_consola_se_sigue_pidiendo_el_token(monkeypatch):
+    """La misma corrida sin `--sin-teclado`: con consola, el token se pide por
+    teclado, como siempre. Es lo que prueba que la que lo cambia es la
+    opcion."""
+    _main_que_no_toca_nada(monkeypatch)
+    monkeypatch.setattr(vw, "BASE_N8N", BASE)
+    monkeypatch.setattr(vw, "_hay_consola", lambda: True)
+    pedidos = []
+    monkeypatch.setattr(vw.getpass, "getpass",
+                        lambda prompt="": pedidos.append(prompt) or "")
+    monkeypatch.setattr(vw, "_memoria_leer", lambda: {})
+    monkeypatch.setattr(vw, "_memoria_escribir", lambda datos: None)
+
+    assert vw.main([]) == 1
+    assert len(pedidos) == 2
+
+
+def test_la_tarea_del_manual_lanza_el_vigilante_con_sin_teclado():
+    """El manual y el script no pueden divergir: la orden que monta la tarea
+    programada (§5 del manual) lanza este script con `--sin-teclado`, y el
+    script tiene esa opcion (una que no tuviera, la rechazaria)."""
+    manual = (RAIZ / "docs" / "sp3-operacion.md").read_text(encoding="utf-8")
+    acciones = [linea for linea in manual.splitlines()
+                if "New-ScheduledTaskAction" in linea]
+    assert len(acciones) == 1, "una sola orden monta la accion de la tarea"
+    argumento = re.search(r"-Argument '([^']*)'", acciones[0])
+    assert argumento, "la accion de la tarea no lleva -Argument"
+    script, *opciones = argumento.group(1).split()
+    assert script.replace("\\", "/") == "pruebas/verificar_webhooks.py"
+    assert "--sin-teclado" in opciones
+    assert vw.leer_opciones(opciones).sin_teclado is True
 
 
 def test_la_entrada_desde_el_dispositivo_nulo_no_es_una_consola(monkeypatch):
@@ -841,7 +903,7 @@ def test_con_consola_y_sin_token_el_vigilante_lo_pide_por_teclado(monkeypatch):
     monkeypatch.setattr(vw, "_memoria_leer", lambda: {})
     monkeypatch.setattr(vw, "_memoria_escribir", lambda datos: None)
 
-    assert vw.main() == 1
+    assert vw.main([]) == 1
     assert len(pedidos) == 2
     assert usados == ["tok-de-teclado", "tok-de-teclado"]
 
@@ -885,7 +947,7 @@ def test_con_N8N_URL_mal_puesta_main_avisa_sin_comprobar_nada(valor, monkeypatch
     monkeypatch.setattr(modulo, "pedir_api", no_se_llama)
     monkeypatch.setattr(modulo, "_memoria_escribir", no_se_llama)
 
-    assert modulo.main() == 1
+    assert modulo.main([]) == 1
 
     texto = enviados["cuerpo"]["text"]
     assert "los webhooks de Telegram NO se han comprobado" in texto
@@ -917,7 +979,7 @@ def test_los_problemas_de_una_lectura_de_verdad_llegan_al_canal_de_avisos(
     monkeypatch.setattr(vw, "_memoria_escribir", escrita.update)
     enviados = _canal_de_avisos_falso(monkeypatch)
 
-    assert vw.main() == 1
+    assert vw.main([]) == 1
 
     assert escrita == {"paciente": 0, "profesional": 2}
     assert enviados["url"] == "https://api.telegram.org/botT0K3N/sendMessage"

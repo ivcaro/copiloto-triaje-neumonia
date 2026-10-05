@@ -25,15 +25,24 @@ lado de Telegram:
     note);
   - que `pending_update_count` no este creciendo entre dos lecturas.
 
-Los tokens NO se escriben en ningun sitio: se piden por teclado, o se leen del
-entorno si ya estan (`TELEGRAM_TOKEN_PACIENTE`, `TELEGRAM_TOKEN_PROFESIONAL`).
-Sin consola -como corre la tarea programada- no se piden: el bot sin token en
-el entorno no se comprueba y se cuenta como problema.
-Salen siempre de BotFather (`/token`); el que esta en una credencial de n8n no se
-puede volver a leer desde la interfaz.
+Los tokens NO se escriben en ningun sitio: se leen del entorno si ya estan
+(`TELEGRAM_TOKEN_PACIENTE`, `TELEGRAM_TOKEN_PROFESIONAL`) o se piden por
+teclado. Salen siempre de BotFather (`/token`); el que esta en una credencial de
+n8n no se puede volver a leer desde la interfaz.
 
 Uso:
     C:\\venv-copiloto\\Scripts\\python.exe pruebas/verificar_webhooks.py
+    C:\\venv-copiloto\\Scripts\\python.exe pruebas/verificar_webhooks.py --sin-teclado
+
+A mano, en una consola, el token que no este en el entorno se pide por
+teclado; sin consola, no. Con `--sin-teclado` no se pide NUNCA: el bot sin
+token en el entorno no se comprueba y se cuenta como problema.
+
+LA TAREA PROGRAMADA LO LANZA CON `--sin-teclado` (§5 del manual de operacion).
+Mirar si hay consola no basta: el Programador de tareas le da a python.exe una
+consola aunque nadie la vea, y sin la opcion `getpass` se quedaria esperando en
+ella un token que nadie va a escribir -sin avisar de nada, y sin dejar que la
+tarea vuelva a correr los dias siguientes, porque sigue en marcha-.
 
 Devuelve 0 si los dos webhooks estan como deben, y 1 si hay algo que arreglar.
 
@@ -53,6 +62,7 @@ de Telegram-. Con las dos puestas, lo que encuentre se manda por Telegram; sin
 ellas solo se imprime. Una tarea programada que escribe en un log que nadie lee
 es el silencio que esto existe para romper.
 """
+import argparse
 import getpass
 import json
 import os
@@ -290,8 +300,11 @@ def avisar_al_equipo(problemas, comprobado=True):
 
 
 def _hay_consola() -> bool:
-    """Si hay alguien al teclado. La tarea programada corre sin consola, y ahi
-    `getpass` se quedaria esperando un token que nadie va a teclear.
+    """Si hay una consola a la que pedirle el token. Sin ella (una entrada
+    redirigida, un proceso sin consola) `getpass` se quedaria esperando un
+    token que nadie va a teclear. Que la haya no quiere decir que haya alguien
+    delante: la tarea programada tiene una que nadie ve, y por eso va con
+    `--sin-teclado`.
 
     En Windows `isatty()` no basta: una entrada redirigida desde `NUL` es un
     dispositivo de caracteres y dice que si. Alli se pregunta ademas a la
@@ -315,7 +328,26 @@ def _hay_consola() -> bool:
         ctypes.c_void_p(manejador), ctypes.byref(modo)))
 
 
-def main() -> int:
+def leer_opciones(argv=None):
+    """Las opciones de la linea de ordenes (con `argv` None, las de
+    `sys.argv`). Se leen en `main()` y nunca al importar: este modulo lo
+    importan las pruebas, con las opciones de pytest en `sys.argv`. Sin
+    abreviaturas: la orden de la tarea tiene que llevar la opcion entera."""
+    p = argparse.ArgumentParser(
+        allow_abbrev=False,
+        description="Mira que Telegram siga entregando los dos bots donde debe: "
+                    "la mitad del §16 que no cabe dentro de n8n.")
+    p.add_argument(
+        "--sin-teclado", action="store_true",
+        help="no pedir nunca un token por teclado: el bot sin token en el "
+             "entorno se cuenta como problema. Es como lo lanza la tarea "
+             "programada (§5 del manual de operacion), que tiene una consola "
+             "que nadie ve")
+    return p.parse_args(argv)
+
+
+def main(argv=None) -> int:
+    opciones = leer_opciones(argv)
     if not BASE_N8N:
         # Antes de pedir ningun token y de tocar la memoria: sin la base no hay
         # con que comparar, y una lectura a medias borraria la de ayer. Mal
@@ -332,7 +364,7 @@ def main() -> int:
     problemas_totales = 0
     for quien, variable, ruta, flujo in BOTS:
         token = os.environ.get(variable)
-        if not token and _hay_consola():
+        if not token and not opciones.sin_teclado and _hay_consola():
             token = getpass.getpass(
                 f"token del bot del {quien} (de BotFather, no se muestra): ").strip()
         if not token:
