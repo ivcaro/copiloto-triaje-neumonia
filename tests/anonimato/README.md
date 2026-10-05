@@ -111,7 +111,9 @@ Varias pruebas de `tests/test_anonimato.py` atan esa revisión:
   puede pegar de más maneras (dentro del texto de una celda, en una salida
   HTML, en cualquier otro fichero), otra prueba exige que toda tirada de 120
   o más caracteres de base64 de un fichero de texto que se publica sea una
-  de esas imágenes declaradas.
+  de esas imágenes declaradas. Si el base64 va partido en líneas de menos de
+  120 caracteres, esa prueba no lo ve (más abajo, en lo que esto no
+  protege).
 - Las claves de los metadatos de los PNG y de las imágenes incrustadas
   tienen que estar en `METADATOS_PERMITIDOS`, y las de cada notebook y de sus
   celdas, en las de la tabla (con `colab.provenance` vacío): un notebook
@@ -124,9 +126,12 @@ Cuando no hay hallazgos pero sí binarios, el script no dice «limpio» a secas:
 dice cuántos binarios quedan sin recorrer. Las imágenes incrustadas no las
 cuenta: para el script un notebook es texto.
 
-Fuera de un repositorio de git, las pruebas del árbol recorren la carpeta
-entera, también lo que git ignoraría: un `.env` que alguien haya creado en su
-copia las hace fallar. El mensaje del fallo lo dice.
+Fuera de un repositorio de git, las pruebas que recorren el árbol miran la
+carpeta entera, también lo que git ignoraría: un `.env` que alguien haya
+creado en su copia hace fallar la de los secretos (y la de las huellas, si
+lleva un token de la lista), y el base64 de una dependencia instalada dentro
+de la carpeta, la de las tiradas largas. Cuando fallan así, su mensaje lo
+dice.
 
 ## Lo que esto no protege
 
@@ -143,7 +148,9 @@ línea o por un guion de fin de línea, escrito con letras de otro alfabeto que
 se parecen, ni en un base64 corto. Una tirada de 120 o más caracteres del
 alfabeto de base64 se quita sin mirarla: el contenido de una imagen
 incrustada solo lo ve la revisión a mano, y sus metadatos, la prueba que la
-fija (más arriba).
+fija (más arriba). Y una imagen pegada como `data:` en el texto de una celda
+o en una salida HTML, con su base64 partido en líneas cortas, no la ve
+ninguna prueba.
 
 **Los secretos se buscan por su forma.** Una asignación solo se mira si el
 NOMBRE de la clave lleva `password`, `passwd`, `secret`, `token` o `api_key`,

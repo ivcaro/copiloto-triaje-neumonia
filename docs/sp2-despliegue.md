@@ -933,10 +933,12 @@ Da el commit de antes del ÚLTIMO `pull`. Comprueba que es el bueno, cambiando
 obligatoria.
 
 ```bash
-git -C /opt/copiloto show '<commit>:servidor/docker-compose.yml' | grep -c 'RED_N8N:?'
+git -C /opt/copiloto cat-file -e '<commit>:servidor/docker-compose.yml' && git -C /opt/copiloto show '<commit>:servidor/docker-compose.yml' | grep -c 'RED_N8N:?'
 ```
 
-Tiene que dar `0`. Si da `1`, desde el compose anterior se ha hecho más de un
+Tiene que dar `0`. Si en vez de un número sale un `fatal:`, el commit está mal
+copiado (o sigue puesto el marcador): cópialo otra vez. Si da `1`, desde el
+compose anterior se ha hecho más de un
 `pull`: repite las dos órdenes con `'main@{2}'`, y así hasta que dé `0`.
 
 Sigue con este punto, pero no apuntes el commit que imprime su orden.

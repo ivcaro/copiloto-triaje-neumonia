@@ -499,9 +499,11 @@ una falte:
   **no comprueba nada**, lo dice, avisa por el canal si lo tiene, y devuelve
   1.
 - `TELEGRAM_TOKEN_PACIENTE` y `TELEGRAM_TOKEN_PROFESIONAL` son lo que el script
-  comprueba. Si no están, los **pide por teclado** — y una tarea programada no
-  tiene teclado: sin ellas la tarea no comprueba ese bot y lo cuenta como
-  problema.
+  comprueba. Si no están, los **pide por teclado**. La tarea programada lo
+  lanza con `--sin-teclado`, que no pide nada nunca: el Programador de tareas
+  le da una consola aunque nadie la vea, y sin esa opción se quedaría
+  esperando un token que nadie va a escribir. Con ella, sin los tokens la
+  tarea no comprueba ese bot y lo cuenta como problema.
 - `COPILOTO_CHAT_EQUIPO` y `TELEGRAM_TOKEN_AVISOS` son el canal del aviso, y
   **hacen falta las dos**. Sin ellas el script encuentra los problemas pero solo
   los **imprime**, y una tarea programada que escribe en un log que nadie abre
@@ -514,7 +516,7 @@ aviso caiga **en el mismo hilo** que los otros.
 avisos en el mismo minuto):
 
 ```powershell
-$acc = New-ScheduledTaskAction -Execute 'C:\venv-copiloto\Scripts\python.exe' -Argument 'pruebas\verificar_webhooks.py' -WorkingDirectory '<raiz-del-repositorio>'
+$acc = New-ScheduledTaskAction -Execute 'C:\venv-copiloto\Scripts\python.exe' -Argument 'pruebas\verificar_webhooks.py --sin-teclado' -WorkingDirectory '<raiz-del-repositorio>'
 $dis = New-ScheduledTaskTrigger -Daily -At 07:15
 Register-ScheduledTask -TaskName 'Copiloto Triaje: webhooks de Telegram' -Action $acc -Trigger $dis -Description 'La mitad del §16 que no cabe en n8n: getWebhookInfo de los dos bots.'
 ```
