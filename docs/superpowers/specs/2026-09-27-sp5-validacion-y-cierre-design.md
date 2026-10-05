@@ -388,8 +388,8 @@ destacadas (§4.5) y en 0A; el resto de la rejilla se publica sin intervalos.
 > y no en la estimación que se publica, y el intervalo por percentiles sigue
 > cubriendo de más (entre el 96 y el 100 % en el mismo ensayo). El bootstrap
 > de los casos de la estimación cubre entre el 92 y el 95 %. Las estimaciones puntuales no cambian; de los
-> 328 intervalos con anchura, 292 se estrechan y 13 se ensanchan (la anchura
-> mediana pasa a 0,83 de la anterior).
+> 328 intervalos con anchura, 292 se estrechan y 13 se ensanchan (en mediana,
+> cada intervalo mide 0,83 de lo que medía).
 >
 > Un intervalo así recoge solo el muestreo de los casos bajo este generador:
 > no la incertidumbre del calibrador, ni la de `z_y` y `τ`, ni la de las RV

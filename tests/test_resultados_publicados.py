@@ -22,9 +22,9 @@ formados. Sus cifras solo quedan vigiladas de rebote: las que el documento
 imprime, y con los decimales con que las imprime, porque el documento se
 regenera y se compara. Tampoco se comparan los píxeles de las figuras: solo
 sus nombres, su resolución, su huella y su título (que lleve el rótulo y, en
-las de fiabilidad, el nombre de su celda). Si se toca algo que cambie el
-bootstrap o el dibujo, hay que volver a correr el guion: ninguna prueba lo va
-a pedir.
+las de fiabilidad, el nombre de su celda). Si se toca el dibujo, o algo del
+bootstrap que no mueva los intervalos de (0,6; 0), hay que volver a correr el
+guion: ninguna prueba lo va a pedir.
 
 Las versiones de las librerías (`entorno`) no se comparan con las de esta
 máquina: lo publicado salió con las suyas. Pero si el recálculo no coincide y

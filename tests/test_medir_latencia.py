@@ -170,14 +170,16 @@ def test_la_corrida_lleva_su_fecha_en_la_hora_de_ecuador(medir, tmp_path):
 
 def test_los_mensajes_con_tilde_salen_bien_por_los_dos_canales(tmp_path):
     """El de «no medida» sale por stderr: en una consola que no es UTF-8
-    saldría roto si el guion no reconfigurara también ese canal."""
+    saldría roto si el guion no reconfigurara también ese canal. La consola
+    que no es UTF-8 la pone la prueba (`PYTHONIOENCODING`), para que pueda
+    fallar en cualquier máquina y no solo donde el sistema no lo es."""
     import os
     import subprocess
     import sys
     corrida = tmp_path / "latencias.json"
-    entorno = {k: v for k, v in os.environ.items()
-               if k not in ("PYTHONIOENCODING", "PYTHONUTF8")}
+    entorno = {k: v for k, v in os.environ.items() if k != "PYTHONUTF8"}
     entorno["PYTHONUTF8"] = "0"
+    entorno["PYTHONIOENCODING"] = "cp1252"
     guion = str(REPO / "scripts" / "medir_latencia.py")
     corrida.write_text(json.dumps(_validas(2)), encoding="utf-8")
     corta = subprocess.run([sys.executable, guion, "--corrida", str(corrida),

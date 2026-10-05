@@ -329,8 +329,9 @@ def test_cada_replica_remuestrea_los_casos_de_la_estimacion_y_no_vuelve_a_sortea
 def test_las_replicas_se_centran_en_la_estimacion_que_se_publica(conjunto):
     """Lo que separa este bootstrap de uno que vuelve a sortear la clínica:
     en (0,6; 0) la pendiente del extremo conservador de la estimación es
-    1,13, y la media sobre otras clínicas, 1,09. Las réplicas tienen que
-    rodear a la primera: el intervalo es de la cifra que se publica."""
+    1,13, y las réplicas que vuelven a sortear la clínica se centran en 1,09.
+    Las de aquí tienen que rodear a la primera: el intervalo es de la cifra
+    que se publica."""
     _, _, salidas, l_or = _escenario(conjunto, 0.6, 0.0)
     ruta = "modelos.conservador.pendiente"
     puntual = simulacion.aplanar(simulacion.medir(conjunto, salidas, l_or))[ruta]

@@ -47,8 +47,9 @@ LADOS_DE_LA_IMAGEN = (("a_favor", "con la imagen a favor"),
 METRICAS = (("auc", "AUC", 3), ("brier", "Brier", 3), ("pendiente", "pendiente", 2),
             ("intercepto", "intercepto", 3), ("ece", "ECE", 3))
 PAREADAS = (("auc", "ΔAUC", 3), ("brier", "ΔBrier", 3), ("pendiente", "Δpendiente", 2))
-# Los titulos de las figuras, los nombres de las celdas y el titulo del
-# documento se escriben aqui y solo aqui: el guion los toma de este modulo.
+# Los titulos de las figuras y el titulo del documento se escriben aqui y
+# solo aqui: el guion los toma de este modulo. (El nombre de una celda lo
+# escribe `simulacion.nombre_de_celda`, y de ahi lo leen los dos.)
 # Los nombres de las figuras los dice tambien el guion, que es quien sabe
 # que funcion dibuja cada una; una prueba ata las dos listas.
 PREFIJO_FIABILIDAD = "fiabilidad_"

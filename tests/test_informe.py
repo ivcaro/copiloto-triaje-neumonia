@@ -578,8 +578,10 @@ def test_el_modulo_es_puro():
 
 def test_los_nombres_de_las_figuras_son_los_del_guion(validar):
     """El paquete no puede importar el guion, pero el guion sí el paquete:
-    los nombres de las figuras, de las celdas y de los modelos y el título
-    se escriben UNA vez, aquí, y el guion los toma de `informe`."""
+    los títulos de las figuras, los nombres de los modelos y el título del
+    documento se escriben UNA vez, en `informe`, y el guion los toma de ahí.
+    Los nombres de los ficheros de las figuras los dicen los dos, y esta
+    prueba ata las dos listas."""
     assert [clave for clave, _ in informe.FIGURAS_GLOBALES] == list(validar.FIGURAS_GLOBALES)
     assert informe.PREFIJO_FIABILIDAD == validar.PREFIJO_FIABILIDAD
     assert validar.slug_de_celda is informe.slug_de_celda
