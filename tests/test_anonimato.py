@@ -1963,48 +1963,6 @@ def test_el_arbol_no_lleva_huellas():
     _el_arbol_no_lleva_huellas(RAIZ, HUELLAS)
 
 
-@pytest.mark.parametrize("con_git", [
-    pytest.param(False, id="sin_git"),
-    pytest.param(True, id="con_git", marks=hay_git),
-])
-def test_fuera_de_git_el_fallo_del_arbol_lo_dice(tmp_path, con_git):
-    # C4 y A1: fuera de la raiz de un repositorio se recorre la carpeta
-    # entera, tambien lo que git ignoraria (un `.env` de la copia de alguien,
-    # un notebook de `.ipynb_checkpoints/`): todas las pruebas que recorren
-    # el arbol lo dicen al fallar.
-    raiz = _repositorio(tmp_path) if con_git else _arbol_limpio(
-        tmp_path / "repo")
-    (raiz / ".env").write_text("X=1\n", encoding="utf-8")
-    (raiz / "nota.md").write_text(f"{OTRO}\n", encoding="utf-8")
-    # Un notebook con una imagen que nadie ha declarado y una clave de
-    # metadatos que nadie ha revisado.
-    imagen = base64.b64encode(_png_de_juguete((b"Software", b"x" * 80)))
-    cuaderno = {"metadata": {"authors": ["de juguete"]}, "cells": [
-        {"cell_type": "code", "metadata": {}, "outputs": [
-            {"output_type": "display_data",
-             "data": {"image/png": imagen.decode("ascii")}}]}]}
-    (raiz / "cuaderno.ipynb").write_text(json.dumps(cuaderno, indent=1),
-                                         encoding="utf-8")
-    de_juguete = _huellas_de_juguete(tmp_path)
-    comprobaciones = {
-        "secretos": lambda: _el_arbol_no_lleva_secretos(raiz, de_juguete,
-                                                        minimo=1),
-        "huellas": lambda: _el_arbol_no_lleva_huellas(raiz, de_juguete,
-                                                      minimo=1),
-        "tiradas": lambda: _toda_tirada_larga_es_una_imagen_declarada(
-            raiz, set()),
-        "imagenes": lambda: _las_imagenes_de_los_notebooks_son_las_declaradas(
-            raiz, {}),
-        "metadatos": lambda: _los_metadatos_de_los_notebooks_son_los_revisados(
-            raiz),
-    }
-    for que, comprobar in comprobaciones.items():
-        with pytest.raises(pytest.fail.Exception) as error:
-            comprobar()
-        assert (NO_ES_UN_REPOSITORIO in str(error.value)) is not con_git, que
-        assert OTRO not in str(error.value).lower(), que
-
-
 def test_con_solo_el_centinela_los_secretos_del_arbol_se_buscan(tmp_path):
     # V-3: antes, el salto por «solo el centinela» se llevaba tambien la
     # busqueda de secretos del arbol, que no necesita la lista.
@@ -2373,3 +2331,45 @@ def test_un_metadato_de_notebook_no_revisado_se_nombra_sin_su_valor():
 
 def test_los_metadatos_de_los_notebooks_son_los_revisados():
     _los_metadatos_de_los_notebooks_son_los_revisados(RAIZ)
+
+
+@pytest.mark.parametrize("con_git", [
+    pytest.param(False, id="sin_git"),
+    pytest.param(True, id="con_git", marks=hay_git),
+])
+def test_fuera_de_git_el_fallo_del_arbol_lo_dice(tmp_path, con_git):
+    # C4 y A1: fuera de la raiz de un repositorio se recorre la carpeta
+    # entera, tambien lo que git ignoraria (un `.env` de la copia de alguien,
+    # un notebook de `.ipynb_checkpoints/`): todas las pruebas que recorren
+    # el arbol lo dicen al fallar.
+    raiz = _repositorio(tmp_path) if con_git else _arbol_limpio(
+        tmp_path / "repo")
+    (raiz / ".env").write_text("X=1\n", encoding="utf-8")
+    (raiz / "nota.md").write_text(f"{OTRO}\n", encoding="utf-8")
+    # Un notebook con una imagen que nadie ha declarado y una clave de
+    # metadatos que nadie ha revisado.
+    imagen = base64.b64encode(_png_de_juguete((b"Software", b"x" * 80)))
+    cuaderno = {"metadata": {"authors": ["de juguete"]}, "cells": [
+        {"cell_type": "code", "metadata": {}, "outputs": [
+            {"output_type": "display_data",
+             "data": {"image/png": imagen.decode("ascii")}}]}]}
+    (raiz / "cuaderno.ipynb").write_text(json.dumps(cuaderno, indent=1),
+                                         encoding="utf-8")
+    de_juguete = _huellas_de_juguete(tmp_path)
+    comprobaciones = {
+        "secretos": lambda: _el_arbol_no_lleva_secretos(raiz, de_juguete,
+                                                        minimo=1),
+        "huellas": lambda: _el_arbol_no_lleva_huellas(raiz, de_juguete,
+                                                      minimo=1),
+        "tiradas": lambda: _toda_tirada_larga_es_una_imagen_declarada(
+            raiz, set()),
+        "imagenes": lambda: _las_imagenes_de_los_notebooks_son_las_declaradas(
+            raiz, {}),
+        "metadatos": lambda: _los_metadatos_de_los_notebooks_son_los_revisados(
+            raiz),
+    }
+    for que, comprobar in comprobaciones.items():
+        with pytest.raises(pytest.fail.Exception) as error:
+            comprobar()
+        assert (NO_ES_UN_REPOSITORIO in str(error.value)) is not con_git, que
+        assert OTRO not in str(error.value).lower(), que
