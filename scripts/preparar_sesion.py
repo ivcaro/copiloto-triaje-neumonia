@@ -41,7 +41,6 @@ USO
 import argparse
 import datetime
 import json
-import os
 import pathlib
 import shutil
 import sys
@@ -51,20 +50,13 @@ import numpy as np
 REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
+from copiloto_triaje.config import raiz_rsna  # noqa: E402
 from copiloto_triaje.servicio.heckerling import PREVALENCIA_COHORTE  # noqa: E402
 from copiloto_triaje.validacion import datos, oraculo, sesion  # noqa: E402
 from copiloto_triaje.validacion.categoria import categoria_del_sistema  # noqa: E402
 
 FORMULARIO = REPO / "pruebas" / "formulario"
 ROTULO = "simulación semisintética — sesión H7"
-
-
-def raiz_rsna() -> pathlib.Path:
-    raiz = os.environ.get("RSNA_RAIZ")
-    if not raiz:
-        raise SystemExit("falta RSNA_RAIZ: la raíz del dataset preparado, sin valor "
-                         "por defecto (spec de SP5 §6.1)")
-    return pathlib.Path(raiz)
 
 
 def entrada_formulario(caso: dict, mensaje, control: bool = False) -> dict:
@@ -125,6 +117,16 @@ def fase_elegir(salida: pathlib.Path, semilla: int, forzar: bool = False):
     casos, practica = sesion.elegir(df, rv, modelo, PREVALENCIA_COHORTE, semilla)
     ordenes = sesion.ordenes(casos, np.random.default_rng(semilla + 1))
     preparacion = f"{semilla}-{datetime.datetime.now().strftime('%Y%m%dT%H%M%S')}"
+
+    # Todas las placas, ANTES de borrar nada de una eleccion anterior: si no,
+    # quedarian una clave y unos casos viejos sin placas ni mensajes.
+    faltan = [c["patientId"] for c in casos + practica
+              if not (raiz / "png" / f"{c['patientId']}.png").is_file()]
+    if faltan:
+        raise SystemExit(
+            f"faltan {len(faltan)} de las {len(casos + practica)} placas en "
+            f"{raiz / 'png'} (la primera, {faltan[0]}.png): ¿apunta RSNA_RAIZ "
+            "al dataset preparado? No se ha borrado nada de la elección anterior.")
 
     for relativa in DE_UNA_ELECCION_ANTERIOR:
         (salida / relativa).unlink(missing_ok=True)

@@ -18,9 +18,17 @@ Tres mitades, y ninguna necesita el VPS:
 - El `jsCode` de `Evaluar` ejecutado de verdad, en `tests/mantenimiento.mjs`:
   ahi se comprueba el TEXTO del aviso y la regla de cuando se calla, que es lo
   que de verdad se entrega.
+
+El export versionado lleva MARCADORES en vez de los valores de la instancia
+-la URL de n8n y los ids y nombres de las credenciales (spec de SP5 §6.1)-,
+asi que ya no es identico byte a byte al desplegado: entre uno y otro media
+`scripts/marcadores_n8n.py`, que se prueba en `test_marcadores_n8n.py`.
 """
+import io
 import json
+import os
 import pathlib
+import re
 import shutil
 import subprocess
 import time
@@ -33,10 +41,11 @@ RAIZ = pathlib.Path(__file__).resolve().parents[1]
 FLUJO = RAIZ / "n8n" / "copiloto-mantenimiento.json"
 LIMPIEZA = RAIZ / "bd" / "limpieza.sql"
 
-# Los ids de §12. Escritos a mano aqui para que sean un testigo independiente:
-# si alguien apunta el workflow a una credencial del cliente, esto lo ve.
-CRED_BD = "[retirado]"
-CRED_AVISOS = "[retirado]"
+# Los marcadores de las credenciales (spec de SP5 §6.1), y no sus ids en la
+# instancia. Escritos a mano aqui para que sean un testigo independiente: si
+# alguien versiona un export con los ids reales o con otra credencial, se ve.
+CRED_BD = "CRED_POSTGRES_COPILOTO"
+CRED_AVISOS = "CRED_TELEGRAM_AVISOS"
 
 # Las comprobaciones del §16, por el nodo que las mide. La lista esta aqui y no
 # se deduce del JSON: si alguien borra un nodo, la prueba falla en vez de
@@ -178,7 +187,9 @@ def test_las_sondas_de_webhook_no_llevan_el_secreto_ni_disparan_los_bots(flujo):
     for nombre, ruta in (("Webhook del paciente", "copiloto-paciente"),
                          ("Webhook del profesional", "copiloto-profesional")):
         p = nodo(flujo, nombre)["parameters"]
-        assert p["url"] == f"https://n8n.[retirado].com/webhook/{ruta}"
+        # si falla se dice la sonda y no la URL que lleva
+        al_marcador = p["url"] == f"https://n8n.ejemplo.test/webhook/{ruta}"
+        assert al_marcador, nombre
         assert p["method"] == "POST"
         assert not p.get("sendHeaders"), nombre
         assert "authentication" not in p, nombre
@@ -208,12 +219,19 @@ def test_no_hay_ningun_secreto_ni_ningun_chat_id_en_el_repositorio(flujo):
     identificador de una persona real-."""
     crudo = FLUJO.read_text(encoding="utf-8")
     import re
-    assert not re.search(r"\d{8,12}:[A-Za-z0-9_-]{30,}", crudo), "parece un token"
+    # Las tres, sobre un booleano: si fallan, pytest no enseña lo que caso
+    # (el token), el chat_id que lleve la configuracion ni un `chatId` escrito
+    # a mano en el nodo que avisa.
+    parece_un_token = re.search(r"\d{8,12}:[A-Za-z0-9_-]{30,}", crudo) is not None
+    assert not parece_un_token, "parece un token"
     config = nodo(flujo, "Configuracion")["parameters"]["assignments"]["assignments"]
     assert [a["name"] for a in config] == ["chat_equipo"]
-    assert config[0]["value"] == "", "el chat del equipo no se versiona"
-    assert (nodo(flujo, "Avisar al equipo")["parameters"]["chatId"]
-            == "={{ $('Configuracion').first().json.chat_equipo }}")
+    vacio = config[0]["value"] == ""
+    assert vacio, "el chat del equipo no se versiona"
+    lee_la_configuracion = (nodo(flujo, "Avisar al equipo")["parameters"]["chatId"]
+                            == "={{ $('Configuracion').first().json.chat_equipo }}")
+    assert lee_la_configuracion, ("el chatId de «Avisar al equipo» no es la "
+                                  "expresion que lee `chat_equipo` de Configuracion")
 
 
 def test_las_credenciales_son_las_de_sp3(flujo):
@@ -225,7 +243,9 @@ def test_las_credenciales_son_las_de_sp3(flujo):
     for n in flujo["nodes"]:
         for tipo, c in (n.get("credentials") or {}).items():
             usadas.setdefault(tipo, set()).add(c["id"])
-    assert usadas == {"postgres": {CRED_BD}, "telegramApi": {CRED_AVISOS}}, usadas
+    # si falla se dicen los tipos de credencial y cuantas hay de cada uno, no cuales
+    las_de_sp3 = usadas == {"postgres": {CRED_BD}, "telegramApi": {CRED_AVISOS}}
+    assert las_de_sp3, {tipo: len(ids) for tipo, ids in usadas.items()}
 
 
 def test_el_aviso_va_en_texto_plano(flujo):
@@ -498,8 +518,21 @@ import sys  # noqa: E402
 sys.path.insert(0, str(RAIZ / "pruebas"))
 import verificar_webhooks as vw  # noqa: E402
 
-BIEN = {"url": "https://n8n.[retirado].com/webhook/copiloto-paciente",
+# La base de n8n de estas pruebas es un marcador, y la fija la prueba: el script
+# ya no trae ninguna por defecto (`N8N_URL` es obligatoria para correrlo), y el
+# diagnostico no puede depender de lo que haya en el entorno de quien corre la
+# suite.
+BASE = "https://n8n.ejemplo.test"
+BIEN = {"url": f"{BASE}/webhook/copiloto-paciente",
         "pending_update_count": 0}
+
+
+@pytest.fixture(autouse=True)
+def _base_de_n8n_fija(monkeypatch):
+    """`BASE_N8N` se calcula al importar el script, con el `N8N_URL` de ese
+    momento. Aqui se pisa en cada prueba del fichero, y al acabar vuelve a ser
+    la que era."""
+    monkeypatch.setattr(vw, "BASE_N8N", BASE)
 
 
 def diagnosticar(info, anterior=None):
@@ -520,7 +553,7 @@ def test_sin_webhook_registrado_lo_dice_y_manda_al_manual():
 def test_el_webhook_del_otro_bot_es_el_error_silencioso_del_manual():
     """Pegar la ruta del otro bot: Telegram contesta «Webhook was set» igual y el
     bot queda mudo. Es el fallo que ya paso una vez."""
-    p = diagnosticar({"url": "https://n8n.[retirado].com/webhook/copiloto-profesional",
+    p = diagnosticar({"url": f"{BASE}/webhook/copiloto-profesional",
                       "pending_update_count": 0})
     assert len(p) == 1
     assert "copiloto-paciente" in p[0] and "el OTRO bot" in p[0]
@@ -579,7 +612,9 @@ def test_el_aviso_de_la_tarea_programada_lleva_los_problemas_y_no_el_token(monke
     texto = vw.mensaje_para_telegram(problemas)
     ok, detalle = vw.avisar_por_telegram("T0K3N", "987", texto)
     assert ok is True, detalle
+    assert enviados["url"] == "https://api.telegram.org/botT0K3N/sendMessage"
     assert enviados["cuerpo"]["chat_id"] == "987"
+    assert "el webhook de Telegram no está como debe" in enviados["cuerpo"]["text"]
     assert "mudo" in enviados["cuerpo"]["text"]
     assert "Qué hacer" in enviados["cuerpo"]["text"]
     assert "T0K3N" not in enviados["cuerpo"]["text"]
@@ -604,3 +639,356 @@ def test_un_token_revocado_se_distingue_de_un_problema_de_url(monkeypatch):
     assert ok is False and "revocado" in mensaje and "BotFather" in mensaje
     ok, mensaje = vw.pedir_api("otro", "getWebhookInfo")
     assert ok is False and "no es la URL, es el token" in mensaje
+
+
+# --------------------------------------------------------------------------
+# `N8N_URL` no tiene valor por defecto
+# --------------------------------------------------------------------------
+# El script no trae la URL de ningun n8n: la pone quien lo corre. Pero este
+# fichero lo importa entero, asi que sin la variable tiene que seguir
+# importandose; el que se niega a trabajar sin ella es `main()`.
+def _script_recien_importado():
+    """El script cargado otra vez, con el entorno de AHORA. `vw` se importo al
+    coleccionar, con el entorno de entonces."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "verificar_webhooks_recien_importado",
+        RAIZ / "pruebas" / "verificar_webhooks.py")
+    modulo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modulo)
+    return modulo
+
+
+def _main_que_no_toca_nada(monkeypatch):
+    """Deja `main()` sin teclado, sin red y sin memoria: si los busca antes de
+    mirar `N8N_URL`, la prueba falla en vez de quedarse esperando un token."""
+    def no_se_llama(*a, **k):
+        raise AssertionError("main() siguió adelante sin N8N_URL")
+
+    monkeypatch.setattr(vw.getpass, "getpass", no_se_llama)
+    monkeypatch.setattr(vw, "pedir_api", no_se_llama)
+    monkeypatch.setattr(vw, "_memoria_escribir", no_se_llama)
+    for variable in ("TELEGRAM_TOKEN_PACIENTE", "TELEGRAM_TOKEN_PROFESIONAL",
+                     "COPILOTO_CHAT_EQUIPO", "TELEGRAM_TOKEN_AVISOS"):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setattr(vw, "BASE_N8N", "")
+    # y sin el motivo de una `N8N_URL` mal puesta que hubiera al coleccionar
+    monkeypatch.setattr(vw, "N8N_URL_MAL_PUESTA", "")
+
+
+def _canal_de_avisos_falso(monkeypatch):
+    """El canal de avisos puesto, y un Telegram que contesta que si. Devuelve
+    donde queda lo que `main()` le mande: la URL a la que llamo y el cuerpo."""
+    import urllib.parse
+
+    monkeypatch.setenv("COPILOTO_CHAT_EQUIPO", "987")
+    monkeypatch.setenv("TELEGRAM_TOKEN_AVISOS", "T0K3N")
+    enviados = {}
+
+    def falso(pet, timeout=0):
+        enviados["url"] = pet.full_url
+        enviados["cuerpo"] = dict(urllib.parse.parse_qsl(pet.data.decode()))
+
+        class R:
+            def read(self_inner):
+                return b'{"ok":true,"result":{}}'
+
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *a):
+                return False
+        return R()
+
+    monkeypatch.setattr(vw.urllib.request, "urlopen", falso)
+    return enviados
+
+
+@pytest.mark.parametrize("valor", [None, "", "   "],
+                         ids=["ausente", "vacia", "en-blanco"])
+def test_el_script_se_importa_sin_N8N_URL_y_no_trae_ninguna_por_defecto(
+        valor, monkeypatch):
+    """Vacia o con solo espacios es lo mismo que ausente: si pasara por una
+    base, `main()` pediria los tokens y daria los dos webhooks por mal
+    apuntados."""
+    if valor is None:
+        monkeypatch.delenv("N8N_URL", raising=False)
+    else:
+        monkeypatch.setenv("N8N_URL", valor)
+    assert _script_recien_importado().BASE_N8N == ""
+
+
+def test_el_script_toma_la_base_de_N8N_URL_sin_la_barra_final(monkeypatch):
+    monkeypatch.setenv("N8N_URL", "https://otro.ejemplo.test/")
+    assert _script_recien_importado().BASE_N8N == "https://otro.ejemplo.test"
+
+
+def test_el_diagnostico_no_vuelve_a_mirar_el_entorno(monkeypatch):
+    """Con `N8N_URL` apuntando a otro sitio, el diagnostico sigue comparando con
+    la base del modulo. Es lo que deja correr este fichero en la maquina que
+    tiene la variable puesta para las pruebas conducidas."""
+    monkeypatch.setenv("N8N_URL", "https://otro.ejemplo.test")
+    assert diagnosticar(BIEN) == []
+    p = diagnosticar({"url": "https://otro.ejemplo.test/webhook/copiloto-paciente",
+                      "pending_update_count": 0})
+    assert len(p) == 1 and f"{BASE}/webhook/copiloto-paciente" in p[0]
+
+
+def test_sin_N8N_URL_main_sale_con_un_mensaje_y_no_pide_ningun_token(
+        monkeypatch, capsys):
+    _main_que_no_toca_nada(monkeypatch)
+    monkeypatch.setattr(vw.urllib.request, "urlopen",
+                        lambda *a, **k: pytest.fail("no había a quién avisar"))
+
+    assert vw.main([]) == 1
+
+    salida = capsys.readouterr().out
+    assert "N8N_URL" in salida and "Qué hacer" in salida
+    assert "están como deben" not in salida
+
+
+def test_sin_N8N_URL_la_tarea_programada_avisa_por_telegram(monkeypatch, capsys):
+    """La tarea programada que se quede sin la variable no puede callar: es el
+    silencio que el script existe para romper. Con el canal de avisos puesto, el
+    motivo llega al mismo hilo que los demas, y dice que NO se comprobo nada:
+    con el encabezado de siempre, quien lea solo la notificacion iria a
+    registrar otra vez un webhook que estaba bien."""
+    _main_que_no_toca_nada(monkeypatch)
+    enviados = _canal_de_avisos_falso(monkeypatch)
+
+    assert vw.main([]) == 1
+
+    assert enviados["url"] == "https://api.telegram.org/botT0K3N/sendMessage"
+    assert enviados["cuerpo"]["chat_id"] == "987"
+    texto = enviados["cuerpo"]["text"]
+    assert "N8N_URL" in texto and "T0K3N" not in texto
+    assert "los webhooks de Telegram NO se han comprobado" in texto
+    assert "no está como debe" not in texto
+    assert "aviso por Telegram: enviado." in capsys.readouterr().out
+
+
+def test_sin_N8N_URL_el_mensaje_dice_donde_se_pone_para_la_tarea_programada():
+    """Una tarea programada de Windows no tiene variables propias: la variable
+    va en el perfil del usuario que la corre, con `setx`, como dice el paso 2
+    del §5 del manual. «En la tarea» mandaba a buscar donde no hay."""
+    assert "setx N8N_URL" in vw.SIN_N8N_URL
+    assert "§5" in vw.SIN_N8N_URL and "paso 2" in vw.SIN_N8N_URL
+    assert "en la tarea." not in vw.SIN_N8N_URL
+
+
+# --------------------------------------------------------------------------
+# Sin consola no se pide nada por teclado
+# --------------------------------------------------------------------------
+class _Entrada(io.StringIO):
+    """Un `sys.stdin` de pega que dice si es una consola."""
+
+    def __init__(self, consola):
+        super().__init__("")
+        self._consola = consola
+
+    def isatty(self):
+        return self._consola
+
+
+def test_sin_consola_y_sin_token_el_vigilante_no_espera_y_lo_cuenta(monkeypatch, capsys):
+    """Sin consola (una entrada redirigida, un proceso sin consola) no hay a
+    quien pedirle el token: `getpass` se quedaria esperando un teclado que
+    nadie va a usar. El bot sin token se cuenta como problema."""
+    _main_que_no_toca_nada(monkeypatch)       # sin tokens, sin canal, sin red
+    monkeypatch.setattr(vw, "BASE_N8N", BASE)
+
+    def pide(*a, **k):
+        raise AssertionError("pidió el token por teclado sin consola")
+
+    monkeypatch.setattr(vw.getpass, "getpass", pide)
+    monkeypatch.setattr(vw.sys, "stdin", _Entrada(consola=False))
+    monkeypatch.setattr(vw, "_memoria_leer", lambda: {})
+    monkeypatch.setattr(vw, "_memoria_escribir", lambda datos: None)
+
+    assert vw.main([]) == 1
+
+    salida = capsys.readouterr().out
+    for quien in ("paciente", "profesional"):
+        assert f"{quien}: sin token, no se puede comprobar. SALTADO" in salida
+    assert "2 cosas que arreglar." in salida
+
+
+def test_con_sin_teclado_no_se_pide_nada_aunque_haya_consola(monkeypatch, capsys):
+    """§5 del manual: la tarea programada SI tiene consola -el Programador de
+    tareas se la da a python.exe aunque nadie la vea-, asi que mirar si hay
+    consola no basta: `getpass` se quedaria esperando en ella, sin avisar, y la
+    tarea no volveria a correr. Con `--sin-teclado`, `main()` no pide nada: el
+    bot sin token cuenta como problema, y el aviso sale."""
+    _main_que_no_toca_nada(monkeypatch)       # sin tokens y sin red
+    enviados = _canal_de_avisos_falso(monkeypatch)
+    monkeypatch.setattr(vw, "BASE_N8N", BASE)
+    monkeypatch.setattr(vw, "_hay_consola", lambda: True)
+
+    def pide(*a, **k):
+        raise AssertionError("pidió el token por teclado con --sin-teclado")
+
+    monkeypatch.setattr(vw.getpass, "getpass", pide)
+    monkeypatch.setattr(vw, "_memoria_leer", lambda: {})
+    monkeypatch.setattr(vw, "_memoria_escribir", lambda datos: None)
+
+    assert vw.main(["--sin-teclado"]) == 1
+
+    salida = capsys.readouterr().out
+    for quien, variable in (("paciente", "TELEGRAM_TOKEN_PACIENTE"),
+                            ("profesional", "TELEGRAM_TOKEN_PROFESIONAL")):
+        assert f"{quien}: sin token, no se puede comprobar. SALTADO" in salida
+        assert f"falta su token en {variable}" in enviados["cuerpo"]["text"]
+    assert "2 cosas que arreglar." in salida
+    assert "aviso por Telegram: enviado." in salida
+
+
+def test_sin_la_opcion_y_con_consola_se_sigue_pidiendo_el_token(monkeypatch):
+    """La misma corrida sin `--sin-teclado`: con consola, el token se pide por
+    teclado, como siempre. Es lo que prueba que la que lo cambia es la
+    opcion."""
+    _main_que_no_toca_nada(monkeypatch)
+    monkeypatch.setattr(vw, "BASE_N8N", BASE)
+    monkeypatch.setattr(vw, "_hay_consola", lambda: True)
+    pedidos = []
+    monkeypatch.setattr(vw.getpass, "getpass",
+                        lambda prompt="": pedidos.append(prompt) or "")
+    monkeypatch.setattr(vw, "_memoria_leer", lambda: {})
+    monkeypatch.setattr(vw, "_memoria_escribir", lambda datos: None)
+
+    assert vw.main([]) == 1
+    assert len(pedidos) == 2
+
+
+def test_la_tarea_del_manual_lanza_el_vigilante_con_sin_teclado():
+    """El manual y el script no pueden divergir: la orden que monta la tarea
+    programada (§5 del manual) lanza este script con `--sin-teclado`, y el
+    script tiene esa opcion (una que no tuviera, la rechazaria)."""
+    manual = (RAIZ / "docs" / "sp3-operacion.md").read_text(encoding="utf-8")
+    acciones = [linea for linea in manual.splitlines()
+                if "New-ScheduledTaskAction" in linea]
+    assert len(acciones) == 1, "una sola orden monta la accion de la tarea"
+    argumento = re.search(r"-Argument '([^']*)'", acciones[0])
+    assert argumento, "la accion de la tarea no lleva -Argument"
+    script, *opciones = argumento.group(1).split()
+    assert script.replace("\\", "/") == "pruebas/verificar_webhooks.py"
+    assert "--sin-teclado" in opciones
+    assert vw.leer_opciones(opciones).sin_teclado is True
+
+
+def test_la_entrada_desde_el_dispositivo_nulo_no_es_una_consola(monkeypatch):
+    """En Windows, una entrada redirigida desde `NUL` dice que es una
+    consola (`isatty()` da True: es un dispositivo de caracteres), y `getpass`
+    se quedaba esperando igual. Una tarea lanzada con `< NUL` no tiene a nadie
+    al teclado."""
+    with open(os.devnull, encoding="utf-8") as nulo:
+        monkeypatch.setattr(vw.sys, "stdin", nulo)
+        assert vw._hay_consola() is False
+
+
+def test_con_consola_y_sin_token_el_vigilante_lo_pide_por_teclado(monkeypatch):
+    """A mano, con consola, no cambia nada: el token se pide por teclado."""
+    _main_que_no_toca_nada(monkeypatch)
+    monkeypatch.setattr(vw, "BASE_N8N", BASE)
+    pedidos, usados = [], []
+    monkeypatch.setattr(vw.getpass, "getpass",
+                        lambda prompt="": pedidos.append(prompt) or " tok-de-teclado ")
+    monkeypatch.setattr(vw.sys, "stdin", _Entrada(consola=True))
+
+    def pedir(token, metodo):
+        usados.append(token)
+        return False, "respuesta de pega"
+
+    monkeypatch.setattr(vw, "pedir_api", pedir)
+    monkeypatch.setattr(vw, "_memoria_leer", lambda: {})
+    monkeypatch.setattr(vw, "_memoria_escribir", lambda datos: None)
+
+    assert vw.main([]) == 1
+    assert len(pedidos) == 2
+    assert usados == ["tok-de-teclado", "tok-de-teclado"]
+
+
+# Mal puestas, con un host inventado que no sale en ningun mensaje: el mensaje
+# no repite el valor (va por Telegram).
+N8N_URL_MAL_PUESTAS = [
+    "n8n.inventado.test",                                   # sin esquema
+    "https://n8n.inventado.test/webhook/copiloto-paciente",  # con una ruta
+    '"https://n8n.inventado.test"',                          # entre comillas
+    "https://n8n. inventado.test",                           # con un blanco
+    "https://alguien@n8n.inventado.test",                    # con usuario
+    "/",
+]
+
+
+@pytest.mark.parametrize("valor", N8N_URL_MAL_PUESTAS)
+def test_con_N8N_URL_mal_puesta_el_script_se_importa_y_no_la_da_por_buena(
+        valor, monkeypatch):
+    monkeypatch.setenv("N8N_URL", valor)
+    modulo = _script_recien_importado()
+    assert modulo.BASE_N8N == ""
+    assert modulo.N8N_URL_MAL_PUESTA, "el motivo"
+    assert "inventado" not in modulo.N8N_URL_MAL_PUESTA
+
+
+@pytest.mark.parametrize("valor", N8N_URL_MAL_PUESTAS)
+def test_con_N8N_URL_mal_puesta_main_avisa_sin_comprobar_nada(valor, monkeypatch, capsys):
+    """Antes daba por mal apuntados los dos webhooks, que estaban bien, y
+    mandaba registrarlos en la direccion mal escrita. Ahora sigue el camino de
+    la variable ausente, con su propio mensaje: no pide tokens, no toca la
+    memoria, avisa diciendo que NO se comprobo nada y devuelve 1."""
+    _main_que_no_toca_nada(monkeypatch)
+    enviados = _canal_de_avisos_falso(monkeypatch)
+    monkeypatch.setenv("N8N_URL", valor)
+    modulo = _script_recien_importado()
+
+    def no_se_llama(*a, **k):
+        raise AssertionError("main() siguió adelante con N8N_URL mal puesta")
+
+    monkeypatch.setattr(modulo, "pedir_api", no_se_llama)
+    monkeypatch.setattr(modulo, "_memoria_escribir", no_se_llama)
+
+    assert modulo.main([]) == 1
+
+    texto = enviados["cuerpo"]["text"]
+    assert "los webhooks de Telegram NO se han comprobado" in texto
+    assert "N8N_URL" in texto and "mal puesta" in texto and "Qué hacer" in texto
+    assert "Vuelve a registrarlo" not in texto
+    salida = capsys.readouterr().out
+    assert "mal puesta" in salida and "aviso por Telegram: enviado." in salida
+    assert "inventado" not in texto + salida
+
+
+def test_los_problemas_de_una_lectura_de_verdad_llegan_al_canal_de_avisos(
+        monkeypatch, capsys):
+    """El final de `main()`: con la base puesta y un webhook mal apuntado, el
+    aviso sale. Si esa llamada se perdiera, la tarea programada seguiria
+    devolviendo 1 a un log que nadie abre."""
+    monkeypatch.setenv("TELEGRAM_TOKEN_PACIENTE", "tok-paciente")
+    monkeypatch.setenv("TELEGRAM_TOKEN_PROFESIONAL", "tok-profesional")
+    monkeypatch.setattr(
+        vw.getpass, "getpass",
+        lambda *a, **k: pytest.fail("los tokens estaban en el entorno"))
+    # los dos bots entregan en la ruta del profesional: el del paciente esta mal
+    lecturas = {"tok-paciente": {"url": f"{BASE}/webhook/copiloto-profesional",
+                                 "pending_update_count": 0},
+                "tok-profesional": {"url": f"{BASE}/webhook/copiloto-profesional",
+                                    "pending_update_count": 2}}
+    monkeypatch.setattr(vw, "pedir_api", lambda token, metodo: (True, lecturas[token]))
+    monkeypatch.setattr(vw, "_memoria_leer", lambda: {})
+    escrita = {}
+    monkeypatch.setattr(vw, "_memoria_escribir", escrita.update)
+    enviados = _canal_de_avisos_falso(monkeypatch)
+
+    assert vw.main([]) == 1
+
+    assert escrita == {"paciente": 0, "profesional": 2}
+    assert enviados["url"] == "https://api.telegram.org/botT0K3N/sendMessage"
+    texto = enviados["cuerpo"]["text"]
+    assert "el webhook de Telegram no está como debe" in texto
+    assert "el OTRO bot" in texto and "bot del paciente" in texto
+    assert "bot del profesional" not in texto
+    for secreto in ("tok-paciente", "tok-profesional", "T0K3N"):
+        assert secreto not in texto
+    salida = capsys.readouterr().out
+    assert "1 cosas que arreglar." in salida
+    assert "aviso por Telegram: enviado." in salida

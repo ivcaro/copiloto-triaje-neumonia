@@ -79,7 +79,7 @@ de cada tarea las incluyen.**
 ## Cómo se corren las pruebas
 
 ```bash
-cd "C:/Users/[retirado]/OneDrive/Desktop/Claude/Proyecto Integrador/copiloto-triaje"
+cd <raiz-del-repositorio>
 C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_heckerling.py -q        # una suite
 C:/venv-copiloto/Scripts/python.exe -m pytest -q -rs                              # todo pytest (unos 300)
 node tests/profesional.mjs > /tmp/prof.txt; echo "salida $?"; tail -3 /tmp/prof.txt  # los nodos (576 OK hoy)
@@ -1608,7 +1608,7 @@ Léelo: lo que tiene que estar rojo es «viaja con los cinco datos crudos».
 
 - [ ] **Paso 3: parchear el nodo**
 
-Escribe `C:/Users/[retirado]/AppData/Local/Temp/claude/.../scratchpad/sp4_patch_a_base64.py`
+Escribe `<carpeta-temporal>/sp4_patch_a_base64.py`
 (en el scratchpad de la sesión; con el tool Write, nunca con `echo`/heredoc por
 las comillas y los acentos) y córrelo desde la raíz del repo con
 `PYTHONIOENCODING=utf-8`:
@@ -2480,7 +2480,7 @@ no aparece `prevalencia_local`, la imagen no se reconstruyó: `docker compose
 `docker logs copiloto-mcp` dirá `Falta la variable de entorno
 PREVALENCIA_LOCAL`: el compose del VPS no es el del repositorio.
 
-Después, desde la máquina de [retirado] con el túnel de `docs/sp3-operacion.md` §2
+Después, desde la máquina de desarrollo con el túnel de `docs/sp3-operacion.md` §2
 apuntando `COPILOTO_URL` al contenedor:
 `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_contrato_mcp.py tests/test_contrato_sp4.py -q -rs` → 13 pasadas, 0 saltadas.
 
@@ -2488,7 +2488,7 @@ apuntando `COPILOTO_URL` al contenedor:
 
 1. Leer el export: `python -c` que imprima `parameters.jsCode` de `A base64`,
    `Leer respuesta` y `Desenlace` de `n8n/copiloto-profesional.json`.
-2. `n8n_update_partial_workflow` sobre el workflow `[retirado]`
+2. `n8n_update_partial_workflow` sobre el workflow `<id-del-workflow-profesional>`
    (`🩺 Copiloto Triaje: Profesional`) con tres operaciones `updateNode`, una por
    nodo, que pongan `parameters.jsCode` al valor del export. Nada más del
    workflow se toca (restricción 10).

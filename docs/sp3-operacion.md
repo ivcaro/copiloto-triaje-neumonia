@@ -8,9 +8,15 @@ dos bots ya funcionando.
 
 | Dónde | Qué va ahí |
 | :--- | :--- |
-| **El VPS** (donde el prompt dice `root@ubuntu-…`) | todo lo de `docker` |
+| **El VPS** (donde el prompt es el del servidor, p. ej. `root@…`) | todo lo de `docker` |
 | **Tu Windows, PowerShell** | el túnel, las pruebas, los scripts |
 | **n8n en el navegador** | credenciales y workflows |
+
+En las órdenes, `<raiz-del-repositorio>` es la carpeta de tu máquina donde
+está tu clon del repositorio; `<RSNA_RAIZ>`, la del dataset preparado (la
+variable de entorno `RSNA_RAIZ`); `usuario@vps`, el usuario y la dirección con
+los que entras por `ssh` al servidor; y `<IP-del-contenedor>`, la que da la
+orden que la precede. Se sustituyen antes de pegar la orden.
 
 ---
 
@@ -26,7 +32,7 @@ donde se lee el identificador.
 **2. Averiguar su `chat_id`.** Con el túnel abierto (§3) y el DSN puesto:
 
 ```powershell
-cd "C:\Users\[retirado]\OneDrive\Desktop\Claude\Proyecto Integrador\copiloto-triaje"; C:\venv-copiloto\Scripts\python.exe pruebas/profesionales.py
+cd "<raiz-del-repositorio>"; C:\venv-copiloto\Scripts\python.exe pruebas/profesionales.py
 ```
 
 Lista los intentos no autorizados más recientes **y te imprime el comando de
@@ -108,10 +114,11 @@ crear.
 > número de historia. El riesgo está declarado en el §5.5 del spec, junto con lo
 > que haría falta para quitarlo.
 
-DICOM de prueba, cualquiera de aquí:
+DICOM de prueba, cualquiera de aquí (`<RSNA_RAIZ>` es la raíz del dataset de
+RSNA preparado, la de la variable `RSNA_RAIZ`):
 
 ```
-C:\Users\[retirado]\datasets\rsna-pneumonia\trabajo\crudo\stage_2_train_images\
+<RSNA_RAIZ>\crudo\stage_2_train_images\
 ```
 
 **Casos que merece la pena probar a propósito:**
@@ -192,7 +199,8 @@ perfectamente vivo. **Un skip aquí se ve verde**: nada en pantalla dice que las
 diez aserciones del §10 del spec —la forma de `structuredContent`, la posición
 del código de error, los dos límites de tamaño y las cotas de la razón de
 verosimilitud— se quedaron sin comprobar. Medido: con `/mcp` puesta, `10
-skipped`; sin ella, `10 passed`.
+skipped`; sin ella, `10 passed` (con `RSNA_RAIZ` y los pesos puestos; con el
+servidor solo, 2 pasan y 8 se saltan).
 
 Así que: **para las pruebas de contrato, no pongas `COPILOTO_URL`** y deja el
 valor por defecto. Si tienes que apuntarlas a otro sitio, pásale el origen a
@@ -200,17 +208,20 @@ secas y córrelas con `pytest -rs`, que es lo único que enseña los skips.
 
 **Sin bots** — no toca n8n, ni Telegram, ni la base. Llama al copiloto y
 redacta el mensaje con el código del propio workflow. Es lo que se puede correr
-sin el túnel ni los secretos, y tarda un minuto:
+sin el túnel ni los secretos, y tarda un minuto. Necesita `RSNA_RAIZ`, porque
+las placas salen del dataset:
 
 ```powershell
-cd "C:\Users\[retirado]\OneDrive\Desktop\Claude\Proyecto Integrador\copiloto-triaje"; C:\venv-copiloto\Scripts\python.exe pruebas/reproducir_casos.py --sin-bots
+cd "<raiz-del-repositorio>"; C:\venv-copiloto\Scripts\python.exe pruebas/reproducir_casos.py --sin-bots
 ```
 
 **Con los dos bots** — conduce las 49 conversaciones de verdad. Hacen falta el
-túnel de la base (§3) y cuatro variables; **son secretos y no se escriben en
-ningún fichero del repositorio**:
+túnel de la base (§3), `RSNA_RAIZ` y cinco variables más: la dirección de n8n,
+que el repositorio ya no lleva escrita, y cuatro que **son secretos y no se
+escriben en ningún fichero del repositorio**:
 
 ```powershell
+$env:N8N_URL = "<dirección base de n8n, con https://>"
 $env:COPILOTO_BD_DSN = "host=127.0.0.1 port=15433 dbname=copiloto user=copiloto password=..."
 $env:TELEGRAM_SECRET_PRUEBA = "..."
 $env:TELEGRAM_TOKEN_PROFESIONAL = "..."
@@ -348,10 +359,13 @@ spec— y eso implica registrarlo a mano.
 `copiloto-profesional: secret_token…`, campo **Value**. El nombre de la
 cabecera (`X-Telegram-Bot-Api-Secret-Token`) no se toca.
 
-**3. Registrarlo.** No hay nada que sustituir: pregunta las dos cosas.
+**3. Registrarlo.** No hay nada que sustituir: pregunta las tres cosas. La URL
+base es la pública de la instancia de n8n (la misma que va en
+`n8n/valores.local.json`, §7); en el repositorio solo figura su marcador,
+`https://n8n.ejemplo.test`.
 
 ```powershell
-$t = Read-Host 'token del bot'; $s = Read-Host 'secret_token'; Invoke-RestMethod -Uri "https://api.telegram.org/bot$t/setWebhook" -Method Post -Body @{url='https://n8n.[retirado].com/webhook/copiloto-paciente'; secret_token=$s}
+$u = (Read-Host 'URL base de n8n, con https://').TrimEnd('/'); $t = Read-Host 'token del bot'; $s = Read-Host 'secret_token'; Invoke-RestMethod -Uri "https://api.telegram.org/bot$t/setWebhook" -Method Post -Body @{url="$u/webhook/copiloto-paciente"; secret_token=$s}
 ```
 
 La ruta es `copiloto-paciente` o `copiloto-profesional` según el bot. **Si
@@ -406,7 +420,7 @@ sin ninguna señal si además no falla nada.
 
 - El chat_id lo da `pruebas/profesionales.py` (§1), y es **el mismo para todos
   los bots**: es el id del usuario de Telegram.
-- Los avisos salen por **`[retirado]`** y no por los dos bots de producción:
+- Los avisos salen por **el bot de pruebas y avisos** y no por los dos bots de producción:
   así quedan en su propio hilo, y el canal del aviso no depende de un token que
   quizá haya que revocar. **Hay que haberle escrito a ese bot alguna vez**: un
   bot no puede iniciar una conversación.
@@ -457,28 +471,39 @@ la credencial de n8n. En los dos casos **el bot queda mudo y las sondas del
 workflow siguen viendo su 403 tan contentas**: desde fuera de Telegram todo está
 bien. Es el único agujero que queda del §16, y se tapa con el paso 2.
 
-### Paso 2: la tarea programada diaria (Windows de [retirado])
+### Paso 2: la tarea programada diaria (la máquina de desarrollo)
 
 Se decidió esto y no dos variables de entorno en el n8n del cliente: reiniciar
 **su** n8n por una comprobación nuestra no compensa mientras H5 esté abierto.
 
 **Una vez**, en una consola de PowerShell del usuario que vaya a correrla —las
-cuatro variables quedan en su perfil, no en el repositorio—:
+cinco variables quedan en su perfil, no en el repositorio—:
 
 ```powershell
+setx N8N_URL (Read-Host 'dirección base de n8n, con https://')
 setx TELEGRAM_TOKEN_PACIENTE (Read-Host 'token del bot del paciente')
 setx TELEGRAM_TOKEN_PROFESIONAL (Read-Host 'token del bot del profesional')
-setx TELEGRAM_TOKEN_AVISOS (Read-Host 'token de [retirado]')
+setx TELEGRAM_TOKEN_AVISOS (Read-Host 'token del bot de pruebas y avisos')
 setx COPILOTO_CHAT_EQUIPO (Read-Host 'chat_id del equipo')
 ```
 
-**Son cuatro y hacen dos cosas distintas**, que conviene no confundir cuando
+`setx` vale para las consolas que se abran después: abre una nueva antes de
+seguir.
+
+**Son cinco y hacen tres cosas distintas**, que conviene no confundir cuando
 una falte:
 
+- `N8N_URL` es la dirección con la que el script compara la de cada
+  webhook. El repositorio ya no la lleva escrita: sin ella, o con ella mal
+  puesta (sin `https://`, con una ruta detrás, entre comillas), el script
+  **no comprueba nada**, lo dice, avisa por el canal si lo tiene, y devuelve
+  1.
 - `TELEGRAM_TOKEN_PACIENTE` y `TELEGRAM_TOKEN_PROFESIONAL` son lo que el script
-  comprueba. Si no están, los **pide por teclado** — y una tarea programada no
-  tiene teclado: sin ellas la tarea no comprueba ese bot y lo cuenta como
-  problema.
+  comprueba. Si no están, los **pide por teclado**. La tarea programada lo
+  lanza con `--sin-teclado`, que no pide nada nunca: el Programador de tareas
+  le da una consola aunque nadie la vea, y sin esa opción se quedaría
+  esperando un token que nadie va a escribir. Con ella, sin los tokens la
+  tarea no comprueba ese bot y lo cuenta como problema.
 - `COPILOTO_CHAT_EQUIPO` y `TELEGRAM_TOKEN_AVISOS` son el canal del aviso, y
   **hacen falta las dos**. Sin ellas el script encuentra los problemas pero solo
   los **imprime**, y una tarea programada que escribe en un log que nadie abre
@@ -491,7 +516,7 @@ aviso caiga **en el mismo hilo** que los otros.
 avisos en el mismo minuto):
 
 ```powershell
-$acc = New-ScheduledTaskAction -Execute 'C:\venv-copiloto\Scripts\python.exe' -Argument 'pruebas\verificar_webhooks.py' -WorkingDirectory 'C:\Users\[retirado]\OneDrive\Desktop\Claude\Proyecto Integrador\copiloto-triaje'
+$acc = New-ScheduledTaskAction -Execute 'C:\venv-copiloto\Scripts\python.exe' -Argument 'pruebas\verificar_webhooks.py --sin-teclado' -WorkingDirectory '<raiz-del-repositorio>'
 $dis = New-ScheduledTaskTrigger -Daily -At 07:15
 Register-ScheduledTask -TaskName 'Copiloto Triaje: webhooks de Telegram' -Action $acc -Trigger $dis -Description 'La mitad del §16 que no cabe en n8n: getWebhookInfo de los dos bots.'
 ```
@@ -507,13 +532,14 @@ que arreglar, y **eso es todo lo que dice**: el script devuelve 1 también cuand
 **no ha mandado nada** —porque falten `COPILOTO_CHAT_EQUIPO` o
 `TELEGRAM_TOKEN_AVISOS`, o porque falte el token de un bot y no lo haya podido
 comprobar— y cuando el envío por Telegram **falló**. Un 1 no garantiza que el
-aviso haya salido.
+aviso haya salido. Y devuelve 1 sin haber comprobado ningún webhook si falta
+`N8N_URL` o está mal puesta.
 
 Lo que sí lo dice es la salida del script, no su código: la línea del final es
 «aviso por Telegram: enviado.» o «NO se pudo enviar (…)». Si la tarea lleva días
 devolviendo 1 y en el chat no ha aparecido nada, córrelo a mano en una consola y
 lee esa línea: lo más probable es que falte una de las dos variables del canal,
-o que nadie le haya escrito nunca a `[retirado]`.
+o que nadie le haya escrito nunca al bot de pruebas y avisos.
 
 ### Probarlo sin esperar a mañana
 
@@ -554,19 +580,135 @@ Las tres nos costaron tiempo:
 
 ## 7. Credenciales y workflows
 
-| Rol | Credencial en n8n | Workflow |
+| Rol | Credencial en n8n (su marcador) | Workflow |
 | :--- | :--- | :--- |
-| Paciente | `[retirado]` | `🩺 Copiloto Triaje: Paciente (Telegram)` |
-| Profesional | `[retirado]` | `🩺 Copiloto Triaje: Profesional (Telegram)` |
-| Pruebas y avisos | `[retirado]` | `🩺 Copiloto Triaje: Mantenimiento` (solo para mandar los avisos) |
+| Paciente | `bot-paciente` | `🩺 Copiloto Triaje: Paciente (Telegram)` |
+| Profesional | `bot-profesional` | `🩺 Copiloto Triaje: Profesional (Telegram)` |
+| Pruebas y avisos | `bot-avisos` | `🩺 Copiloto Triaje: Mantenimiento` (solo para mandar los avisos) |
 | Base de datos | `copiloto-bd` | el del paciente, el del profesional y el de mantenimiento |
 
-**No se toca ninguna otra credencial de Telegram.** `[retirado]` la usan cinco
-workflows del cliente, y un token de Telegram admite **un solo webhook**:
-apuntarle un flujo nuestro lo dejaría mudo sin ningún error visible.
+La segunda columna es el **marcador** con el que el repositorio nombra cada
+credencial de Telegram, no el nombre que tiene que llevar en n8n. El nombre
+real es el que tenga en la instancia, con una condición que pone la
+herramienta de los marcadores: no puede ser un marcador, ni contener uno, ni
+ser un trozo de uno. `bot-paciente`, `Telegram` o `Bot` no valen; `Triaje
+pacientes` sí.
+
+**No se toca ninguna otra credencial de Telegram.** La credencial de Telegram
+del cliente la usan cinco workflows suyos, y un token de Telegram admite **un
+solo webhook**: apuntarle un flujo nuestro lo dejaría mudo sin ningún error
+visible.
 
 Los tres workflows llevan el prefijo `🩺 Copiloto Triaje:`. Cualquier otro de
 esa instancia es del cliente y **no se modifica**.
+
+### Los marcadores: del repositorio a n8n, y de n8n al repositorio
+
+Los tres exports de `n8n/` se versionan con **marcadores** en lugar de los
+valores de la instancia donde corren. Por eso **un export del repositorio ya
+no es idéntico byte a byte al workflow desplegado**: se diferencian en estas
+cadenas y, el de mantenimiento, en el `chat_equipo` del nodo `Configuracion`,
+que en el repositorio va vacío (§5, paso 1).
+
+| Marcador | Qué es en la instancia |
+| :--- | :--- |
+| `https://n8n.ejemplo.test` | la URL base pública de n8n, con esquema y sin barra final (las dos sondas del mantenimiento y las notas de los webhooks) |
+| `CRED_TELEGRAM_PACIENTE`, `bot-paciente` | el `id` y el nombre de la credencial de Telegram del bot del paciente |
+| `CRED_TELEGRAM_PROFESIONAL`, `bot-profesional` | los de la credencial del bot del profesional |
+| `CRED_TELEGRAM_AVISOS`, `bot-avisos` | los de la credencial del bot de pruebas y avisos |
+| `CRED_POSTGRES_COPILOTO` | el `id` de la credencial `copiloto-bd` |
+| `CRED_SECRETO_PACIENTE`, `CRED_SECRETO_PROFESIONAL` | los `id` de las dos credenciales de cabecera con el `secret_token` |
+
+El `id` de una credencial se lee en n8n en la URL de la propia credencial al
+abrirla, o en un export del workflow que ya la usa. **Ninguno es un secreto**
+—el token y la contraseña viven dentro de la credencial y no salen en ningún
+export—, pero identifican la instancia, y por eso no se versionan.
+
+**Una sola vez por máquina:** copiar `n8n/valores.ejemplo.json` a
+`n8n/valores.local.json` y cambiar cada valor de ejemplo por el real. Ese
+fichero está en `.gitignore`: no se versiona ni se comparte.
+
+**Poner los valores reales, ANTES de importar o desplegar un workflow desde el
+repositorio.** La salida va a una carpeta temporal fuera del repositorio, y es
+ese fichero —no el de `n8n/`— el que se importa:
+
+```powershell
+C:\venv-copiloto\Scripts\python.exe scripts/marcadores_n8n.py --entrada n8n/copiloto-mantenimiento.json --salida $env:TEMP\n8n-real\copiloto-mantenimiento.json
+```
+
+Si se importa el export tal como está en el repositorio, con los marcadores,
+el workflow no funciona: sus nodos apuntan a credenciales que no existen en la
+instancia, y las dos sondas del mantenimiento preguntan a un dominio que no
+existe.
+
+**Después de importar, mirar en n8n que cada workflow usa SU bot.** El
+repositorio ya no puede vigilarlo: qué credencial real hay detrás de cada
+marcador lo dice `valores.local.json`, y si ahí se cruzan dos `id` —o se cuela
+el de una credencial que no es del proyecto— la herramienta los pone sin
+rechistar. Abre un nodo de Telegram de cada workflow y comprueba que la
+credencial es la del bot del paciente en el del paciente, la del profesional en
+el del profesional y la de pruebas y avisos en el de mantenimiento. La primera
+vez, empieza por el de mantenimiento, que no atiende a nadie.
+
+**Quitar los valores reales, ANTES de versionar un export.** El workflow se
+descarga de n8n a la carpeta temporal y se deja en `n8n/` ya con marcadores:
+
+```powershell
+C:\venv-copiloto\Scripts\python.exe scripts/marcadores_n8n.py --retirar --entrada $env:TEMP\n8n-real\export.json --salida n8n/copiloto-mantenimiento.json
+```
+
+Una descarga de n8n trae más de lo que se versiona: el `id` del workflow, su
+`versionId`, la huella de la instancia (`meta`), datos de ejecuciones
+(`pinData`) y etiquetas. Identifican la instancia, como el dominio. Al retirar,
+la herramienta se queda con las cinco claves que se versionan (`name`,
+`active`, `nodes`, `connections` y `settings`), escribe el fichero como los de
+`n8n/` y dice qué claves quitó. Y vacía el `chat_equipo` del workflow de
+mantenimiento, que identifica a una persona: lo dice, sin repetir el valor.
+Por eso, **después de importar ese workflow desde el repositorio hay que
+volver a rellenarlo en n8n** (§5, paso 1): hasta entonces no llega ningún
+aviso.
+
+Después, `git diff n8n/` tiene que enseñar solo lo que se cambió a propósito
+en el workflow, y estas dos pruebas tienen que pasar:
+
+```powershell
+C:\venv-copiloto\Scripts\python.exe -m pytest -rs tests/test_marcadores_n8n.py tests/test_anonimato.py
+```
+
+La primera caza lo que la herramienta no conoce y tiene forma de
+identificador: el `id` de una credencial que se volvió a crear y no está en
+`valores.local.json` (en los workflows versionados las credenciales solo
+pueden ser marcadores, y cada marcador aparece las veces previstas). La
+herramienta ya se niega a escribir un export así; la prueba es la segunda red,
+para lo que llegue a `n8n/` por otro camino. La
+segunda mira el árbol entero contra las huellas: caza lo que la lista conoce
+y está escrito de otra forma, como el dominio con otro subdominio. En el
+repositorio publicado `huellas.txt` lleva solo la huella del centinela y esa
+parte **se salta** (lo dice el `-rs` de la orden): allí la comprobación del
+árbol es `scripts/verificar_anonimato.py` con las huellas del repositorio de
+desarrollo (`tests/anonimato/README.md`). Ninguna de las dos caza un
+identificador nuevo que nadie haya puesto en la lista: para eso está el
+`git diff`. Si enseña de más, no se versiona hasta entender por qué. Al
+terminar se borra la carpeta temporal.
+
+La primera vez que se exporte un workflow que no se ha desplegado todavía desde
+el repositorio, sus notas llevan aún el texto de antes de los marcadores. En el
+del profesional eso se ve en dos sitios —la nota del webhook y un comentario
+del nodo `Desenlace`—, donde el `git diff` enseñará un texto distinto del
+versionado: se corrige a mano con el del repositorio, o se despliega antes
+desde el repositorio y se exporta después.
+
+El script se niega —sin escribir nada— si en `valores.local.json` falta un
+marcador, si dos marcadores comparten valor, si el valor de la URL de n8n lleva
+una ruta, si al poner los valores la salida es el propio fichero de entrada o
+cae dentro del repositorio, o si tras retirar queda algún valor real escrito de
+otra forma (en mayúsculas, o el dominio sin el `https://`); en ese último caso
+dice la línea, y se corrige a mano. Al retirar se niega además si la entrada no
+es UN workflow (la descarga de varios, que es una lista, se pasa de uno en
+uno), y si después de retirar queda una credencial o una URL de webhook que no
+es un marcador: los valores de `valores.local.json` no son los de esa
+descarga. Ningún mensaje suyo repite un valor real: dice el marcador, el nodo o
+la línea.
 
 ---
 
@@ -583,5 +725,62 @@ los bots en BotFather.
 
 **Lo que no hay que teclear nunca en ese VPS:** `docker compose down` a secas
 (baja el proyecto del directorio donde estés, que puede ser el del cliente),
-`docker network rm [retirado]_[retirado]_network`, `docker network prune`, y
+`docker network rm <RED_N8N>`, `docker network prune`, y
 `git clean -xfd` en `/opt/copiloto`.
+
+---
+
+## 9. Después de la anonimización: lo que hay que hacer una vez
+
+El repositorio dejó de llevar escritos la dirección de n8n, el nombre de la
+red y los identificadores de las credenciales. Lo desplegado **sigue
+funcionando como está**; estos pasos hacen falta la próxima vez que se
+despliegue o se opere desde el repositorio —el 2, antes—, y se hacen fuera
+de las fechas de la sesión con el médico (`docs/sp5-sesion.md`).
+
+1. **En el servidor, antes del próximo despliegue:** `RED_N8N` en
+   `servidor/.env`, y el primer redespliegue, que vuelve a crear los dos
+   contenedores (la clave de la red cambió de nombre en el compose) sin tocar
+   el volumen de la base. Mientras se recrean, alrededor de un minuto, los
+   bots no contestan: se hace cuando no haya consultas en curso. El
+   procedimiento, orden a orden, está en
+   `docs/sp2-despliegue.md`, apartado «El primer redespliegue con `RED_N8N`
+   obligatoria»: se sigue ese, no se improvisa otro.
+
+2. **En la máquina de desarrollo:** la tarea programada diaria que corre
+   `pruebas/verificar_webhooks.py` necesita `N8N_URL` en su entorno (§5,
+   «Paso 2»). Sin ella el script no comprueba nada: lo dice, avisa por el
+   canal de avisos si lo tiene configurado, y devuelve un código de error.
+   **Esto no espera a «la próxima vez»:** la tarea corre desde el clon de esa
+   máquina, y desde que el clon tiene este cambio devuelve 1 y avisa cada
+   mañana de que falta `N8N_URL`, sin que haya nada roto. La variable se pone
+   antes de traer el cambio a ese clon; si ya está traído, ya.
+   Y la acción de la tarea lleva `--sin-teclado` (§5). Si la tarea se
+   registró antes, no la lleva, y repetir el `Register-ScheduledTask` del §5
+   no la reemplaza: se cambia con
+   `Set-ScheduledTask -TaskName 'Copiloto Triaje: webhooks de Telegram' -Action $acc`,
+   con el `$acc` del §5, y se comprueba con
+   `(Get-ScheduledTask -TaskName 'Copiloto Triaje: webhooks de Telegram').Actions`:
+   su `Arguments` acaba en `--sin-teclado`.
+
+3. **En la máquina de desarrollo:** `n8n/valores.local.json`, con los valores
+   reales de cada marcador. Si no existe, se crea a partir de
+   `n8n/valores.ejemplo.json`. Está ignorado por git y no sale de la
+   máquina. Cómo se usa, en el §7 de este manual, «Los marcadores: del
+   repositorio a n8n, y de n8n al repositorio».
+
+4. **La primera vez que se importe un workflow desde el repositorio**, empezar
+   por el de mantenimiento, que no atiende a nadie, y mirar en n8n, nodo a
+   nodo, que cada workflow usa la credencial de SU bot antes de activarlo: un
+   valor cruzado en `valores.local.json` haría contestar a un bot con la
+   cuenta de otro. En el de mantenimiento, además, volver a rellenar
+   `chat_equipo` (§5, paso 1).
+
+5. **Para correr la suite completa y el arnés**, `RSNA_RAIZ` (y `N8N_URL`,
+   con los secretos del arnés —los de la tabla «Variables de entorno» del
+   `README.md`—, para las pruebas conducidas y para el arnés con bots). Un
+   salto se ve verde: conviene correr con `-rs` y leer qué se saltó.
+
+       setx RSNA_RAIZ "<RSNA_RAIZ>"
+
+   `setx` vale para las consolas que se abran después: abre una nueva.

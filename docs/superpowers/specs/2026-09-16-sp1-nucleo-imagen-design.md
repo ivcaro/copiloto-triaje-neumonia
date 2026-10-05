@@ -2,7 +2,7 @@
 
 **Proyecto:** Copiloto de triaje para neumonía en adultos (Telegram + MCP + LLM)
 **Sub-proyecto:** SP1, primero de cinco. Corresponde al hito **H3 (25 de septiembre de 2026)**.
-**Equipo:** [retirado] [retirado] [retirado] [retirado] e [retirado] [retirado] [retirado] [retirado] — UEES, Maestría en IA.
+**Equipo:** dos integrantes.
 **Fecha:** 16 de septiembre de 2026.
 **Estado:** aprobado en chat el 16-sep-2026; pendiente de revisión escrita.
 
@@ -43,7 +43,7 @@ Criterios no numéricos, igualmente obligatorios:
 
 Contenido real del archivo descargado, inspeccionado el 16-sep-2026 (no son cifras estimadas):
 
-- Origen: `rsna-pneumonia-detection-challenge.zip`, 3,66 GB, en `C:\Users\[retirado]\datasets\rsna-pneumonia\` (fuera de OneDrive y fuera del repositorio).
+- Origen: `rsna-pneumonia-detection-challenge.zip`, 3,66 GB, en `<carpeta-de-descarga>\` (fuera de OneDrive y fuera del repositorio).
 - `stage_2_train_images/`: **26 684 archivos DICOM**, 3,31 GB.
 - `stage_2_test_images/`: 3 000 archivos DICOM, 0,37 GB. **No se usan**: la competencia no publica sus etiquetas.
 - `stage_2_train_labels.csv`: 30 227 filas con columnas `patientId, x, y, width, height, Target`. Hay más filas que imágenes porque un paciente positivo puede tener varias cajas.

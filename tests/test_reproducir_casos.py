@@ -768,3 +768,90 @@ def test_main_escribe_latencias_json_tambien_sin_bots(tmp_path, monkeypatch, cap
     # El arnes sigue haciendo lo de siempre.
     assert (tmp_path / "RESUMEN.txt").is_file()
     assert (tmp_path / "03-banda_contradictoria" / "p-1.txt").is_file()
+
+
+# --------------------------------------------------------------------------
+# `N8N_URL` no tiene valor por defecto: con los bots es obligatoria.
+# --------------------------------------------------------------------------
+def _entorno_con_bots(monkeypatch, tmp_path, *argumentos):
+    """Los tres secretos que eligen el modo con bots, inventados, y `main()`
+    sin copiloto ni base: si llega a buscarlos, la prueba falla en vez de salir
+    a la red."""
+    from pruebas import reproducir_casos as rc
+
+    for variable in ("COPILOTO_BD_DSN", "TELEGRAM_SECRET_PRUEBA",
+                     "TELEGRAM_TOKEN_PROFESIONAL"):
+        monkeypatch.setenv(variable, "inventado")
+    monkeypatch.delenv("N8N_URL", raising=False)
+    monkeypatch.setattr(sys, "argv", ["reproducir_casos.py", "--salida",
+                                      str(tmp_path), *argumentos])
+
+    class Llego(Exception):
+        pass
+
+    def llego(*a, **k):
+        raise Llego()
+
+    monkeypatch.setattr(rc, "comprobar_el_copiloto", llego)
+    monkeypatch.setattr(rc, "_conectar", llego)
+    return rc, Llego
+
+
+def test_la_base_de_n8n_sale_de_N8N_URL_y_de_ningun_otro_sitio(monkeypatch):
+    from pruebas.reproducir_casos import base_de_n8n
+
+    monkeypatch.setenv("N8N_URL", " https://otro.ejemplo.test/ ")
+    assert base_de_n8n() == "https://otro.ejemplo.test"
+    for vacia in ("", "   "):
+        monkeypatch.setenv("N8N_URL", vacia)
+        with pytest.raises(SystemExit) as salida:
+            base_de_n8n()
+        assert "N8N_URL" in str(salida.value)
+    monkeypatch.delenv("N8N_URL")
+    with pytest.raises(SystemExit) as salida:
+        base_de_n8n()
+    assert "N8N_URL" in str(salida.value) and "--sin-bots" in str(salida.value)
+
+
+def test_con_los_bots_y_sin_N8N_URL_el_arnes_sale_antes_de_empezar(
+        monkeypatch, tmp_path, capsys):
+    """Antes el arnes hablaba con un n8n por defecto. Ahora, con los secretos
+    puestos y sin la URL, sale diciendo que variable falta, y lo hace antes de
+    comprobar el copiloto, de elegir los casos y de abrir la base."""
+    rc, _ = _entorno_con_bots(monkeypatch, tmp_path)
+
+    with pytest.raises(SystemExit) as salida:
+        rc.main()
+
+    assert "N8N_URL" in str(salida.value)
+    assert salida.value.code != 0
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("valor", [
+    "n8n.inventado.test", "https://n8n.inventado.test/webhook/copiloto-paciente",
+    '"https://n8n.inventado.test"', "https://n8n. inventado.test", "/"])
+def test_con_los_bots_y_N8N_URL_mal_puesta_el_arnes_sale_antes_de_empezar(
+        valor, monkeypatch, tmp_path):
+    """Mal puesta, el primer POST moria con «unknown url type» despues de abrir
+    la base y de dar de alta el chat de pruebas. Ahora se detiene donde la
+    ausente: antes del copiloto, de elegir los casos y de abrir la base. Y el
+    mensaje no repite el valor."""
+    rc, _ = _entorno_con_bots(monkeypatch, tmp_path)
+    monkeypatch.setenv("N8N_URL", valor)
+
+    with pytest.raises(SystemExit) as salida:
+        rc.main()
+
+    assert "N8N_URL" in str(salida.value) and "mal puesta" in str(salida.value)
+    assert "inventado" not in str(salida.value)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_sin_bots_el_arnes_no_pide_N8N_URL(monkeypatch, tmp_path, capsys):
+    rc, Llego = _entorno_con_bots(monkeypatch, tmp_path, "--sin-bots")
+
+    with pytest.raises(Llego):
+        rc.main()
+
+    assert "MODO SIN BOTS (--sin-bots)" in capsys.readouterr().out

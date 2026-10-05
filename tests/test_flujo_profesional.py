@@ -112,7 +112,9 @@ SINTOMAS_PRUEBA = {"fiebre": "si", "tos": "con_flema", "dias_evolucion": "3_a_7"
                    "texto_libre": None}
 
 # Las TRES pruebas que suben una placa. Las otras cinco de la clase no suben nada
-# y no dependen de esto.
+# y no dependen de esto. La placa es una radiografia real de RSNA, elegida con
+# `seleccionar`: las tres piden ademas `rsna_raiz` y `pesos_desplegados`, y sin
+# `RSNA_RAIZ` o sin los pesos se saltan diciendo cual falta.
 necesita_subida = pytest.mark.skipif(
     not SUBIDA,
     reason="sin CHAT_SUBIDA_PLACAS no hay chat real donde subir la placa, y sin "
@@ -158,10 +160,10 @@ def _foto(chat):
 def _subir_dicom(ruta, chat=None):
     """Sube el DICOM con el bot del PROFESIONAL y devuelve su `file_id`.
 
-    Con el bot del profesional y no con `[retirado]`, aunque el brief diga
+    Con el bot del profesional y no con el de pruebas y avisos, aunque el brief diga
     otra cosa: en Telegram un `file_id` solo lo puede resolver **el bot que lo
     obtuvo**. Un `file_id` conseguido subiendo el fichero al bot de pruebas haria
-    que el `getFile` del flujo -que usa la credencial de `[retirado]`-
+    que el `getFile` del flujo -que usa la credencial `bot-profesional`-
     respondiera `wrong file identifier`, y la prueba estaria midiendo eso y no el
     flujo.
 
@@ -327,8 +329,8 @@ class TestConducido:
             " LIMIT 1", (AUTORIZADO,)).fetchone()[0] is None
 
     @necesita_subida
-    def test_un_menor_de_edad_se_rechaza_sin_ninguna_cifra(self, webhook_n8n,
-                                                           bd_sp3):
+    def test_un_menor_de_edad_se_rechaza_sin_ninguna_cifra(
+            self, webhook_n8n, bd_sp3, rsna_raiz, pesos_desplegados):
         """Criterio 7. Se usa una placa de un nino REAL, de los 1 276 de RSNA."""
         from pruebas.seleccionar_casos import seleccionar
         caso = seleccionar(n_por_perfil=1)["menor_edad"][0]
@@ -344,7 +346,8 @@ class TestConducido:
             (AUTORIZADO,)).fetchone()[0] == 0, "§9: el rechazo por edad TERMINA"
 
     @necesita_subida
-    def test_la_banda_contradictoria_lleva_su_aviso(self, webhook_n8n, bd_sp3):
+    def test_la_banda_contradictoria_lleva_su_aviso(self, webhook_n8n, bd_sp3,
+                                                    rsna_raiz, pesos_desplegados):
         """Criterio 6. Pasa una de cada cuatro veces que hay un positivo (§3)."""
         from pruebas.seleccionar_casos import seleccionar
         caso = seleccionar(n_por_perfil=1)["banda_contradictoria"][0]
@@ -411,7 +414,8 @@ class TestConducido:
             bd_sp3.execute("DELETE FROM profesionales WHERE chat_id = %s", (OTRO,))
 
     @necesita_subida
-    def test_los_sintomas_se_copian_a_consultas(self, webhook_n8n, bd_sp3):
+    def test_los_sintomas_se_copian_a_consultas(self, webhook_n8n, bd_sp3,
+                                                rsna_raiz, pesos_desplegados):
         """D12: sin la copia, H7 se queda sin nada que validar porque
         `cuestionarios` se borra a los 7 dias."""
         from pruebas.seleccionar_casos import seleccionar
@@ -478,33 +482,44 @@ def test_el_webhook_rechaza_por_cabecera_antes_de_ejecutar_nada():
 def test_solo_se_usa_la_credencial_del_bot_del_profesional():
     """D9 y la regla dura 2: reutilizar una credencial de Telegram del cliente le
     robaria el webhook a un bot suyo y lo dejaria mudo sin error visible.
-    `[retirado]` la usan cinco workflows del cliente."""
+    La credencial de Telegram del cliente la usan cinco workflows suyos."""
     usadas = {c["id"]
               for n in _flujo()["nodes"]
               for t, c in (n.get("credentials") or {}).items()
               if t == "telegramApi"}
-    assert usadas == {"[retirado]"}, usadas            # [retirado]
+    # El marcador (SP5 §6.1). Si falla se dice cuantas credenciales distintas
+    # hay y no cuales: lo que imprime una prueba tambien se puede publicar.
+    solo_la_suya = usadas == {"CRED_TELEGRAM_PROFESIONAL"}
+    assert solo_la_suya, f"{len(usadas)} credenciales de Telegram distintas"
     paciente = {c["id"]
                 for n in _flujo(FLUJO_PACIENTE)["nodes"]
                 for t, c in (n.get("credentials") or {}).items()
                 if t == "telegramApi"}
-    assert not (usadas & paciente), \
+    # sobre un booleano: pytest enseñaria los id de la interseccion
+    comparten = bool(usadas & paciente)
+    assert not comparten, \
         "los dos bots no pueden compartir credencial: un token, un webhook"
 
 
 def test_ningun_secreto_viaja_en_el_JSON_exportado():
     """§12: ninguno va al repositorio. Las credenciales se referencian por id y
-    nombre; sus valores se quedan en n8n."""
+    nombre; sus valores se quedan en n8n. Si algo falla se dice el nodo o lo
+    que se busco, nunca lo que se encontro: cada comprobacion se reduce ANTES
+    a un booleano, porque pytest enseña lo que compara."""
     flujo = _flujo()
-    for nodo in flujo["nodes"]:
-        for tipo, cred in (nodo.get("credentials") or {}).items():
-            assert set(cred) <= {"id", "name"}, (nodo["name"], tipo, cred)
+    con_de_mas = [f"{nodo['name']} ({tipo})"
+                  for nodo in flujo["nodes"]
+                  for tipo, cred in (nodo.get("credentials") or {}).items()
+                  if not set(cred) <= {"id", "name"}]
+    solo_id_y_nombre = not con_de_mas
+    assert solo_id_y_nombre, f"credenciales con algo mas que id y nombre: {con_de_mas}"
     texto = json.dumps(flujo)
-    assert not re.search(r"\b\d{8,10}:[A-Za-z0-9_-]{35}\b", texto), \
-        "algo con la forma de un token de bot de Telegram"
-    for sospechoso in ("accessToken", "\"password\"", "api.telegram.org/bot1",
-                       "Bearer "):
-        assert sospechoso not in texto, sospechoso
+    parece_un_token = re.search(r"\b\d{8,10}:[A-Za-z0-9_-]{35}\b", texto) is not None
+    assert not parece_un_token, "algo con la forma de un token de bot de Telegram"
+    presentes = [s for s in ("accessToken", "\"password\"", "api.telegram.org/bot1",
+                             "Bearer ") if s in texto]
+    ninguno = not presentes
+    assert ninguno, f"el JSON lleva {presentes}"
 
 
 def test_el_workflow_no_guarda_los_datos_de_ejecucion():
@@ -787,7 +802,7 @@ def test_el_segundo_mensaje_no_lleva_ni_un_caracter_del_sistema():
     byte**: la posición 0 es tan del sistema como el límite. Y sin cabecera, en las
     superficies donde la burbuja se ve sola —notificación push, lista de chats,
     reenvío, cita, fijado, búsqueda— la atribución era **cero** y la interfaz la
-    rotulaba «[retirado]»; el camino realista al daño es que el clínico reenvíe
+    rotulaba «<bot del profesional>»; el camino realista al daño es que el clínico reenvíe
     esa burbuja a un colega.
 
     Estructura final: **una línea literal en la posición 0, y nada más. Sin

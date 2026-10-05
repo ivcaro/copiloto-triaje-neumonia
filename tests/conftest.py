@@ -5,18 +5,18 @@
 integracion: mas lentas que las unitarias, y con efectos que se ven desde
 fuera.
 
-OJO, QUE ESTE DOCSTRING DECIA LO CONTRARIO: `webhook_n8n` **no salta** por
-`N8N_URL`. Esa variable solo elige a que n8n se habla, y sin ella se habla al
-de produccion (`https://n8n.[retirado].com`). Lo que hace que la suite corra en una
-maquina sin acceso son los `pytest.skip` de cada prueba por sus SECRETOS
+`webhook_n8n` SALTA SIN `N8N_URL`. La variable dice a que n8n se habla y no
+tiene valor por defecto: el repositorio no lleva la URL de ningun despliegue,
+asi que sin ella las pruebas conducidas se saltan, y lo dicen. Es la primera
+guarda. La segunda son los `skipif` de cada clase de pruebas por sus SECRETOS
 -`TELEGRAM_SECRET_PRUEBA`, `TELEGRAM_TOKEN_PROFESIONAL`,
 `CHAT_SUBIDA_PLACAS`-: sin el secreto no se pasa la puerta del secret_token del
 §4.2, asi que la peticion no llega a ningun sitio. El fijador `bd_sp3` de abajo
-si salta solo, por `COPILOTO_BD_DSN`.
+salta por `COPILOTO_BD_DSN`.
 
-La diferencia importa: creer que el fijador salta invita a anadir una prueba que
-use `webhook_n8n` sin guardar su secreto, y esa prueba mandaria trafico al n8n
-del cliente desde cualquier maquina que corra la suite.
+Las dos guardas hacen falta. En la maquina que SI tiene `N8N_URL` el fijador no
+salta, y una prueba nueva que use `webhook_n8n` sin guardar su secreto mandaria
+trafico a ese n8n cada vez que alguien corra la suite alli.
 """
 import json
 import os
@@ -24,6 +24,8 @@ import urllib.error
 import urllib.request
 
 import pytest
+
+from copiloto_triaje.config import url_base_n8n
 
 
 @pytest.fixture
@@ -34,8 +36,28 @@ def webhook_n8n():
     la que Telegram manda y la que los flujos de SP3 comprueban ANTES de mirar
     nada mas: el webhook es publico, asi que el `chat_id` del cuerpo lo aporta
     quien llama y no prueba nada por si solo.
+
+    Sin `N8N_URL` la prueba que lo pide se salta: no hay n8n por defecto. Mal
+    puesta, FALLA diciendo por que: un salto se ve verde, y quien la puso
+    quiere correr las pruebas conducidas.
     """
-    base = os.environ.get("N8N_URL", "https://n8n.[retirado].com").rstrip("/")
+    base = os.environ.get("N8N_URL", "").strip()
+    if not base:
+        pytest.skip(
+            "sin N8N_URL no se sabe a qué n8n hablar: las pruebas conducidas "
+            "de los dos bots se quedan sin correr. Para correrlas, pon en "
+            "N8N_URL la URL base del n8n que los sirve, además de los secretos "
+            "de cada prueba")
+    try:
+        base = url_base_n8n(base)
+    except ValueError as e:
+        # el motivo, y no el valor: la salida de las pruebas tambien se publica
+        pytest.fail(
+            f"N8N_URL está mal puesta ({e}): las pruebas conducidas no se "
+            "pueden correr contra ella. Pon en N8N_URL solo la URL base del "
+            "n8n que sirve a los dos bots (por ejemplo "
+            "https://n8n.ejemplo.test), o quítala para saltarlas",
+            pytrace=False)
 
     def enviar(ruta: str, cuerpo: dict, secreto: str | None = None):
         cabeceras = {"Content-Type": "application/json"}
@@ -120,3 +142,72 @@ def resultados_minimos(validar):
     r = validar.calcular(replicas=2, procesos=1, rejilla=(0.0, 0.3),
                          destacadas=((0.3, 0.3),))
     return json.loads(json.dumps(r, ensure_ascii=False))
+
+
+# --------------------------------------------------------------------------
+# Lo que vive fuera del repositorio: el dataset de RSNA y los pesos desplegados
+# --------------------------------------------------------------------------
+def raiz_rsna_o_salta():
+    """La raiz del dataset preparado (`RSNA_RAIZ`), o un skip que dice que se
+    queda sin verificar y como verificarlo.
+
+    No hay valor por defecto (spec de SP5 §6.1): una ruta por defecto seria la
+    de una maquina concreta. La variable la lee `copiloto_triaje.config`, el
+    unico lector que hay; aqui solo se convierte su `SystemExit` en un skip.
+    Si la variable esta puesta pero la carpeta no tiene el dataset, NO se
+    salta: las pruebas fallan con la ruta que no encuentran, que es lo que
+    hace falta ver cuando la variable esta mal escrita.
+    """
+    from copiloto_triaje.config import raiz_rsna
+    try:
+        return raiz_rsna()
+    except SystemExit:
+        pytest.skip(
+            "PRUEBAS CON RADIOGRAFÍAS REALES SIN VERIFICAR: falta RSNA_RAIZ, la"
+            " raíz del dataset de RSNA preparado, que no tiene valor por"
+            " defecto. Se quedan sin comprobar la selección de casos sobre los"
+            " ficheros reales, el contrato con copiloto-mcp cuando recibe un"
+            " DICOM y las consultas conducidas del bot del profesional que"
+            " suben una placa. Para verificarlo, define RSNA_RAIZ con la"
+            " carpeta que tiene dentro manifiestos/, png/ y"
+            " crudo/stage_2_train_images/, y repite.")
+
+
+def pesos_desplegados_o_salta():
+    """La ruta de los pesos desplegados, o un skip si el fichero no esta.
+
+    Los pesos no se versionan (16 MB binarios; `.gitignore`), y sin ellos no
+    se puede ni inferir ni saber si la cache de puntuaciones es la del modelo
+    desplegado: `pruebas/puntuaciones.py` compara su sha256 con el guardado.
+    """
+    import pathlib
+    import sys
+    repo = str(pathlib.Path(__file__).resolve().parents[1])
+    if repo not in sys.path:
+        sys.path.insert(0, repo)
+    from pruebas import puntuaciones
+    if not puntuaciones.PESOS.is_file():
+        pytest.skip(
+            "PRUEBAS CON LAS PUNTUACIONES DEL MODELO SIN VERIFICAR: faltan los"
+            " pesos desplegados, servidor/pesos_modelo_cpu.pt, que no se"
+            " versionan. Sin ellos no se puede inferir ni validar la caché de"
+            " puntuaciones del conjunto de prueba, así que se quedan sin"
+            " comprobar la selección de casos, las dos pruebas del recorte de"
+            " la razón de verosimilitud y las consultas conducidas del bot del"
+            " profesional que suben una placa. Para verificarlo, copia los"
+            " pesos a esa ruta (salen del entrenamiento: README, «Reproducir"
+            " desde cero») y repite; la primera vez, sin caché, infiere sobre"
+            " las 3 811 imágenes de prueba y tarda minutos.")
+    return puntuaciones.PESOS
+
+
+@pytest.fixture(scope="module")
+def rsna_raiz():
+    """La raiz del dataset de RSNA. Sin `RSNA_RAIZ`, la prueba se salta."""
+    return raiz_rsna_o_salta()
+
+
+@pytest.fixture(scope="module")
+def pesos_desplegados():
+    """Los pesos desplegados. Sin el fichero, la prueba se salta."""
+    return pesos_desplegados_o_salta()

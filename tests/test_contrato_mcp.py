@@ -11,6 +11,12 @@ no informa de nada y entrena a no mirar los fallos -que es lo contrario de lo
 que queremos, porque el dia que una de estas diez se rompa de verdad hay que
 verla-. El skip de `copiloto_vivo` dice las dos cosas que hacen falta: QUE se
 ha quedado sin verificar y COMO verificarlo. Se leen con `pytest -rs`.
+
+OCHO DE LAS DIEZ NECESITAN ADEMAS EL DATASET, porque mandan una radiografia
+real: sin `RSNA_RAIZ` se saltan (fijador `rsna_raiz` de `conftest.py`), y las
+dos del recorte tambien sin los pesos desplegados (`pesos_desplegados`). Las
+dos que no mandan ningun DICOM -el base64 invalido y el 413- corren con el
+servidor solo.
 """
 import base64
 import json
@@ -24,8 +30,6 @@ import urllib.request
 import pytest
 
 BASE = os.environ.get("COPILOTO_URL", "http://127.0.0.1:18000")
-CRUDO = pathlib.Path(
-    r"C:\Users\[retirado]\datasets\rsna-pneumonia\trabajo\crudo\stage_2_train_images")
 
 # Rango en el que esta ajustada la curva isotonica del calibrador desplegado
 # (ver src/copiloto_triaje/servicio/calibracion.py). OJO -- premisa falsa que
@@ -115,21 +119,26 @@ def _llamar(b64: str) -> dict:
     pytest.fail(f"la respuesta no traia ninguna linea 'data: ': {texto[:200]}")
 
 
+def _crudo(rsna_raiz: pathlib.Path) -> pathlib.Path:
+    """La carpeta de los DICOM originales, bajo la raiz del dataset."""
+    return rsna_raiz / "crudo" / "stage_2_train_images"
+
+
 @pytest.fixture(scope="module")
-def dicom_adulto() -> bytes:
+def dicom_adulto(rsna_raiz) -> bytes:
     import pandas as pd
-    raiz = pathlib.Path(r"C:\Users\[retirado]\datasets\rsna-pneumonia\trabajo")
-    df = pd.read_csv(raiz / "manifiestos" / "test.csv")
-    return (CRUDO / f"{df[df.etiqueta == 1].iloc[0].patientId}.dcm").read_bytes()
+    df = pd.read_csv(rsna_raiz / "manifiestos" / "test.csv")
+    return (_crudo(rsna_raiz)
+            / f"{df[df.etiqueta == 1].iloc[0].patientId}.dcm").read_bytes()
 
 
 @pytest.fixture(scope="module")
-def dicom_menor() -> bytes:
+def dicom_menor(rsna_raiz) -> bytes:
     import pandas as pd
     repo = pathlib.Path(__file__).resolve().parents[1]
     meta = pd.read_csv(repo / "docs" / "eda" / "metadatos_eda.csv")
     menor = meta[meta.edad_num < 18].iloc[0]
-    return (CRUDO / f"{menor.patientId}.dcm").read_bytes()
+    return (_crudo(rsna_raiz) / f"{menor.patientId}.dcm").read_bytes()
 
 
 def test_un_tools_call_suelto_basta_sin_saludo_initialize(dicom_adulto):
@@ -293,7 +302,7 @@ def _calibrador_desplegado():
 
 
 @pytest.fixture(scope="module")
-def dicom_recortada_por_abajo() -> bytes:
+def dicom_recortada_por_abajo(rsna_raiz, pesos_desplegados) -> bytes:
     """Una radiografia real cuya probabilidad CALIBRADA queda recortada a
     `probabilidad_minima_sostenida`: la condicion de VERDAD del recorte.
 
@@ -316,11 +325,11 @@ def dicom_recortada_por_abajo() -> bytes:
             "calibrador desplegado: el recorte inferior no seria alcanzable "
             "con datos reales -- hallazgo en si mismo")
     patient_id = candidatas.iloc[0].patientId
-    return (CRUDO / f"{patient_id}.dcm").read_bytes()
+    return (_crudo(rsna_raiz) / f"{patient_id}.dcm").read_bytes()
 
 
 @pytest.fixture(scope="module")
-def dicom_recortada_por_arriba() -> bytes:
+def dicom_recortada_por_arriba(rsna_raiz, pesos_desplegados) -> bytes:
     """Simetrica a `dicom_recortada_por_abajo`, contra
     `probabilidad_maxima_sostenida`."""
     df = _cache_puntuaciones()
@@ -333,7 +342,7 @@ def dicom_recortada_por_arriba() -> bytes:
             "calibrador desplegado: el recorte superior no seria alcanzable "
             "con datos reales -- hallazgo en si mismo")
     patient_id = candidatas.iloc[0].patientId
-    return (CRUDO / f"{patient_id}.dcm").read_bytes()
+    return (_crudo(rsna_raiz) / f"{patient_id}.dcm").read_bytes()
 
 
 def test_la_razon_de_verosimilitud_se_recorta_a_la_cota_inferior(

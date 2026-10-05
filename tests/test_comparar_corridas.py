@@ -384,3 +384,37 @@ def test_un_json_con_prueba_inutilizable_dice_de_cual_se_trata(tmp_path):
     ruta = tmp_path / "rota.json"
     ruta.write_text(json.dumps({"prueba": [1, 2]}), encoding="utf-8")
     assert comparar.main([str(ruta), "--salida", str(tmp_path / "c.md")]) == 2
+
+
+def test_la_procedencia_no_escribe_la_ruta_de_la_maquina(tmp_path):
+    """El informe se versiona y se publica: la ruta tal como se paso lleva
+    dentro el usuario y las carpetas de quien lo genero. De cada reporte se
+    escribe la carpeta de la corrida y el nombre del fichero, que es lo que
+    lo identifica, y nada de lo que hay por encima."""
+    carpeta = _escribir_reporte(tmp_path, "corrida_a", recall=0.88,
+                                especificidad=0.74, auc=0.91).parent
+    json_directo = _escribir_reporte(tmp_path, "corrida_b", recall=0.81,
+                                     especificidad=0.71, auc=0.86)
+    salida = tmp_path / "comparativa.md"
+    assert comparar.main([str(carpeta), str(json_directo),
+                          "--salida", str(salida)]) == 0
+
+    texto = salida.read_text(encoding="utf-8")
+    procedencia = texto.split("## Procedencia", 1)[1]
+    assert "| `corrida_a` | `corrida_a/reporte_metricas.json` |" in procedencia
+    assert "| `corrida_b` | `corrida_b/reporte_metricas.json` |" in procedencia
+    assert str(tmp_path) not in texto
+    assert tmp_path.as_posix() not in texto
+    assert tmp_path.name not in texto
+
+
+def test_la_procedencia_nombra_la_carpeta_aunque_la_ruta_sea_relativa(
+        tmp_path, monkeypatch):
+    """Desde dentro de la carpeta de la corrida la ruta que se pasa es solo
+    el nombre del fichero; la carpeta sigue siendo la de la corrida."""
+    ruta = _escribir_reporte(tmp_path, "corrida_c", recall=0.88,
+                             especificidad=0.74)
+    monkeypatch.chdir(ruta.parent)
+    resumen = comparar.resumir(*comparar.cargar_reporte("reporte_metricas.json"))
+    assert comparar.reporte_sin_ruta(resumen["ruta"]) == (
+        "corrida_c/reporte_metricas.json")

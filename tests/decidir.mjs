@@ -87,7 +87,7 @@ for (const [etiqueta, sesion, update] of casos) {
 
 console.log("\nC. consentimiento, /start y /reiniciar");
 ok("/start sin sesion -> consentimiento", decidir(normalizar(msg("/start")), sinSesion).accion === "consentimiento");
-ok("/start@Bot tambien", decidir(normalizar(msg("/start@[retirado]")), sinSesion).accion === "consentimiento");
+ok("/start@Bot tambien", decidir(normalizar(msg("/start@BotDeEjemplo")), sinSesion).accion === "consentimiento");
 ok("/START (mayusculas) tambien", decidir(normalizar(msg("/START")), sinSesion).accion === "consentimiento");
 ok("/reiniciar a medias -> consentimiento (destructivo, a proposito)",
    decidir(normalizar(msg("/reiniciar")), ses(4)).accion === "consentimiento");

@@ -31,10 +31,10 @@ from torch.utils.data import DataLoader
 REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
+from copiloto_triaje.config import raiz_rsna  # noqa: E402
 from copiloto_triaje.datos.dataset import DatasetRadiografias  # noqa: E402
 from copiloto_triaje.modelo.arquitectura import construir_modelo  # noqa: E402
 
-RAIZ = pathlib.Path(r"C:\Users\[retirado]\datasets\rsna-pneumonia\trabajo")
 PESOS = REPO / "servidor" / "pesos_modelo_cpu.pt"
 CACHE = REPO / "pruebas" / "crudas_prueba.csv"
 # El sha256 de PESOS en el momento en que se genero CACHE. Vive al lado y no
@@ -66,13 +66,17 @@ def puntuaciones_de_prueba() -> pd.DataFrame:
     las puntuaciones del modelo viejo para siempre, y `caracterizar_conjunto.py`
     (§3 del spec, §13.1 exige volver a correrlo al reentrenar) no notaria
     nada distinto.
+
+    El dataset solo hace falta para inferir: con la cache al dia no se pide
+    `RSNA_RAIZ`. Sin cache y sin la variable, se detiene nombrandola.
     """
     if _cache_valida():
         return pd.read_csv(CACHE)
+    raiz = raiz_rsna()
     hash_actual = _sha256(PESOS)
-    df = pd.read_csv(RAIZ / "manifiestos" / "test.csv")
+    df = pd.read_csv(raiz / "manifiestos" / "test.csv")
     cargador = DataLoader(
-        DatasetRadiografias(df, RAIZ / "png", 320, entrenamiento=False),
+        DatasetRadiografias(df, raiz / "png", 320, entrenamiento=False),
         batch_size=32, num_workers=4)
     modelo = construir_modelo("efficientnet_b0", congelar_backbone=False,
                               preentrenado=False)

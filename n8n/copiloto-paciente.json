@@ -20,11 +20,11 @@
       },
       "credentials": {
         "httpHeaderAuth": {
-          "id": "[retirado]",
+          "id": "CRED_SECRETO_PACIENTE",
           "name": "copiloto-paciente: secret_token del webhook"
         }
       },
-      "notes": "El secret_token del §4.2, y por que NO es un Telegram Trigger.\n\nEste webhook es PUBLICO: cualquiera que sepa la URL puede hacerle POST, asi que el chat_id del cuerpo lo aporta quien llama y no prueba nada.\n\nEl Telegram Trigger de n8n (v1.5) no expone el campo secret_token NI la cabecera de la peticion: solo entrega el cuerpo del update. Con el, la comprobacion del §4.2 es imposible. Con un Webhook + Header Auth la hace n8n en la capa del webhook, antes de que corra un solo nodo, y el secreto vive en una credencial: no aparece en este JSON ni, por tanto, en el repositorio (§12).\n\nEfecto lateral bueno: un Webhook no llama a setWebhook al activarse, asi que activar esto no puede robarle el webhook a ningun bot del cliente (D9).\n\nEl webhook se registra a mano una vez:\n  curl -s \"https://api.telegram.org/bot<TOKEN>/setWebhook\" -d url=https://n8n.[retirado].com/webhook/copiloto-paciente -d secret_token=<EL MISMO VALOR DE LA CREDENCIAL>",
+      "notes": "El secret_token del §4.2, y por que NO es un Telegram Trigger.\n\nEste webhook es PUBLICO: cualquiera que sepa la URL puede hacerle POST, asi que el chat_id del cuerpo lo aporta quien llama y no prueba nada.\n\nEl Telegram Trigger de n8n (v1.5) no expone el campo secret_token NI la cabecera de la peticion: solo entrega el cuerpo del update. Con el, la comprobacion del §4.2 es imposible. Con un Webhook + Header Auth la hace n8n en la capa del webhook, antes de que corra un solo nodo, y el secreto vive en una credencial: no aparece en este JSON ni, por tanto, en el repositorio (§12).\n\nEfecto lateral bueno: un Webhook no llama a setWebhook al activarse, asi que activar esto no puede robarle el webhook a ningun bot del cliente (D9).\n\nEl webhook se registra a mano una vez:\n  curl -s \"https://api.telegram.org/bot<TOKEN>/setWebhook\" -d url=https://n8n.ejemplo.test/webhook/copiloto-paciente -d secret_token=<EL MISMO VALOR DE LA CREDENCIAL>",
       "webhookId": "2569e6f7-3420-452f-bf65-519ecfd12b9f"
     },
     {
@@ -59,7 +59,7 @@
       },
       "credentials": {
         "postgres": {
-          "id": "[retirado]",
+          "id": "CRED_POSTGRES_COPILOTO",
           "name": "copiloto-bd"
         }
       }
@@ -235,7 +235,7 @@
       },
       "credentials": {
         "postgres": {
-          "id": "[retirado]",
+          "id": "CRED_POSTGRES_COPILOTO",
           "name": "copiloto-bd"
         }
       }
@@ -283,8 +283,8 @@
       },
       "credentials": {
         "telegramApi": {
-          "id": "[retirado]",
-          "name": "[retirado]"
+          "id": "CRED_TELEGRAM_PACIENTE",
+          "name": "bot-paciente"
         }
       },
       "notes": "D11: el consentimiento va ANTES de escribir una sola fila. Dice qué se guarda, cuánto tiempo, quién lo ve, que no es un diagnóstico, y que si le cuesta respirar vaya a urgencias (§6).",
@@ -310,8 +310,8 @@
       },
       "credentials": {
         "telegramApi": {
-          "id": "[retirado]",
-          "name": "[retirado]"
+          "id": "CRED_TELEGRAM_PACIENTE",
+          "name": "bot-paciente"
         }
       },
       "notes": "Esta rama NO toca la base de datos. Es el criterio 1 del §21: quien no acepta no deja ninguna fila en ninguna tabla.",
@@ -335,7 +335,7 @@
       },
       "credentials": {
         "postgres": {
-          "id": "[retirado]",
+          "id": "CRED_POSTGRES_COPILOTO",
           "name": "copiloto-bd"
         }
       },
@@ -428,8 +428,8 @@
       },
       "credentials": {
         "telegramApi": {
-          "id": "[retirado]",
-          "name": "[retirado]"
+          "id": "CRED_TELEGRAM_PACIENTE",
+          "name": "bot-paciente"
         }
       },
       "webhookId": "66ec174b-1621-45b0-8908-ddc8ab04cfb4"
@@ -452,7 +452,7 @@
       },
       "credentials": {
         "postgres": {
-          "id": "[retirado]",
+          "id": "CRED_POSTGRES_COPILOTO",
           "name": "copiloto-bd"
         }
       },
@@ -718,8 +718,8 @@
       },
       "credentials": {
         "telegramApi": {
-          "id": "[retirado]",
-          "name": "[retirado]"
+          "id": "CRED_TELEGRAM_PACIENTE",
+          "name": "bot-paciente"
         }
       },
       "webhookId": "5c762070-6102-4d25-8fbb-da7d01831900"
@@ -785,8 +785,8 @@
       },
       "credentials": {
         "telegramApi": {
-          "id": "[retirado]",
-          "name": "[retirado]"
+          "id": "CRED_TELEGRAM_PACIENTE",
+          "name": "bot-paciente"
         }
       },
       "webhookId": "846f9b73-cd9f-4d72-987d-5204847fb38d"
@@ -852,8 +852,8 @@
       },
       "credentials": {
         "telegramApi": {
-          "id": "[retirado]",
-          "name": "[retirado]"
+          "id": "CRED_TELEGRAM_PACIENTE",
+          "name": "bot-paciente"
         }
       },
       "webhookId": "dfe7a5d2-79df-4971-bd90-aff760677ff3"
@@ -901,8 +901,8 @@
       },
       "credentials": {
         "telegramApi": {
-          "id": "[retirado]",
-          "name": "[retirado]"
+          "id": "CRED_TELEGRAM_PACIENTE",
+          "name": "bot-paciente"
         }
       },
       "webhookId": "ef7341b1-32a6-437d-a62c-672eef072b9a"
@@ -950,8 +950,8 @@
       },
       "credentials": {
         "telegramApi": {
-          "id": "[retirado]",
-          "name": "[retirado]"
+          "id": "CRED_TELEGRAM_PACIENTE",
+          "name": "bot-paciente"
         }
       },
       "webhookId": "bf18e8cc-7311-4370-9592-a685f8ad722c"
@@ -1005,8 +1005,8 @@
       },
       "credentials": {
         "telegramApi": {
-          "id": "[retirado]",
-          "name": "[retirado]"
+          "id": "CRED_TELEGRAM_PACIENTE",
+          "name": "bot-paciente"
         }
       },
       "notes": "El asma es el unico de los cinco predictores de Heckerling que aporta el paciente, y el unico con tres estados. `no_se` se CONSERVA: convertirlo en un booleano seria fabricar el dato. H6 tiene que decidir explicitamente que hace con el (§4.4).",
@@ -1049,8 +1049,8 @@
       },
       "credentials": {
         "telegramApi": {
-          "id": "[retirado]",
-          "name": "[retirado]"
+          "id": "CRED_TELEGRAM_PACIENTE",
+          "name": "bot-paciente"
         }
       },
       "notes": "La unica pregunta que acepta texto. No alimenta ningun calculo (D4), se recorta a 500 caracteres, y se guarda tal cual: el profesional la vera como texto plano, sin parse_mode.",
@@ -1074,7 +1074,7 @@
       },
       "credentials": {
         "postgres": {
-          "id": "[retirado]",
+          "id": "CRED_POSTGRES_COPILOTO",
           "name": "copiloto-bd"
         }
       }
@@ -1134,8 +1134,8 @@
       },
       "credentials": {
         "telegramApi": {
-          "id": "[retirado]",
-          "name": "[retirado]"
+          "id": "CRED_TELEGRAM_PACIENTE",
+          "name": "bot-paciente"
         }
       },
       "notes": "Sin parse_mode, como todos los mensajes de este flujo. El codigo sale de un alfabeto de 31 caracteres sin metacaracteres de Markdown, pero renunciar al formato en TODO el flujo del paciente elimina de golpe la clase entera de fallos por formato: ninguno de estos mensajes puede romperse ni inyectar formato. El §6 lo enseña en negrita; la diferencia es cosmetica.\n\nREINTENTA, y por que este nodo si y los demas no: el cuestionario esta completo, el codigo generado y `limite_paciente` ya conto a esta persona. Si el envio falla, el paciente nunca sabe su codigo y ha gastado su intento. Tres intentos separados 3 s: un 429 de Telegram es transitorio y pide unos segundos. Si aun asi falla, el desenlace se pierde igual -eso NO lo arregla el reintento- pero deja de perderse por el caso comun.",
@@ -1164,8 +1164,8 @@
       },
       "credentials": {
         "telegramApi": {
-          "id": "[retirado]",
-          "name": "[retirado]"
+          "id": "CRED_TELEGRAM_PACIENTE",
+          "name": "bot-paciente"
         }
       },
       "notes": "Existe para que un fallo de generacion no sea silencioso. La sesion no se ha borrado, asi que el paciente puede reintentar.",

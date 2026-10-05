@@ -2,8 +2,8 @@
 
 Uso:
     C:\\venv-copiloto\\Scripts\\python.exe scripts/preparar_datos.py ^
-        --zip "C:\\Users\\[retirado]\\datasets\\rsna-pneumonia\\rsna-pneumonia-detection-challenge.zip" ^
-        --raiz "C:\\Users\\[retirado]\\datasets\\rsna-pneumonia\\trabajo" ^
+        --zip "<carpeta-de-descarga>\\rsna-pneumonia-detection-challenge.zip" ^
+        --raiz "<RSNA_RAIZ>" ^
         [--limite 200]
 
 Es idempotente: descomprimir y convertir se saltan si ya estan hechos.

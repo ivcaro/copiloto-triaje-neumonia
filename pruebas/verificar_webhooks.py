@@ -25,15 +25,35 @@ lado de Telegram:
     note);
   - que `pending_update_count` no este creciendo entre dos lecturas.
 
-Los tokens NO se escriben en ningun sitio: se piden por teclado, o se leen del
-entorno si ya estan (`TELEGRAM_TOKEN_PACIENTE`, `TELEGRAM_TOKEN_PROFESIONAL`).
-Salen siempre de BotFather (`/token`); el que esta en una credencial de n8n no se
-puede volver a leer desde la interfaz.
+Los tokens NO se escriben en ningun sitio: se leen del entorno si ya estan
+(`TELEGRAM_TOKEN_PACIENTE`, `TELEGRAM_TOKEN_PROFESIONAL`) o se piden por
+teclado. Salen siempre de BotFather (`/token`); el que esta en una credencial de
+n8n no se puede volver a leer desde la interfaz.
 
 Uso:
     C:\\venv-copiloto\\Scripts\\python.exe pruebas/verificar_webhooks.py
+    C:\\venv-copiloto\\Scripts\\python.exe pruebas/verificar_webhooks.py --sin-teclado
+
+A mano, en una consola, el token que no este en el entorno se pide por
+teclado; sin consola, no. Con `--sin-teclado` no se pide NUNCA: el bot sin
+token en el entorno no se comprueba y se cuenta como problema.
+
+LA TAREA PROGRAMADA LO LANZA CON `--sin-teclado` (§5 del manual de operacion).
+Mirar si hay consola no basta: el Programador de tareas le da a python.exe una
+consola aunque nadie la vea, y sin la opcion `getpass` se quedaria esperando en
+ella un token que nadie va a escribir -sin avisar de nada, y sin dejar que la
+tarea vuelva a correr los dias siguientes, porque sigue en marcha-.
 
 Devuelve 0 si los dos webhooks estan como deben, y 1 si hay algo que arreglar.
+
+`N8N_URL` ES OBLIGATORIA y no tiene valor por defecto: es la URL base del n8n
+que sirve a los dos bots (por ejemplo `https://n8n.ejemplo.test`), y con ella se
+calcula donde tendria que estar entregando Telegram. El repositorio no lleva la
+de ningun despliegue. Sin ella, o mal puesta (sin esquema, con una ruta detras,
+entre comillas...), el script no pide ningun token ni comprueba nada: dice que
+falta o que esta mal, lo manda por Telegram si el canal de avisos esta puesto,
+y devuelve 1. Mal puesta, compararla con lo que devuelve Telegram daria por mal
+apuntado un webhook que esta bien.
 
 PARA LA TAREA PROGRAMADA DIARIA (§5 del manual de operacion) hacen falta dos
 variables mas: `COPILOTO_CHAT_EQUIPO` y `TELEGRAM_TOKEN_AVISOS` -el token del bot
@@ -42,6 +62,7 @@ de Telegram-. Con las dos puestas, lo que encuentre se manda por Telegram; sin
 ellas solo se imprime. Una tarea programada que escribe en un log que nadie lee
 es el silencio que esto existe para romper.
 """
+import argparse
 import getpass
 import json
 import os
@@ -51,7 +72,50 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-BASE_N8N = os.environ.get("N8N_URL", "https://n8n.[retirado].com").rstrip("/")
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
+
+from copiloto_triaje.config import url_base_n8n  # noqa: E402
+
+
+def _base_de_n8n():
+    """(base, motivo): la URL base de `N8N_URL`, o "" y por que no vale. Sin
+    la variable el motivo va vacio: ausente y mal puesta se dicen distinto."""
+    valor = os.environ.get("N8N_URL", "").strip()
+    if not valor:
+        return "", ""
+    try:
+        return url_base_n8n(valor), ""
+    except ValueError as e:
+        return "", str(e)
+
+
+# Sin valor por defecto, y sin fallar al importar: `tests/test_mantenimiento.py`
+# importa este modulo para probar el diagnostico, y tiene que poder hacerlo en
+# una maquina que no sabe de ningun n8n, o que la tiene mal puesta. Quien se
+# niega a seguir es `main()`.
+BASE_N8N, N8N_URL_MAL_PUESTA = _base_de_n8n()
+
+# Donde se pone, dicho para la tarea programada: una tarea de Windows no tiene
+# variables propias, lee las del perfil del usuario que la corre.
+DONDE_SE_PONE = (
+    "en el entorno de quien corre el script; si lo corre la tarea programada, "
+    "con `setx N8N_URL` en el perfil del usuario que la corre (manual de "
+    "operación, §5, paso 2).")
+
+SIN_N8N_URL = (
+    "Falta N8N_URL: sin ella no se sabe en qué URL tendría que estar "
+    "entregando Telegram, y no se ha comprobado ningún webhook.\n"
+    "   Qué hacer: pon en N8N_URL la URL base del n8n que sirve a los dos bots "
+    "(por ejemplo https://n8n.ejemplo.test), " + DONDE_SE_PONE)
+
+# El motivo, y nunca el valor: el mensaje viaja por Telegram.
+N8N_URL_MAL = (
+    "N8N_URL está mal puesta ({motivo}): con ella no se sabe en qué URL "
+    "tendría que estar entregando Telegram, y no se ha comprobado ningún "
+    "webhook.\n"
+    "   Qué hacer: pon en N8N_URL solo la URL base del n8n que sirve a los dos "
+    "bots, con su esquema y sin nada detrás del host (por ejemplo "
+    "https://n8n.ejemplo.test), " + DONDE_SE_PONE)
 
 BOTS = [
     ("paciente", "TELEGRAM_TOKEN_PACIENTE", "copiloto-paciente",
@@ -171,12 +235,19 @@ def _memoria_escribir(datos):
         pass
 
 
-def mensaje_para_telegram(problemas):
+def mensaje_para_telegram(problemas, comprobado=True):
     """El mismo formato que el aviso del workflow: encabezado, y cada problema
-    con su «Que hacer». Recortado al limite de Telegram, que son 4096."""
-    cabeza = ("\U0001fa7a Copiloto Triaje — el webhook de Telegram no está como "
-              "debe\n\n(lo dice pruebas/verificar_webhooks.py, que es la mitad "
-              "de la sexta comprobación del §16 que no cabe dentro de n8n)\n")
+    con su «Que hacer». Recortado al limite de Telegram, que son 4096.
+
+    Con `comprobado` en False el encabezado dice que NO se comprobo nada: si
+    no se llego a mirar ningun webhook, el aviso no puede decir que uno no
+    esta como debe, o quien lea solo la notificacion ira a registrar otra
+    vez un webhook que estaba bien."""
+    titulo = ("el webhook de Telegram no está como debe" if comprobado
+              else "los webhooks de Telegram NO se han comprobado")
+    cabeza = (f"\U0001fa7a Copiloto Triaje — {titulo}\n\n(lo dice "
+              "pruebas/verificar_webhooks.py, que es la mitad de la sexta "
+              "comprobación del §16 que no cabe dentro de n8n)\n")
     cuerpo = "\n\n".join(f"{i}. {p}" for i, p in enumerate(problemas, 1))
     texto = f"{cabeza}\n{cuerpo}"
     if len(texto) > 3900:
@@ -212,14 +283,90 @@ def avisar_por_telegram(token, chat_id, texto):
         return False, str(e)
 
 
-def main() -> int:
+def avisar_al_equipo(problemas, comprobado=True):
+    """El canal de la tarea programada: sin esto, lo que se imprime acaba en un
+    log que nadie abre. Hacen falta las dos variables; con una sola se dice.
+    `comprobado` es el de `mensaje_para_telegram`."""
+    chat = os.environ.get("COPILOTO_CHAT_EQUIPO", "").strip()
+    token_avisos = os.environ.get("TELEGRAM_TOKEN_AVISOS", "").strip()
+    if problemas and chat and token_avisos:
+        enviado, detalle = avisar_por_telegram(
+            token_avisos, chat, mensaje_para_telegram(problemas, comprobado))
+        print("\naviso por Telegram: "
+              + ("enviado." if enviado else f"NO se pudo enviar ({detalle})."))
+    elif problemas and (chat or token_avisos):
+        print("\naviso por Telegram: no se manda, faltan COPILOTO_CHAT_EQUIPO o "
+              "TELEGRAM_TOKEN_AVISOS (hacen falta las dos).")
+
+
+def _hay_consola() -> bool:
+    """Si hay una consola a la que pedirle el token. Sin ella (una entrada
+    redirigida, un proceso sin consola) `getpass` se quedaria esperando un
+    token que nadie va a teclear. Que la haya no quiere decir que haya alguien
+    delante: la tarea programada tiene una que nadie ve, y por eso va con
+    `--sin-teclado`.
+
+    En Windows `isatty()` no basta: una entrada redirigida desde `NUL` es un
+    dispositivo de caracteres y dice que si. Alli se pregunta ademas a la
+    consola por su modo, que solo lo tiene una consola de verdad."""
+    try:
+        if sys.stdin is None or not sys.stdin.isatty():
+            return False
+    except (AttributeError, ValueError, OSError):
+        return False
+    if os.name != "nt":
+        return True
+    try:
+        import msvcrt
+        manejador = msvcrt.get_osfhandle(sys.stdin.fileno())
+    except (AttributeError, ValueError, OSError):
+        # una entrada sin descriptor que dice ser una consola: se le cree
+        return True
+    import ctypes
+    modo = ctypes.c_ulong()
+    return bool(ctypes.windll.kernel32.GetConsoleMode(
+        ctypes.c_void_p(manejador), ctypes.byref(modo)))
+
+
+def leer_opciones(argv=None):
+    """Las opciones de la linea de ordenes (con `argv` None, las de
+    `sys.argv`). Se leen en `main()` y nunca al importar: este modulo lo
+    importan las pruebas, con las opciones de pytest en `sys.argv`. Sin
+    abreviaturas: la orden de la tarea tiene que llevar la opcion entera."""
+    p = argparse.ArgumentParser(
+        allow_abbrev=False,
+        description="Mira que Telegram siga entregando los dos bots donde debe: "
+                    "la mitad del §16 que no cabe dentro de n8n.")
+    p.add_argument(
+        "--sin-teclado", action="store_true",
+        help="no pedir nunca un token por teclado: el bot sin token en el "
+             "entorno se cuenta como problema. Es como lo lanza la tarea "
+             "programada (§5 del manual de operacion), que tiene una consola "
+             "que nadie ve")
+    return p.parse_args(argv)
+
+
+def main(argv=None) -> int:
+    opciones = leer_opciones(argv)
+    if not BASE_N8N:
+        # Antes de pedir ningun token y de tocar la memoria: sin la base no hay
+        # con que comparar, y una lectura a medias borraria la de ayer. Mal
+        # puesta es lo mismo: compararla daria por mal apuntados los dos
+        # webhooks y mandaria registrarlos en una direccion equivocada.
+        mensaje = (N8N_URL_MAL.format(motivo=N8N_URL_MAL_PUESTA)
+                   if N8N_URL_MAL_PUESTA else SIN_N8N_URL)
+        print(mensaje)
+        avisar_al_equipo([mensaje], comprobado=False)
+        return 1
     memoria = _memoria_leer()
     nueva = {}
     problemas_todos = []
     problemas_totales = 0
     for quien, variable, ruta, flujo in BOTS:
-        token = os.environ.get(variable) or getpass.getpass(
-            f"token del bot del {quien} (de BotFather, no se muestra): ").strip()
+        token = os.environ.get(variable)
+        if not token and not opciones.sin_teclado and _hay_consola():
+            token = getpass.getpass(
+                f"token del bot del {quien} (de BotFather, no se muestra): ").strip()
         if not token:
             print(f"{quien}: sin token, no se puede comprobar. SALTADO")
             problemas_todos.append(
@@ -245,19 +392,7 @@ def main() -> int:
         else:
             print(f"   bien: Telegram entrega en {info['url']}, sin errores.")
     _memoria_escribir(nueva)
-
-    # El canal de la tarea programada: sin esto, lo de arriba acaba en un log
-    # que nadie abre.
-    chat = os.environ.get("COPILOTO_CHAT_EQUIPO", "").strip()
-    token_avisos = os.environ.get("TELEGRAM_TOKEN_AVISOS", "").strip()
-    if problemas_todos and chat and token_avisos:
-        enviado, detalle = avisar_por_telegram(
-            token_avisos, chat, mensaje_para_telegram(problemas_todos))
-        print("\naviso por Telegram: "
-              + ("enviado." if enviado else f"NO se pudo enviar ({detalle})."))
-    elif problemas_todos and (chat or token_avisos):
-        print("\naviso por Telegram: no se manda, faltan COPILOTO_CHAT_EQUIPO o "
-              "TELEGRAM_TOKEN_AVISOS (hacen falta las dos).")
+    avisar_al_equipo(problemas_todos)
 
     if problemas_totales:
         print(f"\n{problemas_totales} cosas que arreglar.")

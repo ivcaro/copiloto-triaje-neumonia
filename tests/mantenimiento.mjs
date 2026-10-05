@@ -78,7 +78,7 @@ const SALUD_OK = JSON.stringify({
 
 const bien = (cambios = {}) => Object.assign({
   Configuracion: { chat_equipo: "987654321" },
-  // MEDIDO contra el n8n real el 25-09-2026 (ejecucion 34140): una consulta de
+  // MEDIDO contra el n8n real el 25-09-2026: una consulta de
   // solo DELETE sin RETURNING sale del nodo como `{success: true}`. ESO ES EL
   // CASO BUENO. El `{}` que deja «Always Output Data» cuando no hay ni eso se
   // prueba aparte, mas abajo.
@@ -143,7 +143,7 @@ console.log("A. ocho dias seguidos con todo bien: habla una vez y calla seis");
 console.log("\nB. el copiloto caido (el escenario del brief: apagarlo)");
 {
   const roto = bien({
-    "Salud del copiloto": { error: "connect ECONNREFUSED 172.18.0.9:8000" },
+    "Salud del copiloto": { error: "connect ECONNREFUSED 172.18.0.2:8000" },
   });
   const m = {};
   const caido = await evaluar(roto, m, enIso(T0));

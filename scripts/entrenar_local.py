@@ -2,9 +2,9 @@
 
 Uso:
     C:\\venv-copiloto\\Scripts\\python.exe scripts/entrenar_local.py ^
-        --raiz "C:\\Users\\[retirado]\\datasets\\rsna-pneumonia\\trabajo" ^
+        --raiz "<RSNA_RAIZ>" ^
         --arquitectura mobilenet_v3_large --tam-imagen 224 --lote 32 ^
-        --salida "C:\\...\\corridas\\corrida3_mobilenet_224px"
+        --salida "<RSNA_RAIZ>\\corridas\\corrida3_mobilenet_224px"
 
 Por que existe: esta maquina no tiene GPU y la cuota de Colab se agoto, asi
 que el entrenamiento real hay que dejarlo corriendo horas sobre los 20 nucleos

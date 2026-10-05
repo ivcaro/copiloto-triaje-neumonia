@@ -68,3 +68,12 @@ pruebas/corpus/
 # mensajes reales, la clave del evaluador y los CSV del medico. Nada de esto
 # se versiona; al acta van solo los patientId, los estratos y las cifras.
 pruebas/sesion/
+
+# Los valores reales de la instancia de n8n (spec de SP5 §6.1): la URL y los
+# ids y nombres de las credenciales que `scripts/marcadores_n8n.py` pone en
+# los workflows antes de desplegarlos. El de ejemplo, de al lado, si se versiona.
+n8n/valores.local.json
+
+# La lista en claro del anonimato (spec de SP5 §6.1) vive FUERA del
+# repositorio. Por si alguien la copia aqui: tampoco se versiona.
+tests/anonimato/lista*.txt
