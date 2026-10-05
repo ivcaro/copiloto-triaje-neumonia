@@ -66,8 +66,8 @@ formados; sus cifras solo quedan vigiladas de rebote, las que el análisis
 imprime y con los decimales con que las imprime. De las figuras comprueba el nombre, la resolución, la
 huella y que el título lleva el rótulo y, en las de fiabilidad, el nombre
 de su celda. Si se toca el dibujo, o algo del bootstrap que no mueva los
-intervalos de esa celda, hay que volver a correr el guion, porque ninguna
-prueba lo va a pedir. Si la prueba
+intervalos de la celda (0,6; 0), hay que volver a correr el guion, porque
+ninguna prueba lo va a pedir. Si la prueba
 falla en una máquina con otras versiones de las librerías, lo dice: la
 diferencia puede venir de la librería y no del código.
 

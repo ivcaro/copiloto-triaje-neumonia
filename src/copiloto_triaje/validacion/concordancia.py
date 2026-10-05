@@ -516,12 +516,14 @@ def _a_seis(x: float) -> float:
 
 
 def _f_frente_a_umbral(x) -> str:
-    """Un kappa, o un limite de su intervalo, para la frase que lo compara
-    con 0,4 y 0,6. Si los dos decimales de siempre dieran justo un umbral sin
-    que el valor lo sea (0,3996 → «0,40»), la frase se contradiria; entonces
-    se imprime con tres decimales, y con los que hagan falta (hasta seis) si
-    tres aun dan el umbral. Un valor que a seis decimales ES el umbral se
-    imprime como el umbral, y `frente_a_umbrales` lo trata igual."""
+    """Un kappa, o un limite de su intervalo, para cualquier linea del acta que
+    lo imprima: la frase que lo compara con 0,4 y 0,6, la linea del kappa y
+    «Observado». Asi el mismo valor se lee igual en todas. Si los dos
+    decimales de siempre dieran justo un umbral sin que el valor lo sea
+    (0,3996 → «0,40»), la frase se contradiria; entonces se imprime con tres
+    decimales, y con los que hagan falta (hasta seis) si tres aun dan el
+    umbral. Un valor que a seis decimales ES el umbral se imprime como el
+    umbral, y `frente_a_umbrales` lo trata igual."""
     if x is None or (isinstance(x, float) and math.isnan(x)):
         return _f(x)
     for umbral in UMBRALES_KAPPA:

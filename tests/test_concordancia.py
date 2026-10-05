@@ -617,10 +617,11 @@ def test_lo_observado_y_el_criterio_no_se_contradicen_sobre_el_0_4():
 
 def test_el_mismo_limite_se_lee_igual_en_las_tres_lineas_del_acta():
     """La línea del kappa, la frase del criterio y «Observado» imprimen los
-    límites del mismo intervalo. Junto a una mitad, redondear antes a seis
-    decimales le cambia la segunda cifra a un límite (0,5750004 es «0,58»;
-    0,575, «0,57»), y a dos decimales a secas 0,3999 se lee «0,40» al lado de
-    «el 0,4 queda fuera»."""
+    límites del mismo intervalo, y las dos primeras el kappa puntual. Junto a
+    una mitad, redondear antes a seis decimales le cambia la segunda cifra a
+    un límite (0,5750004 es «0,58»; 0,575, «0,57»), y a dos decimales a secas
+    0,3999 se lee «0,40» al lado de «el 0,4 queda fuera» o, si es el kappa,
+    de «no alcanza el mínimo de 0,4»."""
     import re
     junto_a_una_mitad = (0.5750004190841983, 0.6250000000000001, 0.125000000001,
                          0.3750000000000001, 0.575, 0.625)
@@ -635,17 +636,19 @@ def test_el_mismo_limite_se_lee_igual_en_las_tres_lineas_del_acta():
                 r = {"kappa": max(li_a, li_b), "ic95": [li_a, ls], "ic95_bca": [li_b, ls],
                      "n": 24}
                 r["frente_a_umbrales"] = cc.frente_a_umbrales(r)
-                linea = re.search(r"analítico (\S+) a (\S+); BCa (\S+) a (\S+); n = 24",
-                                  cc._kappa_texto(r)).groups()
+                m = re.match(r"(\S+) \(IC 95 % analítico (\S+) a (\S+); BCa (\S+) a (\S+); "
+                             r"n = 24\)$", cc._kappa_texto(r))
+                puntual, linea = m.group(1), m.groups()[1:]
                 observado = cc._anchura_observada(r)
                 analitico = re.search(r"de (\S+) a (\S+) con el método analítico", observado)
                 bca = re.search(r"de (\S+) a (\S+) con el BCa", observado)
                 assert linea == analitico.groups() + bca.groups(), (r, observado)
                 criterio = cc._criterio("El kappa ponderado", r)
+                assert re.match(r"El kappa ponderado \((\S+)\)", criterio).group(1) == puntual
                 assert re.search(r"analítico \(?(-?\d+,\d+)", criterio).group(1) == linea[0]
                 assert re.search(r"BCa \(?(-?\d+,\d+)", criterio).group(1) == linea[2]
                 # y lo que se lee «0,40» o «0,60» ES el umbral
-                for crudo, leido in zip((li_a, ls, li_b, ls), linea):
+                for crudo, leido in zip((r["kappa"], li_a, ls, li_b, ls), (puntual,) + linea):
                     if leido in ("0,40", "0,60"):
                         assert round(crudo, 6) in (0.4, 0.6), (crudo, leido)
 
