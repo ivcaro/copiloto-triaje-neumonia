@@ -472,6 +472,35 @@ def test_detecta_el_centinela_dentro_del_recorrido(tmp_path):
     assert solo_el_centinela_en_la_nota, _donde(hallazgos)
 
 
+# A2: cada asercion sobre las huellas de HUELLAS que se paso a booleano (C5),
+# con un huellas.txt de juguete que lleva la huella de `ejemplo`, un token
+# del contenido del arbol de juguete (linea 3 de `docs/guia.md`; no de un
+# nombre, que saldria tapado por el principio de su huella): la prueba
+# falla, y su mensaje no lleva nada de esa huella. Con la forma vieja,
+# pytest la enseñaria entera.
+@pytest.mark.parametrize("llamar, esperado", [
+    pytest.param(lambda carpeta: test_el_centinela_esta_en_huellas_txt(),
+                 "no lleva la huella del centinela", id="el_centinela_esta"),
+    pytest.param(lambda carpeta: test_huellas_txt_lleva_mas_que_el_centinela(),
+                 "falta regenerar", id="mas_que_el_centinela"),
+    pytest.param(lambda carpeta: test_un_arbol_limpio_no_da_hallazgos(carpeta),
+                 "1 hallazgos: docs/guia.md:3", id="arbol_limpio"),
+    pytest.param(
+        lambda carpeta: test_detecta_el_centinela_dentro_del_recorrido(carpeta),
+        "1 hallazgos: docs/guia.md:3", id="centinela_en_el_recorrido"),
+])
+def test_las_aserciones_sobre_huellas_txt_no_ensenan_huellas(
+        tmp_path, monkeypatch, llamar, esperado):
+    de_juguete = tmp_path / "huellas.txt"
+    de_juguete.write_text("# de juguete\n" + va.huella("ejemplo") + "\n",
+                          encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "HUELLAS", de_juguete)
+    with pytest.raises(AssertionError) as error:
+        llamar(tmp_path / "prueba")
+    assert esperado in str(error.value)
+    assert va.huella("ejemplo")[:8] not in str(error.value)
+
+
 def test_lo_detecta_con_mayusculas_tildes_y_pegado_a_separadores(tmp_path):
     raiz = _arbol_limpio(tmp_path / "arbol")
     (raiz / "a.txt").write_text(
@@ -1627,14 +1656,18 @@ def _sin_ninguna_huella(salida, huellas):
 
 
 @hay_git
-def test_un_solo_commit_no_publica_las_huellas_de_la_lista(tmp_path, capsys):
+def test_un_solo_commit_no_publica_las_huellas_de_la_lista(
+        tmp_path, tmp_path_factory, capsys):
     # V-1: el arbol que se publica lleva un huellas.txt con solo la del
     # centinela (D9). Publicar el del repositorio de desarrollo es publicar,
     # para quien tenga un diccionario, buena parte de la lista.
     huellas = tmp_path / "huellas.txt"
     va.regenerar([OTRO, OTRO_MAS], huellas)     # dos de juguete y el centinela
     todas = va.leer_huellas(huellas)
-    raiz = _repositorio(tmp_path)
+    # Bajo una carpeta de nombre corto (`v0`, no la de la prueba, de 31
+    # caracteres): el fichero con nombre de huella, de 67, cabe en los 260
+    # de Windows aunque la carpeta temporal sea larga (A3).
+    raiz = _repositorio(tmp_path_factory.mktemp("v"))
     publicado = raiz / "tests" / "anonimato" / "huellas.txt"
     publicado.parent.mkdir(parents=True)
     shutil.copyfile(huellas, publicado)
@@ -1888,6 +1921,24 @@ def test_la_busqueda_de_secretos_del_arbol_no_se_salta():
     assert not marcas & {"skip", "skipif", "xfail"}, sorted(marcas)
 
 
+def test_la_busqueda_de_secretos_del_arbol_no_se_salta_por_dentro(
+        tmp_path, monkeypatch):
+    # A4: la de arriba lee las marcas; esta, el cuerpo. Con solo la huella
+    # del centinela, como en el repositorio que se publica, la prueba del
+    # arbol corre: un `pytest.skip()` dentro, condicionado a eso, la
+    # saltaria en verde.
+    publico = tmp_path / "huellas.txt"
+    va.regenerar_solo_centinela(publico)
+    modulo = sys.modules[__name__]
+    monkeypatch.setattr(modulo, "HUELLAS", publico)
+    monkeypatch.setattr(modulo, "solo_el_centinela", lambda ruta=publico: True)
+    try:
+        test_el_arbol_no_lleva_secretos()
+    except pytest.skip.Exception:
+        pytest.fail("con solo la huella del centinela, "
+                    "test_el_arbol_no_lleva_secretos se salta", pytrace=False)
+
+
 def _el_arbol_no_lleva_huellas(raiz, ruta_de_huellas, minimo=100):
     """La busqueda de huellas en el arbol: fichero, linea y el principio de
     la huella (no el token). Un recorrido vacio no es un arbol limpio."""
@@ -1917,18 +1968,41 @@ def test_el_arbol_no_lleva_huellas():
     pytest.param(True, id="con_git", marks=hay_git),
 ])
 def test_fuera_de_git_el_fallo_del_arbol_lo_dice(tmp_path, con_git):
-    # C4: fuera de la raiz de un repositorio se recorre la carpeta entera,
-    # tambien lo que git ignoraria (un `.env` de la copia de alguien).
+    # C4 y A1: fuera de la raiz de un repositorio se recorre la carpeta
+    # entera, tambien lo que git ignoraria (un `.env` de la copia de alguien,
+    # un notebook de `.ipynb_checkpoints/`): todas las pruebas que recorren
+    # el arbol lo dicen al fallar.
     raiz = _repositorio(tmp_path) if con_git else _arbol_limpio(
         tmp_path / "repo")
     (raiz / ".env").write_text("X=1\n", encoding="utf-8")
     (raiz / "nota.md").write_text(f"{OTRO}\n", encoding="utf-8")
+    # Un notebook con una imagen que nadie ha declarado y una clave de
+    # metadatos que nadie ha revisado.
+    imagen = base64.b64encode(_png_de_juguete((b"Software", b"x" * 80)))
+    cuaderno = {"metadata": {"authors": ["de juguete"]}, "cells": [
+        {"cell_type": "code", "metadata": {}, "outputs": [
+            {"output_type": "display_data",
+             "data": {"image/png": imagen.decode("ascii")}}]}]}
+    (raiz / "cuaderno.ipynb").write_text(json.dumps(cuaderno, indent=1),
+                                         encoding="utf-8")
     de_juguete = _huellas_de_juguete(tmp_path)
-    for comprobar in (_el_arbol_no_lleva_secretos, _el_arbol_no_lleva_huellas):
+    comprobaciones = {
+        "secretos": lambda: _el_arbol_no_lleva_secretos(raiz, de_juguete,
+                                                        minimo=1),
+        "huellas": lambda: _el_arbol_no_lleva_huellas(raiz, de_juguete,
+                                                      minimo=1),
+        "tiradas": lambda: _toda_tirada_larga_es_una_imagen_declarada(
+            raiz, set()),
+        "imagenes": lambda: _las_imagenes_de_los_notebooks_son_las_declaradas(
+            raiz, {}),
+        "metadatos": lambda: _los_metadatos_de_los_notebooks_son_los_revisados(
+            raiz),
+    }
+    for que, comprobar in comprobaciones.items():
         with pytest.raises(pytest.fail.Exception) as error:
-            comprobar(raiz, de_juguete, minimo=1)
-        assert (NO_ES_UN_REPOSITORIO in str(error.value)) is not con_git
-        assert OTRO not in str(error.value).lower()
+            comprobar()
+        assert (NO_ES_UN_REPOSITORIO in str(error.value)) is not con_git, que
+        assert OTRO not in str(error.value).lower(), que
 
 
 def test_con_solo_el_centinela_los_secretos_del_arbol_se_buscan(tmp_path):
@@ -2049,12 +2123,12 @@ def test_un_metadato_detras_de_los_datos_de_la_imagen_tambien_se_mira(
     assert "Neutro" not in str(error.value)
 
 
-def _notebooks_publicados():
+def _notebooks_publicados(raiz=RAIZ):
     """{nombre: notebook} de cada `.ipynb` que se publicaria, no solo los de
     `notebooks/`."""
-    return {p.relative_to(RAIZ).as_posix():
+    return {p.relative_to(raiz).as_posix():
             json.loads(p.read_text(encoding="utf-8"))
-            for p in va.ficheros_versionados(RAIZ) if p.suffix == ".ipynb"}
+            for p in va.ficheros_versionados(raiz) if p.suffix == ".ipynb"}
 
 
 def _imagenes_del_notebook(notebook):
@@ -2090,34 +2164,69 @@ def test_las_imagenes_salen_de_las_salidas_y_de_los_adjuntos():
     assert _imagenes_del_notebook(notebook) == [("image/png", png)] * 2
 
 
+def _las_imagenes_de_los_notebooks_son_las_declaradas(raiz, declaradas):
+    """Los notebooks que se publicarian bajo `raiz` y las imagenes de cada
+    uno (por su SHA-256) son exactamente los de `declaradas` (como
+    IMAGENES_DE_LOS_NOTEBOOKS). Si no, falla diciendo el notebook y las
+    huellas de las imagenes que no se han revisado (son de imagenes: se
+    pueden publicar). Devuelve [(nombre, tipo, bytes)] de cada imagen, para
+    mirar sus metadatos."""
+    notebooks = _notebooks_publicados(raiz)
+    problemas, imagenes = [], []
+    for nombre in sorted(set(notebooks) | set(declaradas)):
+        if nombre not in declaradas:
+            problemas.append(f"{nombre}: no esta en IMAGENES_DE_LOS_NOTEBOOKS")
+            continue
+        if nombre not in notebooks:
+            problemas.append(f"{nombre}: esta declarado y no se publicaria")
+            continue
+        suyas = _imagenes_del_notebook(notebooks[nombre])
+        de_sus_imagenes = tuple(sorted(hashlib.sha256(d).hexdigest()
+                                       for _tipo, d in suyas))
+        if de_sus_imagenes != tuple(declaradas[nombre]):
+            nuevas = sorted(set(de_sus_imagenes) - set(declaradas[nombre]))
+            problemas.append(f"{nombre}: {len(de_sus_imagenes)} imagenes, "
+                             f"{len(declaradas[nombre])} declaradas; sin "
+                             f"revisar: {', '.join(nuevas) or 'ninguna'}")
+        imagenes += [(f"{nombre}, imagen {n}", tipo, datos)
+                     for n, (tipo, datos) in enumerate(suyas, 1)]
+    if problemas:
+        pytest.fail("\n".join(
+            ["Las imagenes incrustadas no son las revisadas "
+             "(IMAGENES_DE_LOS_NOTEBOOKS):"]
+            + _fuera_de_git(raiz)
+            + ["  " + p for p in problemas]), pytrace=False)
+    return imagenes
+
+
 def test_las_imagenes_de_los_notebooks_son_las_revisadas():
     """Las imagenes incrustadas no las lee ni la prueba de huellas ni el
     script (el base64 largo se quita sin mirarlo): se revisan a mano y se
     fijan aqui por su huella; sus metadatos se miran como los de los PNG."""
-    notebooks = _notebooks_publicados()
-    assert sorted(notebooks) == sorted(IMAGENES_DE_LOS_NOTEBOOKS)
     textos = []
-    for nombre, notebook in sorted(notebooks.items()):
-        imagenes = _imagenes_del_notebook(notebook)
-        suyas = tuple(sorted(hashlib.sha256(d).hexdigest()
-                             for _tipo, d in imagenes))
-        assert suyas == IMAGENES_DE_LOS_NOTEBOOKS[nombre], nombre
-        for n, (tipo, datos) in enumerate(imagenes, 1):
-            if tipo != "image/svg+xml":         # el texto lo recorre el resto
-                _formato, texto = _mirar_imagen(datos,
-                                                f"{nombre}, imagen {n}")
-                textos.append((f"{nombre}, imagen {n}", texto))
+    for nombre, tipo, datos in _las_imagenes_de_los_notebooks_son_las_declaradas(
+            RAIZ, IMAGENES_DE_LOS_NOTEBOOKS):
+        if tipo != "image/svg+xml":             # el texto lo recorre el resto
+            _formato, texto = _mirar_imagen(datos, nombre)
+            textos.append((nombre, texto))
     _sin_huellas_en_los_valores(textos)
 
 
 def _tiradas_de_base64_sin_declarar(raiz, declaradas):
-    """(fichero, linea) de cada tirada de 120 o mas caracteres de base64 de
-    un fichero de texto que se publicaria (la expresion `BASE64` del script:
-    lo que la busqueda de huellas quita sin mirar) que, decodificada, no es
-    una de las imagenes `declaradas` (por su SHA-256). Nunca la tirada."""
+    """(fichero, linea, motivo) de cada tirada de 120 o mas caracteres de
+    base64 de un fichero de texto que se publicaria (la expresion `BASE64`
+    del script: lo que la busqueda de huellas quita sin mirar) que,
+    decodificada, no es una de las imagenes `declaradas` (por su SHA-256).
+    Nunca la tirada. Un fichero que no se deja leer es un hallazgo de linea
+    0 («no se pudo leer», A5): no se da por limpio, y sin traza."""
     sin_declarar = []
     for ruta in va.ficheros_versionados(raiz):
-        texto = va._texto(ruta)
+        relativo = ruta.relative_to(raiz).as_posix()
+        try:
+            texto = va._texto(ruta)
+        except OSError:
+            sin_declarar.append((relativo, 0, "no se pudo leer"))
+            continue
         if texto is None:
             continue
         for n, linea in enumerate(texto.splitlines(), 1):
@@ -2128,8 +2237,22 @@ def _tiradas_de_base64_sin_declarar(raiz, declaradas):
                     datos = None
                 if (datos is None or hashlib.sha256(datos).hexdigest()
                         not in declaradas):
-                    sin_declarar.append((ruta.relative_to(raiz).as_posix(), n))
+                    sin_declarar.append(
+                        (relativo, n, "no es una imagen declarada"))
     return sin_declarar
+
+
+def _toda_tirada_larga_es_una_imagen_declarada(raiz, declaradas):
+    """Falla con el fichero, la linea y el motivo de cada tirada sin
+    declarar (y de cada fichero ilegible), nunca con la tirada."""
+    sin_declarar = _tiradas_de_base64_sin_declarar(raiz, declaradas)
+    if sin_declarar:
+        pytest.fail("\n".join(
+            ["Tiradas de base64 de 120 o mas caracteres que no son una "
+             "imagen declarada (IMAGENES_DE_LOS_NOTEBOOKS):"]
+            + _fuera_de_git(raiz)
+            + [f"  {fichero}:{n} ({motivo})"
+               for fichero, n, motivo in sin_declarar]), pytrace=False)
 
 
 def test_una_imagen_pegada_de_otra_forma_tambien_se_ve(tmp_path):
@@ -2150,16 +2273,39 @@ def test_una_imagen_pegada_de_otra_forma_tambien_se_ve(tmp_path):
                                          encoding="utf-8")
     assert _imagenes_del_notebook(notebook) == []
     sin_declarar = _tiradas_de_base64_sin_declarar(raiz, set())
-    assert ("notas.md", 2) in sin_declarar
-    assert sorted({f for f, _n in sin_declarar}) == ["cuaderno.ipynb",
-                                                     "notas.md"]
+    assert ("notas.md", 2, "no es una imagen declarada") in sin_declarar
+    assert sorted({f for f, _n, _motivo in sin_declarar}) == [
+        "cuaderno.ipynb", "notas.md"]
     # Declarada, pasa; y una tirada que no es base64 valido no pasa.
     assert _tiradas_de_base64_sin_declarar(
         raiz, {hashlib.sha256(imagen).hexdigest()}) == []
     (raiz / "ruta.txt").write_text("/".join(["abcdefgh"] * 20) + "\n",
                                    encoding="utf-8")
     assert _tiradas_de_base64_sin_declarar(
-        raiz, {hashlib.sha256(imagen).hexdigest()}) == [("ruta.txt", 1)]
+        raiz, {hashlib.sha256(imagen).hexdigest()}) == [
+        ("ruta.txt", 1, "no es una imagen declarada")]
+
+
+def test_un_fichero_ilegible_es_un_hallazgo_de_las_tiradas(tmp_path,
+                                                          monkeypatch):
+    # A5: un fichero que no se deja leer (sin permiso, bloqueado) no rompe la
+    # prueba de las tiradas con una traza: es un hallazgo, con el fichero.
+    raiz = _arbol_limpio(tmp_path / "arbol")
+    leer = Path.read_bytes
+
+    def leer_salvo_la_guia(ruta):
+        if ruta.name == "guia.md":
+            raise PermissionError(13, "acceso denegado")
+        return leer(ruta)
+
+    monkeypatch.setattr(Path, "read_bytes", leer_salvo_la_guia)
+    assert _tiradas_de_base64_sin_declarar(raiz, set()) == [
+        ("docs/guia.md", 0, "no se pudo leer")]
+    with pytest.raises(pytest.fail.Exception) as error:
+        _toda_tirada_larga_es_una_imagen_declarada(raiz, set())
+    assert "docs/guia.md:0 (no se pudo leer)" in str(error.value)
+    assert "Traceback" not in str(error.value)
+    assert "PermissionError" not in str(error.value)
 
 
 def test_toda_tirada_larga_de_base64_es_una_imagen_declarada():
@@ -2168,16 +2314,14 @@ def test_toda_tirada_larga_de_base64_es_una_imagen_declarada():
     la linea, no la tirada."""
     declaradas = {una for suyas in IMAGENES_DE_LOS_NOTEBOOKS.values()
                   for una in suyas}
-    sin_declarar = _tiradas_de_base64_sin_declarar(RAIZ, declaradas)
-    assert not sin_declarar, (
-        "tiradas de base64 que no son una imagen declarada: "
-        + ", ".join(f"{fichero}:{n}" for fichero, n in sin_declarar))
+    _toda_tirada_larga_es_una_imagen_declarada(RAIZ, declaradas)
 
 
-def _mirar_metadatos_de_los_notebooks(notebooks):
+def _mirar_metadatos_de_los_notebooks(notebooks, aviso=()):
     """Las claves de `metadata` de cada notebook, las de su `colab` (con
     `provenance` vacio) y las de cada celda son las revisadas. Si no, falla
-    diciendo el notebook y la CLAVE, nunca el valor."""
+    diciendo el notebook y la CLAVE, nunca el valor (y las lineas de
+    `aviso`, si las hay)."""
     de_mas = []
     for nombre, notebook in sorted(notebooks.items()):
         metadatos = notebook.get("metadata", {})
@@ -2193,9 +2337,15 @@ def _mirar_metadatos_de_los_notebooks(notebooks):
                        for c in sorted(set(celda.get("metadata", {}))
                                        - METADATOS_DE_LA_CELDA)]
     if de_mas:
-        pytest.fail("Metadatos de notebook que no son los revisados (las "
-                    "huellas no los conocen: se miran a mano):\n  "
-                    + "\n  ".join(de_mas), pytrace=False)
+        pytest.fail("\n".join(
+            ["Metadatos de notebook que no son los revisados (las huellas no "
+             "los conocen: se miran a mano):"]
+            + list(aviso) + ["  " + d for d in de_mas]), pytrace=False)
+
+
+def _los_metadatos_de_los_notebooks_son_los_revisados(raiz):
+    _mirar_metadatos_de_los_notebooks(_notebooks_publicados(raiz),
+                                      aviso=_fuera_de_git(raiz))
 
 
 def test_un_metadato_de_notebook_no_revisado_se_nombra_sin_su_valor():
@@ -2222,4 +2372,4 @@ def test_un_metadato_de_notebook_no_revisado_se_nombra_sin_su_valor():
 
 
 def test_los_metadatos_de_los_notebooks_son_los_revisados():
-    _mirar_metadatos_de_los_notebooks(_notebooks_publicados())
+    _los_metadatos_de_los_notebooks_son_los_revisados(RAIZ)
