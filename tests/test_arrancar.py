@@ -483,6 +483,98 @@ def test_el_primer_redespliegue_no_baja_el_servicio_antes_de_construir():
         "rm -f ~/copiloto.env.antes-de-red_n8n ~/copiloto-bd.antes-de-red_n8n.sql.gz"]
 
 
+def _lo_que_le_falta_al_commit_de_vuelta(guia):
+    """Lo que el primer redespliegue tiene que decir del commit de vuelta y de
+    la copia de la base, mirado en el apartado con los blancos normalizados:
+    la guarda del punto 1 y su `0`; la orden que da el commit de antes del
+    `pull` y su comprobacion, que antes exige que el commit exista
+    (`cat-file -e … &&`: si no, el `grep -c` de detras daria el `0` que se pide
+    con un commit mal copiado), con su `0` y lo que significa un `fatal:`; y
+    que tras `gunzip -t` se siga con `&&` al hacer la copia y al restaurarla
+    (con `;`, una copia rota se restauraria igual). Devuelve lo que falta."""
+    inicio = guia.index("### El primer redespliegue con `RED_N8N` obligatoria")
+    seguido = " ".join(guia[inicio:guia.index("\n## 7. ", inicio)].split())
+    donde = seguido.find
+    falta = []
+    guarda = "grep -c 'RED_N8N:?' /opt/copiloto/servidor/docker-compose.yml"
+    if f"{guarda} ``` Tiene que dar `0`" not in seguido:
+        falta.append("la guarda del punto 1 va seguida de «Tiene que dar `0`»")
+    reflog = "git -C /opt/copiloto rev-parse 'main@{1}'"
+    comprobacion = ("git -C /opt/copiloto cat-file -e '<commit>:servidor/docker-compose.yml' "
+                    "&& git -C /opt/copiloto show '<commit>:servidor/docker-compose.yml' "
+                    "| grep -c 'RED_N8N:?'")
+    apunta = donde("git rev-parse HEAD")      # la orden que apunta el commit de ahora
+    if not -1 < donde(guarda) < donde(reflog) < apunta:
+        falta.append("la orden que da el commit de antes del pull")
+    if not -1 < max(donde(reflog), donde(guarda)) < donde(comprobacion) < apunta:
+        falta.append("la comprobacion del commit de vuelta, con `cat-file -e` delante y `&&`")
+    elif f"{comprobacion} ``` Tiene que dar `0`" not in seguido:
+        falta.append("la comprobacion del commit va seguida de «Tiene que dar `0`»")
+    if "sale un `fatal:`, el commit está mal copiado" not in seguido:
+        falta.append("lo que significa que salga un `fatal:`")
+    if ("gunzip -t ~/copiloto-bd.antes-de-red_n8n.sql.gz && gunzip -c "
+            "~/copiloto-bd.antes-de-red_n8n.sql.gz | docker exec -i copiloto-bd psql"
+            not in seguido):
+        falta.append("la restauracion sigue a `gunzip -t` con `&&`")
+    if (".sql.gz) && gunzip -t ~/copiloto-bd.antes-de-red_n8n.sql.gz && ls -l"
+            not in seguido):
+        falta.append("la copia se comprueba con `gunzip -t` encadenado con `&&`")
+    return falta
+
+
+def test_el_primer_redespliegue_guarda_el_commit_de_vuelta_y_encadena_la_restauracion():
+    """La hermana de la anterior, sobre una funcion que recibe el texto de la
+    guia, para poder probarla con mutaciones: lo que se pega en el servidor
+    tiene que decir lo que significa cada `0`, comprobar el commit de vuelta
+    antes de darlo por bueno, y no seguir con una copia rota."""
+    assert _lo_que_le_falta_al_commit_de_vuelta(_guia()) == []
+
+
+# Mutaciones de la guia que la comprobacion de arriba tiene que cazar, cada
+# una con lo que tiene que decir que falta.
+MUTACIONES_DEL_COMMIT_DE_VUELTA = {
+    "la guarda pide un 1": (
+        "Tiene que dar `0`: el compose del disco", "Tiene que dar `1`: el compose del disco",
+        "la guarda del punto 1 va seguida de «Tiene que dar `0`»"),
+    "sin la orden de main@{1}": (
+        "```bash\ngit -C /opt/copiloto rev-parse 'main@{1}'\n```\n", "",
+        "la orden que da el commit de antes del pull"),
+    "sin la comprobacion del commit": (
+        "git -C /opt/copiloto cat-file -e '<commit>:servidor/docker-compose.yml' && git -C "
+        "/opt/copiloto show '<commit>:servidor/docker-compose.yml' | grep -c 'RED_N8N:?'\n", "",
+        "la comprobacion del commit de vuelta, con `cat-file -e` delante y `&&`"),
+    "la comprobacion sin cat-file": (
+        "git -C /opt/copiloto cat-file -e '<commit>:servidor/docker-compose.yml' && git", "git",
+        "la comprobacion del commit de vuelta, con `cat-file -e` delante y `&&`"),
+    "la comprobacion con ; tras cat-file": (
+        "servidor/docker-compose.yml' && git -C /opt/copiloto show",
+        "servidor/docker-compose.yml'; git -C /opt/copiloto show",
+        "la comprobacion del commit de vuelta, con `cat-file -e` delante y `&&`"),
+    "la comprobacion pide un 1": (
+        "Tiene que dar `0`. Si en vez", "Tiene que dar `1`. Si en vez",
+        "la comprobacion del commit va seguida de «Tiene que dar `0`»"),
+    "sin decir que es un fatal": (
+        "sale un `fatal:`, el commit está mal", "sale un error, el commit está mal",
+        "lo que significa que salga un `fatal:`"),
+    "la restauracion con ; tras gunzip -t": (
+        "gunzip -t ~/copiloto-bd.antes-de-red_n8n.sql.gz && gunzip -c",
+        "gunzip -t ~/copiloto-bd.antes-de-red_n8n.sql.gz; gunzip -c",
+        "la restauracion sigue a `gunzip -t` con `&&`"),
+    "la copia con ; tras gunzip -t": (
+        "gunzip -t ~/copiloto-bd.antes-de-red_n8n.sql.gz && ls -l",
+        "gunzip -t ~/copiloto-bd.antes-de-red_n8n.sql.gz; ls -l",
+        "la copia se comprueba con `gunzip -t` encadenado con `&&`"),
+}
+
+
+@pytest.mark.parametrize("antes, despues, falta", MUTACIONES_DEL_COMMIT_DE_VUELTA.values(),
+                         ids=list(MUTACIONES_DEL_COMMIT_DE_VUELTA))
+def test_la_comprobacion_del_commit_de_vuelta_caza_las_mutaciones(antes, despues, falta):
+    guia = _guia()
+    assert guia.count(antes) == 1, "la mutacion ya no encuentra su texto"
+    assert falta in _lo_que_le_falta_al_commit_de_vuelta(guia.replace(antes, despues))
+
+
 def test_la_plantilla_del_env_se_copia_sin_pisar_el_que_hay():
     """El `.env` lleva la contraseña de la base: copiar encima la plantilla,
     pegando la orden sin leer la condicion de delante, la perderia. Con `-n`,
