@@ -164,6 +164,7 @@ en comentarios ni en nombres de fichero. Por eso:
 | `docs/**`, `notebooks/eda_rsna.ipynb`, `tests/mantenimiento.mjs`, lo que quede; `tests/test_anonimato.py`, `tests/anonimato/huellas.txt` | 6 | sustitución mecánica, el repaso a mano y la prueba del árbol limpio |
 | `tests/anonimato/README.md`, `tests/test_anonimato.py` | 7 | declaración de la revisión manual de los binarios, y lo que la vigilancia no ve |
 | `README.md`, `docs/sp3-operacion.md` | 8 | lo que el equipo tiene que hacer en el servidor |
+| los de las tareas 1 a 8 que tocó la revisión final | 9 | la tanda de la revisión final |
 ---
 
 ### Tarea 1: `N8N_URL` sin valor por defecto
@@ -330,6 +331,8 @@ def _main_que_no_toca_nada(monkeypatch):
                      "COPILOTO_CHAT_EQUIPO", "TELEGRAM_TOKEN_AVISOS"):
         monkeypatch.delenv(variable, raising=False)
     monkeypatch.setattr(vw, "BASE_N8N", "")
+    # y sin el motivo de una `N8N_URL` mal puesta que hubiera al coleccionar
+    monkeypatch.setattr(vw, "N8N_URL_MAL_PUESTA", "")
 
 
 def _canal_de_avisos_falso(monkeypatch):
@@ -396,7 +399,7 @@ def test_sin_N8N_URL_main_sale_con_un_mensaje_y_no_pide_ningun_token(
     monkeypatch.setattr(vw.urllib.request, "urlopen",
                         lambda *a, **k: pytest.fail("no había a quién avisar"))
 
-    assert vw.main() == 1
+    assert vw.main([]) == 1
 
     salida = capsys.readouterr().out
     assert "N8N_URL" in salida and "Qué hacer" in salida
@@ -412,7 +415,7 @@ def test_sin_N8N_URL_la_tarea_programada_avisa_por_telegram(monkeypatch, capsys)
     _main_que_no_toca_nada(monkeypatch)
     enviados = _canal_de_avisos_falso(monkeypatch)
 
-    assert vw.main() == 1
+    assert vw.main([]) == 1
 
     assert enviados["url"] == "https://api.telegram.org/botT0K3N/sendMessage"
     assert enviados["cuerpo"]["chat_id"] == "987"
@@ -421,6 +424,196 @@ def test_sin_N8N_URL_la_tarea_programada_avisa_por_telegram(monkeypatch, capsys)
     assert "los webhooks de Telegram NO se han comprobado" in texto
     assert "no está como debe" not in texto
     assert "aviso por Telegram: enviado." in capsys.readouterr().out
+
+
+def test_sin_N8N_URL_el_mensaje_dice_donde_se_pone_para_la_tarea_programada():
+    """Una tarea programada de Windows no tiene variables propias: la variable
+    va en el perfil del usuario que la corre, con `setx`, como dice el paso 2
+    del §5 del manual. «En la tarea» mandaba a buscar donde no hay."""
+    assert "setx N8N_URL" in vw.SIN_N8N_URL
+    assert "§5" in vw.SIN_N8N_URL and "paso 2" in vw.SIN_N8N_URL
+    assert "en la tarea." not in vw.SIN_N8N_URL
+
+
+# --------------------------------------------------------------------------
+# Sin consola no se pide nada por teclado
+# --------------------------------------------------------------------------
+class _Entrada(io.StringIO):
+    """Un `sys.stdin` de pega que dice si es una consola."""
+
+    def __init__(self, consola):
+        super().__init__("")
+        self._consola = consola
+
+    def isatty(self):
+        return self._consola
+
+
+def test_sin_consola_y_sin_token_el_vigilante_no_espera_y_lo_cuenta(monkeypatch, capsys):
+    """Sin consola (una entrada redirigida, un proceso sin consola) no hay a
+    quien pedirle el token: `getpass` se quedaria esperando un teclado que
+    nadie va a usar. El bot sin token se cuenta como problema."""
+    _main_que_no_toca_nada(monkeypatch)       # sin tokens, sin canal, sin red
+    monkeypatch.setattr(vw, "BASE_N8N", BASE)
+
+    def pide(*a, **k):
+        raise AssertionError("pidió el token por teclado sin consola")
+
+    monkeypatch.setattr(vw.getpass, "getpass", pide)
+    monkeypatch.setattr(vw.sys, "stdin", _Entrada(consola=False))
+    monkeypatch.setattr(vw, "_memoria_leer", lambda: {})
+    monkeypatch.setattr(vw, "_memoria_escribir", lambda datos: None)
+
+    assert vw.main([]) == 1
+
+    salida = capsys.readouterr().out
+    for quien in ("paciente", "profesional"):
+        assert f"{quien}: sin token, no se puede comprobar. SALTADO" in salida
+    assert "2 cosas que arreglar." in salida
+
+
+def test_con_sin_teclado_no_se_pide_nada_aunque_haya_consola(monkeypatch, capsys):
+    """§5 del manual: la tarea programada SI tiene consola -el Programador de
+    tareas se la da a python.exe aunque nadie la vea-, asi que mirar si hay
+    consola no basta: `getpass` se quedaria esperando en ella, sin avisar, y la
+    tarea no volveria a correr. Con `--sin-teclado`, `main()` no pide nada: el
+    bot sin token cuenta como problema, y el aviso sale."""
+    _main_que_no_toca_nada(monkeypatch)       # sin tokens y sin red
+    enviados = _canal_de_avisos_falso(monkeypatch)
+    monkeypatch.setattr(vw, "BASE_N8N", BASE)
+    monkeypatch.setattr(vw, "_hay_consola", lambda: True)
+
+    def pide(*a, **k):
+        raise AssertionError("pidió el token por teclado con --sin-teclado")
+
+    monkeypatch.setattr(vw.getpass, "getpass", pide)
+    monkeypatch.setattr(vw, "_memoria_leer", lambda: {})
+    monkeypatch.setattr(vw, "_memoria_escribir", lambda datos: None)
+
+    assert vw.main(["--sin-teclado"]) == 1
+
+    salida = capsys.readouterr().out
+    for quien, variable in (("paciente", "TELEGRAM_TOKEN_PACIENTE"),
+                            ("profesional", "TELEGRAM_TOKEN_PROFESIONAL")):
+        assert f"{quien}: sin token, no se puede comprobar. SALTADO" in salida
+        assert f"falta su token en {variable}" in enviados["cuerpo"]["text"]
+    assert "2 cosas que arreglar." in salida
+    assert "aviso por Telegram: enviado." in salida
+
+
+def test_sin_la_opcion_y_con_consola_se_sigue_pidiendo_el_token(monkeypatch):
+    """La misma corrida sin `--sin-teclado`: con consola, el token se pide por
+    teclado, como siempre. Es lo que prueba que la que lo cambia es la
+    opcion."""
+    _main_que_no_toca_nada(monkeypatch)
+    monkeypatch.setattr(vw, "BASE_N8N", BASE)
+    monkeypatch.setattr(vw, "_hay_consola", lambda: True)
+    pedidos = []
+    monkeypatch.setattr(vw.getpass, "getpass",
+                        lambda prompt="": pedidos.append(prompt) or "")
+    monkeypatch.setattr(vw, "_memoria_leer", lambda: {})
+    monkeypatch.setattr(vw, "_memoria_escribir", lambda datos: None)
+
+    assert vw.main([]) == 1
+    assert len(pedidos) == 2
+
+
+def test_la_tarea_del_manual_lanza_el_vigilante_con_sin_teclado():
+    """El manual y el script no pueden divergir: la orden que monta la tarea
+    programada (§5 del manual) lanza este script con `--sin-teclado`, y el
+    script tiene esa opcion (una que no tuviera, la rechazaria)."""
+    manual = (RAIZ / "docs" / "sp3-operacion.md").read_text(encoding="utf-8")
+    acciones = [linea for linea in manual.splitlines()
+                if "New-ScheduledTaskAction" in linea]
+    assert len(acciones) == 1, "una sola orden monta la accion de la tarea"
+    argumento = re.search(r"-Argument '([^']*)'", acciones[0])
+    assert argumento, "la accion de la tarea no lleva -Argument"
+    script, *opciones = argumento.group(1).split()
+    assert script.replace("\\", "/") == "pruebas/verificar_webhooks.py"
+    assert "--sin-teclado" in opciones
+    assert vw.leer_opciones(opciones).sin_teclado is True
+
+
+def test_la_entrada_desde_el_dispositivo_nulo_no_es_una_consola(monkeypatch):
+    """En Windows, una entrada redirigida desde `NUL` dice que es una
+    consola (`isatty()` da True: es un dispositivo de caracteres), y `getpass`
+    se quedaba esperando igual. Una tarea lanzada con `< NUL` no tiene a nadie
+    al teclado."""
+    with open(os.devnull, encoding="utf-8") as nulo:
+        monkeypatch.setattr(vw.sys, "stdin", nulo)
+        assert vw._hay_consola() is False
+
+
+def test_con_consola_y_sin_token_el_vigilante_lo_pide_por_teclado(monkeypatch):
+    """A mano, con consola, no cambia nada: el token se pide por teclado."""
+    _main_que_no_toca_nada(monkeypatch)
+    monkeypatch.setattr(vw, "BASE_N8N", BASE)
+    pedidos, usados = [], []
+    monkeypatch.setattr(vw.getpass, "getpass",
+                        lambda prompt="": pedidos.append(prompt) or " tok-de-teclado ")
+    monkeypatch.setattr(vw.sys, "stdin", _Entrada(consola=True))
+
+    def pedir(token, metodo):
+        usados.append(token)
+        return False, "respuesta de pega"
+
+    monkeypatch.setattr(vw, "pedir_api", pedir)
+    monkeypatch.setattr(vw, "_memoria_leer", lambda: {})
+    monkeypatch.setattr(vw, "_memoria_escribir", lambda datos: None)
+
+    assert vw.main([]) == 1
+    assert len(pedidos) == 2
+    assert usados == ["tok-de-teclado", "tok-de-teclado"]
+
+
+# Mal puestas, con un host inventado que no sale en ningun mensaje: el mensaje
+# no repite el valor (va por Telegram).
+N8N_URL_MAL_PUESTAS = [
+    "n8n.inventado.test",                                   # sin esquema
+    "https://n8n.inventado.test/webhook/copiloto-paciente",  # con una ruta
+    '"https://n8n.inventado.test"',                          # entre comillas
+    "https://n8n. inventado.test",                           # con un blanco
+    "https://alguien@n8n.inventado.test",                    # con usuario
+    "/",
+]
+
+
+@pytest.mark.parametrize("valor", N8N_URL_MAL_PUESTAS)
+def test_con_N8N_URL_mal_puesta_el_script_se_importa_y_no_la_da_por_buena(
+        valor, monkeypatch):
+    monkeypatch.setenv("N8N_URL", valor)
+    modulo = _script_recien_importado()
+    assert modulo.BASE_N8N == ""
+    assert modulo.N8N_URL_MAL_PUESTA, "el motivo"
+    assert "inventado" not in modulo.N8N_URL_MAL_PUESTA
+
+
+@pytest.mark.parametrize("valor", N8N_URL_MAL_PUESTAS)
+def test_con_N8N_URL_mal_puesta_main_avisa_sin_comprobar_nada(valor, monkeypatch, capsys):
+    """Antes daba por mal apuntados los dos webhooks, que estaban bien, y
+    mandaba registrarlos en la direccion mal escrita. Ahora sigue el camino de
+    la variable ausente, con su propio mensaje: no pide tokens, no toca la
+    memoria, avisa diciendo que NO se comprobo nada y devuelve 1."""
+    _main_que_no_toca_nada(monkeypatch)
+    enviados = _canal_de_avisos_falso(monkeypatch)
+    monkeypatch.setenv("N8N_URL", valor)
+    modulo = _script_recien_importado()
+
+    def no_se_llama(*a, **k):
+        raise AssertionError("main() siguió adelante con N8N_URL mal puesta")
+
+    monkeypatch.setattr(modulo, "pedir_api", no_se_llama)
+    monkeypatch.setattr(modulo, "_memoria_escribir", no_se_llama)
+
+    assert modulo.main([]) == 1
+
+    texto = enviados["cuerpo"]["text"]
+    assert "los webhooks de Telegram NO se han comprobado" in texto
+    assert "N8N_URL" in texto and "mal puesta" in texto and "Qué hacer" in texto
+    assert "Vuelve a registrarlo" not in texto
+    salida = capsys.readouterr().out
+    assert "mal puesta" in salida and "aviso por Telegram: enviado." in salida
+    assert "inventado" not in texto + salida
 
 
 def test_los_problemas_de_una_lectura_de_verdad_llegan_al_canal_de_avisos(
@@ -444,7 +637,7 @@ def test_los_problemas_de_una_lectura_de_verdad_llegan_al_canal_de_avisos(
     monkeypatch.setattr(vw, "_memoria_escribir", escrita.update)
     enviados = _canal_de_avisos_falso(monkeypatch)
 
-    assert vw.main() == 1
+    assert vw.main([]) == 1
 
     assert escrita == {"paciente": 0, "profesional": 2}
     assert enviados["url"] == "https://api.telegram.org/botT0K3N/sendMessage"
@@ -487,9 +680,11 @@ blanco que la sigue, inserta este párrafo y una línea en blanco detrás, de mo
 `N8N_URL` ES OBLIGATORIA y no tiene valor por defecto: es la URL base del n8n
 que sirve a los dos bots (por ejemplo `https://n8n.ejemplo.test`), y con ella se
 calcula donde tendria que estar entregando Telegram. El repositorio no lleva la
-de ningun despliegue. Sin ella el script no pide ningun token ni comprueba nada:
-dice que falta, lo manda por Telegram si el canal de avisos esta puesto, y
-devuelve 1.
+de ningun despliegue. Sin ella, o mal puesta (sin esquema, con una ruta detras,
+entre comillas...), el script no pide ningun token ni comprueba nada: dice que
+falta o que esta mal, lo manda por Telegram si el canal de avisos esta puesto,
+y devuelve 1. Mal puesta, compararla con lo que devuelve Telegram daria por mal
+apuntado un webhook que esta bien.
 ```
 
 (2) La línea 54 asigna `BASE_N8N` con un valor por defecto (patrón
@@ -498,15 +693,31 @@ devuelve 1.
 ```python
 # Sin valor por defecto, y sin fallar al importar: `tests/test_mantenimiento.py`
 # importa este modulo para probar el diagnostico, y tiene que poder hacerlo en
-# una maquina que no sabe de ningun n8n. Quien se niega a seguir es `main()`.
-BASE_N8N = os.environ.get("N8N_URL", "").strip().rstrip("/")
+# una maquina que no sabe de ningun n8n, o que la tiene mal puesta. Quien se
+# niega a seguir es `main()`.
+BASE_N8N, N8N_URL_MAL_PUESTA = _base_de_n8n()
+
+# Donde se pone, dicho para la tarea programada: una tarea de Windows no tiene
+# variables propias, lee las del perfil del usuario que la corre.
+DONDE_SE_PONE = (
+    "en el entorno de quien corre el script; si lo corre la tarea programada, "
+    "con `setx N8N_URL` en el perfil del usuario que la corre (manual de "
+    "operación, §5, paso 2).")
 
 SIN_N8N_URL = (
     "Falta N8N_URL: sin ella no se sabe en qué URL tendría que estar "
     "entregando Telegram, y no se ha comprobado ningún webhook.\n"
     "   Qué hacer: pon en N8N_URL la URL base del n8n que sirve a los dos bots "
-    "(por ejemplo https://n8n.ejemplo.test), en el entorno de quien corre el "
-    "script; si lo corre la tarea programada, en la tarea.")
+    "(por ejemplo https://n8n.ejemplo.test), " + DONDE_SE_PONE)
+
+# El motivo, y nunca el valor: el mensaje viaja por Telegram.
+N8N_URL_MAL = (
+    "N8N_URL está mal puesta ({motivo}): con ella no se sabe en qué URL "
+    "tendría que estar entregando Telegram, y no se ha comprobado ningún "
+    "webhook.\n"
+    "   Qué hacer: pon en N8N_URL solo la URL base del n8n que sirve a los dos "
+    "bots, con su esquema y sin nada detrás del host (por ejemplo "
+    "https://n8n.ejemplo.test), " + DONDE_SE_PONE)
 ```
 
 (3) Justo antes de `def main() -> int:` (línea 215), añade la función `avisar_al_equipo`, y dentro
@@ -530,12 +741,64 @@ def avisar_al_equipo(problemas, comprobado=True):
               "TELEGRAM_TOKEN_AVISOS (hacen falta las dos).")
 
 
-def main() -> int:
+def _hay_consola() -> bool:
+    """Si hay una consola a la que pedirle el token. Sin ella (una entrada
+    redirigida, un proceso sin consola) `getpass` se quedaria esperando un
+    token que nadie va a teclear. Que la haya no quiere decir que haya alguien
+    delante: la tarea programada tiene una que nadie ve, y por eso va con
+    `--sin-teclado`.
+
+    En Windows `isatty()` no basta: una entrada redirigida desde `NUL` es un
+    dispositivo de caracteres y dice que si. Alli se pregunta ademas a la
+    consola por su modo, que solo lo tiene una consola de verdad."""
+    try:
+        if sys.stdin is None or not sys.stdin.isatty():
+            return False
+    except (AttributeError, ValueError, OSError):
+        return False
+    if os.name != "nt":
+        return True
+    try:
+        import msvcrt
+        manejador = msvcrt.get_osfhandle(sys.stdin.fileno())
+    except (AttributeError, ValueError, OSError):
+        # una entrada sin descriptor que dice ser una consola: se le cree
+        return True
+    import ctypes
+    modo = ctypes.c_ulong()
+    return bool(ctypes.windll.kernel32.GetConsoleMode(
+        ctypes.c_void_p(manejador), ctypes.byref(modo)))
+
+
+def leer_opciones(argv=None):
+    """Las opciones de la linea de ordenes (con `argv` None, las de
+    `sys.argv`). Se leen en `main()` y nunca al importar: este modulo lo
+    importan las pruebas, con las opciones de pytest en `sys.argv`. Sin
+    abreviaturas: la orden de la tarea tiene que llevar la opcion entera."""
+    p = argparse.ArgumentParser(
+        allow_abbrev=False,
+        description="Mira que Telegram siga entregando los dos bots donde debe: "
+                    "la mitad del §16 que no cabe dentro de n8n.")
+    p.add_argument(
+        "--sin-teclado", action="store_true",
+        help="no pedir nunca un token por teclado: el bot sin token en el "
+             "entorno se cuenta como problema. Es como lo lanza la tarea "
+             "programada (§5 del manual de operacion), que tiene una consola "
+             "que nadie ve")
+    return p.parse_args(argv)
+
+
+def main(argv=None) -> int:
+    opciones = leer_opciones(argv)
     if not BASE_N8N:
         # Antes de pedir ningun token y de tocar la memoria: sin la base no hay
-        # con que comparar, y una lectura a medias borraria la de ayer.
-        print(SIN_N8N_URL)
-        avisar_al_equipo([SIN_N8N_URL], comprobado=False)
+        # con que comparar, y una lectura a medias borraria la de ayer. Mal
+        # puesta es lo mismo: compararla daria por mal apuntados los dos
+        # webhooks y mandaria registrarlos en una direccion equivocada.
+        mensaje = (N8N_URL_MAL.format(motivo=N8N_URL_MAL_PUESTA)
+                   if N8N_URL_MAL_PUESTA else SIN_N8N_URL)
+        print(mensaje)
+        avisar_al_equipo([mensaje], comprobado=False)
         return 1
     memoria = _memoria_leer()
 ```
@@ -674,6 +937,31 @@ def test_sin_N8N_URL_el_fijador_salta_y_dice_que_se_queda_sin_correr(
     assert "pruebas conducidas" in motivo
 
 
+@pytest.mark.parametrize("valor", [
+    "n8n.inventado.test", "https://n8n.inventado.test/webhook/copiloto-paciente",
+    '"https://n8n.inventado.test"', "https://n8n. inventado.test", "/"])
+def test_con_N8N_URL_mal_puesta_el_fijador_falla_diciendo_por_que(monkeypatch, valor):
+    """Mal puesta no se SALTA: un salto se ve verde, y quien la puso quiere
+    correr las pruebas conducidas. Falla, diciendo por que, sin repetir el
+    valor y sin salir a la red. Se recogen las dos excepciones: si el fijador
+    se saltara, `pytest.raises` no lo recogeria, el salto se propagaria y esta
+    misma prueba saldria saltada, en verde."""
+    monkeypatch.setenv("N8N_URL", valor)
+    _sin_red(monkeypatch)
+
+    try:
+        fijador()
+    except pytest.skip.Exception:
+        raise AssertionError("se saltó en vez de fallar") from None
+    except pytest.fail.Exception as fallo:
+        motivo = str(fallo)
+    else:
+        raise AssertionError("el fijador siguió adelante con N8N_URL mal puesta")
+
+    assert "N8N_URL" in motivo and "mal puesta" in motivo
+    assert "inventado" not in motivo
+
+
 def test_con_N8N_URL_el_fijador_habla_con_esa_url_y_con_ninguna_otra(monkeypatch):
     monkeypatch.setenv("N8N_URL", "https://otro.ejemplo.test/")
     pedidas = []
@@ -738,9 +1026,11 @@ Sustituye esas dos líneas por:
 
 ```python
 
-    Sin `N8N_URL` la prueba que lo pide se salta: no hay n8n por defecto.
+    Sin `N8N_URL` la prueba que lo pide se salta: no hay n8n por defecto. Mal
+    puesta, FALLA diciendo por que: un salto se ve verde, y quien la puso
+    quiere correr las pruebas conducidas.
     """
-    base = os.environ.get("N8N_URL", "").strip().rstrip("/")
+    base = os.environ.get("N8N_URL", "").strip()
     if not base:
         pytest.skip(
             "sin N8N_URL no se sabe a qué n8n hablar: las pruebas conducidas "
@@ -806,7 +1096,7 @@ def test_la_base_de_n8n_sale_de_N8N_URL_y_de_ningun_otro_sitio(monkeypatch):
     from pruebas.reproducir_casos import base_de_n8n
 
     monkeypatch.setenv("N8N_URL", " https://otro.ejemplo.test/ ")
-    assert base_de_n8n() == "https://otro.ejemplo.test/"
+    assert base_de_n8n() == "https://otro.ejemplo.test"
     for vacia in ("", "   "):
         monkeypatch.setenv("N8N_URL", vacia)
         with pytest.raises(SystemExit) as salida:
@@ -830,6 +1120,26 @@ def test_con_los_bots_y_sin_N8N_URL_el_arnes_sale_antes_de_empezar(
 
     assert "N8N_URL" in str(salida.value)
     assert salida.value.code != 0
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("valor", [
+    "n8n.inventado.test", "https://n8n.inventado.test/webhook/copiloto-paciente",
+    '"https://n8n.inventado.test"', "https://n8n. inventado.test", "/"])
+def test_con_los_bots_y_N8N_URL_mal_puesta_el_arnes_sale_antes_de_empezar(
+        valor, monkeypatch, tmp_path):
+    """Mal puesta, el primer POST moria con «unknown url type» despues de abrir
+    la base y de dar de alta el chat de pruebas. Ahora se detiene donde la
+    ausente: antes del copiloto, de elegir los casos y de abrir la base. Y el
+    mensaje no repite el valor."""
+    rc, _ = _entorno_con_bots(monkeypatch, tmp_path)
+    monkeypatch.setenv("N8N_URL", valor)
+
+    with pytest.raises(SystemExit) as salida:
+        rc.main()
+
+    assert "N8N_URL" in str(salida.value) and "mal puesta" in str(salida.value)
+    assert "inventado" not in str(salida.value)
     assert list(tmp_path.iterdir()) == []
 
 
@@ -864,8 +1174,10 @@ En `pruebas/reproducir_casos.py`, cuatro ediciones.
     N8N_URL                      OBLIGATORIA con los bots, y sin valor por
                                  defecto: la URL base del n8n que los sirve
                                  (por ejemplo https://n8n.ejemplo.test). Si
-                                 falta, el arnes sale diciendolo antes de
-                                 empezar. Con --sin-bots no hace falta
+                                 falta o esta mal puesta (sin esquema, con
+                                 una ruta detras...), el arnes sale
+                                 diciendolo antes de empezar. Con --sin-bots
+                                 no hace falta
 ```
 
 (2) Justo antes de `def main() -> int:` (línea 1334), añade:
@@ -874,7 +1186,9 @@ En `pruebas/reproducir_casos.py`, cuatro ediciones.
 def base_de_n8n() -> str:
     """La URL base del n8n de los bots. Sale de `N8N_URL` y de ningun otro
     sitio: el repositorio no lleva la de ningun despliegue, y un valor por
-    defecto mandaria las conversaciones de prueba a un n8n que nadie eligio."""
+    defecto mandaria las conversaciones de prueba a un n8n que nadie eligio.
+    Mal puesta tambien se detiene: si no, el primer mensaje moria con una
+    traza despues de abrir la base y de dar de alta el chat de pruebas."""
     base = os.environ.get("N8N_URL", "").strip()
     if not base:
         raise SystemExit(
@@ -882,7 +1196,16 @@ def base_de_n8n() -> str:
             "contra un n8n, y no hay ninguno por defecto.\n"
             "Pon en N8N_URL la URL base del n8n que sirve a los dos bots (por "
             "ejemplo https://n8n.ejemplo.test), o corre con --sin-bots.")
-    return base
+    try:
+        return url_base_n8n(base)
+    except ValueError as e:
+        # el motivo, y no el valor
+        raise SystemExit(
+            f"N8N_URL está mal puesta ({e}): con los bots el arnés conduce "
+            "las conversaciones contra esa dirección.\n"
+            "Pon en N8N_URL solo la URL base del n8n que sirve a los dos bots "
+            "(por ejemplo https://n8n.ejemplo.test), o corre con --sin-bots."
+        ) from None
 ```
 
 (3) En `main()`, después de la línea 1360 (`    con_bots = not args.sin_bots and not falta`),
@@ -1066,6 +1389,53 @@ def test_sin_rsna_raiz_se_detiene_y_nombra_la_variable(valor, monkeypatch):
         monkeypatch.setenv("RSNA_RAIZ", valor)
     with pytest.raises(SystemExit, match="RSNA_RAIZ"):
         raiz_rsna()
+
+
+def test_raiz_rsna_no_mira_el_disco(tmp_path, monkeypatch):
+    """Lo comprueba quien va a leer el dataset, antes de tocar nada."""
+    monkeypatch.setenv("RSNA_RAIZ", str(tmp_path / "no-existe"))
+    assert raiz_rsna() == tmp_path / "no-existe"
+
+
+# --------------------------------------------------------------------------
+# `N8N_URL`: la escribe una persona, y mal puesta no puede pasar por buena
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("valor, base", [
+    ("https://n8n.inventado.test", "https://n8n.inventado.test"),
+    ("https://n8n.inventado.test/", "https://n8n.inventado.test"),
+    ("  https://N8N.Inventado.TEST/  ", "https://n8n.inventado.test"),
+    ("HTTPS://n8n.inventado.test", "https://n8n.inventado.test"),
+    ("http://localhost:5678", "http://localhost:5678"),
+])
+def test_url_base_n8n_devuelve_la_base(valor, base):
+    assert url_base_n8n(valor) == base
+
+
+@pytest.mark.parametrize("valor, dice", [
+    ("", "vacia"),
+    ("n8n.inventado.test", "esquema"),
+    ("n8n.inventado.test:5678", "esquema"),
+    ("ftp://n8n.inventado.test", "esquema"),
+    ("/", "esquema"),
+    ("https://", "host"),
+    ("https:/n8n.inventado.test", "host"),
+    # lo que sale de copiar la barra del navegador
+    ("https://n8n.inventado.test/webhook/copiloto-paciente", "ruta"),
+    ("https://n8n.inventado.test/n8n/", "ruta"),
+    ("https://n8n.inventado.test?x=1", "consulta"),
+    ("https://n8n.inventado.test#arriba", "fragmento"),
+    ('"https://n8n.inventado.test"', "comillas"),
+    ("'https://n8n.inventado.test'", "comillas"),
+    ("https://n8n. inventado.test", "blancos"),
+    ("https://n8n.inventado.test/\tx", "blancos"),
+    ("https://alguien@n8n.inventado.test", "usuario"),
+    ("https://n8n.inventado.test:puerto", "puerto"),
+])
+def test_url_base_n8n_rechaza_lo_que_no_es_una_url_base(valor, dice):
+    with pytest.raises(ValueError, match=dice) as e:
+        url_base_n8n(valor)
+    # el motivo no repite el valor: acaba en la consola, en un log o en Telegram
+    assert "inventado" not in str(e.value)
 ```
 
 En `tests/test_sesion.py`, al final del fichero, después de
@@ -1100,6 +1470,8 @@ constante `ARQUITECTURAS`) pasa a ser:
 from __future__ import annotations
 
 import os
+import re
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -1115,7 +1487,9 @@ def raiz_rsna() -> Path:
     cada llamada y nunca al importar, para que los modulos que la usan se
     puedan importar en una maquina sin dataset; quien la necesita la llama
     dentro de la funcion que de verdad va a leer el disco. No comprueba que la
-    carpeta exista: eso lo dice, con la ruta, quien intente abrir el fichero.
+    carpeta exista: lo comprueba quien la usa, antes de tocar nada (la
+    seleccion de casos mira la carpeta de los DICOM; la fase de elegir de la
+    sesion, los PNG).
     """
     raiz = os.environ.get("RSNA_RAIZ", "").strip()
     if not raiz:
@@ -1338,8 +1712,9 @@ def con_puntuaciones_de_mentira(monkeypatch):
 def test_las_rutas_cuelgan_de_rsna_raiz(con_puntuaciones_de_mentira, tmp_path,
                                         monkeypatch):
     monkeypatch.setenv("RSNA_RAIZ", str(tmp_path))
-    casos = con_puntuaciones_de_mentira.seleccionar(n_por_perfil=2)
     crudo = tmp_path / "crudo" / "stage_2_train_images"
+    crudo.mkdir(parents=True)   # la carpeta tiene que existir; los DICOM, no
+    casos = con_puntuaciones_de_mentira.seleccionar(n_por_perfil=2)
     alta = casos["positiva_clara"][0]
     assert alta["ruta_dcm"] == str(crudo / f"{alta['patientId']}.dcm")
     for nombre, perfil in casos.items():
@@ -1353,6 +1728,25 @@ def test_sin_rsna_raiz_seleccionar_se_detiene_nombrandola(
     monkeypatch.delenv("RSNA_RAIZ", raising=False)
     with pytest.raises(SystemExit, match="RSNA_RAIZ"):
         con_puntuaciones_de_mentira.seleccionar(n_por_perfil=2)
+
+
+def test_con_rsna_raiz_en_otra_carpeta_seleccionar_se_detiene_al_principio(
+        tmp_path, monkeypatch):
+    """Una `RSNA_RAIZ` que no es el dataset daba 45 rutas que no existen, y
+    el arnes moria mas tarde, con una traza, despues de haber tocado cosas.
+    Ahora se detiene al principio, antes de leer las puntuaciones, nombrando
+    la variable y la carpeta que falta."""
+    from pruebas import seleccionar_casos
+
+    def no_se_llama():
+        raise AssertionError("seleccionar() siguió sin mirar la carpeta")
+
+    monkeypatch.setattr(seleccionar_casos, "puntuaciones_de_prueba", no_se_llama)
+    monkeypatch.setenv("RSNA_RAIZ", str(tmp_path))
+    with pytest.raises(SystemExit) as salida:
+        seleccionar_casos.seleccionar(n_por_perfil=2)
+    assert "RSNA_RAIZ" in str(salida.value)
+    assert "stage_2_train_images" in str(salida.value)
 
 
 def test_el_modulo_no_guarda_ninguna_ruta_del_dataset():
@@ -1481,9 +1875,17 @@ def seleccionar(n_por_perfil: int = 10) -> dict:
     """Los casos de cada perfil, con la ruta de su DICOM bajo `RSNA_RAIZ`.
 
     La variable se lee aqui y no al importar: este modulo lo importan, solo
-    por `UMBRAL` o de paso, ficheros que corren sin dataset.
+    por `UMBRAL` o de paso, ficheros que corren sin dataset. Y se comprueba al
+    principio que apunta al dataset: si no, saldrian rutas que no existen, y
+    quien las usa moriria mas tarde, con una traza, despues de haber tocado
+    cosas.
     """
     crudo = raiz_rsna() / "crudo" / "stage_2_train_images"
+    if not crudo.is_dir():
+        raise SystemExit(
+            f"RSNA_RAIZ no apunta al dataset preparado: no existe {crudo}, la "
+            "carpeta de los DICOM. Pon en RSNA_RAIZ la carpeta que tiene dentro "
+            "manifiestos/, png/ y crudo/stage_2_train_images/.")
     df = puntuaciones_de_prueba()
 ```
 
@@ -2125,20 +2527,228 @@ def test_la_guia_de_despliegue_no_promete_un_valor_por_defecto_para_la_red():
     assert "| `RED_N8N` | **ninguno: es obligatoria** |" in guia
 
 
-PARAN_O_BORRAN = {"down", "stop", "kill", "rm", "restart", "pause", "prune"}
+# La palabra entera, tambien pegada a un parentesis o a una comilla; `--rm`,
+# `--remove-orphans` o `ON_ERROR_STOP` no son ninguna de ellas. `remove` es el
+# alias de `rm` (`docker volume remove`, `docker network remove`, `docker
+# container remove`), y `rmi` borra una imagen.
+PARAN_O_BORRAN = re.compile(
+    r"(?<![\w-])(down|stop|kill|rm|remove|rmi|restart|pause|prune|disconnect)(?![\w-])")
+
+
+def _ordenes(bloque):
+    """Los trozos de un bloque de shell: se parte por `&&`, `||`, `;`, `|` y
+    saltos de linea, despues de unir las lineas que siguen con `\\`."""
+    return re.split(r"&&|\|\||;|\||\n", bloque.replace("\\\n", " "))
 
 
 def _las_que_paran(bloque):
-    """Las ordenes de docker de un bloque de shell que paran o borran algo.
-    El bloque se parte por `&&`, `||`, `;`, `|` y saltos de linea."""
-    paran = []
-    for orden in re.split(r"&&|\|\||;|\||\n", bloque):
-        if "docker" not in orden:
+    """Los trozos de un bloque de shell que llevan `docker` y paran o borran
+    algo, con los blancos normalizados. Se mira el trozo ENTERO, no solo lo
+    que va detras de `docker`: `systemctl restart docker` para todos los
+    contenedores de la maquina."""
+    return [" ".join(orden.split()) for orden in _ordenes(bloque)
+            if "docker" in orden and PARAN_O_BORRAN.search(orden)]
+
+
+_VALLA = re.compile(r"\s*(`{3,}|~{3,})")
+_CITA = re.compile(r"\s*(>\s?)+")
+_SANGRADA = re.compile(r"( {4,}|\t)")
+
+
+def _bloques(texto):
+    """[(apartado, bloque)]: el contenido de cada bloque de la guia y el
+    titulo del apartado en el que esta. Cuentan los que van entre vallas de
+    acentos graves o de tildes, con lenguaje o sin el (```bash, ```, ~~~sh),
+    tambien sangradas dentro de una lista o dentro de una cita (`> ```bash`),
+    y los sangrados sin valla (cuatro espacios o un tabulador detras de una
+    linea en blanco): Markdown los pinta igual y se pegan igual. Las lineas de
+    un bloque que empiezan por `#` son comentarios, no titulos."""
+    bloques, apartado = [], ""
+    valla, en_cita, dentro = None, False, None   # el bloque con valla abierto
+    sangrado = None                              # el bloque sangrado abierto
+    en_blanco = True                             # la linea anterior, vacia
+
+    def cerrar_sangrado():
+        nonlocal sangrado
+        if sangrado is not None:
+            bloques.append((apartado, "\n".join(sangrado).rstrip("\n") + "\n"))
+            sangrado = None
+
+    for linea in texto.splitlines():
+        cita = _CITA.match(linea)
+        if valla is not None:
+            contenido = linea[cita.end():] if en_cita and cita else linea
+            if contenido.lstrip().startswith(valla):
+                bloques.append((apartado, "\n".join(dentro) + "\n"))
+                valla, dentro = None, None
+            else:
+                dentro.append(contenido)
+            en_blanco = False
             continue
-        palabras = orden[orden.index("docker"):].split()
-        if PARAN_O_BORRAN & set(palabras):
-            paran.append(" ".join(palabras))
-    return paran
+        abre = _VALLA.match(linea[cita.end():] if cita else linea)
+        if abre:
+            cerrar_sangrado()
+            valla, en_cita, dentro = abre.group(1), bool(cita), []
+        elif sangrado is not None and (not linea.strip() or _SANGRADA.match(linea)):
+            sangrado.append(linea)
+        else:
+            cerrar_sangrado()
+            if en_blanco and not cita and _SANGRADA.match(linea) and linea.strip():
+                sangrado = [linea]
+            elif not cita and re.match(r"#{1,6} ", linea):
+                apartado = linea.lstrip("#").strip()
+        en_blanco = not linea.strip()
+    cerrar_sangrado()
+    return bloques
+
+
+@pytest.mark.parametrize("bloque, paran", [
+    ("sudo systemctl restart docker\n", ["sudo systemctl restart docker"]),
+    ("kill $(docker inspect -f '{{.State.Pid}}' x)\n",
+     ["kill $(docker inspect -f '{{.State.Pid}}' x)"]),
+    ("docker network disconnect red x\n", ["docker network disconnect red x"]),
+    ("x=$(docker compose -p otro down)\n", ["x=$(docker compose -p otro down)"]),
+    ("docker compose \\\n  -p otro \\\n  stop\n", ["docker compose -p otro stop"]),
+    ("cd /opt && docker compose up -d --build && docker logs --tail 50 copiloto-mcp\n", []),
+    ("rm -f ~/copia\n", []),
+    ("docker compose -p x up -d --remove-orphans\n", []),
+    ("docker run --rm x\n", []),
+    ("docker rmi y\n", ["docker rmi y"]),
+    ("docker volume remove v\n", ["docker volume remove v"]),
+])
+def test_las_que_paran_mira_el_trozo_entero(bloque, paran):
+    assert _las_que_paran(bloque) == paran
+
+
+# Las ordenes de la guia que paran o borran algo y NO van por nombre de
+# proyecto, una a una, con el apartado donde estan y su motivo. Fuera de ese
+# apartado, la misma orden no vale.
+EXCEPCIONES = {
+    ("Caso B: en local, para probar el despliegue desde cero",
+     "docker compose down"):
+        "en la maquina de quien prueba, desde `servidor/`: baja el proyecto de "
+        "ese compose, con la red de tirar, y alli no hay ningun stack ajeno",
+    ("Caso B: en local, para probar el despliegue desde cero",
+     "docker network rm copiloto-local"):
+        "borra la red de tirar que el mismo caso crea dos ordenes antes; el "
+        "nombre de la red de n8n no aparece nunca junto a un `network rm`",
+}
+
+_COMPOSE = re.compile(r"docker(-|\s+)compose(?![\w-])")
+_POR_PROYECTO = re.compile(r"(?<![\w-])(-p\s+|--project-name[\s=]+)copiloto-mcp(?![\w-])")
+_CON_VOLUMENES = re.compile(r"(?<![\w-])(-[A-Za-z]*v[A-Za-z]*|--volumes)(?![\w-])")
+_BORRA_VOLUMEN = re.compile(r"docker\s+volume\s+(rm|remove)(?![\w-])")
+_BORRA_IMAGEN = re.compile(r"docker\s+(rmi|image\s+(rm|remove))(?![\w-])")
+# La imagen del proyecto, la de la linea 12 del compose (la fija la prueba de
+# las lineas que cita la guia): borrarla solo cuesta reconstruirla.
+IMAGEN_DEL_PROYECTO = "copiloto-mcp:0.1.0"
+
+
+def _ordenes_que_no_valen(guia):
+    """Las ordenes de los bloques de la guia (de todas las clases que
+    reconoce `_bloques`) que borran datos o pueden parar lo ajeno: un `down`
+    con `-v` o `--volumes` en cualquier posicion, un `docker volume rm` (o
+    `remove`) o un `prune`, un `docker rmi` de una imagen que no es la del
+    proyecto, y cualquier orden que pare, arranque o borre algo sin ser de
+    Compose por nombre de proyecto (`-p copiloto-mcp`), salvo las
+    `EXCEPCIONES`. Devuelve [(apartado, orden, por que)]; tambien, las
+    excepciones que ya no estan en la guia."""
+    malas, usadas = [], set()
+    for apartado, bloque in _bloques(guia):
+        for orden in _ordenes(bloque):
+            orden = " ".join(orden.split())
+            if "docker" not in orden:
+                continue
+            imagen = _BORRA_IMAGEN.search(orden)
+            if (re.search(r"(?<![\w-])down(?![\w-])", orden)
+                    and _CON_VOLUMENES.search(orden)):
+                malas.append((apartado, orden, "down con volumenes: borra la base"))
+            elif _BORRA_VOLUMEN.search(orden) or re.search(r"(?<![\w-])prune(?![\w-])", orden):
+                malas.append((apartado, orden, "borra volumenes o imagenes"))
+            elif imagen:
+                borradas = [p for p in orden[imagen.end():].split() if not p.startswith("-")]
+                if not borradas or any(i != IMAGEN_DEL_PROYECTO for i in borradas):
+                    malas.append((apartado, orden, "borra una imagen que no es la del proyecto"))
+            elif (PARAN_O_BORRAN.search(orden)
+                  or re.search(r"(?<![\w-])start(?![\w-])", orden)):
+                if (apartado, orden) in EXCEPCIONES:
+                    usadas.add((apartado, orden))
+                elif not (_COMPOSE.search(orden) and _POR_PROYECTO.search(orden)):
+                    malas.append((apartado, orden,
+                                  "para, arranca o borra sin ir por -p copiloto-mcp"))
+    malas += [(apartado, orden, "excepcion que la guia ya no lleva")
+              for apartado, orden in set(EXCEPCIONES) - usadas]
+    return malas
+
+
+def _guia():
+    return (RAIZ / "docs" / "sp2-despliegue.md").read_text(encoding="utf-8")
+
+
+def test_la_guia_entera_no_lleva_ordenes_que_borren_datos_o_paren_lo_ajeno():
+    """El servidor es COMPARTIDO con los servicios de un cliente y la guia la
+    sigue una persona copiando y pegando: en ningun bloque de ordenes, del
+    tipo que sea, hay un `down` con volumenes, un `docker volume rm` ni un
+    `prune`, y todo lo que para, arranca o borra va por nombre de proyecto,
+    salvo las excepciones de arriba."""
+    assert _ordenes_que_no_valen(_guia()) == []
+    # y la comprobacion ha visto las que van por proyecto: la bajada de
+    # reserva del primer redespliegue, y el `down`, el `stop` y el `start`
+    # del paso 12
+    ordenes = [" ".join(o.split()) for _, b in _bloques(_guia()) for o in _ordenes(b)]
+    assert ordenes.count("docker compose -p copiloto-mcp down") == 2
+    for verbo in ("stop", "start"):
+        assert any(o.startswith(f"docker compose -p copiloto-mcp {verbo} ")
+                   for o in ordenes), verbo
+
+
+# La orden de una linea del redespliegue de siempre, la que mas se pega.
+ORDEN_DE_SIEMPRE = ("docker compose -f servidor/docker-compose.yml up -d --build "
+                    "copiloto-mcp")
+
+
+@pytest.mark.parametrize("mutar", [
+    lambda g: g + "\n```sh\ndocker volume rm copiloto-mcp_copiloto_bd_datos\n```\n",
+    lambda g: g + ("\n```\ncd servidor\ndocker compose -p copiloto-mcp down "
+                   "--remove-orphans --volumes\n```\n"),
+    lambda g: g + "\n```\ndocker stop n8n\n```\n",
+    lambda g: g.replace(ORDEN_DE_SIEMPRE, "docker compose -f servidor/docker-compose.yml"
+                        " down -v && " + ORDEN_DE_SIEMPRE, 1),
+    # la excepcion del caso local no vale fuera de el
+    lambda g: g + "\n## 13. Otra cosa\n\n```bash\ndocker compose down\n```\n",
+    lambda g: g + "\n```bash\ndocker system prune -a\n```\n",
+    lambda g: g + "\n```bash\nsystemctl restart docker\n```\n",
+    # `remove`, el alias de `rm`
+    lambda g: g + "\n```bash\ndocker volume remove copiloto-mcp_copiloto_bd_datos\n```\n",
+    lambda g: g + "\n```bash\ndocker network remove otra-red\n```\n",
+    lambda g: g + "\n```bash\ndocker container remove -f n8n\n```\n",
+    # una imagen que no es la del proyecto
+    lambda g: g + "\n```bash\ndocker rmi n8nio/n8n\n```\n",
+    lambda g: g + "\n```bash\ndocker image rm copiloto-mcp:0.1.0 n8nio/n8n\n```\n",
+    # bloques que no van entre acentos graves, o que van dentro de una cita
+    lambda g: g + "\n~~~bash\ndocker volume rm copiloto-mcp_copiloto_bd_datos\n~~~\n",
+    lambda g: g + "\n> ```bash\n> docker stop n8n\n> ```\n",
+    lambda g: g + "\nPara pararlo todo:\n\n    docker stop n8n\n",
+    lambda g: g + "\n1. Si hace falta:\n\n\tdocker compose down --volumes\n",
+], ids=["volume-rm-en-sh", "volumes-detras-sin-lenguaje", "stop-de-otro-contenedor",
+        "down-v-en-la-orden-de-siempre", "excepcion-fuera-de-su-apartado",
+        "prune", "reiniciar-docker", "volume-remove", "network-remove",
+        "container-remove", "rmi-de-otra-imagen", "image-rm-de-otra-imagen",
+        "valla-de-tildes", "valla-en-una-cita", "sangrado-sin-valla",
+        "sangrado-con-tabulador"])
+def test_la_comprobacion_de_la_guia_caza_las_ordenes_peligrosas(mutar):
+    guia = _guia()
+    assert ORDEN_DE_SIEMPRE in guia
+    mutada = mutar(guia)
+    assert mutada != guia
+    assert _ordenes_que_no_valen(mutada) != []
+
+
+def test_una_excepcion_que_la_guia_ya_no_lleva_se_dice():
+    guia = _guia().replace("docker network rm copiloto-local", "docker network ls")
+    assert _ordenes_que_no_valen(guia) == [
+        ("Caso B: en local, para probar el despliegue desde cero",
+         "docker network rm copiloto-local", "excepcion que la guia ya no lleva")]
 
 
 def test_el_primer_redespliegue_no_baja_el_servicio_antes_de_construir():
@@ -2149,10 +2759,10 @@ def test_el_primer_redespliegue_no_baja_el_servicio_antes_de_construir():
     DESPUES de construir; la base y los contenedores se apuntan antes y se
     comparan despues; hay copia de la base; y la vuelta atras restaura el
     `.env` antes de levantar."""
-    guia = (RAIZ / "docs" / "sp2-despliegue.md").read_text(encoding="utf-8")
+    guia = _guia()
     inicio = guia.index("### El primer redespliegue con `RED_N8N` obligatoria")
     apartado = guia[inicio:guia.index("\n## 7. ", inicio)]
-    bloques = re.findall(r"```bash\n(.*?)```", apartado, flags=re.S)
+    bloques = [b for _, b in _bloques(apartado)]
     # en todo el apartado, dentro o fuera de un bloque, nadie baja con los volumenes
     assert not re.search(r"down\s+(-v\b|--volumes)", apartado)
 
@@ -2197,6 +2807,206 @@ def test_el_primer_redespliegue_no_baja_el_servicio_antes_de_construir():
     assert len(vuelta) == 1
     assert (vuelta[0].index(restaurar) < vuelta[0].index("git checkout --detach")
             < vuelta[0].index("up -d --build"))
+
+    # el commit de vuelta: antes de apuntarlo, la guarda de que el codigo
+    # nuevo no esta ya traido; y al reintentar, el de vuelta sigue siendo el
+    # de la primera vez, no el de ahora
+    guarda = "grep -c 'RED_N8N:?' /opt/copiloto/servidor/docker-compose.yml"
+    assert any(guarda in b for b in bloques)
+    assert apartado.index(guarda) < apartado.index("git rev-parse HEAD")
+    seguido = " ".join(apartado.split())
+    assert ("`git switch main`, y otra vez desde el punto 1. El commit de vuelta "
+            "sigue siendo el que apuntaste la primera vez") in seguido
+    # y lo que significa lo que da la guarda: con la explicacion al reves, el
+    # segundo intento volveria a apuntar como commit de vuelta el nuevo
+    for dice in ("Si da `1`, el código nuevo ya está en el disco",
+                 "no es el de ahora",
+                 "(si el `grep` dio `0`)"):
+        assert dice in seguido, dice
+
+    # si el contenedor esta en dos redes: dicho entre la orden que las lista
+    # (punto 2) y la que mira si la variable ya esta en el `.env`
+    redes = ("docker inspect copiloto-mcp --format '{{range $red, $c := "
+             ".NetworkSettings.Networks}}{{println $red}}{{end}}'")
+    ya_esta = "grep -c '^RED_N8N='"
+    for dice in ("Si salen dos, para", "la pierde al recrearse"):
+        assert seguido.index(redes) < seguido.index(dice) < seguido.index(ya_esta), dice
+
+    # el camino B no se cubre a medias: se dice que no, y no hay copia del arbol
+    assert "no cubre el camino B" in seguido
+    assert "cp -a" not in apartado
+
+    # la copia de la base se comprueba entera al hacerla: una copia cortada
+    # no daria ningun error al restaurarla
+    (copia,) = copias
+    comprobar = "gunzip -t ~/copiloto-bd.antes-de-red_n8n.sql.gz"
+    assert copia.index("pg_dump") < copia.index(comprobar) < copia.index("ls -l")
+
+    # la copia de la base se restaura en una sola transaccion, y antes se
+    # comprueba que esta entera
+    (restaura,) = [b for b in bloques if "gunzip -c ~/copiloto-bd.antes-de-red_n8n.sql.gz" in b]
+    assert re.search(r"docker exec -i copiloto-bd psql .*(?<![\w-])-1(?![\w-])", restaura)
+    assert "-v ON_ERROR_STOP=1" in restaura
+    assert restaura.index(comprobar) < restaura.index("gunzip -c")
+
+    # las copias se borran con `rm -f`: tambien si una de las dos no llego a hacerse
+    borrar = [b for b in bloques if "antes-de-red_n8n" in b and re.search(r"(?<![\w-])rm ", b)]
+    assert [b.strip() for b in borrar] == [
+        "rm -f ~/copiloto.env.antes-de-red_n8n ~/copiloto-bd.antes-de-red_n8n.sql.gz"]
+
+
+def _lo_que_le_falta_al_commit_de_vuelta(guia):
+    """Lo que el primer redespliegue tiene que decir del commit de vuelta y de
+    la copia de la base, mirado en el apartado con los blancos normalizados:
+    la guarda del punto 1 y su `0`; la orden que da el commit de antes del
+    `pull` y su comprobacion, que antes exige que el commit exista
+    (`cat-file -e … &&`: si no, el `grep -c` de detras daria el `0` que se pide
+    con un commit mal copiado), con su `0` y lo que significa un `fatal:`; y
+    que tras `gunzip -t` se siga con `&&` al hacer la copia y al restaurarla
+    (con `;`, una copia rota se restauraria igual). Devuelve lo que falta."""
+    inicio = guia.index("### El primer redespliegue con `RED_N8N` obligatoria")
+    seguido = " ".join(guia[inicio:guia.index("\n## 7. ", inicio)].split())
+    donde = seguido.find
+    falta = []
+    guarda = "grep -c 'RED_N8N:?' /opt/copiloto/servidor/docker-compose.yml"
+    if f"{guarda} ``` Tiene que dar `0`" not in seguido:
+        falta.append("la guarda del punto 1 va seguida de «Tiene que dar `0`»")
+    reflog = "git -C /opt/copiloto rev-parse 'main@{1}'"
+    comprobacion = ("git -C /opt/copiloto cat-file -e '<commit>:servidor/docker-compose.yml' "
+                    "&& git -C /opt/copiloto show '<commit>:servidor/docker-compose.yml' "
+                    "| grep -c 'RED_N8N:?'")
+    apunta = donde("git rev-parse HEAD")      # la orden que apunta el commit de ahora
+    if not -1 < donde(guarda) < donde(reflog) < apunta:
+        falta.append("la orden que da el commit de antes del pull")
+    if not -1 < max(donde(reflog), donde(guarda)) < donde(comprobacion) < apunta:
+        falta.append("la comprobacion del commit de vuelta, con `cat-file -e` delante y `&&`")
+    elif f"{comprobacion} ``` Tiene que dar `0`" not in seguido:
+        falta.append("la comprobacion del commit va seguida de «Tiene que dar `0`»")
+    if "sale un `fatal:`, el commit está mal copiado" not in seguido:
+        falta.append("lo que significa que salga un `fatal:`")
+    if ("gunzip -t ~/copiloto-bd.antes-de-red_n8n.sql.gz && gunzip -c "
+            "~/copiloto-bd.antes-de-red_n8n.sql.gz | docker exec -i copiloto-bd psql"
+            not in seguido):
+        falta.append("la restauracion sigue a `gunzip -t` con `&&`")
+    if (".sql.gz) && gunzip -t ~/copiloto-bd.antes-de-red_n8n.sql.gz && ls -l"
+            not in seguido):
+        falta.append("la copia se comprueba con `gunzip -t` encadenado con `&&`")
+    return falta
+
+
+def test_el_primer_redespliegue_guarda_el_commit_de_vuelta_y_encadena_la_restauracion():
+    """La hermana de la anterior, sobre una funcion que recibe el texto de la
+    guia, para poder probarla con mutaciones: lo que se pega en el servidor
+    tiene que decir lo que significa cada `0`, comprobar el commit de vuelta
+    antes de darlo por bueno, y no seguir con una copia rota."""
+    assert _lo_que_le_falta_al_commit_de_vuelta(_guia()) == []
+
+
+# Mutaciones de la guia que la comprobacion de arriba tiene que cazar, cada
+# una con lo que tiene que decir que falta.
+MUTACIONES_DEL_COMMIT_DE_VUELTA = {
+    "la guarda pide un 1": (
+        "Tiene que dar `0`: el compose del disco", "Tiene que dar `1`: el compose del disco",
+        "la guarda del punto 1 va seguida de «Tiene que dar `0`»"),
+    "sin la orden de main@{1}": (
+        "```bash\ngit -C /opt/copiloto rev-parse 'main@{1}'\n```\n", "",
+        "la orden que da el commit de antes del pull"),
+    "sin la comprobacion del commit": (
+        "git -C /opt/copiloto cat-file -e '<commit>:servidor/docker-compose.yml' && git -C "
+        "/opt/copiloto show '<commit>:servidor/docker-compose.yml' | grep -c 'RED_N8N:?'\n", "",
+        "la comprobacion del commit de vuelta, con `cat-file -e` delante y `&&`"),
+    "la comprobacion sin cat-file": (
+        "git -C /opt/copiloto cat-file -e '<commit>:servidor/docker-compose.yml' && git", "git",
+        "la comprobacion del commit de vuelta, con `cat-file -e` delante y `&&`"),
+    "la comprobacion con ; tras cat-file": (
+        "servidor/docker-compose.yml' && git -C /opt/copiloto show",
+        "servidor/docker-compose.yml'; git -C /opt/copiloto show",
+        "la comprobacion del commit de vuelta, con `cat-file -e` delante y `&&`"),
+    "la comprobacion pide un 1": (
+        "Tiene que dar `0`. Si en vez", "Tiene que dar `1`. Si en vez",
+        "la comprobacion del commit va seguida de «Tiene que dar `0`»"),
+    "sin decir que es un fatal": (
+        "sale un `fatal:`, el commit está mal", "sale un error, el commit está mal",
+        "lo que significa que salga un `fatal:`"),
+    "la restauracion con ; tras gunzip -t": (
+        "gunzip -t ~/copiloto-bd.antes-de-red_n8n.sql.gz && gunzip -c",
+        "gunzip -t ~/copiloto-bd.antes-de-red_n8n.sql.gz; gunzip -c",
+        "la restauracion sigue a `gunzip -t` con `&&`"),
+    "la copia con ; tras gunzip -t": (
+        "gunzip -t ~/copiloto-bd.antes-de-red_n8n.sql.gz && ls -l",
+        "gunzip -t ~/copiloto-bd.antes-de-red_n8n.sql.gz; ls -l",
+        "la copia se comprueba con `gunzip -t` encadenado con `&&`"),
+}
+
+
+@pytest.mark.parametrize("antes, despues, falta", MUTACIONES_DEL_COMMIT_DE_VUELTA.values(),
+                         ids=list(MUTACIONES_DEL_COMMIT_DE_VUELTA))
+def test_la_comprobacion_del_commit_de_vuelta_caza_las_mutaciones(antes, despues, falta):
+    guia = _guia()
+    assert guia.count(antes) == 1, "la mutacion ya no encuentra su texto"
+    assert falta in _lo_que_le_falta_al_commit_de_vuelta(guia.replace(antes, despues))
+
+
+def test_la_plantilla_del_env_se_copia_sin_pisar_el_que_hay():
+    """El `.env` lleva la contraseña de la base: copiar encima la plantilla,
+    pegando la orden sin leer la condicion de delante, la perderia. Con `-n`,
+    `cp` no pisa un fichero que ya existe."""
+    copias = re.findall(r"\bcp\b([^`\n]*?)servidor/\.env\.ejemplo\s+servidor/\.env\b",
+                        _guia())
+    assert copias, "la guia ya no dice como nace servidor/.env"
+    assert all(re.search(r"(?<![\w-])-n\b", opciones) for opciones in copias), copias
+
+
+# --- Lo que sostiene la seguridad de la guia --------------------------------
+#
+# La guia apoya el `down` por proyecto en el `name:` del compose, la
+# conservacion de la base en la clave de su volumen, y cita el compose por
+# numero de linea. Si un cambio del compose toca cualquiera de esas cosas, la
+# guia se queda mintiendo: el siguiente redespliegue crea un volumen nuevo y
+# vacio, o `down -p copiloto-mcp` deja de identificar nada.
+
+def _compose():
+    return (RAIZ / "servidor" / "docker-compose.yml").read_text(encoding="utf-8")
+
+
+def test_el_compose_es_el_que_la_guia_dice():
+    compose = _compose()
+    assert re.findall(r"^name:\s*(\S+)\s*$", compose, flags=re.M) == ["copiloto-mcp"]
+    assert re.findall(r"^\s+container_name:\s*(\S+)\s*$", compose, flags=re.M) == [
+        "copiloto-mcp", "copiloto-bd"]
+    assert not re.search(r"^\s*ports\s*:", compose, flags=re.M), "no publica puertos"
+    # la clave del volumen, declarada y montada; el volumen se llama
+    # <proyecto>_<clave>: cambiar cualquiera de los dos es otra base
+    assert re.search(r"^volumes:\s*\n\s+copiloto_bd_datos:\s*$", compose, flags=re.M)
+    assert "- copiloto_bd_datos:/var/lib/postgresql/data" in compose
+
+
+# Lo que la guia dice que dice cada linea del compose que cita por numero.
+LINEAS_CITADAS = {5: "name: copiloto-mcp", 12: "image: copiloto-mcp:0.1.0"}
+
+
+def test_las_lineas_del_compose_que_cita_la_guia_dicen_lo_que_la_guia_dice():
+    guia = " ".join(_guia().split())
+    citadas = {int(n) for n in re.findall(r"l[ií]nea (\d+) del compose", guia)}
+    assert citadas == set(LINEAS_CITADAS), "una cita nueva necesita su fila aqui"
+    assert "`copiloto-mcp:0.1.0` (línea 12 del compose)" in guia
+    assert "la línea 5 del compose (`name: copiloto-mcp`)" in guia
+    lineas = _compose().splitlines()
+    for numero, dice in LINEAS_CITADAS.items():
+        assert lineas[numero - 1].strip() == dice, numero
+
+
+def test_la_salida_literal_del_paso_2_1_es_la_que_da_hoy_la_orden():
+    """El paso 2.1 enseña la salida de un `grep` sobre el compose como
+    «Salida literal». Aqui se aplica al compose la MISMA expresion que lleva
+    la orden de la guia, y se compara linea a linea."""
+    bloques = [b for apartado, b in _bloques(_guia()) if apartado.startswith("2.1.")]
+    (i,) = [n for n, b in enumerate(bloques) if "grep -nE" in b and "docker-compose.yml" in b]
+    expresion = re.search(r"grep -nE '([^']+)' docker-compose\.yml", bloques[i]).group(1)
+    salida = [f"{n}:{linea}" for n, linea in enumerate(_compose().splitlines(), 1)
+              if re.search(expresion, linea)]
+    assert bloques[i + 1].splitlines() == salida
+    assert len(salida) == 7, "la guia dice «Siete lineas»"
 ```
 
 - [ ] **Paso 3: Correrlas y verlas fallar**
@@ -2239,7 +3049,7 @@ líneas (cinco de comentario, que continúan el comentario de las líneas
 ```
 
 **Línea 123**, la clave de la red (la única línea con dos espacios de sangría
-dentro de `networks:`, que termina en `_network:`). Pasa a:
+dentro de `networks:`). Pasa a:
 
 ```yaml
   red_n8n:
@@ -2446,48 +3256,89 @@ servicios, una red externa, un volumen con nombre) y Compose v5.2.0: con la
 variable ausente, con una errata en el nombre de la red y con una construcción
 que falla, `up` se detiene **sin tocar** los contenedores que había; con todo
 bien, los recrea, y el volumen es el mismo y conserva sus datos. También se
-ensayaron la vuelta atrás y la copia de la base con su restauración. **No se
-ha ensayado en el servidor**, donde la versión de Compose puede ser otra: por
-eso los puntos 1 y 3 apuntan de dónde se parte y guardan una copia, y al final
-está escrito cómo volver.
+ensayaron la vuelta atrás y la copia de la base; y su restauración, el 29-sep,
+sobre una base con el esquema del proyecto que había cambiado después de la
+copia: vuelve a lo copiado, y si se interrumpe a medias la base se queda como
+estaba. **No se ha ensayado en el servidor**, donde la versión de Compose
+puede ser otra: por eso los puntos 1 y 3 apuntan de dónde se parte y guardan
+una copia, y al final está escrito cómo volver.
 
-Es para una instalación que es un clon de git (el camino A del paso 3.1). Con
-el camino B el código se trae como la primera vez, y del punto 1 vale solo la
-copia del `.env`.
+Es para una instalación que es un clon de git (el camino A del paso 3.1), y
+**no cubre el camino B**: las órdenes de los puntos 1 y 4 y la vuelta atrás
+son de git, y pegadas en un árbol que no es un clon se cortan sin hacer nada.
+Para el camino B no hay procedimiento escrito ni ensayado: no lo improvises
+sobre este.
 
 Mientras Compose recrea los contenedores y el copiloto vuelve a estar
 `healthy` —alrededor de un minuto— n8n no alcanza ni al copiloto ni a la base:
 los bots contestan con su mensaje de error. Hazlo cuando no haya consultas en
 curso.
 
-**1. Apuntar de dónde se parte y guardar el `.env`.** El `.env` es el fichero
-que tiene la contraseña de la base: se guarda una copia **fuera** del
-repositorio antes de tocarlo. Y una `RED_N8N` exportada en la sesión manda
-sobre la del `.env`, así que se retira:
+**1. Apuntar de dónde se parte y guardar el `.env`.** Primero, que el código
+nuevo no esté ya traído:
+
+```bash
+grep -c 'RED_N8N:?' /opt/copiloto/servidor/docker-compose.yml
+```
+
+Tiene que dar `0`: el compose del disco es el anterior, y el commit de ahora
+es al que se vuelve. **Si da `1`, el código nuevo ya está en el disco** —se
+lanzó antes el redespliegue de siempre, o este es un segundo intento— y el
+commit de vuelta **no es el de ahora**: es el que apuntaste la primera vez. Si
+no lo apuntaste, es el que tenía `main` antes del `pull`, y lo dice esta
+orden (ensayada: lo da aunque después se haya cambiado de commit a mano):
+
+```bash
+git -C /opt/copiloto rev-parse 'main@{1}'
+```
+
+Da el commit de antes del ÚLTIMO `pull`. Comprueba que es el bueno, cambiando
+`<commit>` por el que ha salido: su compose no tiene que llevar la variable
+obligatoria.
+
+```bash
+git -C /opt/copiloto cat-file -e '<commit>:servidor/docker-compose.yml' && git -C /opt/copiloto show '<commit>:servidor/docker-compose.yml' | grep -c 'RED_N8N:?'
+```
+
+Tiene que dar `0`. Si en vez de un número sale un `fatal:`, el commit está mal
+copiado (o sigue puesto el marcador): cópialo otra vez. Si da `1`, desde el
+compose anterior se ha hecho más de un
+`pull`: repite las dos órdenes con `'main@{2}'`, y así hasta que dé `0`.
+
+Sigue con este punto, pero no apuntes el commit que imprime su orden.
+
+El `.env` es el fichero que tiene la contraseña de la base: se guarda una
+copia **fuera** del repositorio antes de tocarlo. Y una `RED_N8N` exportada
+en la sesión manda sobre la del `.env`, así que se retira:
 
 ```bash
 cd /opt/copiloto && unset RED_N8N && git rev-parse HEAD && cp -p servidor/.env ~/copiloto.env.antes-de-red_n8n && echo "copia hecha"
 ```
 
-Apunta el commit que imprime: es al que se vuelve si algo sale mal.
+Apunta el commit que imprime (si el `grep` dio `0`): es al que se vuelve si
+algo sale mal.
 
-**2. Declarar la variable, antes del `git pull`.** Mira primero si ya está:
+**2. Declarar la variable, antes del `git pull`.** El nombre es el de la red
+donde está hoy el contenedor; pregúntaselo a él:
+
+```bash
+docker inspect copiloto-mcp --format '{{range $red, $c := .NetworkSettings.Networks}}{{println $red}}{{end}}'
+```
+
+Tiene que salir **un solo nombre**. Si salen dos, para: la de `RED_N8N` es
+la que el contenedor comparte con n8n (la del paso 2.3); la otra no está en
+el compose y el contenedor la pierde al recrearse, así que averigua quién la
+conectó y para qué antes de seguir. Mira ahora si la variable ya está en el
+`.env`:
 
 ```bash
 grep -c '^RED_N8N=' /opt/copiloto/servidor/.env
 ```
 
 Si da `1`, ya está declarada: **no añadas nada**, y pasa a comprobar, más
-abajo, que su valor es el nombre de la red. Si da `0`, el nombre es el de la
-red donde está hoy el contenedor; pregúntaselo a él:
-
-```bash
-docker inspect copiloto-mcp --format '{{range $red, $c := .NetworkSettings.Networks}}{{println $red}}{{end}}'
-```
-
-Tiene que salir **un solo nombre**. Añádelo al final del `.env` con esta
-orden, cambiando `<RED_N8N>` por ese nombre. Lleva `>>`, que añade; con un
-solo `>` se borraría el fichero, contraseña incluida:
+abajo, que su valor es ese nombre. Si da `0`, añádela al final del `.env` con
+esta orden, cambiando `<RED_N8N>` por el nombre. Lleva `>>`, que añade; con
+un solo `>` se borraría el fichero, contraseña incluida:
 
 ```bash
 printf '\nRED_N8N=%s\n' '<RED_N8N>' >> /opt/copiloto/servidor/.env
@@ -2500,14 +3351,20 @@ contraseña sigue ahí:
 grep -c '^RED_N8N=.' /opt/copiloto/servidor/.env; grep -c '^COPILOTO_BD_PASSWORD=.' /opt/copiloto/servidor/.env; grep '^RED_N8N=' /opt/copiloto/servidor/.env
 ```
 
-Esperado: `1`, `1` y la línea `RED_N8N=` con el nombre. **Si no sale eso**
-—la línea quedó dos veces, lleva todavía el marcador, o falta la contraseña—
-no repitas el `printf` encima: restaura la copia y vuelve a empezar este
-punto.
+Esperado: `1`, `1` y la línea `RED_N8N=` con el nombre que dio el `docker
+inspect`. **Si no sale eso** y la línea la acabas de añadir tú —quedó dos
+veces, lleva todavía el marcador, o falta la contraseña—, no repitas el
+`printf` encima: restaura la copia y vuelve a empezar este punto.
 
 ```bash
 cp -p ~/copiloto.env.antes-de-red_n8n /opt/copiloto/servidor/.env
 ```
+
+Si la línea **ya estaba** antes de empezar —vacía, con otro nombre o
+repetida—, restaurar la copia te devuelve el mismo fichero. Esa se corrige a
+mano, con un editor (`nano /opt/copiloto/servidor/.env`): una sola línea
+`RED_N8N=` con el nombre que dio el `docker inspect`. Después, la misma
+comprobación.
 
 **3. Apuntar cómo están la base y los contenedores, y sacar una copia de la
 base.** Primero lo que se va a comparar al final: cuándo se creó el volumen,
@@ -2523,11 +3380,14 @@ Y la copia, que es con lo que se repara la base si al final no es la que
 había. Se queda fuera del repositorio y solo la puede leer quien la hace:
 
 ```bash
-(umask 077; set -o pipefail; docker exec copiloto-bd pg_dump --clean --if-exists -U copiloto -d copiloto | gzip > ~/copiloto-bd.antes-de-red_n8n.sql.gz) && ls -l ~/copiloto-bd.antes-de-red_n8n.sql.gz
+(umask 077; set -o pipefail; docker exec copiloto-bd pg_dump --clean --if-exists -U copiloto -d copiloto | gzip > ~/copiloto-bd.antes-de-red_n8n.sql.gz) && gunzip -t ~/copiloto-bd.antes-de-red_n8n.sql.gz && ls -l ~/copiloto-bd.antes-de-red_n8n.sql.gz
 ```
 
 Tiene que terminar enseñando el fichero. Si en su lugar sale un error de
-`pg_dump`, no hay copia: no sigas.
+`pg_dump` o de `gunzip` (que comprueba que la copia está entera), no hay
+copia: no sigas. Y si entre este punto y el 5 pasa un rato
+en el que los bots han atendido consultas, repite este punto antes de
+redesplegar: la copia que sirve es la de justo antes.
 
 **4. Traer el código y comprobar, sin levantar nada,** que el compose nuevo se
 deja leer y que la red que dice el `.env` existe:
@@ -2552,7 +3412,9 @@ Primero construye la imagen —minutos, con el servicio todavía en marcha— y
 después recrea. Lo que Compose va pintando mientras tanto depende de la
 terminal (líneas sueltas, o una lista que se actualiza en su sitio): no te
 guíes por eso. Lo que cuenta es cómo termina, `copiloto-bd: healthy` y
-`copiloto-mcp: healthy`, y el punto 6.
+`copiloto-mcp: healthy`, y el punto 6. Si la conexión con el servidor se
+corta a medias, vuelve a entrar y repite la orden: si Compose ya había
+terminado, no cambia nada; si no, acaba lo que faltaba.
 
 **6. Comprobar**, con las mismas órdenes del punto 3 y una más:
 
@@ -2578,8 +3440,9 @@ prueba por el bot.
   conservan la fecha de creación del punto 3** (la construcción, la red): no
   se ha tocado nada y el servicio sigue con los contenedores de antes. Se
   corrige la causa y se repite desde el punto 4.
-- **Los contenedores se recrearon y alguno no llega a `healthy`:** mira por
-  qué, con `docker logs --tail 50 copiloto-mcp` o `docker logs --tail 50
+- **Los contenedores se recrearon y alguno no llega a `healthy`, o llegan
+  los dos pero quedan en otra red que la del punto 2:** mira por qué, con
+  `docker logs --tail 50 copiloto-mcp` o `docker logs --tail 50
   copiloto-bd`. Para volver a la versión anterior se restaura **antes** el
   `.env` —el compose anterior también lee `RED_N8N`, y con el `.env` de antes
   vuelve a la red en la que estaba— y se levanta el commit del punto 1:
@@ -2589,7 +3452,9 @@ prueba por el bot.
   ```
 
   Después, las comprobaciones del punto 6. Para volver a intentarlo otro día:
-  `git switch main`, y otra vez desde el punto 1.
+  `git switch main`, y otra vez desde el punto 1. El commit de vuelta sigue
+  siendo el que apuntaste la primera vez: tras el `git switch main` el de
+  ahora ya es el nuevo, y el `grep` del punto 1 lo avisa.
 - **`up` se niega a recrear y pide bajar antes el proyecto** (una versión
   antigua de Compose puede hacerlo cuando cambia la clave de la red):
   entonces sí, y en este orden, para que el servicio esté caído lo menos
@@ -2605,20 +3470,26 @@ prueba por el bot.
   cualquier otro contenedor, `Ctrl+C`. Después, las comprobaciones del punto 6.
 - **El volumen tiene otra fecha de creación, o la base guarda menos
   consultas:** la base no es la que había. Para, y no sigas operando sobre
-  ella. La copia del punto 3 la devuelve a como estaba:
+  ella. Si el volumen es otro, el de antes sigue en el disco (`docker volume
+  ls`): **no lo borres**, que es donde están los datos. La copia del punto 3
+  devuelve la base a como estaba, en una sola transacción —si una sentencia
+  falla, la base se queda como estaba antes de empezar—, y antes comprueba
+  que la copia está entera, porque una copia cortada no daría ningún error y
+  dejaría la base a medias:
 
   ```bash
-  gunzip -c ~/copiloto-bd.antes-de-red_n8n.sql.gz | docker exec -i copiloto-bd psql -U copiloto -d copiloto -q -v ON_ERROR_STOP=1 && docker exec copiloto-bd psql -U copiloto -d copiloto -tAc 'select count(*) from consultas'
+  gunzip -t ~/copiloto-bd.antes-de-red_n8n.sql.gz && gunzip -c ~/copiloto-bd.antes-de-red_n8n.sql.gz | docker exec -i copiloto-bd psql -U copiloto -d copiloto -q -1 -v ON_ERROR_STOP=1 && docker exec copiloto-bd psql -U copiloto -d copiloto -tAc 'select count(*) from consultas'
   ```
 
-  Tiene que terminar con el recuento del punto 3.
+  Tiene que terminar con el recuento del punto 3. Lo que se haya escrito en
+  la base después del punto 3 no está en la copia, y se pierde.
 
 Las dos copias —la del `.env`, que lleva la contraseña, y la de la base, que
 lleva las consultas— se borran cuando todo esté comprobado, y también si se
 abandona el redespliegue:
 
 ```bash
-rm ~/copiloto.env.antes-de-red_n8n ~/copiloto-bd.antes-de-red_n8n.sql.gz
+rm -f ~/copiloto.env.antes-de-red_n8n ~/copiloto-bd.antes-de-red_n8n.sql.gz
 ```
 
 A partir de aquí los redespliegues vuelven a ser la orden de una línea de
@@ -2645,7 +3516,7 @@ Cinco cosas que esa línea tiene, o no tiene, por un motivo:
 
 ````markdown
 ```bash
-export RED_N8N="$(grep '^RED_N8N=' .env | cut -d= -f2-)"
+export RED_N8N="$(sed -n 's/^RED_N8N=//p' .env | tail -n 1)"
 docker run --rm --network "${RED_N8N:?define RED_N8N con el nombre de la red externa de n8n}" python:3.12-slim python -c "import urllib.request,json; print(json.load(urllib.request.urlopen('http://copiloto-mcp:8000/salud')))"
 unset RED_N8N
 ```
@@ -2694,8 +3565,12 @@ está junto al `docker-compose.yml`: vale igual si lanzas la orden desde
 `-f servidor/docker-compose.yml`. Así **ningún comando de esta guía necesita
 llevar la variable delante**, y no hay forma de olvidarla en uno.
 
-Edita `servidor/.env` y añade la línea, con el nombre que apuntaste en el paso
-2.2 en lugar del marcador:
+Si `servidor/.env` no existe todavía, créalo copiando la plantilla
+(`cp -n servidor/.env.ejemplo servidor/.env`; con `-n` no pisa uno que ya
+exista, que lleva la contraseña) y pon en él la contraseña de la base. La
+plantilla ya trae una línea `RED_N8N=` con un valor de ejemplo: **no
+se añade otra, se sustituye su valor** por el nombre que apuntaste en el paso
+2.2. Tiene que quedar una sola:
 
 ```
 RED_N8N=<RED_N8N>
@@ -2709,8 +3584,10 @@ docker compose config --quiet && echo "el compose se deja leer"
 ```
 
 `config` solo lee e interpola: no crea, no arranca y no toca ningún contenedor.
-Si imprime el mensaje de `required variable`, la línea no está en `.env`, está
-vacía, o el `.env` no está en `servidor/`.
+Si imprime un mensaje de `required variable`, mira qué variable nombra. Si es
+`RED_N8N`, la línea no está en `.env`, está vacía, o el `.env` no está en
+`servidor/`. Si es `COPILOTO_BD_PASSWORD`, lo que falta es la contraseña de la
+base.
 
 Una variable `RED_N8N` exportada en la sesión **manda sobre la de `.env`**. Es
 lo que usa el caso B, y es también el motivo de no dejarla exportada en el VPS:
@@ -3273,13 +4150,21 @@ media entre los dos, sin n8n y sin red: con valores inventados.
 """
 import importlib.util
 import json
+import os
 import pathlib
+import stat
 
 import pytest
 
 RAIZ = pathlib.Path(__file__).resolve().parents[1]
 N8N = RAIZ / "n8n"
 EJEMPLO = N8N / "valores.ejemplo.json"
+
+# Las pruebas que comparan lo escrito con lo versionado lo hacen sobre un
+# booleano: pytest enseñaria la linea que difiere, y si en lo versionado se
+# colara un valor (un `chat_equipo` relleno) saldria en la salida.
+IGUAL_A_LO_VERSIONADO = ("lo escrito no es letra por letra lo versionado: "
+                         "miralo con git diff")
 
 
 def _cargar():
@@ -3306,6 +4191,22 @@ def valores(mn):
 TEXTO = ('{\n  "url": "https://n8n.ejemplo.test/webhook/copiloto-paciente",\n'
          '  "credentials": {"telegramApi": {"id": "CRED_TELEGRAM_PACIENTE", '
          '"name": "bot-paciente"}}\n}\n')
+
+# Lo mismo que TEXTO, pero con forma de workflow y escrito como se versiona:
+# es lo que `--retirar` acepta (TEXTO no es un workflow).
+FLUJO = json.dumps({
+    "name": "flujo de juguete",
+    "active": False,
+    "nodes": [
+        {"name": "Sonda", "type": "n8n-nodes-base.httpRequest",
+         "parameters": {"url": "https://n8n.ejemplo.test/webhook/copiloto-paciente"}},
+        {"name": "Responder", "type": "n8n-nodes-base.telegram",
+         "credentials": {"telegramApi": {"id": "CRED_TELEGRAM_PACIENTE",
+                                         "name": "bot-paciente"}}},
+    ],
+    "connections": {},
+    "settings": {},
+}, ensure_ascii=False, indent=2) + "\n"
 
 
 # --------------------------------------------------------------------------
@@ -3420,10 +4321,20 @@ def test_un_valor_que_no_es_texto_no_se_acepta(mn, valores):
         mn.aplicar(TEXTO, ["lista"])
 
 
-def test_un_marcador_desconocido_en_los_valores_es_un_error(mn, valores):
-    valores["CRED_TELEGRAM_PACIENT"] = "errata"
-    with pytest.raises(mn.ErrorDeMarcadores, match="desconocidos.*CRED_TELEGRAM_PACIENT"):
+@pytest.mark.parametrize("errata, parecido", [
+    ("CRED_TELEGRAM_PACEINTE", "CRED_TELEGRAM_PACIENTE"),
+    ("bot-pacinete", "bot-paciente"),
+])
+def test_un_marcador_desconocido_en_los_valores_es_un_error(mn, valores, errata, parecido):
+    """Se dice cuantas claves no son marcadores y, de las que tienen forma de
+    marcador, el conocido mas parecido; nunca la clave tal como viene: una con
+    forma `bot-...` puede ser el nombre real de un bot."""
+    valores[errata] = "errata"
+    with pytest.raises(mn.ErrorDeMarcadores, match="desconocid") as e:
         mn.aplicar(TEXTO, valores)
+    assert parecido in str(e.value)
+    assert "1 clave" in str(e.value)
+    assert errata not in str(e.value)
 
 
 def test_con_los_valores_al_reves_el_error_no_imprime_ninguno(mn, valores):
@@ -3437,19 +4348,34 @@ def test_con_los_valores_al_reves_el_error_no_imprime_ninguno(mn, valores):
         for valor in valores.values():
             assert valor not in str(e.value)
         assert f"{len(valores)} claves que no son marcadores" in str(e.value)
-    # una errata entre valores reales: se dice la errata, y de lo demas, cuantas
-    mezcla = dict(al_reves, CRED_TELEGRAM_PACIENT="errata")
-    with pytest.raises(mn.ErrorDeMarcadores, match="CRED_TELEGRAM_PACIENT") as e:
+    # una errata entre valores reales: se dice el marcador que se parece a la
+    # errata, y de lo demas, cuantas; ni la errata ni los valores
+    mezcla = dict(al_reves, CRED_TELEGRAM_PACEINTE="errata")
+    with pytest.raises(mn.ErrorDeMarcadores, match="CRED_TELEGRAM_PACIENTE") as e:
         mn.aplicar(TEXTO, mezcla)
     assert all(valor not in str(e.value) for valor in valores.values())
+    assert "CRED_TELEGRAM_PACEINTE" not in str(e.value)
+    assert f"{len(valores)} claves que no son marcadores" in str(e.value)
 
 
 @pytest.mark.parametrize("url", [
-    "https://flujos.inventado.test/", "flujos.inventado.test", "ftp://x.test"])
+    "https://flujos.inventado.test/", "flujos.inventado.test", "ftp://x.test",
+    # esquema y host, y nada mas: una ruta acabaria delante de /webhook/
+    "https://flujos.inventado.test/n8n", "https://flujos.inventado.test/n8n/",
+    "https://flujos.inventado.test?x=1", "https://flujos.inventado.test#arriba",
+    "https://", "https://:5678", "https://flujos inventado.test",
+    "https://alguien@flujos.inventado.test"])
 def test_la_url_va_con_esquema_y_sin_barra_final(mn, valores, url):
     valores[mn.URL_N8N] = url
     with pytest.raises(mn.ErrorDeMarcadores, match="URL base"):
         mn.aplicar(TEXTO, valores)
+
+
+@pytest.mark.parametrize("url", [
+    "https://flujos.inventado.test", "http://flujos.inventado.test:5678"])
+def test_la_url_con_esquema_host_y_puerto_se_acepta(mn, valores, url):
+    valores[mn.URL_N8N] = url
+    assert f'"url": "{url}/webhook/copiloto-paciente"' in mn.aplicar(TEXTO, valores)
 
 
 def test_un_valor_no_puede_confundirse_con_un_marcador_ni_con_otro_valor(mn, valores):
@@ -3470,7 +4396,7 @@ def test_un_valor_no_puede_confundirse_con_un_marcador_ni_con_otro_valor(mn, val
 @pytest.fixture()
 def carpeta(tmp_path, valores):
     (tmp_path / "valores.json").write_text(json.dumps(valores), encoding="utf-8")
-    (tmp_path / "entrada.json").write_bytes(TEXTO.replace("\n", "\r\n").encode("utf-8"))
+    (tmp_path / "entrada.json").write_bytes(FLUJO.replace("\n", "\r\n").encode("utf-8"))
     return tmp_path
 
 
@@ -3483,13 +4409,25 @@ def test_la_cli_pone_y_quita_y_escribe_en_lf(mn, carpeta, valores, capsys):
     assert "valores puestos: 3 sustituciones" in dicho
     crudo = (carpeta / "sub" / "puesto.json").read_bytes()
     assert b"\r" not in crudo
-    assert crudo.decode("utf-8") == mn.aplicar(TEXTO, valores)
+    assert crudo.decode("utf-8") == mn.aplicar(FLUJO, valores)
 
     assert mn.main(argumentos + ["--retirar",
                                  "--entrada", str(carpeta / "sub" / "puesto.json"),
                                  "--salida", str(carpeta / "vuelta.json")]) == 0
     assert "valores retirados: 3 sustituciones" in capsys.readouterr().out
-    assert (carpeta / "vuelta.json").read_bytes() == TEXTO.encode("utf-8")
+    assert (carpeta / "vuelta.json").read_bytes() == FLUJO.encode("utf-8")
+
+
+def test_la_cli_lee_ficheros_con_marca_de_orden_de_bytes(mn, carpeta, valores, capsys):
+    """PowerShell 5.1 escribe los JSON con la marca (`Out-File`, `Set-Content
+    -Encoding utf8`): los valores y la entrada se leen igual con ella."""
+    (carpeta / "valores-bom.json").write_text(json.dumps(valores), encoding="utf-8-sig")
+    (carpeta / "entrada-bom.json").write_text(FLUJO, encoding="utf-8-sig")
+    assert mn.main(["--valores", str(carpeta / "valores-bom.json"),
+                    "--entrada", str(carpeta / "entrada-bom.json"),
+                    "--salida", str(carpeta / "puesto.json")]) == 0, capsys.readouterr().err
+    assert (carpeta / "puesto.json").read_bytes() == mn.aplicar(FLUJO, valores).encode("utf-8")
+    assert mn.leer_valores(carpeta / "valores-bom.json") == valores
 
 
 def test_la_cli_no_pone_valores_reales_encima_de_la_entrada(mn, carpeta, capsys):
@@ -3526,11 +4464,68 @@ def test_la_cli_no_pone_valores_reales_dentro_del_repositorio(
 
 
 def test_la_cli_retira_encima_de_la_entrada(mn, carpeta, valores):
-    (carpeta / "export.json").write_text(mn.aplicar(TEXTO, valores), encoding="utf-8")
+    (carpeta / "export.json").write_text(mn.aplicar(FLUJO, valores), encoding="utf-8")
     assert mn.main(["--valores", str(carpeta / "valores.json"), "--retirar",
                     "--entrada", str(carpeta / "export.json"),
                     "--salida", str(carpeta / "export.json")]) == 0
-    assert (carpeta / "export.json").read_bytes() == TEXTO.encode("utf-8")
+    assert (carpeta / "export.json").read_bytes() == FLUJO.encode("utf-8")
+
+
+def test_escribir_no_deja_el_destino_a_medias(mn, tmp_path):
+    """Se escribe a un temporal junto al destino y se pone en su sitio al
+    final: si la escritura falla, el destino queda como estaba y el temporal
+    no se queda en la carpeta. Un sustituto suelto no se puede escribir en
+    UTF-8."""
+    destino = tmp_path / "flujo.json"
+    destino.write_bytes(b'{"antes": true}\n')
+    with pytest.raises(UnicodeEncodeError):
+        mn.escribir(destino, '{"nota": "a medias \ud800"}\n')
+    assert destino.read_bytes() == b'{"antes": true}\n'
+    assert [p.name for p in tmp_path.iterdir()] == ["flujo.json"]
+
+    mn.escribir(destino, '{"despues": true}\n')
+    assert destino.read_bytes() == b'{"despues": true}\n'
+    assert [p.name for p in tmp_path.iterdir()] == ["flujo.json"]
+
+
+def test_con_el_destino_de_solo_lectura_el_temporal_no_se_queda(mn, tmp_path, monkeypatch):
+    """Al PONER valores, el temporal lleva los valores reales: si la escritura
+    falla, no puede quedarse en la carpeta. Windows se niega a reemplazar un
+    fichero de solo lectura, y el temporal, que copio sus permisos, tampoco se
+    dejaba borrar. En los demas sistemas el reemplazo pisaria el fichero: alli
+    se simula la negativa."""
+    destino = tmp_path / "flujo.json"
+    destino.write_bytes(b'{"antes": true}\n')
+    os.chmod(destino, stat.S_IREAD)
+    if os.name != "nt":
+        def negarse(*a, **k):
+            raise PermissionError("el destino es de solo lectura")
+        monkeypatch.setattr(mn.os, "replace", negarse)
+    try:
+        with pytest.raises(OSError):
+            mn.escribir(destino, '{"despues": "valor-real"}\n')
+        assert [p.name for p in tmp_path.iterdir()] == ["flujo.json"]
+        assert destino.read_bytes() == b'{"antes": true}\n'
+    finally:
+        os.chmod(destino, stat.S_IREAD | stat.S_IWRITE)
+
+
+def test_la_cli_dice_el_error_si_lo_retirado_no_se_puede_escribir(
+        mn, carpeta, valores, capsys):
+    """Una descarga con un sustituto suelto escapado (`\\ud800`) en una nota:
+    al reescribirla como se versiona sale el caracter, que no cabe en UTF-8.
+    La orden sale con 1 y el destino, que existia, sigue como estaba."""
+    flujo = json.loads(mn.aplicar(FLUJO, valores))
+    flujo["nodes"][0]["notes"] = "a medias \ud800"
+    (carpeta / "descarga.json").write_text(json.dumps(flujo), encoding="utf-8")
+    (carpeta / "destino.json").write_bytes(b"lo de antes\n")
+    assert mn.main(["--valores", str(carpeta / "valores.json"), "--retirar",
+                    "--entrada", str(carpeta / "descarga.json"),
+                    "--salida", str(carpeta / "destino.json")]) == 1
+    assert capsys.readouterr().err.startswith("ERROR: UnicodeEncodeError")
+    assert (carpeta / "destino.json").read_bytes() == b"lo de antes\n"
+    assert sorted(p.name for p in carpeta.iterdir()) == [
+        "descarga.json", "destino.json", "entrada.json", "valores.json"]
 
 
 def test_la_cli_dice_que_hacer_si_no_hay_fichero_de_valores(mn, carpeta, capsys):
@@ -3618,15 +4613,28 @@ lo deja como se versiona: solo con las cinco claves que se versionan (`name`,
 `active`, `nodes`, `connections`, `settings`) y escrito como los de `n8n/`.
 Una descarga de n8n trae tambien el `id` del workflow, su `versionId`, la
 huella de la instancia (`meta`), datos de ejecuciones (`pinData`) y etiquetas:
-identifican la instancia y no se versionan. No usa la red ni habla con n8n.
+identifican la instancia y no se versionan. Tambien vacia el `chat_equipo` del
+nodo `Configuracion` (el chat_id de una persona, que se rellena en n8n).
+
+`--retirar` trabaja con UN workflow cada vez: una lista (como exporta la linea
+de ordenes de n8n) o un JSON sin `nodes` no se retiran. Y no escribe si, tras
+retirar, queda una credencial o una URL de webhook que no es un marcador: es
+que los valores no son los de la instancia de la que viene la descarga. No usa
+la red ni habla con n8n.
 """
 from __future__ import annotations
 
 import argparse
+import difflib
 import io
 import json
+import os
 import re
+import shutil
+import stat
 import sys
+import tempfile
+import urllib.parse
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -3673,25 +4681,52 @@ def _nombres(marcadores) -> str:
     return ", ".join(sorted(marcadores))
 
 
+def _es_url_base(url: str) -> bool:
+    """Esquema `http` o `https` y host (con su puerto, si lo lleva), y nada
+    mas: ni ruta, ni consulta, ni fragmento, ni barra final, ni usuario, ni
+    blancos."""
+    if re.search(r"[\s?#]", url) or url.endswith("/"):
+        return False
+    try:
+        partes = urllib.parse.urlsplit(url)
+        partes.port  # un puerto que no es un numero lanza ValueError
+    except ValueError:
+        return False
+    return (partes.scheme in ("http", "https") and bool(partes.hostname)
+            and "@" not in partes.netloc and not partes.path)
+
+
 def _validar(valores: dict) -> None:
     if not isinstance(valores, dict):
         raise ErrorDeMarcadores("los valores tienen que ser un objeto JSON "
                                 "{marcador: valor}")
     desconocidos = set(valores) - set(MARCADORES)
     if desconocidos:
-        # Solo se repiten las claves con forma de marcador (una errata). Las
-        # demas pueden ser valores reales: con el fichero escrito al reves,
-        # {valor real: marcador}, el mensaje los imprimiria todos.
-        erratas = {d for d in desconocidos
-                   if isinstance(d, str) and _FORMA_DE_MARCADOR.fullmatch(d)}
-        mensaje = "marcadores desconocidos en los valores: "
-        mensaje += _nombres(erratas) if erratas else "ninguno tiene forma de marcador"
-        otras = len(desconocidos) - len(erratas)
+        # Ninguna clave se repite: con el fichero escrito al reves, {valor
+        # real: marcador}, el mensaje los imprimiria todos, y una clave con
+        # forma de marcador (`bot-...`) tambien puede ser un nombre real. De
+        # las que tienen esa forma se dice el marcador conocido mas parecido.
+        erratas = [d for d in desconocidos
+                   if isinstance(d, str) and _FORMA_DE_MARCADOR.fullmatch(d)]
+        n = len(desconocidos)
+        mensaje = (f"marcadores desconocidos en los valores: {n} "
+                   + ("clave desconocida, que no se repite"
+                      if n == 1 else "claves desconocidas, que no se repiten")
+                   + " aqui")
+        if erratas:
+            parecidos = sorted({m for d in erratas
+                                for m in difflib.get_close_matches(d, MARCADORES, n=1)})
+            mensaje += (f"; {len(erratas)} con forma de marcador"
+                        + (f", ¿erratas de {_nombres(parecidos)}?" if parecidos
+                           else ", sin ningun marcador conocido parecido"))
+        otras = n - len(erratas)
         if otras:
-            mensaje += (f" ({otras} claves que no son marcadores y no se "
-                        "repiten aqui: las claves son los marcadores y los "
-                        "valores, los de la instancia; ¿esta el fichero al "
-                        "reves?)")
+            mensaje += (f"; {otras} "
+                        + ("clave que no es un marcador ni lo parece"
+                           if otras == 1 else
+                           "claves que no son marcadores ni lo parecen")
+                        + ": las claves son los marcadores y los valores, "
+                        "los de la instancia; ¿esta el fichero al reves?")
         raise ErrorDeMarcadores(mensaje)
     for marcador, valor in valores.items():
         if not isinstance(valor, str) or not valor.strip():
@@ -3701,11 +4736,11 @@ def _validar(valores: dict) -> None:
                 f"el valor de {marcador} lleva espacios en los extremos, "
                 "comillas, barras invertidas o caracteres de control")
     url = valores.get(URL_N8N)
-    if url is not None and (not re.match(r"https?://[^/]+", url)
-                            or url.endswith("/")):
+    if url is not None and not _es_url_base(url):
         raise ErrorDeMarcadores(
-            f"el valor de {URL_N8N} tiene que ser la URL base de n8n, con "
-            "esquema y sin barra final")
+            f"el valor de {URL_N8N} tiene que ser la URL base de n8n: esquema "
+            "(http o https) y host, sin ruta, consulta, fragmento ni barra "
+            "final")
     por_valor = {}
     for marcador, valor in valores.items():
         por_valor.setdefault(valor.lower(), []).append(marcador)
@@ -3788,16 +4823,46 @@ def retirar(texto: str, valores: dict) -> str:
 
 
 def leer(ruta) -> str:
-    """El fichero en UTF-8 con los finales de linea en LF, venga como venga."""
-    with io.open(ruta, encoding="utf-8", newline="") as f:
+    """El fichero en UTF-8 con los finales de linea en LF, venga como venga, y
+    sin la marca de orden de bytes si la lleva (PowerShell 5.1 la pone)."""
+    with io.open(ruta, encoding="utf-8-sig", newline="") as f:
         return f.read().replace("\r\n", "\n")
 
 
+def _borrar(temporal) -> None:
+    """Borra el temporal aunque haya copiado el solo lectura del destino: en
+    Windows un fichero de solo lectura no se deja borrar."""
+    try:
+        os.chmod(temporal, stat.S_IREAD | stat.S_IWRITE)
+    except OSError:
+        pass
+    try:
+        os.unlink(temporal)
+    except OSError:
+        pass  # el error que cuenta es el de la escritura, que se relanza
+
+
 def escribir(ruta, texto: str) -> None:
+    """Escribe a un temporal junto al destino y lo pone en su sitio al final:
+    si la escritura falla, el destino queda como estaba y el temporal se
+    borra siempre (al poner valores, lleva los reales)."""
     ruta = Path(ruta)
     ruta.parent.mkdir(parents=True, exist_ok=True)
-    with io.open(ruta, "w", encoding="utf-8", newline="\n") as f:
-        f.write(texto)
+    fd, temporal = tempfile.mkstemp(dir=ruta.parent, prefix=f".{ruta.name}.",
+                                    suffix=".tmp")
+    try:
+        with io.open(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(texto)
+        # el temporal nace legible solo por su propietario: el fichero
+        # conserva los permisos que tenia, o los de uno nuevo
+        if ruta.exists():
+            shutil.copymode(ruta, temporal)
+        else:
+            os.chmod(temporal, 0o644)
+        os.replace(temporal, ruta)
+    except BaseException:
+        _borrar(temporal)
+        raise
 
 
 def leer_valores(ruta) -> dict:
@@ -3823,6 +4888,70 @@ def como_se_versiona(datos) -> tuple:
     return json.dumps(limpio, ensure_ascii=False, indent=2) + "\n", sobran
 
 
+def _vaciar_chat_equipo(datos: dict) -> bool:
+    """Vacia el `value` de la asignacion `chat_equipo` del nodo
+    `Configuracion`: es el chat_id de una persona, se rellena en n8n y no se
+    versiona. Devuelve si llevaba algo. Sin ese nodo no hace nada."""
+    vaciado = False
+    for nodo in datos.get("nodes") or []:
+        if not isinstance(nodo, dict) or nodo.get("name") != "Configuracion":
+            continue
+        asignaciones = (((nodo.get("parameters") or {}).get("assignments")
+                         or {}).get("assignments") or [])
+        for asignacion in asignaciones:
+            if (isinstance(asignacion, dict)
+                    and asignacion.get("name") == "chat_equipo"
+                    and asignacion.get("value") != ""):
+                asignacion["value"] = ""
+                vaciado = True
+    return vaciado
+
+
+# Una URL hasta su `/webhook/`, en cualquier texto de un nodo (la URL de una
+# sonda, la nota de un webhook con su orden de `setWebhook`...). No cruza
+# blancos, comillas ni los signos que la cierran en una orden o en Markdown.
+_URL_HASTA_EL_WEBHOOK = re.compile(
+    r"https?://[^\s\"'`<>()\[\]{}|\\^]*?/webhook/", re.IGNORECASE)
+
+
+def _textos(valor):
+    """Todas las cadenas de un valor de JSON: claves y valores, a cualquier
+    profundidad."""
+    if isinstance(valor, str):
+        yield valor
+    elif isinstance(valor, dict):
+        for clave, dentro in valor.items():
+            yield from _textos(clave)
+            yield from _textos(dentro)
+    elif isinstance(valor, list):
+        for dentro in valor:
+            yield from _textos(dentro)
+
+
+def _lo_que_no_es_marcador(datos: dict) -> list:
+    """De un workflow ya retirado, lo que sigue siendo de la instancia: una
+    credencial cuyo `id` no es un marcador conocido (y en las de Telegram, su
+    `name`), o una URL de webhook, en cualquier texto del nodo, que no es el
+    marcador de la URL seguido de `/webhook/`. Se dice el nodo y que es, nunca
+    el valor."""
+    hallados = []
+    for nodo in datos.get("nodes") or []:
+        if not isinstance(nodo, dict):
+            continue
+        nombre = nodo.get("name")
+        for tipo, credencial in (nodo.get("credentials") or {}).items():
+            credencial = credencial if isinstance(credencial, dict) else {}
+            if credencial.get("id") not in MARCADORES:
+                hallados.append(f"«{nombre}»: el id de su credencial {tipo}")
+            if tipo == "telegramApi" and credencial.get("name") not in MARCADORES:
+                hallados.append(f"«{nombre}»: el nombre de su credencial {tipo}")
+        if any(m.group(0) != URL_N8N + "/webhook/"
+               for texto in _textos(nodo)
+               for m in _URL_HASTA_EL_WEBHOOK.finditer(texto)):
+            hallados.append(f"«{nombre}»: la URL de su webhook")
+    return hallados
+
+
 def _dentro_del_repositorio(ruta: Path) -> bool:
     try:
         ruta.resolve().relative_to(REPO)
@@ -3834,7 +4963,8 @@ def _dentro_del_repositorio(ruta: Path) -> bool:
 def convertir(entrada, salida, valores: dict, quitar: bool = False) -> dict:
     """Lee `entrada`, pone o quita los valores y escribe `salida`. Devuelve
     {marcador: veces} de lo sustituido; al retirar, ademas, en la clave
-    `"claves quitadas"`, las del nivel superior que no se versionan."""
+    `"claves quitadas"`, las del nivel superior que no se versionan, y en
+    `"chat_equipo vaciado"`, si se vacio."""
     entrada, salida = Path(entrada), Path(salida)
     if not quitar and entrada.resolve() == salida.resolve():
         raise ErrorDeMarcadores(
@@ -3851,12 +4981,29 @@ def convertir(entrada, salida, valores: dict, quitar: bool = False) -> dict:
     except json.JSONDecodeError as e:
         raise ErrorDeMarcadores(f"{entrada} no es un JSON valido: {e}") from e
     if quitar:
-        versionable, quitadas = como_se_versiona(datos)
-        if versionable is not None:
-            texto = versionable
+        if isinstance(datos, list):
+            raise ErrorDeMarcadores(
+                f"{entrada} es una lista, no un workflow (asi exporta la linea "
+                "de ordenes de n8n): --retirar trabaja con un workflow cada "
+                "vez; pasa cada uno en su fichero, como lo descarga el editor "
+                "de n8n")
+        if not isinstance(datos, dict) or "nodes" not in datos:
+            raise ErrorDeMarcadores(
+                f"{entrada} no es un workflow (no tiene `nodes`): --retirar "
+                "trabaja con un workflow cada vez, como lo descarga el editor "
+                "de n8n")
+        chat_vaciado = _vaciar_chat_equipo(datos)
+        texto, quitadas = como_se_versiona(datos)
         resultado = retirar(texto, valores)
+        restos = _lo_que_no_es_marcador(json.loads(resultado))
+        if restos:
+            raise ErrorDeMarcadores(
+                "tras retirar quedan en el workflow cosas que no son "
+                "marcadores, y no se escribe nada (¿son los valores los de la "
+                "instancia de la que viene la descarga?): " + "; ".join(restos))
         veces = {m: texto.count(v) for m, v in valores.items() if v in texto}
         veces["claves quitadas"] = quitadas
+        veces["chat_equipo vaciado"] = chat_vaciado
     else:
         resultado = aplicar(texto, valores)
         veces = {m: texto.count(m) for m in marcadores_de(texto)}
@@ -3883,11 +5030,13 @@ def main(argv=None) -> int:
     except ErrorDeMarcadores as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
-    except (OSError, UnicodeDecodeError) as e:
-        # un fichero que no existe, que no se puede escribir o que no es UTF-8
+    except (OSError, UnicodeError) as e:
+        # un fichero que no existe, que no se puede escribir, que no es UTF-8
+        # o un texto que no cabe en UTF-8 (un sustituto suelto)
         print(f"ERROR: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
     quitadas = veces.pop("claves quitadas", [])
+    chat_vaciado = veces.pop("chat_equipo vaciado", False)
     verbo = "retirados" if a.retirar else "puestos"
     for marcador in MARCADORES:
         if marcador in veces:
@@ -3895,6 +5044,9 @@ def main(argv=None) -> int:
     if quitadas:
         print("claves de la instancia que no se versionan, quitadas: "
               + ", ".join(quitadas))
+    if chat_vaciado:
+        print("chat_equipo: vaciado (se rellena en n8n; manual de operacion, "
+              "§5, paso 1)")
     print(f"valores {verbo}: {sum(veces.values())} sustituciones -> {a.salida}")
     return 0
 
@@ -4148,7 +5300,10 @@ def test_retirar_una_descarga_de_n8n_quita_lo_que_es_de_la_instancia(
                     "--entrada", str(tmp_path / "descarga.json"),
                     "--salida", str(tmp_path / "versionable.json")]) == 0
 
-    assert mn.leer(tmp_path / "versionable.json") == versionado
+    # sobre un booleano: pytest enseñaria la linea que difiere, y en lo
+    # versionado podria ir un valor (un chat_equipo relleno)
+    igual = mn.leer(tmp_path / "versionable.json") == versionado
+    assert igual, IGUAL_A_LO_VERSIONADO
     dicho = capsys.readouterr().out
     assert "quitadas: id, meta, pinData, tags, versionId" in dicho
     for de_la_instancia in ("wf-de-la-instancia", "version-de-la-instancia",
@@ -4158,10 +5313,221 @@ def test_retirar_una_descarga_de_n8n_quita_lo_que_es_de_la_instancia(
         assert de_la_instancia not in mn.leer(tmp_path / "versionable.json")
 
 
-def test_lo_que_no_es_un_workflow_se_retira_sin_reescribirlo(mn, carpeta, valores):
-    """Sin `nodes` no es un workflow: se sustituye texto y nada mas."""
-    assert mn.como_se_versiona(json.loads(TEXTO)) == (None, [])
-    assert mn.como_se_versiona(["una", "lista"]) == (None, [])
+def _descarga(mn, fichero, valores, **en_la_instancia):
+    """Un workflow versionado como lo descarga n8n de una instancia con estos
+    `valores`: puestos, con las claves de la instancia y lo que se le pase."""
+    desplegado = json.loads(mn.aplicar(mn.leer(N8N / fichero), valores))
+    desplegado.update({"id": "wf-de-la-instancia",
+                       "versionId": "version-de-la-instancia"}, **en_la_instancia)
+    return desplegado
+
+
+def _chat_equipo(flujo):
+    """Las asignaciones `chat_equipo` del nodo `Configuracion`."""
+    return [a for n in flujo["nodes"] if n["name"] == "Configuracion"
+            for a in n["parameters"]["assignments"]["assignments"]
+            if a["name"] == "chat_equipo"]
+
+
+def test_retirar_el_mantenimiento_vacia_el_chat_del_equipo(mn, valores, tmp_path, capsys):
+    """Desplegado, `chat_equipo` va relleno en n8n (§5 del manual): es el
+    chat_id de una persona y no se versiona. Al retirar se vacia, y la orden
+    lo dice sin repetirlo."""
+    chat = "4455667788"   # inventado
+    descarga = _descarga(mn, "copiloto-mantenimiento.json", valores)
+    (asignacion,) = _chat_equipo(descarga)
+    asignacion["value"] = chat
+    (tmp_path / "valores.json").write_text(json.dumps(valores), encoding="utf-8")
+    (tmp_path / "descarga.json").write_text(json.dumps(descarga, indent=4),
+                                            encoding="utf-8")
+
+    assert mn.main(["--valores", str(tmp_path / "valores.json"), "--retirar",
+                    "--entrada", str(tmp_path / "descarga.json"),
+                    "--salida", str(tmp_path / "versionable.json")]) == 0
+
+    escrito = mn.leer(tmp_path / "versionable.json")
+    igual = escrito == mn.leer(N8N / "copiloto-mantenimiento.json")
+    assert igual, IGUAL_A_LO_VERSIONADO
+    dicho = capsys.readouterr()
+    assert "chat_equipo: vaciado" in dicho.out
+    assert chat not in escrito and chat not in dicho.out + dicho.err
+
+
+def test_el_chat_del_equipo_del_mantenimiento_versionado_va_vacio():
+    """El manual manda correr este fichero despues de retirar un export: asi
+    caza un `chat_equipo` relleno sin tener que nombrar
+    `tests/test_mantenimiento.py`. Si falla no enseña el valor."""
+    flujo = json.loads((N8N / "copiloto-mantenimiento.json").read_text(encoding="utf-8"))
+    asignaciones = _chat_equipo(flujo)
+    assert len(asignaciones) == 1
+    vacio = asignaciones[0]["value"] == ""
+    assert vacio, ("chat_equipo va relleno en n8n/copiloto-mantenimiento.json: "
+                   "retira el export con scripts/marcadores_n8n.py, que lo vacia")
+
+
+@pytest.mark.parametrize("fichero", FLUJOS)
+def test_retirar_con_otros_valores_que_los_de_la_descarga_no_escribe(
+        mn, fichero, valores, tmp_path, capsys):
+    """Con unos valores que no son los de la instancia (los de ejemplo, un
+    `valores.local.json` anticuado) no se sustituye nada, y el workflow se
+    escribiria en `n8n/` con los identificadores de la instancia. Tras
+    retirar, las credenciales y las URL de los webhooks tienen que ser
+    marcadores: si no, no se escribe, y el error dice el nodo y no el valor."""
+    ejemplo = mn.leer_valores(EJEMPLO)
+    (tmp_path / "descarga.json").write_text(
+        json.dumps(_descarga(mn, fichero, valores), indent=4), encoding="utf-8")
+
+    assert mn.main(["--valores", str(EJEMPLO), "--retirar",
+                    "--entrada", str(tmp_path / "descarga.json"),
+                    "--salida", str(tmp_path / "versionable.json")]) == 1
+
+    assert not (tmp_path / "versionable.json").exists()
+    dicho = capsys.readouterr()
+    for valor in list(valores.values()) + list(ejemplo.values()):
+        assert valor not in dicho.err + dicho.out
+    assert "no son marcadores" in dicho.err
+    # el nodo, que es del workflow versionado
+    telegram = {"copiloto-paciente.json": "Pedir consentimiento",
+                "copiloto-profesional.json": "Pedir codigo",
+                "copiloto-mantenimiento.json": "Avisar al equipo"}[fichero]
+    assert telegram in dicho.err
+    if fichero == "copiloto-mantenimiento.json":
+        assert "Webhook del paciente" in dicho.err
+
+
+# Una sola clave anticuada cada vez: el marcador cuyo valor esta mal en los
+# valores con los que se retira, la frase del error de ESA condicion y un nodo
+# que la lleva. Si una de las condiciones se quitara, su caso caeria.
+ANTICUADAS = [
+    ("copiloto-paciente.json", "CRED_POSTGRES_COPILOTO",
+     "el id de su credencial postgres", "Leer sesion"),
+    ("copiloto-paciente.json", "CRED_SECRETO_PACIENTE",
+     "el id de su credencial httpHeaderAuth", "Webhook Telegram (paciente)"),
+    ("copiloto-paciente.json", "CRED_TELEGRAM_PACIENTE",
+     "el id de su credencial telegramApi", "Pedir consentimiento"),
+    ("copiloto-paciente.json", "bot-paciente",
+     "el nombre de su credencial telegramApi", "Pedir consentimiento"),
+    # la URL solo esta en la nota del nodo webhook
+    ("copiloto-paciente.json", "https://n8n.ejemplo.test",
+     "la URL de su webhook", "Webhook Telegram (paciente)"),
+    ("copiloto-profesional.json", "CRED_POSTGRES_COPILOTO",
+     "el id de su credencial postgres", "Leer sesion y permiso"),
+    ("copiloto-profesional.json", "CRED_SECRETO_PROFESIONAL",
+     "el id de su credencial httpHeaderAuth", "Webhook Telegram (profesional)"),
+    ("copiloto-profesional.json", "CRED_TELEGRAM_PROFESIONAL",
+     "el id de su credencial telegramApi", "Pedir codigo"),
+    ("copiloto-profesional.json", "bot-profesional",
+     "el nombre de su credencial telegramApi", "Pedir codigo"),
+    ("copiloto-profesional.json", "https://n8n.ejemplo.test",
+     "la URL de su webhook", "Webhook Telegram (profesional)"),
+    ("copiloto-mantenimiento.json", "CRED_POSTGRES_COPILOTO",
+     "el id de su credencial postgres", "Limpieza"),
+    ("copiloto-mantenimiento.json", "CRED_TELEGRAM_AVISOS",
+     "el id de su credencial telegramApi", "Avisar al equipo"),
+    ("copiloto-mantenimiento.json", "bot-avisos",
+     "el nombre de su credencial telegramApi", "Avisar al equipo"),
+    ("copiloto-mantenimiento.json", "https://n8n.ejemplo.test",
+     "la URL de su webhook", "Webhook del paciente"),
+]
+
+
+@pytest.mark.parametrize("fichero, marcador, frase, nodo", ANTICUADAS,
+                         ids=[f"{f.split('-')[1][:-5]}-{m}" for f, m, _, _ in ANTICUADAS])
+def test_retirar_con_una_sola_clave_anticuada_no_escribe(
+        mn, fichero, marcador, frase, nodo, valores, tmp_path, capsys):
+    """El `valores.local.json` anticuado de verdad: todo bien menos UN valor
+    (una credencial que se volvio a crear, una errata en la URL). Lo que no se
+    sustituye se quedaria en `n8n/`: la herramienta se niega, sin escribir,
+    diciendo la condicion y el nodo, y ningun valor."""
+    anticuados = dict(valores)
+    anticuados[marcador] = ("https://anticuada.inventado.test"
+                            if marcador == mn.URL_N8N else "valor-99-anticuado")
+    (tmp_path / "valores.json").write_text(json.dumps(anticuados), encoding="utf-8")
+    (tmp_path / "descarga.json").write_text(
+        json.dumps(_descarga(mn, fichero, valores), indent=4), encoding="utf-8")
+
+    assert mn.main(["--valores", str(tmp_path / "valores.json"), "--retirar",
+                    "--entrada", str(tmp_path / "descarga.json"),
+                    "--salida", str(tmp_path / "versionable.json")]) == 1
+
+    assert not (tmp_path / "versionable.json").exists()
+    dicho = capsys.readouterr()
+    con_valores = [m for m, v in list(valores.items()) + list(anticuados.items())
+                   if v in dicho.out + dicho.err]
+    assert con_valores == [], "la salida lleva el valor de estos marcadores"
+    assert f"«{nodo}»: {frase}" in dicho.err
+
+
+@pytest.mark.parametrize("fichero, nodo", [
+    ("copiloto-paciente.json", "Webhook Telegram (paciente)"),
+    ("copiloto-mantenimiento.json", "Webhook del paciente"),
+])
+def test_una_url_que_solo_empieza_como_el_marcador_no_es_el_marcador(
+        mn, fichero, nodo, valores, tmp_path, capsys):
+    """El marcador va seguido de `/webhook/`: un host que solo EMPIEZA como el
+    del marcador es otro host."""
+    otro_host = "https://n8n.ejemplo.test.otro"
+    texto = mn.aplicar(mn.leer(N8N / fichero), valores).replace(
+        valores[mn.URL_N8N], otro_host)
+    (tmp_path / "valores.json").write_text(json.dumps(valores), encoding="utf-8")
+    (tmp_path / "descarga.json").write_text(texto, encoding="utf-8")
+
+    assert mn.main(["--valores", str(tmp_path / "valores.json"), "--retirar",
+                    "--entrada", str(tmp_path / "descarga.json"),
+                    "--salida", str(tmp_path / "versionable.json")]) == 1
+
+    assert not (tmp_path / "versionable.json").exists()
+    dicho = capsys.readouterr()
+    assert f"«{nodo}»: la URL de su webhook" in dicho.err
+    sin_el_host = "ejemplo.test.otro" not in dicho.out + dicho.err
+    assert sin_el_host
+
+
+@pytest.mark.parametrize("entrada, dice", [
+    ([], "una lista"),
+    (["un workflow", "otro"], "una lista"),
+    ({"name": "sin nodos", "connections": {}}, "no es un workflow"),
+    (json.loads(TEXTO), "no es un workflow"),
+])
+def test_lo_que_no_es_un_workflow_no_se_retira(mn, carpeta, entrada, dice, capsys):
+    """La linea de ordenes de n8n exporta una LISTA de workflows; y un JSON
+    sin `nodes` no es un workflow. `--retirar` no los reescribe ni los pasa
+    por buenos: se niega, dice que se pase un workflow cada vez, y no escribe
+    nada."""
+    (carpeta / "export.json").write_text(json.dumps(entrada), encoding="utf-8")
+    assert mn.main(["--valores", str(carpeta / "valores.json"), "--retirar",
+                    "--entrada", str(carpeta / "export.json"),
+                    "--salida", str(carpeta / "salida.json")]) == 1
+    error = capsys.readouterr().err
+    assert dice in error and "un workflow cada vez" in error
+    assert not (carpeta / "salida.json").exists()
+    # `como_se_versiona` no los toca
+    assert mn.como_se_versiona(entrada) == (None, [])
+
+
+# Las claves de `settings` que llevan hoy los tres workflows. Una que la
+# instancia añada al descargar no pasa sin que alguien lo decida: la de
+# `errorWorkflow`, por ejemplo, lleva el `id` de otro workflow de la instancia.
+CLAVES_DE_SETTINGS = {
+    "executionOrder", "executionTimeout", "saveDataErrorExecution",
+    "saveDataSuccessExecution", "saveExecutionProgress", "saveManualExecutions",
+    "timezone"}
+
+
+def _settings_que_sobran(flujo):
+    """Los NOMBRES de las claves de `settings` que no estan en la lista; los
+    valores no, que pueden ser de la instancia."""
+    return sorted(set(flujo["settings"]) - CLAVES_DE_SETTINGS)
+
+
+@pytest.mark.parametrize("fichero", FLUJOS)
+def test_las_claves_de_settings_son_las_de_hoy(fichero):
+    flujo = json.loads((N8N / fichero).read_text(encoding="utf-8"))
+    assert _settings_que_sobran(flujo) == [], fichero
+    # y la comprobacion caza la que lleva el id de otro workflow
+    con_error = dict(flujo, settings=dict(flujo["settings"],
+                                          errorWorkflow="wf-de-la-instancia"))
+    assert _settings_que_sobran(con_error) == ["errorWorkflow"]
 
 
 @pytest.mark.parametrize("fichero", FLUJOS)
@@ -4172,8 +5538,9 @@ def test_la_cli_da_la_vuelta_a_un_workflow_entero(mn, fichero, tmp_path):
     assert mn.main(valores + ["--retirar",
                               "--entrada", str(tmp_path / "puesto.json"),
                               "--salida", str(tmp_path / "vuelta.json")]) == 0
-    assert (tmp_path / "vuelta.json").read_text(encoding="utf-8") \
+    igual = (tmp_path / "vuelta.json").read_text(encoding="utf-8") \
         == mn.leer(N8N / fichero)
+    assert igual, IGUAL_A_LO_VERSIONADO
 ```
 
 (b) En `tests/test_mantenimiento.py`, tres cambios.
@@ -4618,7 +5985,7 @@ el nombre de un bot entre comillas angulares) pasa a ser:
 ```
 
 En `tests/mantenimiento.mjs`, la línea 146 (el error fabricado de `"Salud del copiloto"`, con una
-IP privada que acaba en `.9`) pasa a ser:
+IP privada) pasa a ser:
 
 ```javascript
     "Salud del copiloto": { error: "connect ECONNREFUSED 172.18.0.2:8000" },
@@ -4684,7 +6051,8 @@ la sección):
 Los tres exports de `n8n/` se versionan con **marcadores** en lugar de los
 valores de la instancia donde corren. Por eso **un export del repositorio ya
 no es idéntico byte a byte al workflow desplegado**: se diferencian en estas
-cadenas, y solo en ellas.
+cadenas y, el de mantenimiento, en el `chat_equipo` del nodo `Configuracion`,
+que en el repositorio va vacío (§5, paso 1).
 
 | Marcador | Qué es en la instancia |
 | :--- | :--- |
@@ -4738,20 +6106,34 @@ Una descarga de n8n trae más de lo que se versiona: el `id` del workflow, su
 (`pinData`) y etiquetas. Identifican la instancia, como el dominio. Al retirar,
 la herramienta se queda con las cinco claves que se versionan (`name`,
 `active`, `nodes`, `connections` y `settings`), escribe el fichero como los de
-`n8n/` y dice qué claves quitó.
+`n8n/` y dice qué claves quitó. Y vacía el `chat_equipo` del workflow de
+mantenimiento, que identifica a una persona: lo dice, sin repetir el valor.
+Por eso, **después de importar ese workflow desde el repositorio hay que
+volver a rellenarlo en n8n** (§5, paso 1): hasta entonces no llega ningún
+aviso.
 
 Después, `git diff n8n/` tiene que enseñar solo lo que se cambió a propósito
 en el workflow, y estas dos pruebas tienen que pasar:
 
 ```powershell
-C:\venv-copiloto\Scripts\python.exe -m pytest tests/test_marcadores_n8n.py tests/test_anonimato.py
+C:\venv-copiloto\Scripts\python.exe -m pytest -rs tests/test_marcadores_n8n.py tests/test_anonimato.py
 ```
 
-La segunda mira el árbol entero contra las huellas: caza lo que la herramienta
-no conoce, como el dominio escrito con otro subdominio o el `id` de una
-credencial que se volvió a crear y no está en `valores.local.json`. Si el
-`git diff` enseña de más, no se versiona hasta entender por qué. Al terminar se
-borra la carpeta temporal.
+La primera caza lo que la herramienta no conoce y tiene forma de
+identificador: el `id` de una credencial que se volvió a crear y no está en
+`valores.local.json` (en los workflows versionados las credenciales solo
+pueden ser marcadores, y cada marcador aparece las veces previstas). La
+herramienta ya se niega a escribir un export así; la prueba es la segunda red,
+para lo que llegue a `n8n/` por otro camino. La
+segunda mira el árbol entero contra las huellas: caza lo que la lista conoce
+y está escrito de otra forma, como el dominio con otro subdominio. En el
+repositorio publicado `huellas.txt` lleva solo la huella del centinela y esa
+parte **se salta** (lo dice el `-rs` de la orden): allí la comprobación del
+árbol es `scripts/verificar_anonimato.py` con las huellas del repositorio de
+desarrollo (`tests/anonimato/README.md`). Ninguna de las dos caza un
+identificador nuevo que nadie haya puesto en la lista: para eso está el
+`git diff`. Si enseña de más, no se versiona hasta entender por qué. Al
+terminar se borra la carpeta temporal.
 
 La primera vez que se exporte un workflow que no se ha desplegado todavía desde
 el repositorio, sus notas llevan aún el texto de antes de los marcadores. En el
@@ -4761,11 +6143,16 @@ versionado: se corrige a mano con el del repositorio, o se despliega antes
 desde el repositorio y se exporta después.
 
 El script se niega —sin escribir nada— si en `valores.local.json` falta un
-marcador, si dos marcadores comparten valor, si al poner los valores la salida
-es el propio fichero de entrada o cae dentro del repositorio, o si tras retirar
-queda algún valor real escrito de otra forma (en mayúsculas, o el dominio sin
-el `https://`); en ese último caso dice la línea, y se corrige a mano. Ningún
-mensaje suyo repite un valor real: dice el marcador y la línea.
+marcador, si dos marcadores comparten valor, si el valor de la URL de n8n lleva
+una ruta, si al poner los valores la salida es el propio fichero de entrada o
+cae dentro del repositorio, o si tras retirar queda algún valor real escrito de
+otra forma (en mayúsculas, o el dominio sin el `https://`); en ese último caso
+dice la línea, y se corrige a mano. Al retirar se niega además si la entrada no
+es UN workflow (la descarga de varios, que es una lista, se pasa de uno en
+uno), y si después de retirar queda una credencial o una URL de webhook que no
+es un marcador: los valores de `valores.local.json` no son los de esa
+descarga. Ningún mensaje suyo repite un valor real: dice el marcador, el nodo o
+la línea.
 ````
 
 - [ ] **Paso 16: Comprobar el manual**
@@ -4859,13 +6246,14 @@ repositorio: el repositorio lleva solo `tests/anonimato/huellas.txt`, con el
 sha256 de cada token.
 
 Esta tarea deja el script, las huellas y todas las pruebas que NO miran el
-árbol de verdad: la suite queda verde. La prueba que exige el árbol limpio,
-`test_el_arbol_esta_limpio`, entra al final de la tarea 6, cuando ya no
-queda nada que quitar; antes fallaría, y tiene que fallar.
+árbol de verdad: la suite queda verde. Las pruebas que exigen el árbol limpio
+entran al final de la tarea 6, cuando ya no queda nada que quitar; antes la
+de las huellas fallaría, y tiene que fallar.
 
 El script es la última barrera antes de publicar, y su primer diseño dejaba
 pasar cosas que se publican. Lo que sigue es el que quedó después de dos
-rondas de revisión; las decisiones de más abajo dicen qué cambió y por qué.
+rondas de revisión y de la tanda de la revisión final (tarea 9); las
+decisiones de más abajo dicen qué cambió y por qué.
 
 **Ficheros:**
 - Crear: `scripts/verificar_anonimato.py`
@@ -4884,13 +6272,15 @@ rondas de revisión; las decisiones de más abajo dicen qué cambió y por qué.
     `VARIABLE_DE_LA_LISTA = "ANONIMATO_LISTA"`, `COPIA`, `INDICE` y `COMMIT`
     (de dónde sale cada hallazgo), `PATRONES_DE_SECRETO`,
     `CONTRASENAS_DE_EJEMPLO`, `FICHEROS_PROHIBIDOS`, `FICHEROS_PERMITIDOS`,
-    `CAMPOS_DEL_COMMIT`.
+    `CAMPOS_DEL_COMMIT`, `CABECERAS_DEL_COMMIT`.
   - `tokens(texto) -> set[str]`, `huella(token) -> str`,
     `leer_huellas(ruta) -> set[str]` (`ValueError` si una línea no es una
     huella), `huellas_de_la_lista(huellas) -> set[str]` (las huellas sin la
     del centinela), `leer_lista(ruta) -> list[str]`,
     `regenerar(lista, destino) -> int` (`ValueError`, sin escribir nada, si
-    una entrada no da exactamente un token).
+    una entrada no da exactamente un token) y
+    `regenerar_solo_centinela(destino) -> int` (el `huellas.txt` del
+    repositorio que se publica).
   - `ficheros_versionados(raiz) -> list[Path]` (rutas absolutas: en un
     repositorio, lo que tiene seguimiento y lo que no lo tiene ni está
     ignorado), `es_texto(ruta) -> bool`, `binarios(raiz) -> list[Path]`.
@@ -4907,17 +6297,24 @@ rondas de revisión; las decisiones de más abajo dicen qué cambió y por qué.
     `correo_de_quien_confirma`, `mensaje`), `linea` (la del mensaje; 0 en los
     demás) y `huella` o `clase`.
   - `verificar_referencias(raiz, huellas) -> list[dict]` con las claves
-    `referencia` (`rama` o `etiqueta`), `nombre` (tapado) y `huella`.
+    `referencia` (`rama` o `etiqueta`), `nombre` (tapado) y `huella` o
+    `clase` (la del secreto).
+  - `cabeceras_del_commit(raiz, revision="HEAD", huellas=None,
+    un_solo_commit=False) -> list[dict]` con las claves `campo` (el NOMBRE
+    de la cabecera), `linea` (0) y `clase` (`cabecera_del_commit`).
   - `commits(raiz) -> int` (los que alcanza cualquier referencia),
     `ramas(raiz) -> int`, `etiquetas(raiz) -> int`.
   - `main(argv=None) -> int` con `--raiz`, `--huellas`, `--commit [REV]`,
-    `--un-solo-commit` (implica `--commit HEAD`), `--regenerar` y `--lista`.
-    Devuelve 0 sin hallazgos; 1 con ellos, si no se recorrió ningún fichero
-    de texto, o (con `SystemExit`) si las huellas son solo la del centinela.
+    `--un-solo-commit` (implica `--commit HEAD`), `--regenerar`, `--lista` y
+    `--solo-centinela` (con `--regenerar` y `--huellas`). Devuelve 0 sin
+    hallazgos; 1 con ellos, si no se recorrió ningún fichero de texto, o
+    (con `SystemExit`) si las huellas son solo la del centinela. Con
+    `--un-solo-commit` da además los hallazgos de clase `huella_publicada`.
 - Produce, en `tests/test_anonimato.py`: `va` (el script cargado por ruta),
   `RAIZ`, `HUELLAS`, `solo_el_centinela(ruta=HUELLAS) -> bool` y
-  `SIN_LA_LISTA` (el motivo con el que se salta lo que exige la lista
-  entera). Los usan las tareas 6 y 7.
+  `SIN_LA_LISTA` (un motivo por cada sitio que se salta con solo el
+  centinela: `"huellas.txt"`, `"arbol"` y `"metadatos"`; cada uno dice lo que
+  de verdad se queda sin verificar). Los usan las tareas 6 y 7.
 
 **Decisiones de esta tarea** (donde el contrato dejaba margen):
 - **Se recorre lo que se publicaría, no lo que hay versionado.** En la raíz
@@ -4935,7 +6332,7 @@ rondas de revisión; las decisiones de más abajo dicen qué cambió y por qué.
 - **El centinela no cuenta en el árbol.** Es público y el spec lo nombra en
   claro, así que su huella, que va siempre en `huellas.txt`, daría un hallazgo
   en el propio spec, en este plan y en la prueba. `huellas_de_la_lista()`
-  la quita, y la usan `test_el_arbol_esta_limpio` y la línea de órdenes. Las
+  la quita, y la usan las pruebas del árbol y la línea de órdenes. Las
   pruebas del centinela usan el conjunto entero sobre un árbol de juguete.
 - **Con solo la huella del centinela no se comprueba nada** (es el
   `huellas.txt` del repositorio que se publica, D9): la línea de órdenes sale
@@ -4957,25 +6354,45 @@ rondas de revisión; las decisiones de más abajo dicen qué cambió y por qué.
   patrones de secretos. Lo mismo el nombre de las ramas y de las etiquetas,
   que se publican con el `push`.
 - **El commit**: autor, quien confirma, sus correos y el mensaje, contra las
-  huellas y contra los patrones de secretos. `--un-solo-commit` exige un
-  commit contando lo que alcanza CUALQUIER referencia, una sola rama y
-  ninguna etiqueta.
+  huellas y contra los patrones de secretos; y sus **cabeceras**: la que no
+  sea `tree`, `author` ni `committer` es un hallazgo, porque una firma lleva
+  el identificador de la clave de quien firma (el commit único se hace con
+  `--no-gpg-sign`). `--un-solo-commit` exige un commit contando lo que
+  alcanza CUALQUIER referencia, una sola rama y ninguna etiqueta.
+- **Las huellas no se publican** (D9). Con `--un-solo-commit`, que es la
+  orden de publicar, una huella de la lista escrita en el árbol es un
+  hallazgo de clase `huella_publicada`: el `huellas.txt` del árbol que se
+  publica lleva solo la del centinela, y se escribe con
+  `--regenerar --solo-centinela`. Sin `--un-solo-commit` no se mira: el árbol
+  de desarrollo lleva su propio `huellas.txt`.
 - **Secretos por patrón**: las clases de `PATRONES_DE_SECRETO` (el token de
-  bot de Telegram, también pegado a `bot` como va en la URL de su API; claves
-  de API; JWT; la cabecera de una clave privada; una cabecera
-  `Authorization` con un valor literal), la contraseña dentro de una URL y la
-  **asignación de un secreto**: una clave que nombra un secreto (`password`,
-  `secret`, `token`, `api_key`, o que acaba en `_key`) con un valor que es un
-  LITERAL que lo parece (8 o más caracteres, con letras y cifras) y no es de
-  ejemplo. No es un literal lo que lleva paréntesis, corchetes o llaves (una
-  llamada, un subíndice, una expresión de n8n) ni una variable. Los patrones
-  se pasan también por la línea con las comillas desescapadas: el texto de
-  un JSON (una celda de un notebook, el código de un nodo de n8n).
+  bot de Telegram, también pegado a `bot` —en cualquier caja— como va en la
+  URL de su API, y con `%3A` en vez de los dos puntos; claves de API; JWT; la
+  cabecera de una clave privada; una cabecera `Authorization` con un valor
+  literal), la contraseña dentro de una URL y la **asignación de un
+  secreto**: una clave que nombra un secreto con un valor que es un LITERAL
+  que lo parece (8 o más caracteres, con letras y cifras) y no es de
+  ejemplo. El NOMBRE de la clave lleva `password`, `passwd`, `secret`,
+  `token` o `api_key`, o acaba en `_KEY` escrito en mayúsculas (la
+  convención de las variables de entorno) o en una de seis terminaciones en
+  minúsculas (`access_key`, `private_key`…): con `_key` a secas saltaban
+  `cache_key` y `primary_key`. El valor ENTRE COMILLAS es una expresión solo
+  si lleva `{{`, `${` o `$(`, o empieza por `=` (una expresión de n8n); el
+  valor SUELTO, si lleva paréntesis, corchetes o llaves; y con subíndice o
+  detrás de una coma, un valor sin comillas es una variable. Los patrones se
+  pasan también por la línea con las comillas desescapadas: el texto de un
+  JSON (una celda de un notebook, el código de un nodo de n8n).
+- **Las líneas larguísimas.** El patrón de las asignaciones es cuadrático en
+  las tiradas largas de letras, puntos y guiones: no se aplica a la línea que
+  no lleva ninguna de sus palabras clave, ni el de la URL a la que no lleva
+  `://`.
 - **Contraseña en URL.** El árbol lleva seis apariciones, todas de ejemplo,
   con tres valores: `prueba`, `clave` y `token`. Los tres entran en
   `CONTRASENAS_DE_EJEMPLO` junto con `cambiar-esto`, `...` y `%s`; además se
   permiten los marcadores entre `<` y `>` y las variables `$X` y `${X}` (con
-  el nombre en mayúsculas). Ningún fichero del árbol hay que cambiarlo por
+  el nombre en mayúsculas). Lo que va detrás de los dos puntos es un puerto y
+  una ruta, y no una contraseña, solo si lo de delante parece un host (lleva
+  un punto, o es `localhost`). Ningún fichero del árbol hay que cambiarlo por
   esto.
 - **Ficheros prohibidos**: `.env` y sus variantes (salvo `.env.ejemplo`),
   ficheros de claves y de credenciales (`FICHEROS_PROHIBIDOS`). No distingue
@@ -5012,8 +6429,9 @@ rondas de revisión; las decisiones de más abajo dicen qué cambió y por qué.
 
 - [ ] **Paso 1: Escribir las pruebas, que fallan**
 
-Crear `tests/test_anonimato.py` con este contenido (todavía sin
-`test_el_arbol_esta_limpio`, que llega en la tarea 6):
+Crear `tests/test_anonimato.py` con este contenido (todavía sin las pruebas
+del árbol, que llegan en la tarea 6, ni las de lo que no es texto, que llegan
+en la 7):
 
 ```python
 """Pruebas del anonimato del repositorio (spec de SP5 §6.1).
@@ -5030,12 +6448,20 @@ Los secretos de ejemplo se COMPONEN al correr (`"sk" + "-" + ...`): este
 fichero tambien se recorre, y un secreto de ejemplo escrito entero haria
 saltar la misma prueba que lo usa.
 """
+import base64
+import binascii
+import codecs
 import hashlib
 import importlib.util
+import io
+import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
+import time
+import zlib
 from pathlib import Path
 
 import pytest
@@ -5058,6 +6484,7 @@ va = _cargar_script()
 
 CENTINELA = "centinelaanonimato7f3a"
 OTRO = "tokendeprueba9z"          # un segundo token inventado, para la CLI
+OTRO_MAS = "segundotoken5q"       # y un tercero
 
 # De donde sale lo que se recorre (clave `origen` de cada hallazgo).
 COPIA, INDICE, COMMIT = "copia de trabajo", "indice", "commit"
@@ -5077,8 +6504,8 @@ def test_tokens_trocea_una_url():
 
 
 def test_tokens_trocea_la_variable_de_la_red():
-    assert va.tokens("name: ${RED_N8N:-x_y_network}") == {
-        "name", "red", "n8n", "x", "y", "network"}
+    assert va.tokens("name: ${RED_N8N:-uno_dos}") == {
+        "name", "red", "n8n", "uno", "dos"}
 
 
 def test_tokens_trocea_una_ruta_de_windows():
@@ -5165,31 +6592,130 @@ def solo_el_centinela(ruta=HUELLAS):
     return va.leer_huellas(ruta) == {va.huella(CENTINELA)}
 
 
-SIN_LA_LISTA = ("huellas.txt lleva solo la huella del centinela (el "
-                "repositorio que se publica, D9): queda sin verificar aqui "
-                "que el arbol no lleva ninguna cadena de la lista. Esa "
-                "comprobacion se hace antes de publicar, con --huellas y las "
-                "huellas del repositorio de desarrollo")
+_SOLO_EL_CENTINELA = ("huellas.txt lleva solo la huella del centinela (el "
+                      "repositorio que se publica, D9): ")
+# Lo que de verdad se queda sin verificar en cada sitio que se salta.
+SIN_LA_LISTA = {
+    "huellas.txt": _SOLO_EL_CENTINELA
+    + "queda sin verificar que huellas.txt lleve la lista entera. En el "
+      "repositorio que se publica es lo que toca; en el de desarrollo, "
+      "falta regenerarlo con --regenerar --lista",
+    "arbol": _SOLO_EL_CENTINELA
+    + "queda sin verificar aqui que el arbol no lleva ninguna cadena de la "
+      "lista (los secretos si se buscan: test_el_arbol_no_lleva_secretos). "
+      "Esa comprobacion se hace antes de publicar, con "
+      "scripts/verificar_anonimato.py, --huellas y las huellas del "
+      "repositorio de desarrollo",
+    "metadatos": _SOLO_EL_CENTINELA
+    + "las claves de los metadatos de las imagenes se han comprobado, pero "
+      "queda sin verificar aqui que sus valores no llevan ninguna cadena de "
+      "la lista. El script no lee las imagenes: esos valores solo los mira "
+      "la revision a mano declarada en tests/anonimato/README.md",
+}
+
+
+def _lleva_el_centinela(ruta):
+    """Sobre un booleano, con mensaje: pytest enseñaria el conjunto de
+    huellas leido (C5)."""
+    leidas = va.leer_huellas(ruta)
+    con_el_centinela = va.huella(CENTINELA) in leidas
+    assert con_el_centinela, (f"{ruta.name} no lleva la huella del "
+                              f"centinela ({len(leidas)} huellas leídas)")
 
 
 def test_el_centinela_esta_en_huellas_txt():
-    assert va.huella(CENTINELA) in va.leer_huellas(HUELLAS)
+    _lleva_el_centinela(HUELLAS)
+
+
+def test_la_prueba_del_centinela_no_ensena_las_huellas(tmp_path):
+    # Como D-9: si falla, pytest enseñaria el conjunto de huellas leido.
+    ruta = tmp_path / "huellas.txt"
+    datos = sorted(va.huella(f"{OTRO}{n}") for n in range(30))
+    ruta.write_text("# cabecera\n" + "\n".join(datos) + "\n",
+                    encoding="utf-8")
+    with pytest.raises(AssertionError) as error:
+        _lleva_el_centinela(ruta)
+    assert "no lleva la huella del centinela" in str(error.value)
+    assert not any(una[:12] in str(error.value) for una in datos)
+
+
+def test_la_cabecera_de_huellas_txt_es_la_que_escribe_el_script():
+    # Quien mantiene la lista regenera huellas.txt y tiene que salir
+    # identico: la cabecera es, letra por letra, la del script (la del
+    # repositorio que se publica, si lleva solo la del centinela).
+    comentarios = [l for l in HUELLAS.read_text(encoding="utf-8-sig")
+                   .splitlines() if l.startswith("#")]
+    esperada = (va.CABECERA_SOLO_CENTINELA if solo_el_centinela()
+                else va.CABECERA)
+    assert comentarios == esperada.splitlines()
+
+
+def test_la_cabecera_dice_como_se_regenera_en_cualquier_consola():
+    # `VARIABLE=valor orden` es de bash: en PowerShell no funciona.
+    assert "--regenerar --lista <lista en claro>" in va.CABECERA
+    assert "ANONIMATO_LISTA=" not in va.CABECERA
+    publica = va.CABECERA_SOLO_CENTINELA
+    assert "repositorio que se publica" in publica
+    assert "a propósito" in publica
+    assert "--regenerar --solo-centinela" in publica
+    assert "huellas del repositorio de desarrollo" in publica
+    assert all(l.startswith("#") for l in publica.splitlines())
+
+
+def _cabecera_y_huellas_ordenadas(ruta):
+    """Lo que se exige a un fichero de huellas. Se lee como `leer_huellas`
+    (admite la marca de orden de bytes). Las aserciones son sobre booleanos,
+    con recuentos: comparar listas enseñaria las huellas si fallase (D-9)."""
+    lineas = ruta.read_text(encoding="utf-8-sig").splitlines()
+    con_cabecera = bool(lineas) and lineas[0].startswith("#")
+    assert con_cabecera, "la primera línea no es un comentario de cabecera"
+    datos = [l for l in lineas if l and not l.startswith("#")]
+    bien_formadas = all(len(l) == 64 and set(l) <= set("0123456789abcdef")
+                        for l in datos)
+    assert bien_formadas, "hay líneas que no son huellas"
+    ordenadas = datos == sorted(set(datos))
+    assert ordenadas, (f"{len(datos)} líneas, {len(set(datos))} distintas: "
+                       "van ordenadas y sin repetir")
+    leidas = va.leer_huellas(ruta)
+    iguales = set(datos) == leidas
+    assert iguales, f"{len(leidas)} huellas leídas frente a {len(datos)} líneas"
 
 
 def test_huellas_txt_lleva_cabecera_y_huellas_ordenadas_sin_repetir():
-    lineas = HUELLAS.read_text(encoding="utf-8").splitlines()
-    assert lineas[0].startswith("#")
-    datos = [l for l in lineas if l and not l.startswith("#")]
-    assert all(len(l) == 64 and set(l) <= set("0123456789abcdef")
-               for l in datos)
-    assert datos == sorted(set(datos))
-    assert set(datos) == va.leer_huellas(HUELLAS)
+    _cabecera_y_huellas_ordenadas(HUELLAS)
 
 
-@pytest.mark.skipif(solo_el_centinela(), reason=SIN_LA_LISTA)
+def test_la_cabecera_se_lee_con_la_marca_de_orden_de_bytes(tmp_path):
+    # Como `leer_huellas`: un huellas.txt guardado con marca de orden de
+    # bytes (el editor de alguien, PowerShell) vale igual.
+    ruta = _huellas_de_juguete(tmp_path)
+    ruta.write_bytes(codecs.BOM_UTF8 + ruta.read_bytes())
+    _cabecera_y_huellas_ordenadas(ruta)
+
+
+@pytest.mark.parametrize("estropeo", ["desordenadas", "repetida"])
+def test_la_prueba_de_la_cabecera_no_ensena_las_huellas(tmp_path, estropeo):
+    # Si falla, dice cuantas lineas y cuantas distintas: nunca las huellas
+    # (D-9), que pytest enseñaria al comparar dos listas.
+    ruta = tmp_path / "huellas.txt"
+    datos = sorted(va.huella(f"{OTRO}{n}") for n in range(30))
+    datos = datos[::-1] if estropeo == "desordenadas" else datos + datos[:1]
+    ruta.write_text("# cabecera\n" + "\n".join(datos) + "\n",
+                    encoding="utf-8")
+    with pytest.raises(AssertionError) as error:
+        _cabecera_y_huellas_ordenadas(ruta)
+    mensaje = str(error.value)
+    assert {"desordenadas": "30 líneas, 30 distintas",
+            "repetida": "31 líneas, 30 distintas"}[estropeo] in mensaje
+    assert not any(una[:12] in mensaje for una in datos)
+
+
+@pytest.mark.skipif(solo_el_centinela(), reason=SIN_LA_LISTA["huellas.txt"])
 def test_huellas_txt_lleva_mas_que_el_centinela():
-    # Antes era parte de la prueba de arriba («len(datos) > 1»).
-    assert len(va.leer_huellas(HUELLAS)) > 1, "falta regenerar"
+    # Antes era parte de la prueba de arriba («len(datos) > 1»). Sobre un
+    # booleano: pytest enseñaria el conjunto leido.
+    mas_que_el_centinela = len(va.leer_huellas(HUELLAS)) > 1
+    assert mas_que_el_centinela, "falta regenerar"
 
 
 def test_solo_el_centinela_reconoce_el_fichero_del_repositorio_publico(
@@ -5285,7 +6811,7 @@ def test_regenerar_escribe_las_huellas_ordenadas_y_la_del_centinela(tmp_path):
     texto = destino.read_text(encoding="utf-8")
     datos = [l for l in texto.splitlines() if l and not l.startswith("#")]
     assert datos == sorted(esperadas)
-    assert texto.startswith("#")
+    assert texto.startswith(va.CABECERA)
     assert "\r" not in destino.read_bytes().decode("utf-8")
     # Ningun token en claro, salvo el centinela, que es publico y la cabecera
     # lo nombra. (La huella de un token corto se adivina probando: en el
@@ -5308,9 +6834,18 @@ def _arbol_limpio(raiz):
     return raiz
 
 
+def _donde(hallazgos):
+    """Fichero y linea de cada hallazgo: lo que dice una asercion que falla
+    con las huellas de verdad (pytest enseñaria la huella entera, C5)."""
+    return f"{len(hallazgos)} hallazgos: " + ", ".join(
+        f"{h['fichero']}:{h['linea']}" for h in hallazgos)
+
+
 def test_un_arbol_limpio_no_da_hallazgos(tmp_path):
     raiz = _arbol_limpio(tmp_path / "arbol")
-    assert va.buscar_huellas(raiz, va.leer_huellas(HUELLAS)) == []
+    hallazgos = va.buscar_huellas(raiz, va.leer_huellas(HUELLAS))
+    limpio = hallazgos == []
+    assert limpio, _donde(hallazgos)
     assert va.buscar_secretos(raiz) == []
 
 
@@ -5319,8 +6854,39 @@ def test_detecta_el_centinela_dentro_del_recorrido(tmp_path):
     (raiz / "docs" / "nota.md").write_text(
         f"primera\nsegunda con {CENTINELA}.\n", encoding="utf-8")
     hallazgos = va.buscar_huellas(raiz, va.leer_huellas(HUELLAS))
-    assert hallazgos == [{"fichero": "docs/nota.md", "linea": 2,
-                          "huella": va.huella(CENTINELA), "origen": COPIA}]
+    solo_el_centinela_en_la_nota = hallazgos == [
+        {"fichero": "docs/nota.md", "linea": 2,
+         "huella": va.huella(CENTINELA), "origen": COPIA}]
+    assert solo_el_centinela_en_la_nota, _donde(hallazgos)
+
+
+# A2: cada asercion sobre las huellas de HUELLAS que se paso a booleano (C5),
+# con un huellas.txt de juguete que lleva la huella de `ejemplo`, un token
+# del contenido del arbol de juguete (linea 3 de `docs/guia.md`; no de un
+# nombre, que saldria tapado por el principio de su huella): la prueba
+# falla, y su mensaje no lleva nada de esa huella. Con la forma vieja,
+# pytest la enseñaria entera.
+@pytest.mark.parametrize("llamar, esperado", [
+    pytest.param(lambda carpeta: test_el_centinela_esta_en_huellas_txt(),
+                 "no lleva la huella del centinela", id="el_centinela_esta"),
+    pytest.param(lambda carpeta: test_huellas_txt_lleva_mas_que_el_centinela(),
+                 "falta regenerar", id="mas_que_el_centinela"),
+    pytest.param(lambda carpeta: test_un_arbol_limpio_no_da_hallazgos(carpeta),
+                 "1 hallazgos: docs/guia.md:3", id="arbol_limpio"),
+    pytest.param(
+        lambda carpeta: test_detecta_el_centinela_dentro_del_recorrido(carpeta),
+        "1 hallazgos: docs/guia.md:3", id="centinela_en_el_recorrido"),
+])
+def test_las_aserciones_sobre_huellas_txt_no_ensenan_huellas(
+        tmp_path, monkeypatch, llamar, esperado):
+    de_juguete = tmp_path / "huellas.txt"
+    de_juguete.write_text("# de juguete\n" + va.huella("ejemplo") + "\n",
+                          encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "HUELLAS", de_juguete)
+    with pytest.raises(AssertionError) as error:
+        llamar(tmp_path / "prueba")
+    assert esperado in str(error.value)
+    assert va.huella("ejemplo")[:8] not in str(error.value)
 
 
 def test_lo_detecta_con_mayusculas_tildes_y_pegado_a_separadores(tmp_path):
@@ -5475,6 +7041,10 @@ def _git(raiz, *argumentos, **entorno):
 def _repositorio(tmp_path):
     raiz = _arbol_limpio(tmp_path / "repo")
     _git(raiz, "init", "-q")
+    # Una carpeta temporal larga no hace fallar las pruebas de nombres largos
+    # (una rama con nombre de token, C2): git en Windows, sin esto, no pasa
+    # de 260 caracteres.
+    _git(raiz, "config", "core.longpaths", "true")
     _git(raiz, "add", "-A")
     return raiz
 
@@ -5774,6 +7344,83 @@ def test_verificar_commit_mira_autor_quien_confirma_y_mensaje(tmp_path):
     assert va.verificar_commit(raiz, "HEAD~1", huellas=huellas) == []
 
 
+@hay_git
+def test_una_revision_que_no_existe_no_saca_el_token(tmp_path):
+    raiz = _repositorio(tmp_path)
+    _git(raiz, "commit", "-q", "-m", "arbol")
+    huellas = {va.huella(OTRO)}
+    for funcion in (va.verificar_commit, va.cabeceras_del_commit):
+        with pytest.raises(SystemExit) as error:
+            funcion(raiz, f"inexistente-{OTRO}", huellas=huellas)
+        assert OTRO not in str(error.value).lower()
+        assert "inexistente-<huella-" in str(error.value)
+
+
+@hay_git
+def test_la_rama_de_un_repositorio_sin_commits_tambien_se_mira(tmp_path):
+    # `git init` y nada mas: la rama a la que va HEAD aun no existe como
+    # referencia, pero su nombre se publica con el primer push.
+    raiz = _arbol_limpio(tmp_path / "repo")
+    _git(raiz, "init", "-q")
+    _git(raiz, "symbolic-ref", "HEAD", f"refs/heads/informe-{OTRO}")
+    tapada = f"informe-<huella-{va.huella(OTRO)[:12]}>"
+    assert va.verificar_referencias(raiz, {va.huella(OTRO)}) == [
+        {"referencia": "rama", "nombre": tapada, "huella": va.huella(OTRO)}]
+
+
+def _commit_a_mano(raiz, *cabeceras_de_mas):
+    """Apunta HEAD a un commit escrito a mano (`git hash-object`) con el
+    arbol de HEAD, un autor neutro y las cabeceras que se pasen: asi se
+    prueba un commit firmado sin ninguna clave."""
+    arbol = _git(raiz, "rev-parse", "HEAD^{tree}").strip()
+    firma = "Autor Neutro <autor@ejemplo.test> 1700000000 +0000"
+    crudo = raiz.parent / "commit-a-mano.txt"
+    crudo.write_bytes((f"tree {arbol}\nauthor {firma}\ncommitter {firma}\n"
+                       + "".join(cabeceras_de_mas)
+                       + "\narbol escrito a mano\n").encode("utf-8"))
+    sha = _git(raiz, "hash-object", "-t", "commit", "-w", str(crudo)).strip()
+    _git(raiz, "update-ref", "HEAD", sha)
+
+
+@hay_git
+def test_una_cabecera_de_mas_en_el_commit_es_un_hallazgo(tmp_path):
+    raiz = _repositorio(tmp_path)
+    _git(raiz, "commit", "-q", "-m", "arbol")
+    huellas = str(_huellas_de_juguete(tmp_path))
+    firma = ("gpgsig -----BEGIN PGP SIGNATURE-----\n \n"
+             " firma de juguete\n -----END PGP SIGNATURE-----\n")
+    _commit_a_mano(raiz, firma)
+    assert va.cabeceras_del_commit(raiz, "HEAD", huellas=set()) == [
+        {"campo": "gpgsig", "linea": 0, "clase": "cabecera_del_commit"}]
+    codigo, salida = _cli("--raiz", str(raiz), "--huellas", huellas,
+                          "--commit")
+    assert codigo == 1
+    assert "commit HEAD: gpgsig: cabecera_del_commit" in salida
+    assert "juguete" not in salida and "PGP" not in salida
+
+    _commit_a_mano(raiz)                        # el mismo, sin la firma
+    assert va.cabeceras_del_commit(raiz, "HEAD", huellas=set()) == []
+    codigo, salida = _cli("--raiz", str(raiz), "--huellas", huellas,
+                          "--commit")
+    assert codigo == 0, salida
+    assert "commit HEAD: 0" in salida
+
+
+@hay_git
+def test_con_un_solo_commit_un_padre_es_una_cabecera_de_mas(tmp_path):
+    # Un commit con padre no es el unico: con --un-solo-commit, `parent` es
+    # un hallazgo; con --commit a secas, no (el repositorio de desarrollo).
+    raiz = _repositorio(tmp_path)
+    _git(raiz, "commit", "-q", "-m", "uno")
+    assert va.cabeceras_del_commit(raiz, huellas=set(),
+                                   un_solo_commit=True) == []
+    _git(raiz, "commit", "-q", "--allow-empty", "-m", "dos")
+    assert va.cabeceras_del_commit(raiz, huellas=set()) == []
+    assert va.cabeceras_del_commit(raiz, huellas=set(),
+                                   un_solo_commit=True) == [
+        {"campo": "parent", "linea": 0, "clase": "cabecera_del_commit"}]
+
+
 # --------------------------------------------------------------------------
 # Secretos. Se componen al correr: ver el docstring del fichero.
 # --------------------------------------------------------------------------
@@ -5803,6 +7450,14 @@ def _secretos():
 
 def _token_de_bot(cifras="123456789"):
     return cifras + ":" + "AAH" + "x" * 32
+
+
+# Valores de juguete con forma de secreto. Sin la clave delante: la linea que
+# los define no es una asignacion.
+_LITERAL = "a1B2c3D4" + "e5F6g7H8"
+_CON_LLAVES = "S3cr{" + "eta}9x"
+_CON_CORCHETES = "Ab[12]" + "cdefg"
+_CON_PARENTESIS = "Kq9)" + "w2Lm4z"
 
 
 # Otras formas de las mismas clases: (id de la prueba, clase, secreto).
@@ -5862,6 +7517,39 @@ _VARIANTES = [
     ("valor_por_defecto_de_una_variable", "asignacion_de_secreto",
      "COPILOTO_BD_PASS" + "WORD: ${COPILOTO_BD_PASSWORD:-" + "a1B2c3D4e5F6g7H8"
      + "}"),
+    # A1: la terminacion `_KEY` cuenta escrita en mayusculas; en minusculas,
+    # solo con unos pocos nombres delante.
+    ("key_en_mayusculas", "asignacion_de_secreto",
+     "KAGGLE" + "_KEY=" + _LITERAL),
+    ("access_key_en_un_compose", "asignacion_de_secreto",
+     "AWS_ACCESS" + "_KEY: " + _LITERAL),
+    ("private_key_en_minusculas", "asignacion_de_secreto",
+     "private" + '_key = "' + _LITERAL + '"'),
+    ("signing_key_en_minusculas", "asignacion_de_secreto",
+     "signing" + "_key: '" + _LITERAL + "'"),
+    # A2: entre comillas, un parentesis, un corchete o una llave no hacen
+    # una expresion (regresion de la ronda 2).
+    ("entre_comillas_con_llaves", "asignacion_de_secreto",
+     "pass" + 'word = "' + _CON_LLAVES + '"'),
+    ("entre_comillas_con_corchetes_en_json", "asignacion_de_secreto",
+     '"pass' + 'word": "' + _CON_CORCHETES + '"'),
+    ("entre_comillas_con_parentesis", "asignacion_de_secreto",
+     "PASS" + "WORD: '" + _CON_PARENTESIS + "'"),
+    # A4: lo de antes de los dos puntos no parece un host, asi que no es un
+    # puerto y una ruta.
+    ("url_con_contrasena_que_empieza_por_cifras", "contrasena_en_url",
+     "postgresql://u" + ":" + "2024/Secreta9x" + "@" + "host/base"),
+    # A5: `Bot` en mayusculas y los dos puntos escapados.
+    ("telegram_con_bot_capitalizado", "token_de_bot_de_telegram",
+     "https://api.telegram.org/Bot" + _token_de_bot() + "/getMe"),
+    ("telegram_con_bot_en_mayusculas", "token_de_bot_de_telegram",
+     "https://api.telegram.org/BOT" + _token_de_bot() + "/getMe"),
+    ("telegram_con_los_dos_puntos_escapados", "token_de_bot_de_telegram",
+     _token_de_bot().replace(":", "%3A")),
+    ("telegram_con_los_dos_puntos_escapados_en_minusculas",
+     "token_de_bot_de_telegram",
+     "https://api.telegram.org/bot" + _token_de_bot().replace(":", "%3a")
+     + "/getMe"),
 ]
 
 
@@ -5952,6 +7640,62 @@ def test_lo_que_este_proyecto_escribe_de_tokens_y_contrasenas_no_salta(
         "https://ejemplo.test:8443/paquete/@ambito/x",
     ]) + "\n", encoding="utf-8")
     assert va.buscar_secretos(raiz) == []
+
+
+@pytest.mark.parametrize("linea", [
+    # A1: una clave que acaba en `_key` en minusculas no nombra un secreto,
+    # salvo unas pocas (`private_key`, `access_key`...).
+    pytest.param('cache_key = "modelo_v2_2026"', id="cache_key"),
+    pytest.param('primary_key="id_consulta_01"', id="primary_key"),
+    pytest.param('model_key = "densenet121"', id="model_key"),
+    pytest.param('sort_key = "fecha_2026"', id="sort_key"),
+    pytest.param('{"cache_key": "modelo_v2_2026"}', id="cache_key_en_json"),
+    # A2: una expresion sigue sin ser un literal: suelta, con parentesis,
+    # corchetes o llaves; entre comillas, con `{{`, `${`, `$(` o `=` delante.
+    pytest.param("token = partes[1]", id="subindice_suelto"),
+    pytest.param("token = sys.argv[1]", id="argumento_suelto"),
+    pytest.param('"token": "={{ $env.X_2 }}"', id="expresion_de_n8n"),
+    pytest.param('"secret": "={{ $credentials.x1 }}"',
+                 id="credencial_de_n8n"),
+    pytest.param('password = "${CLAVE_2}"', id="variable_entre_comillas"),
+    pytest.param('password = "$(Read-Host clave_2)"',
+                 id="orden_entre_comillas"),
+    pytest.param("Authorization: Bearer <TOKEN_DEL_BOT>", id="marcador"),
+    # A3: con subindice o detras de una coma, el valor sin comillas es una
+    # variable.
+    pytest.param('os.environ["X_TOKEN"] = variable2', id="subindice_variable"),
+    pytest.param('setenv("X_PASSWORD", valor_2)', id="coma_variable"),
+    pytest.param('setenv("X_PASSWORD", variable2, prepend=None)',
+                 id="coma_variable_y_otro_argumento"),
+    # A4: un host (con punto, o localhost), un puerto y una ruta con arroba.
+    pytest.param("https://ejemplo.test:8443/ruta/@ambito", id="puerto_y_ruta"),
+    pytest.param("http://localhost:8000/x@y", id="localhost"),
+])
+def test_estas_formas_no_son_un_secreto(linea):
+    assert va._clases_de_secreto(linea) == []
+
+
+# A7: el patron de las asignaciones es cuadratico en las tiradas de letras,
+# cifras, puntos y guiones; no se aplica a la linea que no lleva ninguna de
+# sus palabras clave (ni el de la URL a la que no lleva `://`).
+@pytest.mark.parametrize("linea", [
+    pytest.param("-" * 100_000, id="guiones"),
+    pytest.param("uno.dos.tres.cuatro." * 5_000, id="palabras_con_puntos"),
+])
+def test_una_linea_larguisima_no_cuesta_segundos(linea):
+    assert len(linea) == 100_000
+    inicio = time.perf_counter()
+    va._clases_de_secreto(linea)
+    assert time.perf_counter() - inicio < 2
+
+
+def test_un_secreto_al_final_de_una_linea_larga_sigue_saltando():
+    relleno = "-" * 2_000 + " "
+    assert va._clases_de_secreto(relleno + "PASS" + "WORD=" + _LITERAL) == [
+        "asignacion_de_secreto"]
+    assert va._clases_de_secreto(
+        relleno + "postgresql://u" + ":" + "S3creta9x" + "@" + "bd.ejemplo.test"
+    ) == ["contrasena_en_url"]
 
 
 def test_el_env_de_ejemplo_se_permite(tmp_path):
@@ -6228,6 +7972,24 @@ def test_los_nombres_de_ramas_y_etiquetas_se_comparan_con_las_huellas(
 
 
 @hay_git
+def test_un_secreto_en_el_nombre_de_una_rama_es_un_hallazgo(tmp_path):
+    # Un nombre de rama no admite `:`, pero si el token con `%3A`.
+    raiz = _repositorio(tmp_path)
+    _git(raiz, "commit", "-q", "-m", "arbol")
+    bot = _token_de_bot().replace(":", "%3A")
+    _git(raiz, "branch", "-m", "bot" + bot)
+    assert va.verificar_referencias(raiz, set()) == [
+        {"referencia": "rama", "nombre": "bot<secreto>",
+         "clase": "token_de_bot_de_telegram"}]
+    codigo, salida = _cli("--raiz", str(raiz),
+                          "--huellas", str(_huellas_de_juguete(tmp_path)),
+                          "--commit", "HEAD")
+    assert codigo == 1
+    assert "rama bot<secreto>: token_de_bot_de_telegram" in salida
+    assert bot not in salida and bot[-35:] not in salida
+
+
+@hay_git
 def test_un_secreto_en_el_commit_es_un_hallazgo(tmp_path):
     raiz = _repositorio(tmp_path)
     huellas = str(_huellas_de_juguete(tmp_path))
@@ -6276,6 +8038,127 @@ def test_un_solo_commit_mira_el_arbol_del_commit(tmp_path, capsys):
     assert "etiquetas: 0" in salida
 
 
+def _sin_ninguna_huella(salida, huellas):
+    for una in huellas:
+        assert una[:12] not in salida
+
+
+@hay_git
+def test_un_solo_commit_no_publica_las_huellas_de_la_lista(
+        tmp_path, tmp_path_factory, capsys):
+    # V-1: el arbol que se publica lleva un huellas.txt con solo la del
+    # centinela (D9). Publicar el del repositorio de desarrollo es publicar,
+    # para quien tenga un diccionario, buena parte de la lista.
+    huellas = tmp_path / "huellas.txt"
+    va.regenerar([OTRO, OTRO_MAS], huellas)     # dos de juguete y el centinela
+    todas = va.leer_huellas(huellas)
+    # Bajo una carpeta de nombre corto (`v0`, no la de la prueba, de 31
+    # caracteres): el fichero con nombre de huella, de 67, cabe en los 260
+    # de Windows aunque la carpeta temporal sea larga (A3).
+    raiz = _repositorio(tmp_path_factory.mktemp("v"))
+    publicado = raiz / "tests" / "anonimato" / "huellas.txt"
+    publicado.parent.mkdir(parents=True)
+    shutil.copyfile(huellas, publicado)
+    _git(raiz, "add", "-A")
+    _git(raiz, "commit", "-q", "-m", "arbol")
+    orden = ["--raiz", str(raiz), "--huellas", str(huellas),
+             "--un-solo-commit"]
+
+    assert va.main(orden) == 1
+    salida = capsys.readouterr().out
+    de_la_lista = [n for n, linea in enumerate(
+        publicado.read_text(encoding="utf-8").splitlines(), 1)
+        if linea in va.huellas_de_la_lista(todas)]
+    assert len(de_la_lista) == 2                # la del centinela no cuenta
+    for n in de_la_lista:
+        assert f"tests/anonimato/huellas.txt:{n}: huella_publicada" in salida
+    assert "huellas publicadas: 2" in salida
+    assert salida.splitlines()[-1] == "NO publicar: hay hallazgos"
+    _sin_ninguna_huella(salida, todas)
+    # Sin --un-solo-commit no se mira: el repositorio de desarrollo lleva su
+    # propio huellas.txt.
+    assert va.main(orden[:-1]) == 0
+    capsys.readouterr()
+
+    # Con solo la del centinela, como se publica: limpio.
+    assert va.main(["--regenerar", "--solo-centinela",
+                    "--huellas", str(publicado)]) == 0
+    _git(raiz, "add", "-A")
+    _git(raiz, "commit", "-q", "--amend", "-m", "arbol")
+    capsys.readouterr()
+    assert va.main(orden) == 0
+    salida = capsys.readouterr().out
+    assert "huellas publicadas: 0" in salida
+
+    # Una huella de la lista copiada en otro fichero (un informe), o en su
+    # nombre: tambien se publicaria.
+    (raiz / "docs" / "informe.md").write_text(
+        f"# Informe\n\nla huella {va.huella(OTRO).upper()} y nada mas\n",
+        encoding="utf-8")
+    # En la raiz y no en una carpeta: un nombre de 67 caracteres, con una
+    # carpeta temporal larga, pasaria de los 260 de Windows (C2).
+    (raiz / f"{va.huella(OTRO_MAS)}.md").write_text("nada\n",
+                                                    encoding="utf-8")
+    _git(raiz, "add", "-A")
+    _git(raiz, "commit", "-q", "--amend", "-m", "arbol")
+    assert va.main(orden) == 1
+    salida = capsys.readouterr().out
+    assert "docs/informe.md:3: huella_publicada" in salida
+    assert "<huella-publicada>.md:0: huella_publicada" in salida.splitlines()
+    assert "huellas publicadas: 2" in salida
+    _sin_ninguna_huella(salida, todas)
+    _sin_ninguna_huella(salida.lower(), todas)
+
+
+@hay_git
+def test_un_solo_commit_mira_las_huellas_del_mensaje_y_de_las_ramas(
+        tmp_path, capsys):
+    # C6: el mensaje del commit y los nombres de las ramas y de las
+    # etiquetas tambien se publican.
+    huellas = tmp_path / "huellas.txt"
+    va.regenerar([OTRO, OTRO_MAS], huellas)
+    todas = va.leer_huellas(huellas)
+    raiz = _repositorio(tmp_path)
+    _git(raiz, "commit", "-q", "-m", "arbol",
+         "-m", f"la huella {va.huella(OTRO)}")
+    _git(raiz, "branch", "-m", f"informe-{va.huella(OTRO_MAS)}")
+    _git(raiz, "tag", f"v-{va.huella(OTRO)}")
+    orden = ["--raiz", str(raiz), "--huellas", str(huellas)]
+
+    assert va.main(orden + ["--un-solo-commit"]) == 1
+    salida = capsys.readouterr().out
+    assert "commit HEAD: mensaje:3: huella_publicada" in salida
+    assert ("rama informe-<huella-publicada>: huella_publicada"
+            in salida.splitlines())
+    assert ("etiqueta v-<huella-publicada>: huella_publicada"
+            in salida.splitlines())
+    _sin_ninguna_huella(salida, todas)
+    # Con --commit a secas no se miran: el repositorio de desarrollo puede
+    # citar una huella en un commit o en una rama.
+    assert va.main(orden + ["--commit"]) == 0
+    salida = capsys.readouterr().out
+    assert "huella_publicada" not in salida
+    _sin_ninguna_huella(salida, todas)
+
+
+@hay_git
+def test_un_solo_commit_da_por_hallazgo_la_cabecera_parent(tmp_path, capsys):
+    # Por la linea de ordenes: `main` pasa --un-solo-commit a las cabeceras.
+    # En un clon superficial el recuento de commits da 1 y el padre es lo
+    # unico que avisa.
+    raiz = _repositorio(tmp_path)
+    huellas = str(_huellas_de_juguete(tmp_path))
+    _git(raiz, "commit", "-q", "-m", "uno")
+    _git(raiz, "commit", "-q", "--allow-empty", "-m", "dos")
+    assert va.main(["--raiz", str(raiz), "--huellas", huellas,
+                    "--un-solo-commit"]) == 1
+    salida = capsys.readouterr().out
+    assert "commit HEAD: parent: cabecera_del_commit" in salida.splitlines()
+    assert va.main(["--raiz", str(raiz), "--huellas", huellas,
+                    "--commit"]) == 0
+    assert "cabecera_del_commit" not in capsys.readouterr().out
+
+
 def test_la_cli_regenera_desde_la_variable_o_desde_lista(tmp_path, capsys,
                                                         monkeypatch):
     lista = tmp_path / "lista.txt"
@@ -6322,6 +8205,44 @@ def test_la_cli_sin_lista_dice_que_variable_falta(tmp_path, monkeypatch):
         va.main(["--regenerar", "--huellas", str(tmp_path / "h.txt")])
     assert "ANONIMATO_LISTA" in str(salida.value)
     assert not (tmp_path / "h.txt").exists()
+
+
+def test_la_cli_escribe_el_huellas_txt_del_repositorio_que_se_publica(
+        tmp_path, monkeypatch, capsys):
+    # Sin lista: con --solo-centinela no se lee ni --lista ni la variable
+    # (aqui apunta a un fichero que no existe).
+    monkeypatch.setenv("ANONIMATO_LISTA", str(tmp_path / "no-existe.txt"))
+    destino = tmp_path / "publico" / "huellas.txt"
+    assert va.main(["--regenerar", "--solo-centinela",
+                    "--huellas", str(destino)]) == 0
+    assert "1 huella escrita" in capsys.readouterr().out
+    assert va.leer_huellas(destino) == {va.huella(CENTINELA)}
+    assert solo_el_centinela(destino)
+    _cabecera_y_huellas_ordenadas(destino)
+    # Con SU cabecera, que dice que lleva solo la del centinela a proposito.
+    assert destino.read_text(encoding="utf-8") == (
+        va.CABECERA_SOLO_CENTINELA + va.huella(CENTINELA) + "\n")
+
+
+def test_la_cli_con_solo_centinela_no_escribe_donde_no_se_le_dice(
+        tmp_path, monkeypatch):
+    # Sin --huellas escribiria encima del huellas.txt de este repositorio,
+    # que en el de desarrollo lleva la lista entera (aqui, uno de juguete que
+    # no existe); con --lista, o sin --regenerar, la orden no tiene sentido.
+    # Ninguna escribe nada.
+    por_defecto = tmp_path / "por_defecto" / "huellas.txt"
+    monkeypatch.setattr(va, "HUELLAS_POR_DEFECTO", por_defecto)
+    lista = tmp_path / "lista.txt"
+    lista.write_text("[huellas]\nuno\n", encoding="utf-8")
+    destino = tmp_path / "huellas.txt"
+    for orden in (["--regenerar", "--solo-centinela"],
+                  ["--regenerar", "--solo-centinela", "--lista", str(lista),
+                   "--huellas", str(destino)],
+                  ["--solo-centinela", "--huellas", str(destino)]):
+        with pytest.raises(SystemExit) as error:
+            va.main(orden)
+        assert "--solo-centinela" in str(error.value)
+        assert not por_defecto.exists() and not destino.exists()
 ```
 
 - [ ] **Paso 2: Correrlas y ver el fallo**
@@ -6349,14 +8270,16 @@ Crear `scripts/verificar_anonimato.py`:
 Uso, desde la raiz del repositorio:
 
     python scripts/verificar_anonimato.py
-    python scripts/verificar_anonimato.py --raiz <arbol> --commit --un-solo-commit
-    ANONIMATO_LISTA=<lista en claro> python scripts/verificar_anonimato.py --regenerar
+    python scripts/verificar_anonimato.py --raiz <arbol> --huellas <huellas> --un-solo-commit
+    python scripts/verificar_anonimato.py --regenerar --lista <lista en claro>
+    python scripts/verificar_anonimato.py --regenerar --solo-centinela --huellas <destino>
 
 Mira lo que se publicaria: la copia de trabajo (en un repositorio, lo que
 tiene seguimiento y lo que no lo tiene ni esta ignorado), lo preparado en el
 indice que no es lo que hay en disco y, con --commit (o --un-solo-commit,
-que lo implica), el arbol de ese commit, su autor, quien lo confirma y su
-mensaje, y los nombres de las ramas y de las etiquetas. Busca dos cosas:
+que lo implica), el arbol de ese commit, su autor, quien lo confirma, su
+mensaje y sus cabeceras, y los nombres de las ramas y de las etiquetas.
+Busca:
 
 1. HUELLAS. La lista de cadenas que identifican al cliente, a la empresa, a la
    maquina o a los integrantes NO vive en el repositorio. El repositorio lleva
@@ -6366,20 +8289,37 @@ mensaje, y los nombres de las ramas y de las etiquetas. Busca dos cosas:
    tildes, particion por todo lo que no sea [a-z0-9], tambien desescapado) y
    se compara huella con huella.
 2. SECRETOS, por patron: token de bot de Telegram, claves de API, claves
-   privadas, cabeceras Authorization, asignaciones de contrasenas y tokens,
-   contrasena dentro de una URL, y ficheros que no deben viajar (`.env`,
-   claves). Un enlace simbolico o un submodulo es un hallazgo `no_recorrido`.
+   privadas, cabeceras Authorization, contrasena dentro de una URL,
+   asignaciones de contrasenas, tokens y claves, y ficheros que no deben
+   viajar (`.env`, claves). Una asignacion se reconoce por el NOMBRE de la
+   clave (lleva `password`, `passwd`, `secret`, `token` o `api_key`; o acaba
+   en `_KEY` escrito en mayusculas, o en `access_key`, `private_key`,
+   `encryption_key`, `signing_key`, `client_key` o `master_key`) y cuenta si
+   su valor es un literal con forma de secreto: entre comillas, salvo una
+   expresion (`{{`, `${`, `$(`, o `=` delante); suelto, si no lleva
+   parentesis, corchetes ni llaves; con subindice o detras de una coma, solo
+   entre comillas. Un enlace simbolico o un submodulo es un hallazgo
+   `no_recorrido`. Los nombres de las ramas y de las etiquetas se miran
+   tambien contra estos patrones.
+3. Con --commit, las CABECERAS del commit: la que no sea `tree`, `author` ni
+   `committer` es un hallazgo (una firma lleva el identificador de la clave
+   de quien firma); `parent`, solo con --un-solo-commit.
+4. Con --un-solo-commit (la orden de publicar), las HUELLAS PUBLICADAS: una
+   huella de la lista escrita en el arbol que se publica, en el commit (su
+   mensaje, su autor, quien lo confirma) o en el nombre de una rama o de una
+   etiqueta. Su `huellas.txt` tiene que llevar solo la del centinela, con
+   su propia cabecera: lo escribe --regenerar --solo-centinela.
 
 Ninguna salida lleva el token ni el secreto en claro: fichero, linea y huella
 o clase. En los nombres (de fichero, de rama, de etiqueta, la revision) el
-token sale tapado por el principio de su huella y el secreto por
-`<secreto>`; las rutas salen relativas a la raiz que se recorre (la de las
-huellas, como se paso).
+token sale tapado por el principio de su huella, el secreto por
+`<secreto>` y una huella de la lista por `<huella-publicada>`; las rutas
+salen relativas a la raiz que se recorre (la de las huellas, como se paso).
 
 Sale con 0 si no hay hallazgos y con 1 si los hay, si no se ha recorrido
-ningun fichero o si las huellas son solo la del centinela. Con binarios sin
-recorrer, la ultima linea no dice «limpio» a secas: se revisan a mano. Lo
-usa `tests/test_anonimato.py`, que lo carga por ruta.
+ningun fichero de texto o si las huellas son solo la del centinela. Con
+binarios sin recorrer, la ultima linea no dice «limpio» a secas: se revisan a
+mano. Lo usa `tests/test_anonimato.py`, que lo carga por ruta.
 """
 import argparse
 import codecs
@@ -6415,7 +8355,18 @@ CABECERA = """\
 # lista negra, que vive FUERA del repositorio. Una por línea, ordenadas.
 # Incluye siempre la del centinela público `centinelaanonimato7f3a`.
 # No se edita a mano. Se regenera con:
-#   ANONIMATO_LISTA=<lista en claro> python scripts/verificar_anonimato.py --regenerar
+#   python scripts/verificar_anonimato.py --regenerar --lista <lista en claro>
+"""
+# La del `huellas.txt` del repositorio que se publica (--solo-centinela).
+CABECERA_SOLO_CENTINELA = """\
+# Huellas del anonimato (spec de SP5 §6.1), del repositorio que se publica.
+# Lleva solo la huella del centinela público `centinelaanonimato7f3a`, y es
+# a propósito: la lista entera de huellas no se publica, porque la huella
+# de un token corto se adivina probando candidatos. La comprobación del
+# árbol se hace antes de publicar, con scripts/verificar_anonimato.py y las
+# huellas del repositorio de desarrollo.
+# No se edita a mano. Se escribe con:
+#   python scripts/verificar_anonimato.py --regenerar --solo-centinela --huellas <este fichero>
 """
 
 
@@ -6555,10 +8506,22 @@ def regenerar(lista, destino):
             f"{len(malas)} entradas de [huellas] no dan exactamente un token "
             f"(números de entrada: {', '.join(map(str, malas))}); pon un "
             "token por línea")
+    return _escribir_huellas(todas, destino)
+
+
+def regenerar_solo_centinela(destino):
+    """Escribe el `huellas.txt` del repositorio que se publica (D9): su
+    cabecera (CABECERA_SOLO_CENTINELA) y la huella del centinela, sin
+    lista."""
+    return _escribir_huellas({huella(CENTINELA)}, destino,
+                             CABECERA_SOLO_CENTINELA)
+
+
+def _escribir_huellas(todas, destino, cabecera=CABECERA):
     destino = Path(destino)
     destino.parent.mkdir(parents=True, exist_ok=True)
     with open(destino, "w", encoding="utf-8", newline="\n") as salida:
-        salida.write(CABECERA)
+        salida.write(cabecera)
         for una in sorted(todas):
             salida.write(una + "\n")
     return len(todas)
@@ -6899,10 +8862,52 @@ def buscar_huellas(raiz, huellas, commit=None):
     return _huellas_en(_piezas(raiz, commit, huellas), huellas)
 
 
+# Un token de 64 hexadecimales: lo que es una huella escrita en un fichero.
+TOKEN_HEXADECIMAL = re.compile(r"(?<![A-Za-z0-9])[0-9A-Fa-f]{64}(?![A-Za-z0-9])")
+
+
+def _huellas_escritas(texto, huellas):
+    """Las huellas de `huellas` escritas en el texto, como token suelto de
+    64 hexadecimales (en mayusculas o en minusculas)."""
+    return [m.group().lower() for m in TOKEN_HEXADECIMAL.finditer(texto)
+            if m.group().lower() in huellas]
+
+
+def _huellas_publicadas_en(piezas, huellas):
+    """Las huellas de la lista (`huellas`, ya sin la del centinela) escritas
+    en lo que se publica: fichero, linea, clase `huella_publicada` y origen.
+    La huella no sale nunca.
+
+    Solo para el arbol que se publica (--un-solo-commit): el de desarrollo
+    lleva su propio `huellas.txt` con la lista entera. Publicarlo es
+    publicar, para quien tenga un diccionario, buena parte de la lista (D9).
+    El mensaje del commit y los nombres de las ramas y de las etiquetas se
+    miran igual (`verificar_commit`, `verificar_referencias`).
+    """
+    huellas = set(huellas)
+    hallazgos = []
+
+    def mirar(texto, fichero, linea, origen):
+        for _una in _huellas_escritas(texto, huellas):
+            hallazgos.append({"fichero": fichero, "linea": linea,
+                              "clase": "huella_publicada", "origen": origen})
+
+    for pieza in piezas:
+        fichero = _publicable(pieza.nombre, huellas)
+        if pieza.primera:
+            mirar(pieza.nombre, fichero, 0, pieza.origen)
+        if pieza.texto is None:
+            continue
+        for n, linea in enumerate(pieza.texto.splitlines(), 1):
+            mirar(linea, fichero, n, pieza.origen)
+    return hallazgos
+
+
 def _tapar_tokens(parte, huellas):
     """El componente con cada token de la lista cambiado por `<huella-...>`,
     el principio de su huella; lo demas se queda (`informe-<huella-...>.md`),
-    para que dos nombres distintos no salgan iguales.
+    para que dos nombres distintos no salgan iguales. Un token que ES una
+    huella de la lista pasa a `<huella-publicada>`: no se imprime.
 
     Recorre el texto original: los caracteres que normalizados dan
     `[a-z0-9]` forman el token; los que no dan nada (marcas, formato) van
@@ -6913,8 +8918,12 @@ def _tapar_tokens(parte, huellas):
     def cerrar():
         if tramo:
             una = huella("".join(token))
-            salida.append(f"<huella-{una[:12]}>" if una in huellas
-                          else "".join(tramo))
+            if una in huellas:
+                salida.append(f"<huella-{una[:12]}>")
+            elif "".join(token) in huellas:
+                salida.append("<huella-publicada>")
+            else:
+                salida.append("".join(tramo))
             tramo.clear()
             token.clear()
 
@@ -6957,10 +8966,11 @@ def _publicable(fichero, huellas):
 # Secretos
 # --------------------------------------------------------------------------
 PATRONES_DE_SECRETO = {
-    # Suelto, o pegado a `bot` como va en la URL de la API de Telegram.
+    # Suelto, o pegado a `bot` (o `Bot`, `BOT`) como va en la URL de la API
+    # de Telegram; los dos puntos, tal cual o escapados (`%3A`).
     "token_de_bot_de_telegram": re.compile(
-        r"(?:(?<=bot)|(?<![0-9A-Za-z]))\d{8,12}:[A-Za-z0-9_-]{35}"
-        r"(?![A-Za-z0-9_-])"),
+        r"(?:(?<=[bB][oO][tT])|(?<![0-9A-Za-z]))\d{8,12}(?::|%3[aA])"
+        r"[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])"),
     "clave_de_api_sk": re.compile(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}"),
     "clave_de_api_akia": re.compile(
         r"(?<![A-Z0-9])AKIA[0-9A-Z]{16}(?![0-9A-Z])"),
@@ -6986,10 +8996,14 @@ PATRONES_DE_SECRETO = {
 # Esquema, dos barras, usuario (puede ir vacio), dos puntos, contrasena
 # (puede llevar `/`: la de base64 casi siempre la lleva), arroba y host.
 URL_CON_CONTRASENA = re.compile(
-    r"[A-Za-z][A-Za-z0-9+.-]*://[^\s/:@]*:([^\s@]+)@")
+    r"[A-Za-z][A-Za-z0-9+.-]*://(?P<usuario>[^\s/:@]*):"
+    r"(?P<contrasena>[^\s@]+)@")
 # Lo que en esa forma no es una contrasena sino un puerto y una ruta
-# (`https://ejemplo.test:8443/ruta/@ambito`).
+# (`https://ejemplo.test:8443/ruta/@ambito`): cifras y `/`, detras de algo
+# que parece un host (lleva un punto, o es `localhost`). Detras de un
+# usuario, `u:2024/Secreta9x@host` es una contrasena que empieza por cifras.
 PUERTO_Y_RUTA = re.compile(r"\d{1,5}/.*")
+PARECE_UN_HOST = re.compile(r"(?i)localhost|[^.]+(?:\.[^.]+)+")
 
 # Los valores de ejemplo que se permiten, en una URL o en una asignacion. Las
 # palabras salen del inventario del arbol (28-sep): `prueba` es la del
@@ -7003,20 +9017,38 @@ CONTRASENAS_DE_EJEMPLO = ("prueba", "cambiar-esto", "clave", "token",
 CONTRASENA_MARCADOR = re.compile(
     r"<[^<>:/@]+>|\$[A-Z_][A-Z0-9_]*|\$\{[A-Z_][A-Z0-9_]*[^{}]*\}")
 
-# Una clave que nombra un secreto (lleva `password`, `passwd`, `secret`,
-# `token` o `api_key`, o acaba en `_key`), y su valor: detras de `=` o `:`
-# (tambien con subindice, `os.environ["X_PASSWORD"] = ...`), o, si la clave
-# va entre comillas, detras de una coma (`setenv("X_PASSWORD", ...)`). El
-# valor va entre comillas, es `${...}` entero, o va suelto hasta el primer
-# blanco, comilla, coma o `;`.
+# Una clave que nombra un secreto, y su valor.
+#
+# La clave lleva `password`, `passwd`, `secret`, `token` o `api_key` (sin
+# distinguir mayusculas), o ACABA en `_KEY` escrito en mayusculas (la
+# convencion de las variables de entorno: `KAGGLE_KEY`, `AWS_ACCESS_KEY`)
+# o, en minusculas, en uno de unos pocos nombres (`access_key`,
+# `private_key`, `encryption_key`, `signing_key`, `client_key`,
+# `master_key`). `cache_key`, `primary_key` o `model_key` no nombran un
+# secreto.
+#
+# El valor va detras de `=` o `:`; con subindice
+# (`os.environ["X_PASSWORD"] = ...`, grupo `subindice`); o, si la clave va
+# entre comillas, detras de una coma (`setenv("X_PASSWORD", ...)`, grupo
+# `coma`). Va entre comillas (`doble`, `simple`), es `${...}` entero
+# (`llaves`) o va suelto hasta el primer blanco, comilla, coma o `;`
+# (`suelto`). Con subindice o detras de una coma, solo cuenta entre
+# comillas: suelto es una variable (ver `_secretos_de_la_linea`).
 ASIGNACION = re.compile(
     r"(?i)(?<![A-Za-z0-9_])(?P<comilla>[\"'])?"
     r"[A-Za-z0-9_.-]*(?:(?:password|passwd|secret|token|api[_-]?key)"
-    r"[A-Za-z0-9_.-]*|_key(?![A-Za-z0-9_.-]))"
-    r"(?:[\"']?\s*\]?\s*[:=]|(?(comilla)(?P=comilla)\s*,|(?!)))\s*"
+    r"[A-Za-z0-9_.-]*"
+    r"|(?:(?:access|private|encryption|signing|client|master)_key"
+    r"|(?-i:_KEY))(?![A-Za-z0-9_.-]))"
+    r"(?:[\"']?\s*(?P<subindice>\])?\s*[:=]"
+    r"|(?(comilla)(?P=comilla)\s*(?P<coma>,)|(?!)))\s*"
     r"(?:\"(?P<doble>[^\"]*)\"|'(?P<simple>[^']*)'"
     r"|(?P<llaves>\$\{[^{}]*\})|(?P<suelto>[^\s\"',;]+))")
 VALOR_DE_LA_ASIGNACION = ("doble", "simple", "llaves", "suelto")
+# La linea que no lleva ninguna de estas palabras no puede llevar una
+# asignacion de secreto, y no se le aplica ASIGNACION: en una tirada larga de
+# letras, cifras, puntos y guiones su coste es cuadratico (A7).
+PALABRA_DE_LA_ASIGNACION = re.compile(r"(?i)password|passwd|secret|token|key")
 # Lo que parece un secreto en una asignacion: 8 o mas caracteres, con letras
 # Y cifras. Deja pasar los nombres de variable, las palabras de ejemplo
 # (`cambiar-esto`, `verifica`) y los ids de ejemplo; y tambien, sin remedio,
@@ -7024,8 +9056,11 @@ VALOR_DE_LA_ASIGNACION = ("doble", "simple", "llaves", "suelto")
 LITERAL_QUE_PARECE_SECRETO = re.compile(
     r"(?=.*[A-Za-z])(?=.*[0-9]).{8,}")
 # Una expresion no es un literal: una llamada, un subindice, una expresion
-# de n8n (`={{ ... }}`).
+# de n8n (`={{ ... }}`). Suelta, la delata cualquier parentesis, corchete o
+# llave; entre comillas, solo `{{`, `${`, `$(` o un `=` delante (la de
+# n8n): `"S3cr{eta}9x"` es un literal.
 EXPRESION = re.compile(r"[()\[\]{}]")
+EXPRESION_ENTRE_COMILLAS = re.compile(r"\{\{|\$\{|\$\(|^=")
 # `${NOMBRE:-valor}` (o `-`, `:=`, `=`): lo de detras es un literal.
 CON_VALOR_POR_DEFECTO = re.compile(
     r"\$\{[A-Za-z_][A-Za-z0-9_]*:?[-=](?P<valor>[^{}]*)\}")
@@ -7046,14 +9081,15 @@ def _es_de_ejemplo(contrasena):
             or CONTRASENA_MARCADOR.fullmatch(contrasena) is not None)
 
 
-def _es_un_literal_secreto(valor):
+def _es_un_literal_secreto(valor, entre_comillas=False):
     """El valor de una asignacion es un secreto si es un LITERAL (no una
     variable ni una expresion) que no es de ejemplo y lo parece."""
     por_defecto = CON_VALOR_POR_DEFECTO.fullmatch(valor)
     if por_defecto is not None:
         valor = por_defecto.group("valor")
+    expresion = EXPRESION_ENTRE_COMILLAS if entre_comillas else EXPRESION
     return (LITERAL_QUE_PARECE_SECRETO.fullmatch(valor) is not None
-            and EXPRESION.search(valor) is None
+            and expresion.search(valor) is None
             and not _es_de_ejemplo(valor))
 
 
@@ -7063,15 +9099,23 @@ def _secretos_de_la_linea(linea):
     for clase, patron in PATRONES_DE_SECRETO.items():
         for m in patron.finditer(linea):
             yield clase, m.start(), m.end()
-    for m in URL_CON_CONTRASENA.finditer(linea):
-        contrasena = m.group(1)
-        if not (_es_de_ejemplo(contrasena)
-                or PUERTO_Y_RUTA.fullmatch(contrasena)):
-            yield "contrasena_en_url", m.start(1), m.end(1)
+    if "://" in linea:                  # si no, no hay URL: no se busca (A7)
+        for m in URL_CON_CONTRASENA.finditer(linea):
+            contrasena = m.group("contrasena")
+            puerto = (PUERTO_Y_RUTA.fullmatch(contrasena)
+                      and PARECE_UN_HOST.fullmatch(m.group("usuario")))
+            if not (_es_de_ejemplo(contrasena) or puerto):
+                yield ("contrasena_en_url", m.start("contrasena"),
+                       m.end("contrasena"))
+    if PALABRA_DE_LA_ASIGNACION.search(linea) is None:
+        return
     for m in ASIGNACION.finditer(linea):
         grupo = next(g for g in VALOR_DE_LA_ASIGNACION
                      if m.group(g) is not None)
-        if _es_un_literal_secreto(m.group(grupo)):
+        entre_comillas = grupo in ("doble", "simple")
+        if (m.group("subindice") or m.group("coma")) and not entre_comillas:
+            continue                    # `os.environ["X"] = variable`
+        if _es_un_literal_secreto(m.group(grupo), entre_comillas):
             yield "asignacion_de_secreto", m.start(grupo), m.end(grupo)
 
 
@@ -7163,9 +9207,12 @@ CAMPOS_DEL_COMMIT = ("autor", "correo_de_autor", "quien_confirma",
                      "correo_de_quien_confirma", "mensaje")
 
 
-def verificar_commit(raiz, revision="HEAD", huellas=None):
+def verificar_commit(raiz, revision="HEAD", huellas=None,
+                     un_solo_commit=False):
     """Autor, quien confirma, sus correos y el mensaje, contra las huellas y
-    contra los patrones de secretos.
+    contra los patrones de secretos; con `un_solo_commit` (el commit que se
+    publica), tambien una huella de la lista escrita en ellos
+    (`huella_publicada`, ver `_huellas_publicadas_en`).
 
     Devuelve `campo`, `linea` (la del mensaje; 0 en los demas) y `huella`
     o `clase` (la del secreto). Sin `huellas`, las del repositorio donde
@@ -7192,6 +9239,46 @@ def verificar_commit(raiz, revision="HEAD", huellas=None):
             for clase in _clases_de_secreto(linea):
                 hallazgos.append({"campo": campo, "linea": donde,
                                   "clase": clase})
+            if un_solo_commit:
+                hallazgos += [{"campo": campo, "linea": donde,
+                               "clase": "huella_publicada"}
+                              for _m in _huellas_escritas(linea, huellas)]
+    return hallazgos
+
+
+# Las cabeceras que lleva un commit sin firma: su arbol, su autor y quien lo
+# confirma (y `parent`, si no es el unico).
+CABECERAS_DEL_COMMIT = ("tree", "author", "committer")
+
+
+def cabeceras_del_commit(raiz, revision="HEAD", huellas=None,
+                         un_solo_commit=False):
+    """Las cabeceras del commit en crudo (`git cat-file commit`) que no son
+    las de CABECERAS_DEL_COMMIT: `campo` (el NOMBRE de la cabecera, nunca su
+    valor), `linea` 0 y clase `cabecera_del_commit`.
+
+    Una firma (`gpgsig`) lleva el identificador de la clave de quien firma.
+    `parent` solo es hallazgo con `un_solo_commit`: un commit con padre no es
+    el unico. Sin `huellas`, las del repositorio donde vive el script (solo
+    tapan la revision y los nombres).
+    """
+    if huellas is None:
+        huellas = huellas_de_la_lista(leer_huellas(HUELLAS_POR_DEFECTO))
+    huellas = set(huellas)
+    crudo = _git(raiz, "cat-file", "commit", revision)
+    if crudo is None:
+        raise SystemExit("No se pudo leer el commit "
+                         f"{_publicable(revision, huellas)} del árbol que se "
+                         "comprueba: ¿es un repositorio de git con commits?")
+    permitidas = CABECERAS_DEL_COMMIT + (() if un_solo_commit else ("parent",))
+    hallazgos = []
+    for linea in crudo.split(b"\n\n", 1)[0].split(b"\n"):
+        if not linea or linea.startswith(b" "):     # la continuacion de otra
+            continue
+        nombre = linea.split(b" ", 1)[0].decode("utf-8", errors="replace")
+        if nombre not in permitidas:
+            hallazgos.append({"campo": _publicable(nombre, huellas),
+                              "linea": 0, "clase": "cabecera_del_commit"})
     return hallazgos
 
 
@@ -7212,19 +9299,32 @@ def _nombres_de_referencias(raiz):
     return nombres
 
 
-def verificar_referencias(raiz, huellas):
-    """Los nombres de las ramas y de las etiquetas, contra las huellas.
+def verificar_referencias(raiz, huellas, un_solo_commit=False):
+    """Los nombres de las ramas y de las etiquetas, contra las huellas y
+    contra los patrones de secretos (cada componente, como el nombre de un
+    fichero); con `un_solo_commit`, tambien una huella de la lista escrita
+    en el nombre (`huella_publicada`).
 
     Devuelve `referencia` (`rama` o `etiqueta`), `nombre` (el publicable,
-    con el token tapado) y `huella`.
+    con el token, el secreto y la huella tapados) y `huella` o `clase`.
     """
     huellas = set(huellas)
     hallazgos = []
     for referencia, nombre in _nombres_de_referencias(raiz):
+        publicable = _publicable(nombre, huellas)
         for una in sorted({huella(t) for t in tokens(nombre)} & huellas):
             hallazgos.append({"referencia": referencia,
-                              "nombre": _publicable(nombre, huellas),
-                              "huella": una})
+                              "nombre": publicable, "huella": una})
+        clases = []
+        for parte in nombre.split("/"):
+            clases += [c for c in _clases_de_secreto(parte)
+                       if c not in clases]
+        hallazgos += [{"referencia": referencia, "nombre": publicable,
+                       "clase": clase} for clase in clases]
+        if un_solo_commit:
+            hallazgos += [{"referencia": referencia, "nombre": publicable,
+                           "clase": "huella_publicada"}
+                          for _m in _huellas_escritas(nombre, huellas)]
     return hallazgos
 
 
@@ -7275,18 +9375,25 @@ def _argumentos(argv):
     analizador.add_argument("--commit", nargs="?", const="HEAD", default=None,
                             metavar="REV",
                             help="comprueba también el árbol, el autor, "
-                                 "quien confirma y el mensaje de ese commit "
-                                 "(HEAD), y los nombres de ramas y etiquetas")
+                                 "quien confirma, el mensaje y las cabeceras "
+                                 "de ese commit (HEAD), y los nombres de "
+                                 "ramas y etiquetas")
     analizador.add_argument("--un-solo-commit", action="store_true",
                             help="exige que el repositorio entero tenga un "
                                  "solo commit, una sola rama y ninguna "
-                                 "etiqueta; implica --commit HEAD")
+                                 "etiqueta, y que el árbol no lleve ninguna "
+                                 "huella de la lista; implica --commit HEAD")
     analizador.add_argument("--regenerar", action="store_true",
                             help="escribe el fichero de huellas desde la "
                                  f"lista en claro ({VARIABLE_DE_LA_LISTA} o "
                                  "--lista)")
     analizador.add_argument("--lista", type=Path, default=None,
                             help="la lista en claro, fuera del repositorio")
+    analizador.add_argument("--solo-centinela", action="store_true",
+                            help="con --regenerar, escribe en --huellas el "
+                                 "huellas.txt del repositorio que se publica: "
+                                 "la cabecera y la huella del centinela, sin "
+                                 "lista")
     return analizador.parse_args(argv)
 
 
@@ -7298,7 +9405,30 @@ def _las_huellas(args):
     return Path(args.huellas), args.huellas
 
 
+def _solo_centinela(args):
+    """El `huellas.txt` del repositorio que se publica (D9). No lee ni
+    --lista ni ANONIMATO_LISTA. Exige --huellas: la de por defecto es la de
+    este repositorio, que en el de desarrollo lleva la lista entera."""
+    if args.lista is not None:
+        raise SystemExit("--solo-centinela no lleva lista: escribe solo la "
+                         "huella del centinela. Quita --lista.")
+    if args.huellas is None:
+        raise SystemExit(
+            "Con --solo-centinela, di dónde se escribe con --huellas (el "
+            "huellas.txt del árbol que se publica): el de este repositorio, "
+            "en el de desarrollo, lleva la lista entera.")
+    destino, mostrado = _las_huellas(args)
+    try:
+        regenerar_solo_centinela(destino)
+    except OSError:
+        raise SystemExit(f"No se pudieron escribir las huellas en {mostrado}.")
+    print(f"1 huella escrita en {mostrado} (solo la del centinela).")
+    return 0
+
+
 def _regenerar(args):
+    if args.solo_centinela:
+        return _solo_centinela(args)
     lista = args.lista or os.environ.get(VARIABLE_DE_LA_LISTA)
     if not lista:
         raise SystemExit(
@@ -7348,6 +9478,9 @@ def main(argv=None):
     args = _argumentos(argv)
     if args.regenerar:
         return _regenerar(args)
+    if args.solo_centinela:
+        raise SystemExit("--solo-centinela va con --regenerar: escribe el "
+                         "huellas.txt del repositorio que se publica.")
 
     huellas = _huellas_de_la_cli(*_las_huellas(args))
     if args.un_solo_commit and args.commit is None:
@@ -7357,6 +9490,9 @@ def main(argv=None):
     piezas = _piezas(args.raiz, args.commit, huellas)
     de_huella = _huellas_en(piezas, huellas)
     de_secreto = _secretos_en(piezas, huellas)
+    # En el arbol que se publica, ninguna huella de la lista (D9).
+    publicadas = (_huellas_publicadas_en(piezas, huellas)
+                  if args.un_solo_commit else [])
 
     def de_donde(h):
         return "" if h["origen"] == COPIA else f" ({h['origen']})"
@@ -7365,20 +9501,23 @@ def main(argv=None):
         return (f"huella {h['huella'][:12]}" if "huella" in h
                 else h["clase"])
 
-    for h in de_huella:
-        print(f"{h['fichero']}:{h['linea']}: {que(h)}" + de_donde(h))
-    for h in de_secreto:
+    for h in de_huella + de_secreto + publicadas:
         print(f"{h['fichero']}:{h['linea']}: {que(h)}" + de_donde(h))
 
     del_commit, de_referencia = [], []
     if args.commit is not None:
-        del_commit = verificar_commit(args.raiz, args.commit, huellas=huellas)
+        del_commit = (verificar_commit(args.raiz, args.commit, huellas=huellas,
+                                       un_solo_commit=args.un_solo_commit)
+                      + cabeceras_del_commit(
+                          args.raiz, args.commit, huellas,
+                          un_solo_commit=args.un_solo_commit))
         for h in del_commit:
             donde = (f"{h['campo']}:{h['linea']}" if h["linea"]
                      else h["campo"])
             print(f"commit {revision}: {donde}: {que(h)}")
         # El nombre de las ramas y de las etiquetas se publica con el push.
-        de_referencia = verificar_referencias(args.raiz, huellas)
+        de_referencia = verificar_referencias(
+            args.raiz, huellas, un_solo_commit=args.un_solo_commit)
         for h in de_referencia:
             print(f"{h['referencia']} {h['nombre']}: {que(h)}")
 
@@ -7403,8 +9542,10 @@ def main(argv=None):
         por_clase[h["clase"]] = por_clase.get(h["clase"], 0) + 1
     detalle = ", ".join(f"{c}: {n}" for c, n in sorted(por_clase.items()))
     print(f"secretos: {len(de_secreto)}" + (f" ({detalle})" if detalle else ""))
-    mal = (len(de_huella) + len(de_secreto) + len(del_commit)
-           + len(de_referencia))
+    if args.un_solo_commit:
+        print(f"huellas publicadas: {len(publicadas)}")
+    mal = (len(de_huella) + len(de_secreto) + len(publicadas)
+           + len(del_commit) + len(de_referencia))
     if args.commit is not None:
         print(f"commit {revision}: {len(del_commit)}")
         print(f"nombres de ramas y etiquetas: {len(de_referencia)}")
@@ -7488,7 +9629,7 @@ Salida esperada (queda una en rojo, la del `.gitignore`):
 
 ```
 FAILED tests/test_anonimato.py::test_la_lista_en_claro_esta_ignorada_por_si_alguien_la_copia_dentro
-1 failed, 152 passed, 2 skipped in 110.19s (0:01:50)
+1 failed, 204 passed, 2 skipped in 110.19s (0:01:50)
 ```
 
 Añadir AL FINAL de `.gitignore`, después de la línea `pruebas/sesion/` y
@@ -7510,7 +9651,7 @@ C:/venv-copiloto/Scripts/python.exe -B -m pytest -p no:cacheprovider -q tests/te
 Salida esperada:
 
 ```
-153 passed, 2 skipped in 73.49s (0:01:13)
+205 passed, 2 skipped in 73.49s (0:01:13)
 ```
 
 Las dos que se saltan son las de los enlaces simbólicos, que Windows no deja
@@ -7518,7 +9659,7 @@ crear sin privilegios; donde se puedan crear, pasan.
 
 Ningún fichero que existiera cambia de comportamiento con esta tarea (solo
 gana tres líneas el `.gitignore`), así que la suite entera tiene que dar lo
-mismo que antes más estas 155 pruebas.
+mismo que antes más estas 207 pruebas.
 
 Y el script, sobre el repositorio:
 
@@ -7535,7 +9676,7 @@ tareas 1 a 4 quedó a medias.
 
 ```bash
 git add scripts/verificar_anonimato.py tests/test_anonimato.py tests/anonimato/huellas.txt .gitignore
-git commit -m "test(anonimato): huellas de la lista negra, centinela y patrones de secretos (SP5-B2 T5)" -m "scripts/verificar_anonimato.py tokeniza lo que se publicaria (la copia de trabajo, el indice y, con --commit, el arbol del commit) y lo compara, huella con huella, con tests/anonimato/huellas.txt; busca secretos por patron y ficheros prohibidos, y comprueba autor, quien confirma, mensaje y nombres de ramas y etiquetas. Ninguna salida lleva el token ni el secreto. La lista en claro vive fuera del repositorio. Falta test_el_arbol_esta_limpio, que exige la anonimizacion hecha." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "test(anonimato): huellas de la lista negra, centinela y patrones de secretos (SP5-B2 T5)" -m "scripts/verificar_anonimato.py tokeniza lo que se publicaria (la copia de trabajo, el indice y, con --commit, el arbol del commit) y lo compara, huella con huella, con tests/anonimato/huellas.txt; busca secretos por patron y ficheros prohibidos, y comprueba autor, quien confirma, mensaje y nombres de ramas y etiquetas. Ninguna salida lleva el token ni el secreto. La lista en claro vive fuera del repositorio. Faltan las pruebas del arbol, que exigen la anonimizacion hecha." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 ---
 
@@ -7560,14 +9701,15 @@ añade a la suite la prueba que exige el árbol limpio.
 - Modificar: cualquier otro fichero versionado donde el comprobador encuentre
   algo (no debería quedar ninguno fuera de esta lista: si aparece, es un
   hallazgo que se anota en el informe de la tarea)
-- Modificar: `tests/test_anonimato.py` (gana `test_el_arbol_esta_limpio`)
+- Modificar: `tests/test_anonimato.py` (gana las dos pruebas del árbol:
+  `test_el_arbol_no_lleva_secretos` y `test_el_arbol_no_lleva_huellas`)
 
 **Interfaces:**
 - Consume: `scripts/verificar_anonimato.py` (tarea 5): `buscar_huellas(raiz, huellas)`,
   `buscar_secretos(raiz, huellas)`, `ficheros_versionados(raiz)`, `leer_huellas(ruta)`, y
   su CLI; de `tests/test_anonimato.py`, `solo_el_centinela()` y `SIN_LA_LISTA`; la lista en claro
   (`ANONIMATO_LISTA`), secciones `[huellas]` y `[sustituciones]`.
-- Produce: el árbol sin ninguna huella; `test_el_arbol_esta_limpio` en la suite.
+- Produce: el árbol sin ninguna huella; las dos pruebas del árbol en la suite.
 
 **Antes de empezar:** `ANONIMATO_LISTA` tiene que apuntar a la lista en claro.
 Comprueba que existe: `python -c "import os, pathlib; print(pathlib.Path(os.environ['ANONIMATO_LISTA']).is_file())"`
@@ -7797,7 +9939,12 @@ workflow, que estaba en el plan de SP4, y el número de una ejecución, en un
 comentario de `tests/mantenimiento.mjs`: los encontró la revisión de esta
 tarea, no las huellas.
 
-- [ ] **Paso 7: La prueba que lo vigila**
+- [ ] **Paso 7: Las pruebas que lo vigilan**
+
+Son dos, y no una, porque no necesitan lo mismo: la que busca secretos no
+necesita la lista y corre siempre; la que busca huellas se salta, diciéndolo,
+donde `huellas.txt` lleva solo la del centinela (el repositorio que se
+publica, D9).
 
 Añade AL FINAL de `tests/test_anonimato.py` (después de
 `test_la_cli_sin_lista_dice_que_variable_falta`, dejando dos líneas en
@@ -7823,24 +9970,119 @@ def _por_fichero(hallazgos, que):
     return lineas
 
 
-@pytest.mark.skipif(solo_el_centinela(), reason=SIN_LA_LISTA)
-def test_el_arbol_esta_limpio():
-    """En el repositorio que se publica `huellas.txt` lleva solo la del
-    centinela (D9) y esta prueba se salta diciendolo: alli no comprobaria
-    nada. Y un recorrido vacio no es un arbol limpio."""
-    huellas = va.huellas_de_la_lista(va.leer_huellas(HUELLAS))
-    recorridos = len(va.ficheros_versionados(RAIZ))
-    assert recorridos > 100, "no se ha recorrido el arbol"
-    de_huella = va.buscar_huellas(RAIZ, huellas)
-    de_secreto = va.buscar_secretos(RAIZ, huellas)
-    if de_huella or de_secreto:
+NO_ES_UN_REPOSITORIO = "no es la raiz de un repositorio de git"
+
+
+def _fuera_de_git(raiz):
+    """La linea que añade el fallo de una prueba del arbol fuera de la raiz
+    de un repositorio (C4): alli se recorre la carpeta entera, tambien lo que
+    git ignoraria, y lo que salga puede no publicarse."""
+    if va._es_la_raiz_de_un_repositorio(raiz):
+        return []
+    return [f"Ojo: esta carpeta {NO_ES_UN_REPOSITORIO} (una copia descargada "
+            "en ZIP, o git fuera del PATH), asi que se ha recorrido entera, "
+            "tambien lo que git ignoraria (un .env de esta copia, por "
+            "ejemplo): lo que sale aqui puede no publicarse."]
+
+
+def _el_arbol_no_lleva_secretos(raiz, ruta_de_huellas, minimo=100):
+    """La busqueda de secretos en el arbol. No necesita la lista, asi que
+    corre siempre, tambien con solo la huella del centinela (V-3): las
+    huellas solo tapan los nombres del mensaje. Un recorrido vacio (menos
+    de `minimo` ficheros) no es un arbol limpio."""
+    huellas = va.huellas_de_la_lista(va.leer_huellas(ruta_de_huellas))
+    recorridos = len(va.ficheros_versionados(raiz))
+    assert recorridos > minimo, "no se ha recorrido el arbol"
+    de_secreto = va.buscar_secretos(raiz, huellas)
+    if de_secreto:
+        pytest.fail("\n".join(
+            [f"El arbol no se puede publicar: {len(de_secreto)} secretos. La "
+             "linea 0 es el nombre del fichero."]
+            + _fuera_de_git(raiz)
+            + _por_fichero(de_secreto, "clase")), pytrace=False)
+
+
+def test_el_arbol_no_lleva_secretos():
+    _el_arbol_no_lleva_secretos(RAIZ, HUELLAS)
+
+
+def test_la_busqueda_de_secretos_del_arbol_no_se_salta():
+    # C1: la prueba de V-3 vigila el ayudante; esta, la prueba del arbol. Un
+    # `skipif` encima (la forma exacta que tenia el defecto) la saltaria en
+    # el repositorio que se publica, y la suite seguiria en verde.
+    marcas = {m.name for m in
+              getattr(test_el_arbol_no_lleva_secretos, "pytestmark", [])}
+    assert not marcas & {"skip", "skipif", "xfail"}, sorted(marcas)
+
+
+def test_la_busqueda_de_secretos_del_arbol_no_se_salta_por_dentro(
+        tmp_path, monkeypatch):
+    # A4: la de arriba lee las marcas; esta, el cuerpo. Con solo la huella
+    # del centinela, como en el repositorio que se publica, la prueba del
+    # arbol corre: un `pytest.skip()` dentro, condicionado a eso, la
+    # saltaria en verde.
+    publico = tmp_path / "huellas.txt"
+    va.regenerar_solo_centinela(publico)
+    modulo = sys.modules[__name__]
+    monkeypatch.setattr(modulo, "HUELLAS", publico)
+    monkeypatch.setattr(modulo, "solo_el_centinela", lambda ruta=publico: True)
+    try:
+        test_el_arbol_no_lleva_secretos()
+    except pytest.skip.Exception:
+        pytest.fail("con solo la huella del centinela, "
+                    "test_el_arbol_no_lleva_secretos se salta", pytrace=False)
+
+
+def _el_arbol_no_lleva_huellas(raiz, ruta_de_huellas, minimo=100):
+    """La busqueda de huellas en el arbol: fichero, linea y el principio de
+    la huella (no el token). Un recorrido vacio no es un arbol limpio."""
+    huellas = va.huellas_de_la_lista(va.leer_huellas(ruta_de_huellas))
+    recorridos = len(va.ficheros_versionados(raiz))
+    assert recorridos > minimo, "no se ha recorrido el arbol"
+    de_huella = va.buscar_huellas(raiz, huellas)
+    if de_huella:
         ficheros = len({h["fichero"] for h in de_huella})
         pytest.fail("\n".join(
             [f"El arbol no se puede publicar: {len(de_huella)} huellas en "
-             f"{ficheros} ficheros y {len(de_secreto)} secretos. La linea 0 "
-             "es el nombre del fichero."]
-            + _por_fichero(de_huella, "huella")
-            + _por_fichero(de_secreto, "clase")), pytrace=False)
+             f"{ficheros} ficheros. La linea 0 es el nombre del fichero."]
+            + _fuera_de_git(raiz)
+            + _por_fichero(de_huella, "huella")), pytrace=False)
+
+
+@pytest.mark.skipif(solo_el_centinela(), reason=SIN_LA_LISTA["arbol"])
+def test_el_arbol_no_lleva_huellas():
+    """En el repositorio que se publica `huellas.txt` lleva solo la del
+    centinela (D9) y esta prueba se salta diciendolo: alli no comprobaria
+    nada."""
+    _el_arbol_no_lleva_huellas(RAIZ, HUELLAS)
+
+
+def test_con_solo_el_centinela_los_secretos_del_arbol_se_buscan(tmp_path):
+    # V-3: antes, el salto por «solo el centinela» se llevaba tambien la
+    # busqueda de secretos del arbol, que no necesita la lista.
+    publico = tmp_path / "publico.txt"
+    publico.write_text("# cabecera\n" + va.huella(CENTINELA) + "\n",
+                       encoding="utf-8")
+    assert solo_el_centinela(publico)
+    raiz = _arbol_limpio(tmp_path / "arbol")
+
+    def buscar():
+        # Un salto aqui es justo el fallo de V-3: que no se salte en verde.
+        try:
+            _el_arbol_no_lleva_secretos(raiz, publico, minimo=1)
+        except pytest.skip.Exception as salto:
+            raise AssertionError("con solo la huella del centinela se ha "
+                                 "saltado la busqueda de secretos") from salto
+
+    buscar()
+    secreto = "PASS" + "WORD=" + _LITERAL
+    (raiz / "docs" / "nota.md").write_text(f"uno\n{secreto}\n",
+                                           encoding="utf-8")
+    with pytest.raises(pytest.fail.Exception) as error:
+        buscar()
+    assert "docs/nota.md: 1 (lineas 2; clase asignacion_de_secreto)" in str(
+        error.value)
+    assert _LITERAL not in str(error.value)
 ```
 
 Sobre el árbol SIN anonimizar esta prueba fallaba (se vio al escribir el
@@ -7852,18 +10094,18 @@ no se copia en un documento que se publica (D9).
 
 ```
 ================================== FAILURES ===================================
-__________________________ test_el_arbol_esta_limpio __________________________
+_______________________ test_el_arbol_no_lleva_huellas ________________________
 El arbol no se puede publicar: 201 huellas en 27 ficheros y 0 secretos. La linea 0 es el nombre del fichero.
   docs/comparativa-corridas.md: 8 (lineas 70, 71, 72, 73, 74, 75, 76, 77; huella <12 hex>)
   docs/sp2-despliegue.md: 29 (lineas 107, 108, 144, ...; huella <12 hex>, <12 hex>, ...)
   ...
 =========================== short test summary info ===========================
-FAILED tests/test_anonimato.py::test_el_arbol_esta_limpio - Failed: El arbol ...
+FAILED tests/test_anonimato.py::test_el_arbol_no_lleva_huellas - Failed: El ar...
 ```
 
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_anonimato.py -q`
 
-Esperado: `154 passed, 2 skipped` (las dos que se saltan son las de los enlaces
+Esperado: `210 passed, 2 skipped` (las dos que se saltan son las de los enlaces
 simbólicos, que esta máquina no deja crear). Si falla, la salida dice qué
 fichero y qué líneas.
 **No se toca la lista, ni `huellas.txt`, ni la prueba**: se quita la cadena
@@ -7913,44 +10155,52 @@ git commit -m "docs(anonimato): el id de un workflow de la instancia, fuera; y l
 
 La prueba de huellas recorre texto. Lo que no es texto —imágenes— solo se
 puede revisar mirándolo, y el spec §6.1 pide que se haga una vez y se declare.
-Esta tarea escribe la declaración, ata la lista de binarios a una prueba —si
-alguien añade un binario nuevo, la prueba falla hasta que se revise y se
-declare— y deja dicho, en el mismo documento, **qué comprueba la vigilancia y
-qué no puede comprobar**.
+Esta tarea escribe la declaración, ata a pruebas lo que la revisión a mano
+miró —los binarios versionados, las imágenes incrustadas en los notebooks y
+los metadatos de unos y otros: lo que aparezca nuevo hace fallar la suite
+hasta que se revise y se declare— y deja dicho, en el mismo documento, **qué
+comprueba la vigilancia y qué no puede comprobar**.
+
+Lo que sigue es la tarea tal como quedó después de su revisión y de la tanda
+de la revisión final (tarea 9). La primera versión tenía dos pruebas; la
+revisión encontró que la de los binarios fallaba fuera de un repositorio de
+git, que las imágenes incrustadas en los notebooks se declaraban revisadas
+sin que nada las atara, y que la declaración callaba límites del buscador de
+secretos.
 
 **Ficheros:**
 - Crear: `tests/anonimato/README.md`
-- Modificar: `tests/test_anonimato.py` (gana `BINARIOS_REVISADOS`,
-  `METADATOS_PERMITIDOS` y dos pruebas)
+- Modificar: `tests/test_anonimato.py` (gana las constantes de lo revisado y
+  el apartado «Lo que no es texto»)
 
 **Interfaces:**
-- Consume: `verificar_anonimato.binarios(raiz) -> list[Path]` (tarea 5: en un
-  repositorio, los binarios con seguimiento y los que no lo tienen ni están
-  ignorados); `va`, `RAIZ` y `HUELLAS`, de la cabecera de
+- Consume: `verificar_anonimato.binarios(raiz) -> list[Path]` y
+  `ficheros_versionados(raiz) -> list[Path]` (tarea 5: en un repositorio, lo
+  que tiene seguimiento y lo que no lo tiene ni está ignorado); `va`, `RAIZ`,
+  `HUELLAS`, `solo_el_centinela()` y `SIN_LA_LISTA`, de
   `tests/test_anonimato.py`; `PIL.Image` (pillow ya es dependencia del
   paquete).
-- Produce: `tests/test_anonimato.py::BINARIOS_REVISADOS` (tupla de rutas
-  relativas, con `/`), `test_los_binarios_versionados_son_los_revisados` y
-  `test_los_png_no_llevan_metadatos_que_identifiquen`.
+- Produce, en `tests/test_anonimato.py`: `BINARIOS_REVISADOS`,
+  `METADATOS_PERMITIDOS`, `IMAGENES_DE_LOS_NOTEBOOKS`,
+  `METADATOS_DEL_NOTEBOOK`, `METADATOS_DE_COLAB`, `METADATOS_DE_LA_CELDA`, y
+  las pruebas del apartado «Lo que no es texto».
 
-**Lo que ya se revisó (28-sep-2026), para no repetirlo a ciegas:** los seis
-PNG de `docs/eda/` y las seis imágenes incrustadas en
-`notebooks/eda_rsna.ipynb` se abrieron una a una. Son gráficos de datos
-agregados del dataset público (distribución de clases, edad, proyección,
-sexo, correlaciones, cajas por paciente); no llevan nombres, rutas, marcas de
-agua ni pies. Sus metadatos PNG son solo `Software` (la versión de
-matplotlib) y `dpi`. Los otros dos notebooks no tienen salidas. Las figuras
-de `docs/validacion-semisintetica/` las genera
-`scripts/validar_combinacion.py` y sus únicos metadatos son `Software` (la
-versión de matplotlib, sin dirección), `dpi`, `Title` (el título de la
-figura, con su rótulo) y `Description` (la huella SHA-256 del contenido de
-`resultados_simulacion.json` con el que se dibujó). Se volvieron a leer, las
-diez, después de la última corrida de SP5-B1.
+**Lo que se revisó a mano, para no repetirlo a ciegas:** los seis PNG de
+`docs/eda/` y las seis imágenes incrustadas en `notebooks/eda_rsna.ipynb` se
+abrieron una a una el 28-sep-2026, y los dieciséis PNG versionados, otra vez,
+el 29-sep-2026, en la revisión de esta tarea. Son gráficos de datos agregados
+del dataset público y de la simulación; no llevan nombres, rutas, marcas de
+agua ni pies. Los metadatos de los PNG de `docs/eda/` son `Software` (la
+versión de matplotlib) y `dpi`; los de las figuras de
+`docs/validacion-semisintetica/`, que genera `scripts/validar_combinacion.py`,
+además `Title` (con su rótulo) y `Description` (la huella SHA-256 del
+contenido de `resultados_simulacion.json` con el que se dibujó). Los otros
+dos notebooks no tienen salidas.
 
 - [ ] **Paso 1: Escribir las pruebas**
 
 Añade a `tests/test_anonimato.py`, en la cabecera, detrás de la línea
-`COPIA, INDICE, COMMIT = …` y dejando una línea en blanco, la lista:
+`COPIA, INDICE, COMMIT = …` y dejando una línea en blanco, lo revisado:
 
 ```python
 # Los binarios versionados, revisados A MANO uno a uno (tests/anonimato/README.md).
@@ -7975,54 +10225,456 @@ BINARIOS_REVISADOS = (
     "docs/validacion-semisintetica/pendiente_rejilla.png",
 )
 METADATOS_PERMITIDOS = {"Software", "dpi", "Title", "Description"}
+
+# Las imagenes incrustadas en cada notebook que se publica, por el SHA-256 de
+# sus bytes (ya decodificados de base64), ordenadas. Son huellas de IMAGENES,
+# no de tokens: se pueden publicar. Una imagen nueva, o una que cambie al
+# volver a ejecutar el notebook, hace fallar la prueba hasta que alguien la
+# mira y la declara aqui y en tests/anonimato/README.md.
+IMAGENES_DE_LOS_NOTEBOOKS = {
+    "notebooks/eda_rsna.ipynb": (
+        "0bdabb57e4fffdfba64143c5d73626e246a18ba76cd246b84a3dde65adc64207",
+        "0db7916271002c6fcdc19ca61bdea62e30f8c438a4d907318abdc290eee91e7f",
+        "2cd353815a6b1463c846d336ed478db1d99b98838059458a961a4951c089fefa",
+        "52f958410542951c5a0558b5aee4904dd1ab4757751d1ff8e0e7a6bef090b86d",
+        "7d4ab28d7b54c08132afb462516338434e924bf81ceaa115d693f554ea295bab",
+        "f1c10db558e768c38e7b4cab01ecc04b9d5a49ef6b125dbc8437ee8d727cd69e",
+    ),
+    "notebooks/entrenar_gpu.ipynb": (),
+    "notebooks/entrenar_kaggle.ipynb": (),
+}
+# Las claves de `metadata` que puede llevar un notebook que se publica, las de
+# su `colab` y las de cada celda. Un notebook guardado de nuevo desde Colab o
+# Kaggle trae campos que las huellas no pueden conocer (un identificador de
+# documento, una cuenta): la prueba falla hasta que alguien los mira.
+METADATOS_DEL_NOTEBOOK = {"kernelspec", "language_info", "accelerator", "colab"}
+METADATOS_DE_COLAB = {"name", "provenance"}
+METADATOS_DE_LA_CELDA = {"execution"}
 ```
 
-y AL FINAL del fichero (detrás de `test_el_arbol_esta_limpio`, dejando dos
-líneas en blanco):
+Las huellas de `IMAGENES_DE_LOS_NOTEBOOKS` son de IMÁGENES (el SHA-256 de sus
+bytes), no de tokens de la lista: se pueden publicar.
+
+Y AL FINAL del fichero (detrás de las pruebas del árbol de la tarea 6,
+dejando dos líneas en blanco):
 
 ```python
 # --------------------------------------------------------------------------
 # Lo que no es texto: revisado a mano y declarado
 # --------------------------------------------------------------------------
+FUERA_DE_GIT = ("esta carpeta no es la raiz de un repositorio de git (una "
+                "copia descargada en ZIP, o git fuera del PATH): no se sabe "
+                "que se publicaria, y queda sin verificar que los binarios "
+                "son los revisados a mano (BINARIOS_REVISADOS)")
+
+
 def test_los_binarios_versionados_son_los_revisados():
     """Lo que no es texto no lo recorre la prueba de huellas: se mira a mano y
     se declara. Si esta prueba falla, hay un binario que nadie ha mirado (o
     uno sin seguimiento y sin ignorar en la carpeta, que se publicaria con un
-    `git add -A`)."""
+    `git add -A`).
+
+    Fuera de un repositorio de git se recorre la carpeta entera, con lo que
+    git ignoraria (los `.pyc` que escribe el propio pytest): se salta."""
+    if not va._es_la_raiz_de_un_repositorio(RAIZ):
+        pytest.skip(FUERA_DE_GIT)
     hallados = sorted(p.relative_to(RAIZ).as_posix() for p in va.binarios(RAIZ))
     assert hallados == sorted(BINARIOS_REVISADOS)
 
 
-def test_los_png_no_llevan_metadatos_que_identifiquen():
+def _mirar_imagen(datos, nombre):
+    """Mira una imagen (un PNG versionado, o una incrustada en un notebook):
+    las claves de sus metadatos tienen que estar en METADATOS_PERMITIDOS.
+    Devuelve su formato y el texto de los valores, que se mira despues
+    contra las huellas. Si falla, dice la imagen y la clave, nunca el
+    valor. Los metadatos, TODOS: sin `load()` PIL no ve los trozos de texto
+    que van detras de los datos de la imagen (E3)."""
     from PIL import Image
+    with Image.open(io.BytesIO(datos)) as imagen:
+        imagen.load()
+        formato, info = imagen.format, dict(imagen.info)
+    de_mas = sorted(str(c) for c in set(info) - METADATOS_PERMITIDOS)
+    if de_mas:
+        pytest.fail(f"{nombre}: metadatos que no son los revisados: "
+                    f"{', '.join(de_mas)}", pytrace=False)
+    return formato, " ".join(str(v) for v in info.values())
+
+
+def _sin_huellas_en_los_valores(textos):
+    """(nombre, texto de los valores de los metadatos): ninguno lleva una
+    cadena de la lista. Con solo la huella del centinela no se puede mirar,
+    y se dice (V-3)."""
+    if solo_el_centinela():
+        pytest.skip(SIN_LA_LISTA["metadatos"])
     huellas = va.huellas_de_la_lista(va.leer_huellas(HUELLAS))
+    con_huella = [nombre for nombre, texto in textos
+                  if {va.huella(t) for t in va.tokens(texto)} & huellas]
+    assert not con_huella, "metadatos con una cadena de la lista"
+
+
+def test_los_png_no_llevan_metadatos_que_identifiquen():
+    textos = []
     for nombre in BINARIOS_REVISADOS:
-        with Image.open(RAIZ / nombre) as imagen:
-            assert imagen.format == "PNG", nombre
-            assert set(imagen.info) <= METADATOS_PERMITIDOS, (nombre, sorted(imagen.info))
-            texto = " ".join(str(v) for v in imagen.info.values())
-        con_huella = {va.huella(t) for t in va.tokens(texto)} & huellas
-        assert not con_huella, nombre
+        formato, texto = _mirar_imagen((RAIZ / nombre).read_bytes(), nombre)
+        assert formato == "PNG", nombre
+        textos.append((nombre, texto))
+    _sin_huellas_en_los_valores(textos)
+
+
+def _png_de_juguete(*textos):
+    """Un PNG de 1x1 compuesto a mano, con un trozo `tEXt` por cada
+    (clave, valor) DETRAS de los datos de la imagen (`IDAT`). Cada trozo es
+    longitud, tipo, datos y CRC."""
+    def trozo(tipo, datos):
+        return (struct.pack(">I", len(datos)) + tipo + datos
+                + struct.pack(">I", zlib.crc32(tipo + datos)))
+    png = (b"\x89PNG\r\n\x1a\n"
+           + trozo(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 0, 0, 0, 0))
+           + trozo(b"IDAT", zlib.compress(b"\x00\x00")))
+    for clave, valor in textos:
+        png += trozo(b"tEXt", clave + b"\x00" + valor)
+    return png + trozo(b"IEND", b"")
+
+
+def test_un_metadato_detras_de_los_datos_de_la_imagen_tambien_se_mira(
+        tmp_path):
+    # E3: sin `load()`, PIL no ve los trozos de texto que van detras de los
+    # datos de la imagen.
+    assert _mirar_imagen(_png_de_juguete(), "limpia.png") == ("PNG", "")
+    ruta = tmp_path / "juguete.png"
+    ruta.write_bytes(_png_de_juguete((b"Author", b"Autor Neutro")))
+    with pytest.raises(pytest.fail.Exception) as error:
+        _mirar_imagen(ruta.read_bytes(), "juguete.png")
+    assert "juguete.png" in str(error.value) and "Author" in str(error.value)
+    assert "Neutro" not in str(error.value)
+
+
+def _notebooks_publicados(raiz=RAIZ):
+    """{nombre: notebook} de cada `.ipynb` que se publicaria, no solo los de
+    `notebooks/`."""
+    return {p.relative_to(raiz).as_posix():
+            json.loads(p.read_text(encoding="utf-8"))
+            for p in va.ficheros_versionados(raiz) if p.suffix == ".ipynb"}
+
+
+def _imagenes_del_notebook(notebook):
+    """[(tipo, bytes)] de las imagenes incrustadas: las salidas `image/*` de
+    las celdas (`outputs[].data`) y los adjuntos (`attachments`), ya
+    decodificadas de base64 (una SVG es texto, no base64)."""
+    imagenes = []
+    for celda in notebook.get("cells", []):
+        paquetes = [s.get("data", {}) for s in celda.get("outputs", [])]
+        paquetes += list(celda.get("attachments", {}).values())
+        for paquete in paquetes:
+            for tipo, valor in sorted(paquete.items()):
+                if not tipo.startswith("image/"):
+                    continue
+                texto = "".join(valor) if isinstance(valor, list) else valor
+                imagenes.append((tipo, texto.encode("utf-8")
+                                 if tipo == "image/svg+xml"
+                                 else base64.b64decode(texto)))
+    return imagenes
+
+
+def test_las_imagenes_salen_de_las_salidas_y_de_los_adjuntos():
+    png = _png_de_juguete()
+    en_base64 = base64.b64encode(png).decode("ascii")
+    notebook = {"cells": [
+        {"cell_type": "markdown", "source": ["![a](attachment:a.png)"],
+         "attachments": {"a.png": {"image/png": en_base64}}},
+        {"cell_type": "code", "outputs": [
+            {"output_type": "display_data",
+             "data": {"text/plain": ["<Figure>"],
+                      "image/png": [en_base64[:10], en_base64[10:]]}},
+            {"output_type": "stream", "text": ["hola\n"]}]}]}
+    assert _imagenes_del_notebook(notebook) == [("image/png", png)] * 2
+
+
+def _las_imagenes_de_los_notebooks_son_las_declaradas(raiz, declaradas):
+    """Los notebooks que se publicarian bajo `raiz` y las imagenes de cada
+    uno (por su SHA-256) son exactamente los de `declaradas` (como
+    IMAGENES_DE_LOS_NOTEBOOKS). Si no, falla diciendo el notebook y las
+    huellas de las imagenes que no se han revisado (son de imagenes: se
+    pueden publicar). Devuelve [(nombre, tipo, bytes)] de cada imagen, para
+    mirar sus metadatos."""
+    notebooks = _notebooks_publicados(raiz)
+    problemas, imagenes = [], []
+    for nombre in sorted(set(notebooks) | set(declaradas)):
+        if nombre not in declaradas:
+            problemas.append(f"{nombre}: no esta en IMAGENES_DE_LOS_NOTEBOOKS")
+            continue
+        if nombre not in notebooks:
+            problemas.append(f"{nombre}: esta declarado y no se publicaria")
+            continue
+        suyas = _imagenes_del_notebook(notebooks[nombre])
+        de_sus_imagenes = tuple(sorted(hashlib.sha256(d).hexdigest()
+                                       for _tipo, d in suyas))
+        if de_sus_imagenes != tuple(declaradas[nombre]):
+            nuevas = sorted(set(de_sus_imagenes) - set(declaradas[nombre]))
+            problemas.append(f"{nombre}: {len(de_sus_imagenes)} imagenes, "
+                             f"{len(declaradas[nombre])} declaradas; sin "
+                             f"revisar: {', '.join(nuevas) or 'ninguna'}")
+        imagenes += [(f"{nombre}, imagen {n}", tipo, datos)
+                     for n, (tipo, datos) in enumerate(suyas, 1)]
+    if problemas:
+        pytest.fail("\n".join(
+            ["Las imagenes incrustadas no son las revisadas "
+             "(IMAGENES_DE_LOS_NOTEBOOKS):"]
+            + _fuera_de_git(raiz)
+            + ["  " + p for p in problemas]), pytrace=False)
+    return imagenes
+
+
+def test_las_imagenes_de_los_notebooks_son_las_revisadas():
+    """Las imagenes incrustadas no las lee ni la prueba de huellas ni el
+    script (el base64 largo se quita sin mirarlo): se revisan a mano y se
+    fijan aqui por su huella; sus metadatos se miran como los de los PNG."""
+    textos = []
+    for nombre, tipo, datos in _las_imagenes_de_los_notebooks_son_las_declaradas(
+            RAIZ, IMAGENES_DE_LOS_NOTEBOOKS):
+        if tipo != "image/svg+xml":             # el texto lo recorre el resto
+            _formato, texto = _mirar_imagen(datos, nombre)
+            textos.append((nombre, texto))
+    _sin_huellas_en_los_valores(textos)
+
+
+def _tiradas_de_base64_sin_declarar(raiz, declaradas):
+    """(fichero, linea, motivo) de cada tirada de 120 o mas caracteres de
+    base64 de un fichero de texto que se publicaria (la expresion `BASE64`
+    del script: lo que la busqueda de huellas quita sin mirar) que,
+    decodificada, no es una de las imagenes `declaradas` (por su SHA-256).
+    Nunca la tirada. Un fichero que no se deja leer es un hallazgo de linea
+    0 («no se pudo leer», A5): no se da por limpio, y sin traza."""
+    sin_declarar = []
+    for ruta in va.ficheros_versionados(raiz):
+        relativo = ruta.relative_to(raiz).as_posix()
+        try:
+            texto = va._texto(ruta)
+        except OSError:
+            sin_declarar.append((relativo, 0, "no se pudo leer"))
+            continue
+        if texto is None:
+            continue
+        for n, linea in enumerate(texto.splitlines(), 1):
+            for m in va.BASE64.finditer(linea):
+                try:
+                    datos = base64.b64decode(m.group(), validate=True)
+                except (binascii.Error, ValueError):
+                    datos = None
+                if (datos is None or hashlib.sha256(datos).hexdigest()
+                        not in declaradas):
+                    sin_declarar.append(
+                        (relativo, n, "no es una imagen declarada"))
+    return sin_declarar
+
+
+def _toda_tirada_larga_es_una_imagen_declarada(raiz, declaradas):
+    """Falla con el fichero, la linea y el motivo de cada tirada sin
+    declarar (y de cada fichero ilegible), nunca con la tirada."""
+    sin_declarar = _tiradas_de_base64_sin_declarar(raiz, declaradas)
+    if sin_declarar:
+        pytest.fail("\n".join(
+            ["Tiradas de base64 de 120 o mas caracteres que no son una "
+             "imagen declarada (IMAGENES_DE_LOS_NOTEBOOKS):"]
+            + _fuera_de_git(raiz)
+            + [f"  {fichero}:{n} ({motivo})"
+               for fichero, n, motivo in sin_declarar]), pytrace=False)
+
+
+def test_una_imagen_pegada_de_otra_forma_tambien_se_ve(tmp_path):
+    # C3: pegada en el texto de una celda o de un .md (`data:image/png;
+    # base64,...`) o en una salida `text/html`, la prueba de las imagenes de
+    # los notebooks no la ve, y la de huellas quita el base64 sin mirarlo.
+    raiz = _arbol_limpio(tmp_path / "arbol")
+    imagen = _png_de_juguete((b"Author", b"Autor Neutro " * 8))
+    en_base64 = base64.b64encode(imagen).decode("ascii")
+    assert len(en_base64) >= 120
+    (raiz / "notas.md").write_text(
+        f"uno\n![figura](data:image/png;base64,{en_base64})\n",
+        encoding="utf-8")
+    notebook = {"cells": [{"cell_type": "code", "outputs": [
+        {"output_type": "display_data", "data": {"text/html": [
+            f'<img src="data:image/png;base64,{en_base64}">']}}]}]}
+    (raiz / "cuaderno.ipynb").write_text(json.dumps(notebook, indent=1),
+                                         encoding="utf-8")
+    assert _imagenes_del_notebook(notebook) == []
+    sin_declarar = _tiradas_de_base64_sin_declarar(raiz, set())
+    assert ("notas.md", 2, "no es una imagen declarada") in sin_declarar
+    assert sorted({f for f, _n, _motivo in sin_declarar}) == [
+        "cuaderno.ipynb", "notas.md"]
+    # Declarada, pasa; y una tirada que no es base64 valido no pasa.
+    assert _tiradas_de_base64_sin_declarar(
+        raiz, {hashlib.sha256(imagen).hexdigest()}) == []
+    (raiz / "ruta.txt").write_text("/".join(["abcdefgh"] * 20) + "\n",
+                                   encoding="utf-8")
+    assert _tiradas_de_base64_sin_declarar(
+        raiz, {hashlib.sha256(imagen).hexdigest()}) == [
+        ("ruta.txt", 1, "no es una imagen declarada")]
+
+
+def test_un_fichero_ilegible_es_un_hallazgo_de_las_tiradas(tmp_path,
+                                                          monkeypatch):
+    # A5: un fichero que no se deja leer (sin permiso, bloqueado) no rompe la
+    # prueba de las tiradas con una traza: es un hallazgo, con el fichero.
+    raiz = _arbol_limpio(tmp_path / "arbol")
+    leer = Path.read_bytes
+
+    def leer_salvo_la_guia(ruta):
+        if ruta.name == "guia.md":
+            raise PermissionError(13, "acceso denegado")
+        return leer(ruta)
+
+    monkeypatch.setattr(Path, "read_bytes", leer_salvo_la_guia)
+    assert _tiradas_de_base64_sin_declarar(raiz, set()) == [
+        ("docs/guia.md", 0, "no se pudo leer")]
+    with pytest.raises(pytest.fail.Exception) as error:
+        _toda_tirada_larga_es_una_imagen_declarada(raiz, set())
+    assert "docs/guia.md:0 (no se pudo leer)" in str(error.value)
+    assert "Traceback" not in str(error.value)
+    assert "PermissionError" not in str(error.value)
+
+
+def test_toda_tirada_larga_de_base64_es_una_imagen_declarada():
+    """El base64 largo se quita sin mirarlo: solo puede ser una imagen de
+    IMAGENES_DE_LOS_NOTEBOOKS, revisada a mano. Si falla, dice el fichero y
+    la linea, no la tirada."""
+    declaradas = {una for suyas in IMAGENES_DE_LOS_NOTEBOOKS.values()
+                  for una in suyas}
+    _toda_tirada_larga_es_una_imagen_declarada(RAIZ, declaradas)
+
+
+def _mirar_metadatos_de_los_notebooks(notebooks, aviso=()):
+    """Las claves de `metadata` de cada notebook, las de su `colab` (con
+    `provenance` vacio) y las de cada celda son las revisadas. Si no, falla
+    diciendo el notebook y la CLAVE, nunca el valor (y las lineas de
+    `aviso`, si las hay)."""
+    de_mas = []
+    for nombre, notebook in sorted(notebooks.items()):
+        metadatos = notebook.get("metadata", {})
+        de_mas += [f"{nombre}: metadata.{c}"
+                   for c in sorted(set(metadatos) - METADATOS_DEL_NOTEBOOK)]
+        colab = metadatos.get("colab", {})
+        de_mas += [f"{nombre}: metadata.colab.{c}"
+                   for c in sorted(set(colab) - METADATOS_DE_COLAB)]
+        if colab.get("provenance", []) != []:
+            de_mas.append(f"{nombre}: metadata.colab.provenance no está vacía")
+        for n, celda in enumerate(notebook.get("cells", []), 1):
+            de_mas += [f"{nombre}: celda {n}, metadata.{c}"
+                       for c in sorted(set(celda.get("metadata", {}))
+                                       - METADATOS_DE_LA_CELDA)]
+    if de_mas:
+        pytest.fail("\n".join(
+            ["Metadatos de notebook que no son los revisados (las huellas no "
+             "los conocen: se miran a mano):"]
+            + list(aviso) + ["  " + d for d in de_mas]), pytrace=False)
+
+
+def _los_metadatos_de_los_notebooks_son_los_revisados(raiz):
+    _mirar_metadatos_de_los_notebooks(_notebooks_publicados(raiz),
+                                      aviso=_fuera_de_git(raiz))
+
+
+def test_un_metadato_de_notebook_no_revisado_se_nombra_sin_su_valor():
+    valor = "cuenta-de-juguete-7q"
+    notebook = {
+        "metadata": {"kernelspec": {"name": "python3"}, "authors": [valor],
+                     "colab": {"name": "x.ipynb", "include_colab_link": True,
+                               "provenance": [{"file_id": valor}]}},
+        "cells": [{"metadata": {"execution": {}}},
+                  {"metadata": {"id": valor, "tags": []}}]}
+    _mirar_metadatos_de_los_notebooks({"limpio.ipynb": {
+        "metadata": {"colab": {"name": "x.ipynb", "provenance": []}},
+        "cells": [{"metadata": {"execution": {}}}]}})
+    with pytest.raises(pytest.fail.Exception) as error:
+        _mirar_metadatos_de_los_notebooks({"sucio.ipynb": notebook})
+    mensaje = str(error.value)
+    for clave in ("sucio.ipynb: metadata.authors",
+                  "sucio.ipynb: metadata.colab.include_colab_link",
+                  "sucio.ipynb: metadata.colab.provenance no está vacía",
+                  "sucio.ipynb: celda 2, metadata.id",
+                  "sucio.ipynb: celda 2, metadata.tags"):
+        assert clave in mensaje
+    assert valor not in mensaje
+
+
+def test_los_metadatos_de_los_notebooks_son_los_revisados():
+    _los_metadatos_de_los_notebooks_son_los_revisados(RAIZ)
+
+
+@pytest.mark.parametrize("con_git", [
+    pytest.param(False, id="sin_git"),
+    pytest.param(True, id="con_git", marks=hay_git),
+])
+def test_fuera_de_git_el_fallo_del_arbol_lo_dice(tmp_path, con_git):
+    # C4 y A1: fuera de la raiz de un repositorio se recorre la carpeta
+    # entera, tambien lo que git ignoraria (un `.env` de la copia de alguien,
+    # un notebook de `.ipynb_checkpoints/`): todas las pruebas que recorren
+    # el arbol lo dicen al fallar.
+    raiz = _repositorio(tmp_path) if con_git else _arbol_limpio(
+        tmp_path / "repo")
+    (raiz / ".env").write_text("X=1\n", encoding="utf-8")
+    (raiz / "nota.md").write_text(f"{OTRO}\n", encoding="utf-8")
+    # Un notebook con una imagen que nadie ha declarado y una clave de
+    # metadatos que nadie ha revisado.
+    imagen = base64.b64encode(_png_de_juguete((b"Software", b"x" * 80)))
+    cuaderno = {"metadata": {"authors": ["de juguete"]}, "cells": [
+        {"cell_type": "code", "metadata": {}, "outputs": [
+            {"output_type": "display_data",
+             "data": {"image/png": imagen.decode("ascii")}}]}]}
+    (raiz / "cuaderno.ipynb").write_text(json.dumps(cuaderno, indent=1),
+                                         encoding="utf-8")
+    de_juguete = _huellas_de_juguete(tmp_path)
+    comprobaciones = {
+        "secretos": lambda: _el_arbol_no_lleva_secretos(raiz, de_juguete,
+                                                        minimo=1),
+        "huellas": lambda: _el_arbol_no_lleva_huellas(raiz, de_juguete,
+                                                      minimo=1),
+        "tiradas": lambda: _toda_tirada_larga_es_una_imagen_declarada(
+            raiz, set()),
+        "imagenes": lambda: _las_imagenes_de_los_notebooks_son_las_declaradas(
+            raiz, {}),
+        "metadatos": lambda: _los_metadatos_de_los_notebooks_son_los_revisados(
+            raiz),
+    }
+    for que, comprobar in comprobaciones.items():
+        with pytest.raises(pytest.fail.Exception) as error:
+            comprobar()
+        assert (NO_ES_UN_REPOSITORIO in str(error.value)) is not con_git, que
+        assert OTRO not in str(error.value).lower(), que
 ```
 
 `va` (el script cargado como módulo), `RAIZ` y `HUELLAS` son los nombres de
-la cabecera de `tests/test_anonimato.py`. Si `va.binarios` devuelve rutas
-relativas en vez de absolutas, quita el `relative_to`: lo que se compara son
-rutas relativas a la raíz, con `/`.
+la cabecera de `tests/test_anonimato.py`.
 
 - [ ] **Paso 2: Correrlas**
 
-Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_anonimato.py -q`
+Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_anonimato.py -q -rs`
 
-Esperado: todo en verde, dos pruebas más que antes de la tarea. (Estas dos
-pruebas son de caracterización: atan lo que ya se revisó. Para verlas fallar,
-copia un PNG cualquiera a la raíz del repositorio con otro nombre, SIN
-`git add`: la primera falla nombrándolo, porque un fichero sin seguimiento y
-sin ignorar también se publicaría. Bórralo después.)
+Esperado: `222 passed, 2 skipped` (las que se saltan son las de los
+enlaces simbólicos, que esta máquina no deja crear). Estas pruebas son de
+caracterización: atan lo que ya se revisó. Para verlas fallar:
 
-Si la primera falla porque la lista no coincide con lo que hay, **no edites
-la lista sin mirar**: abre cada PNG que sobre o falte, comprueba que no lleva
-nada que identifique y entonces corrige la lista y la declaración.
+- copia un PNG cualquiera a la raíz del repositorio con otro nombre, SIN
+  `git add`: la de los binarios falla nombrándolo, porque un fichero sin
+  seguimiento y sin ignorar también se publicaría. Bórralo después;
+- en una carpeta temporal FUERA del repositorio, un PNG con un trozo de texto
+  `Author`: la función que mira una imagen lo rechaza, también si el trozo va
+  detrás de los datos de la imagen (por eso se llama a `load()` antes de
+  leer los metadatos).
+
+Si alguna falla porque lo declarado no coincide con lo que hay, **no edites
+la constante sin mirar**: abre lo que sobre o falte, comprueba que no lleva
+nada que identifique y entonces corrige la constante y la declaración.
+
+**Fuera de un repositorio de git** —una descarga en ZIP— la prueba de los
+binarios se salta diciéndolo: sin `.git` no se sabe qué está versionado, y
+los `.pyc` que escribe el propio pytest son binarios. La última prueba del
+fichero hace fallar las cinco que recorren el árbol —las dos de la tarea 6 y
+tres de esta—, dentro y fuera de un repositorio: fuera, cada mensaje lo dice.
+Va aquí, y no en la tarea 6, porque necesita las de esta. Y **con solo la huella
+del centinela** en `huellas.txt` —el repositorio que se publica— las claves
+de los metadatos se comprueban igual; lo que se salta, diciéndolo, es la
+comparación de sus valores con las huellas.
 
 - [ ] **Paso 3: La declaración**
 
@@ -8036,7 +10688,7 @@ empresa, a una máquina ni a personas, ni ningún secreto. Lo vigilan dos
 comprobaciones y una revisión a mano. Aquí se dice qué hace cada una y, al
 final, **qué no puede ver ninguna de las tres**.
 
-## `tests/test_anonimato.py` (en la suite, siempre)
+## `tests/test_anonimato.py` (en la suite, en cada corrida)
 
 Tokeniza cada fichero de texto —minúsculas, sin tildes, partición por
 cualquier carácter que no sea `[a-z0-9]`— y falla si el SHA-256 de algún
@@ -8046,6 +10698,10 @@ letras a un token y lo esconda. Antes quita las tiradas de 120 o más
 caracteres de base64 (las imágenes incrustadas en los notebooks), que
 producirían tokens al azar. El texto que no es UTF-8 también se recorre.
 
+Otra prueba busca en el mismo recorrido los secretos y lo que no se ha podido
+mirar, también en los nombres de los ficheros y de las carpetas: lo que más
+abajo se describe con el script. Esa no necesita la lista y corre siempre.
+
 Recorre lo que se publicaría: los ficheros con seguimiento, los que no lo
 tienen ni están ignorados, y lo que está preparado en el índice de git y no
 es lo que hay en disco. Un recorrido vacío no cuenta como limpio.
@@ -8053,11 +10709,17 @@ es lo que hay en disco. Un recorrido vacío no cuenta como limpio.
 `huellas.txt` lleva una huella por línea. **La lista de lo prohibido no está
 en el repositorio**: solo sus huellas. Una de ellas es la del centinela
 público `centinelaanonimato7f3a`, con el que la prueba se comprueba a sí
-misma: lo escribe en un fichero temporal y exige detectarlo.
+misma: lo escribe en un fichero temporal y exige detectarlo. Es la única
+huella que no cuenta en el árbol: el centinela está escrito en claro en este
+documento y en la propia prueba.
 
-No hay lista blanca. Lo que se conserva —un huso horario, identificadores
-opacos de los webhooks, números de chat inventados, una IP del rango de
-documentación— se conserva porque no está en la lista, no porque se exceptúe.
+No hay lista blanca de huellas. Lo que se conserva —un huso horario,
+identificadores opacos de los webhooks, números de chat inventados, una IP
+del rango de documentación— se conserva porque no está en la lista, no porque
+se exceptúe. El buscador de secretos sí deja pasar lo que es de ejemplo: unas
+pocas palabras (`prueba`, `clave`, `token`, `cambiar-esto`), los marcadores
+entre `<` y `>`, las variables (`$NOMBRE`, `${NOMBRE}`) y el fichero
+`.env.ejemplo`.
 
 ## `scripts/verificar_anonimato.py` (antes de publicar)
 
@@ -8068,30 +10730,47 @@ Repite la búsqueda de huellas sobre cualquier árbol y añade:
   clave, contraseña dentro de una URL) y los ficheros que no deben viajar
   (`.env`, claves);
 - lo que **no ha podido mirar** —un enlace simbólico, un submódulo, un
-  fichero que no se deja leer—, que sale como hallazgo y no como limpio;
+  fichero que no se deja abrir—, que sale como hallazgo y no como limpio
+  (una carpeta que no se deja recorrer, no: más abajo);
 - el **commit**: el contenido de su árbol, el autor, quien confirma y el
   mensaje (con sus pies), contra las huellas y contra los patrones de
   secretos;
 - los **nombres** de los ficheros, de las carpetas, de las ramas y de las
   etiquetas;
 - que el repositorio tenga **un solo commit, una sola rama y ninguna
-  etiqueta**.
+  etiqueta**, y que ese commit no lleve más cabeceras que su árbol, su autor
+  y quien lo confirma: una firma lleva el identificador de la clave de quien
+  firma, así que el commit único se hace con `git commit --no-gpg-sign`;
+- que lo que se publica **no lleve ninguna huella de la lista**, ni en el
+  árbol —su `huellas.txt` lleva solo la del centinela—, ni en el commit (el
+  mensaje, el autor, quien confirma), ni en los nombres de las ramas y de
+  las etiquetas. La huella se busca entera y
+  suelta, como cualquier token: pegada a otras letras o cifras, o escrita
+  de otra forma, no se ve.
 
       python scripts/verificar_anonimato.py --raiz <árbol> --huellas <huellas> --un-solo-commit
 
 Sus hallazgos dicen fichero, línea y huella o clase: nunca el token ni el
 secreto, y el nombre de un fichero que lleve un token sale tapado. Sale con 1
-si hay hallazgos, si no ha recorrido ningún fichero o si las huellas que
-recibe son solo la del centinela.
+si hay hallazgos, si no ha recorrido ningún fichero de texto o si las huellas
+que recibe son solo la del centinela.
 
 ## Cómo se regeneran las huellas
 
 Quien mantiene la lista en claro, fuera del repositorio:
 
-    ANONIMATO_LISTA=<lista en claro> python scripts/verificar_anonimato.py --regenerar
+    python scripts/verificar_anonimato.py --regenerar --lista <lista en claro>
 
-Cada entrada de la lista es un token ya tokenizado; una entrada que no dé
+(o con la ruta de la lista en la variable de entorno `ANONIMATO_LISTA`, sin
+`--lista`). Las entradas van en la sección `[huellas]` de la lista, una por
+línea, y cada una es un token ya tokenizado: una entrada que no dé
 exactamente un token es un error, y no se escribe nada.
+
+El `huellas.txt` del repositorio que se publica, con solo la huella del
+centinela, se escribe sin lista, y lleva su propia cabecera, que dice qué
+fichero es y dónde se hace la comprobación de verdad:
+
+    python scripts/verificar_anonimato.py --regenerar --solo-centinela --huellas <árbol que se publica>/tests/anonimato/huellas.txt
 
 ## Lo que no es texto: revisión manual
 
@@ -8101,13 +10780,43 @@ La prueba de huellas no puede leer imágenes. Se revisaron a mano, una a una:
 | :--- | :--- | :--- |
 | los 6 PNG de `docs/eda/` | 28-sep-2026 | contenido (gráficos de datos agregados del dataset público, sin nombres, rutas, marcas de agua ni pies) y metadatos (solo `Software` y `dpi`) |
 | las 6 imágenes incrustadas en `notebooks/eda_rsna.ipynb` | 28-sep-2026 | son las mismas seis figuras; mismos metadatos |
-| los metadatos de los tres notebooks | 28-sep-2026 | solo `kernelspec`, `language_info` y, en uno, el nombre del propio notebook; los otros dos notebooks no tienen salidas |
-| las 10 figuras de `docs/validacion-semisintetica/` | al generarlas | las dibuja `scripts/validar_combinacion.py` desde `resultados_simulacion.json`; su título lleva el rótulo «simulación semisintética»; metadatos `Software`, `dpi`, `Title` y `Description` (la huella del JSON de resultados con el que se dibujó cada una) |
+| los metadatos de los tres notebooks | 29-sep-2026 | del notebook: `kernelspec` y `language_info` y, en el de Colab, `accelerator` y `colab` (con el nombre del propio notebook); de las celdas: en `eda_rsna.ipynb`, las horas de ejecución. Los otros dos notebooks no tienen salidas |
+| las 10 figuras de `docs/validacion-semisintetica/` | 29-sep-2026 | contenido (gráficos de la simulación, sin nombres, rutas, marcas de agua ni pies; el título lleva el rótulo «simulación semisintética») y metadatos (`Software`, `dpi`, `Title` y `Description`, que es la huella del JSON de resultados con el que `scripts/validar_combinacion.py` dibujó cada una) |
 
-La lista de binarios revisados está en `tests/test_anonimato.py`
-(`BINARIOS_REVISADOS`): un binario nuevo hace fallar la suite hasta que se
-revisa y se declara aquí. Cuando no hay hallazgos pero sí binarios, el
-script no dice «limpio» a secas: dice cuántos binarios quedan sin recorrer.
+Varias pruebas de `tests/test_anonimato.py` atan esa revisión:
+
+- `BINARIOS_REVISADOS` es la lista de los binarios revisados: un binario
+  nuevo hace fallar la suite hasta que se revisa y se declara aquí. Fuera de
+  un repositorio de git —una descarga en ZIP— no se sabe qué está
+  versionado, y la prueba se salta diciéndolo.
+- `IMAGENES_DE_LOS_NOTEBOOKS` fija, por su SHA-256, las imágenes incrustadas
+  en cada notebook: una imagen nueva, o una que cambie al volver a ejecutar
+  el notebook, hace fallar la suite hasta que se revisa. Y como una imagen se
+  puede pegar de más maneras (dentro del texto de una celda, en una salida
+  HTML, en cualquier otro fichero), otra prueba exige que toda tirada de 120
+  o más caracteres de base64 de un fichero de texto que se publica sea una
+  de esas imágenes declaradas. Si el base64 va partido en líneas de menos de
+  120 caracteres, esa prueba no lo ve (más abajo, en lo que esto no
+  protege).
+- Las claves de los metadatos de los PNG y de las imágenes incrustadas
+  tienen que estar en `METADATOS_PERMITIDOS`, y las de cada notebook y de sus
+  celdas, en las de la tabla (con `colab.provenance` vacío): un notebook
+  guardado de nuevo desde Colab o Kaggle hace fallar la suite hasta que se
+  revisa. Con la lista entera, los valores de los metadatos de las imágenes
+  se miran también contra las huellas; con solo la del centinela, esa parte
+  se salta diciéndolo.
+
+Cuando no hay hallazgos pero sí binarios, el script no dice «limpio» a secas:
+dice cuántos binarios quedan sin recorrer. Las imágenes incrustadas no las
+cuenta: para el script un notebook es texto.
+
+Fuera de un repositorio de git, las pruebas que recorren el árbol miran la
+carpeta entera, también lo que git ignoraría: un `.env` que alguien haya
+creado en su copia hace fallar la de los secretos (y la de las huellas, si
+lleva un token de la lista), y el base64 de una dependencia instalada dentro
+de la carpeta, la de las tiradas largas. Cuando fallan así, su mensaje lo
+dice. Un fichero que no se deja abrir (sin permiso, bloqueado) no se da por
+limpio: la prueba de las tiradas largas lo da como hallazgo, con su nombre.
 
 ## Lo que esto no protege
 
@@ -8122,12 +10831,28 @@ propios, identificadores de una instancia.
 letras o cifras (`prefijoTOKENsufijo`, `token2026`), partido por un salto de
 línea o por un guion de fin de línea, escrito con letras de otro alfabeto que
 se parecen, ni en un base64 corto. Una tirada de 120 o más caracteres del
-alfabeto de base64 se quita sin mirarla.
+alfabeto de base64 se quita sin mirarla: el contenido de una imagen
+incrustada solo lo ve la revisión a mano, y sus metadatos, la prueba que la
+fija (más arriba). Y una imagen pegada como `data:` en el texto de una celda
+o en una salida HTML, con su base64 partido en líneas cortas, no la ve
+ninguna prueba.
 
-**Los secretos se buscan por su forma.** Detrás de una clave, una contraseña
-de menos de ocho caracteres, o escrita solo con letras, o solo con cifras, no
-tiene forma de secreto y no salta. Lo que lleva paréntesis, corchetes o
-llaves se toma por una expresión, no por un literal.
+**Los secretos se buscan por su forma.** Una asignación solo se mira si el
+NOMBRE de la clave lleva `password`, `passwd`, `secret`, `token` o `api_key`,
+o acaba en `_KEY` en mayúsculas (o, en minúsculas, en una de unas pocas:
+`private_key`, `access_key`, `signing_key`…): una clave que se llame `clave`,
+`contrasena`, `pwd` o `auth` no se mira. Y solo salta si el valor tiene forma
+de secreto: ocho o más caracteres, con letras y cifras. Una contraseña corta,
+o sin cifras, o sin letras, no salta. Un valor escrito sin comillas que lleva
+paréntesis, corchetes o llaves se toma por una expresión, no por un literal; y
+entre comillas, el que lleva `{{`, `${` o `$(`, o empieza por `=`: un secreto
+de verdad con esa forma no salta. Detrás de un subíndice o de una coma
+(`entorno["CLAVE"] = valor`, `poner("CLAVE", valor)`), un valor sin comillas
+se toma por una variable y no se mira.
+
+**Una carpeta que no se deja recorrer.** Fuera de un repositorio de git, el
+recorrido se la salta sin decirlo, con todo lo que tenga dentro; dentro de un
+repositorio, el recorrido se detiene con un error.
 
 **No mira la carpeta `.git`.** La dirección del remoto, el historial de
 referencias y los commits que ya no alcanza ninguna rama viven ahí. El
@@ -8144,13 +10869,23 @@ palabra, un dominio de pocas letras— se adivina probando candidatos: quien
 tenga `huellas.txt` y un diccionario recupera buena parte de la lista. Por
 eso la lista completa de huellas vive **solo en el repositorio de
 desarrollo**, que es privado. En el repositorio que se publica,
-`huellas.txt` lleva únicamente la huella del centinela: allí la prueba del
-árbol se salta diciéndolo, las demás siguen comprobando que el mecanismo
-funciona, y la comprobación de verdad se hace antes de publicar, con
-`scripts/verificar_anonimato.py` y las huellas del repositorio de
-desarrollo. Por lo mismo, la salida de la prueba y la del script —que
-enseñan el principio de cada huella— tampoco se publican cuando hay
-hallazgos.
+`huellas.txt` lleva únicamente la huella del centinela: allí las pruebas que
+necesitan la lista entera se saltan diciéndolo, la búsqueda de secretos y las
+pruebas del mecanismo corren igual, y la comprobación de verdad se hace antes
+de publicar, con `scripts/verificar_anonimato.py` y las huellas del
+repositorio de desarrollo. Por lo mismo, la salida de la prueba y la del
+script —que enseñan el principio de cada huella— tampoco se publican cuando
+hay hallazgos.
+
+**No decide qué se cuenta.** Las fechas de las sesiones y de las tutorías, o
+la institución que nombra el `README.md`, no son cadenas de la lista: si se
+publican o no se decide al construir el repositorio que se publica.
+
+**Un salto se ve verde.** Si el `huellas.txt` del repositorio de desarrollo
+se quedara solo con la huella del centinela —porque alguien copió encima el
+del repositorio publicado—, la prueba de huellas del árbol se saltaría y la
+suite seguiría en verde. Se ve corriendo la suite con `-rs`, que lista lo que se
+salta y por qué; y el script, que no se salta nada, sale con 1.
 ````
 
 - [ ] **Paso 4: La declaración también pasa la prueba**
@@ -8158,8 +10893,10 @@ hallazgos.
 Orden: `C:/venv-copiloto/Scripts/python.exe -m pytest tests/test_anonimato.py -q`
 
 Esperado: todo en verde (la declaración es un fichero de texto versionable y
-la recorre la prueba del árbol). Recuerda que el verificador mira también el
-índice: prepara los ficheros (`git add`) antes de correrla.
+la recorren las pruebas del árbol). Recuerda que el verificador mira también
+el índice: prepara los ficheros (`git add`) antes de correrla. **Y contrasta
+cada afirmación de la declaración con el código**: en la primera versión,
+cuatro frases no eran verdad de lo que el verificador hacía.
 
 - [ ] **Paso 5: Commit**
 
@@ -8214,7 +10951,8 @@ node tests/mantenimiento.mjs
 node tests/formulario.mjs
 ```
 
-Esperado: cada una imprime `TODO VERDE` y sale con 0.
+Esperado: las tres primeras imprimen `TODO VERDE` y la del formulario, cuántas
+comprobaciones pasaron (`16 OK`); las cuatro salen con 0.
 
 - [ ] **Paso 2: El README dice qué variables hacen falta**
 
@@ -8230,16 +10968,18 @@ mensaje o, en la suite, se salta diciendo qué se queda sin verificar.
 
 | Variable | Quién la necesita | Qué es |
 | :--- | :--- | :--- |
-| `RSNA_RAIZ` | `scripts/preparar_sesion.py`, `pruebas/seleccionar_casos.py`, `pruebas/puntuaciones.py` (solo si no hay caché) y las pruebas que leen placas | la raíz del dataset preparado (`crudo/`, `png/`, `manifiestos/`) |
+| `RSNA_RAIZ` | `scripts/preparar_sesion.py`, `pruebas/seleccionar_casos.py`, `pruebas/reproducir_casos.py` (con bots y sin ellos), `pruebas/puntuaciones.py` y `pruebas/caracterizar_conjunto.py` (estos dos, solo si no hay caché) y las pruebas que leen placas | la raíz del dataset preparado (`crudo/`, `png/`, `manifiestos/`) |
 | `N8N_URL` | `pruebas/reproducir_casos.py` con bots, `pruebas/verificar_webhooks.py` y las pruebas conducidas | la dirección base de n8n, p. ej. `https://n8n.ejemplo.test` |
 | `RED_N8N` | `servidor/docker-compose.yml` (se declara en `servidor/.env`) | el nombre de la red externa de Docker que comparte n8n; obligatoria |
-| `COPILOTO_URL`, `COPILOTO_BD_DSN`, `TELEGRAM_SECRET_PRUEBA`, `TELEGRAM_TOKEN_PROFESIONAL`, `CHAT_SUBIDA_PLACAS` | el arnés y las pruebas conducidas | las describe la cabecera de `pruebas/reproducir_casos.py` |
+| `COPILOTO_URL`, `COPILOTO_BD_DSN`, `TELEGRAM_SECRET_PRUEBA`, `TELEGRAM_TOKEN_PROFESIONAL`, `CHAT_SUBIDA_PLACAS` | el arnés y las pruebas conducidas | las describe la cabecera de `pruebas/reproducir_casos.py`. Ojo: `COPILOTO_URL` no quiere el mismo valor en el arnés y en las pruebas de contrato (`docs/sp3-operacion.md`, §2) |
 | `ANONIMATO_LISTA` | solo quien mantiene la lista de lo que no se publica, para regenerar las huellas | la ruta de esa lista, que vive fuera del repositorio (`tests/anonimato/README.md`) |
 
 Los workflows de `n8n/` llevan **marcadores** en vez de la dirección y de los
 identificadores de las credenciales: `scripts/marcadores_n8n.py` los
 sustituye por los valores de `n8n/valores.local.json` (que no se versiona;
-`n8n/valores.ejemplo.json` dice qué claves lleva) antes de importarlos.
+`n8n/valores.ejemplo.json` dice qué claves lleva) antes de importarlos, y los
+vuelve a poner antes de versionar un export. El procedimiento, en
+`docs/sp3-operacion.md`, §7.
 ```
 
 En la subsección «Las que se saltan, y qué se queda sin comprobar», la
@@ -8302,13 +11042,15 @@ separada por una línea `---`, esta sección:
 El repositorio dejó de llevar escritos la dirección de n8n, el nombre de la
 red y los identificadores de las credenciales. Lo desplegado **sigue
 funcionando como está**; estos pasos hacen falta la próxima vez que se
-despliegue o se opere desde el repositorio, y se hacen fuera de las fechas
-de la sesión con el médico.
+despliegue o se opere desde el repositorio —el 2, antes—, y se hacen fuera
+de las fechas de la sesión con el médico (`docs/sp5-sesion.md`).
 
 1. **En el servidor, antes del próximo despliegue:** `RED_N8N` en
    `servidor/.env`, y el primer redespliegue, que vuelve a crear los dos
    contenedores (la clave de la red cambió de nombre en el compose) sin tocar
-   el volumen de la base. El procedimiento, orden a orden, está en
+   el volumen de la base. Mientras se recrean, alrededor de un minuto, los
+   bots no contestan: se hace cuando no haya consultas en curso. El
+   procedimiento, orden a orden, está en
    `docs/sp2-despliegue.md`, apartado «El primer redespliegue con `RED_N8N`
    obligatoria»: se sigue ese, no se improvisa otro.
 
@@ -8316,6 +11058,17 @@ de la sesión con el médico.
    `pruebas/verificar_webhooks.py` necesita `N8N_URL` en su entorno (§5,
    «Paso 2»). Sin ella el script no comprueba nada: lo dice, avisa por el
    canal de avisos si lo tiene configurado, y devuelve un código de error.
+   **Esto no espera a «la próxima vez»:** la tarea corre desde el clon de esa
+   máquina, y desde que el clon tiene este cambio devuelve 1 y avisa cada
+   mañana de que falta `N8N_URL`, sin que haya nada roto. La variable se pone
+   antes de traer el cambio a ese clon; si ya está traído, ya.
+   Y la acción de la tarea lleva `--sin-teclado` (§5). Si la tarea se
+   registró antes, no la lleva, y repetir el `Register-ScheduledTask` del §5
+   no la reemplaza: se cambia con
+   `Set-ScheduledTask -TaskName 'Copiloto Triaje: webhooks de Telegram' -Action $acc`,
+   con el `$acc` del §5, y se comprueba con
+   `(Get-ScheduledTask -TaskName 'Copiloto Triaje: webhooks de Telegram').Actions`:
+   su `Arguments` acaba en `--sin-teclado`.
 
 3. **En la máquina de desarrollo:** `n8n/valores.local.json`, con los valores
    reales de cada marcador. Si no existe, se crea a partir de
@@ -8327,13 +11080,17 @@ de la sesión con el médico.
    por el de mantenimiento, que no atiende a nadie, y mirar en n8n, nodo a
    nodo, que cada workflow usa la credencial de SU bot antes de activarlo: un
    valor cruzado en `valores.local.json` haría contestar a un bot con la
-   cuenta de otro.
+   cuenta de otro. En el de mantenimiento, además, volver a rellenar
+   `chat_equipo` (§5, paso 1).
 
-5. **Para correr la suite completa**, `RSNA_RAIZ` (y `N8N_URL`, con los
-   secretos de siempre, para las pruebas conducidas). Un salto se ve verde:
-   conviene correr con `-rs` y leer qué se saltó.
+5. **Para correr la suite completa y el arnés**, `RSNA_RAIZ` (y `N8N_URL`,
+   con los secretos del arnés —los de la tabla «Variables de entorno» del
+   `README.md`—, para las pruebas conducidas y para el arnés con bots). Un
+   salto se ve verde: conviene correr con `-rs` y leer qué se saltó.
 
        setx RSNA_RAIZ "<RSNA_RAIZ>"
+
+   `setx` vale para las consolas que se abran después: abre una nueva.
 ````
 
 - [ ] **Paso 5: La documentación nueva también pasa la prueba**
@@ -8355,6 +11112,213 @@ pruebas, todas en verde. (`tests/test_arrancar.py` y
 ```bash
 git commit -m "docs(anonimato): las variables de entorno y lo que el equipo hace una vez en el servidor" -m "El README dice qué variables hacen falta y quién las necesita. El manual de operación gana N8N_URL en la tarea programada y la lista de lo que hay que hacer una vez tras la anonimización." -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
+
+---
+
+### Tarea 9: La tanda de la revisión final
+
+Las tareas 1 a 8 pasaron cada una su revisión. Después, la rama entera pasó
+una revisión final en cinco dimensiones —el árbol contra lo que las huellas
+no ven, el verificador, las variables de entorno, el despliegue y los
+marcadores—, con un verificador adversario para cada hallazgo: 34 hallazgos,
+ninguno crítico, seis importantes. Esta tarea es la tanda que los arregla,
+junto con lo que las revisiones de las tareas habían aplazado; su re-revisión
+aprobó el verificador y pidió una ronda de cierre, corta, y una tercera, que
+también están aquí. **Lo que cambia
+en el texto y en el código de las tareas 1 a 8 ya está llevado a ellas**: lo
+que este plan cita es lo que quedó. Aquí se dice qué se decidió y por qué.
+
+Los ejemplos de esta tarea se describen y no se escriben: un secreto de
+ejemplo escrito entero en este documento haría saltar la prueba que lo
+recorre.
+
+**Ficheros:**
+- Modificar: `scripts/verificar_anonimato.py`, `tests/test_anonimato.py`,
+  `tests/anonimato/README.md`
+- Modificar: `scripts/marcadores_n8n.py`, `tests/test_marcadores_n8n.py`,
+  `tests/test_mantenimiento.py`
+- Modificar: `tests/test_arrancar.py`
+- Modificar: `src/copiloto_triaje/config.py`, `pruebas/verificar_webhooks.py`,
+  `pruebas/reproducir_casos.py`, `pruebas/seleccionar_casos.py`,
+  `scripts/preparar_sesion.py`, `tests/conftest.py` y sus pruebas
+- Modificar: `tests/test_flujo_paciente.py`, `tests/test_flujo_profesional.py`
+- Modificar: `README.md`, `docs/sp2-despliegue.md`, `docs/sp3-operacion.md`,
+  dos specs y un plan anteriores
+
+**Cómo se trabaja:** TDD en todo lo que es código. Donde la prueba nueva pasa
+a la primera (una prueba que faltaba), el rojo se ve por mutación: se deshace
+el arreglo en una copia y tiene que caer.
+
+- [ ] **Paso 1: El verificador no da por limpio lo que no debe publicarse**
+
+Los tres importantes del verificador:
+
+- **Las huellas publicadas.** Un árbol público que conservara el
+  `huellas.txt` entero del repositorio de desarrollo salía con 0: cada huella
+  es un token de 64 hexadecimales cuyo SHA-256 no está en la lista. Con
+  `--un-solo-commit`, cada token de 64 hexadecimales del árbol que esté en
+  las huellas recibidas, sin contar la del centinela, es un hallazgo de clase
+  `huella_publicada`, con fichero y línea y sin imprimir la huella; y lo
+  mismo si está en el mensaje del commit o en el nombre de una rama o de una
+  etiqueta.
+  `--regenerar --solo-centinela --huellas <destino>` escribe el `huellas.txt`
+  del repositorio que se publica, con su propia cabecera.
+- **La búsqueda de secretos no se salta.** La prueba del árbol se parte en
+  `test_el_arbol_no_lleva_secretos`, que corre siempre, y
+  `test_el_arbol_no_lleva_huellas`, que se salta con solo la huella del
+  centinela. Cada salto dice lo que de verdad se queda sin verificar, y dos
+  pruebas fijan que la de los secretos no se salta: ni con una marca encima
+  ni con un salto dentro.
+- **Fuera de git, nada falla.** Sin `.git` —una descarga en ZIP— la prueba de
+  los binarios se salta diciéndolo. Criterio de aceptación: sobre un árbol
+  extraído con `git archive` fuera de cualquier repositorio,
+  `pytest tests/test_anonimato.py` no da ningún fallo. Y las cinco pruebas
+  que recorren el árbol, si fallan fuera de un repositorio, lo dicen: allí se
+  ha recorrido también lo que git ignoraría.
+
+Y además: las **cabeceras del commit** (con `--commit`, la que no sea
+`tree`, `author` ni `committer` es un hallazgo que dice su nombre y nunca su
+valor; `parent`, solo con `--un-solo-commit`); los **nombres de las ramas y
+de las etiquetas**, también contra los patrones de secretos; las **imágenes
+incrustadas** en los notebooks, fijadas por su SHA-256 (y toda tirada de 120 o
+más caracteres de base64 de un fichero de texto tiene que ser una de ellas:
+una imagen se puede pegar de más maneras; un fichero que no se deja leer es
+un hallazgo, no un fichero limpio), y los **metadatos** de los
+notebooks, por sus claves; `load()` antes de leer los metadatos de
+una imagen; y las aserciones sobre `huellas.txt`, sobre booleanos, para que
+un fallo no enseñe las huellas, cada una con una prueba que cae si vuelve la
+forma vieja. La prueba de las huellas publicadas monta su repositorio de
+juguete en una ruta corta: con una carpeta temporal larga, Windows corta las
+rutas y la prueba fallaba por eso.
+
+- [ ] **Paso 2: Los patrones de secretos**
+
+| Qué pasaba | Qué se decide |
+| :--- | :--- |
+| una clave acabada en `_key` en minúsculas (la clave de una caché, la clave primaria de una tabla) saltaba como secreto | la terminación `_KEY` cuenta escrita en mayúsculas; en minúsculas, solo seis terminaciones (`access_key`, `private_key`, `encryption_key`, `signing_key`, `client_key`, `master_key`) |
+| un valor entre comillas con paréntesis, corchetes o llaves dentro dejó de saltar en la ronda 2 (regresión) | entre comillas es una expresión solo lo que lleva `{{`, `${` o `$(`, o empieza por `=`; suelto, lo que lleva paréntesis, corchetes o llaves |
+| con subíndice o detrás de una coma, un nombre de variable saltaba | en esas dos formas el valor solo cuenta entre comillas |
+| la contraseña de una URL que empieza por cifras y una barra se tomaba por un puerto y una ruta | solo si lo de antes de los dos puntos parece un host: lleva un punto, o es `localhost` |
+| el token de Telegram detrás de `Bot` en mayúsculas, o con `%3A` en vez de los dos puntos, no saltaba | salta |
+| una línea de 40 000 guiones costaba medio minuto | el patrón de las asignaciones no se aplica a la línea que no lleva ninguna de sus palabras clave, ni el de la URL a la que no lleva `://` |
+
+Al terminar, el verificador sobre el repositorio tiene que seguir saliendo
+con 0. Si una regla nueva salta sobre el árbol, no se edita el fichero que
+salta ni se ensancha la regla hasta que calle: se mira qué es.
+
+- [ ] **Paso 3: La herramienta de los marcadores**
+
+- **El chat del equipo no se versiona (importante).** El workflow de
+  mantenimiento desplegado lleva relleno el `chat_equipo` del nodo
+  `Configuracion`, que identifica a una persona, y `--retirar` lo dejaba en
+  el fichero que se versiona. Ahora lo vacía y lo dice, sin repetir el valor;
+  y una prueba estática de `tests/test_marcadores_n8n.py` exige que el
+  versionado vaya vacío.
+- **Después de retirar, lo escrito solo lleva marcadores**: si queda una
+  credencial o una URL de webhook que no es un marcador —los valores no eran
+  los de esa descarga—, la herramienta se niega sin escribir, diciendo el
+  nodo y nunca el valor. La URL se busca en el texto de cada nodo, no solo
+  en el campo de su dirección: en dos workflows está en una nota.
+- Lo que no es un workflow (una lista, un objeto sin `nodes`) no pasa en
+  silencio; la escritura es atómica (a un temporal, y `os.replace`); se lee
+  con marca de orden de bytes; el error de «marcadores desconocidos» no
+  repite ninguna clave y nombra el marcador conocido más parecido; la URL de
+  n8n es esquema y host, sin ruta; y las claves de `settings` que se
+  versionan quedan fijadas en una prueba.
+
+- [ ] **Paso 4: La guía de despliegue, y las pruebas que la vigilan**
+
+- **El commit de vuelta (importante).** El punto 1 del primer redespliegue
+  daba por commit de vuelta el de ese momento, que en un segundo intento, o si
+  antes se lanzó el redespliegue de siempre, ya es el código nuevo: la vuelta
+  atrás habría dejado el compose nuevo con un `.env` sin la variable. El
+  punto 1 comprueba antes si el código nuevo ya está traído, y una orden da
+  el commit que `main` tenía antes del `pull`; la comprobación de ese commit
+  no da un `0` falso: con un commit mal copiado sale un `fatal:`.
+- **Dos redes, y el camino B (importantes, de la re-revisión).** Si el
+  contenedor está en dos redes, la guía manda parar: la que no está en el
+  compose se pierde al recrearlo. Y el apartado no cubre el camino B: lo
+  dice, y no da una receta a medias de algo que no está ensayado.
+- La restauración de la copia de la base va en una sola transacción, y la
+  copia se comprueba entera (`gunzip -t`) al hacerla y antes de restaurarla:
+  una copia cortada no daría ningún error; la plantilla del `.env` se copia
+  sin pisar uno que ya exista; el
+  `.env` nace de la plantilla y lleva una sola línea `RED_N8N`; el apartado
+  dice que es del camino A, y qué cambia con el B; desde SP3 son dos
+  contenedores, y los pre-chequeos miran los dos nombres.
+- `tests/test_arrancar.py`: la función que busca órdenes que paran o borran
+  mira el trozo entero, con límites de palabra; una prueba recorre la guía
+  ENTERA, en bloques con cualquier valla (ningún `down` con volúmenes, ningún
+  `docker volume rm` ni `prune`, y todo lo que para, arranca o borra, por
+  nombre de proyecto; las dos excepciones, del caso local, van una a una con
+  su motivo); y otra fija lo que sostiene la seguridad de la guía: el nombre
+  del proyecto, los de los contenedores, que no hay puertos, la clave del
+  volumen y las líneas del compose que la guía cita por su número. Otras
+  aserciones fijan la guarda del commit de vuelta, la del punto 1,
+  `main@{1}` y el `&&` detrás de `gunzip -t`.
+
+- [ ] **Paso 5: Las variables de entorno**
+
+- **`N8N_URL` mal puesta no pasa por buena.** Antes de la rama la dirección
+  era una constante; ahora la escribe alguien. `url_base_n8n(valor)`, en
+  `src/copiloto_triaje/config.py`: esquema `http` o `https`, host (en
+  minúsculas, con su puerto si lo lleva), sin usuario, ruta, consulta ni
+  fragmento, sin comillas ni blancos. La usan el vigilante diario (la mal
+  puesta sigue el camino de la ausente: avisa, devuelve 1, no pide tokens),
+  el arnés (se detiene antes de abrir la base) y el fijador de las pruebas
+  conducidas (falla diciendo por qué: un salto se ve verde).
+- **`RSNA_RAIZ` a una carpeta que no es el dataset**: `seleccionar()` lo
+  comprueba al principio, y la fase de elegir de `scripts/preparar_sesion.py`
+  comprueba que están todas las placas ANTES de borrar lo de una elección
+  anterior.
+- El mensaje de la variable ausente dice dónde se pone para la tarea
+  programada. Y el vigilante diario, en la tarea programada, corre con
+  `--sin-teclado` y nunca pide un token por teclado: mirar si había consola no
+  bastaba, porque el Programador de tareas le da una a `python.exe`, y la
+  tarea se quedaba esperando. Una prueba ata la orden de la tarea del manual
+  a la opción.
+
+- [ ] **Paso 6: Las pruebas que enseñaban un valor al fallar**
+
+En las pruebas de los workflows, y en la del chat del equipo, cada
+comprobación se reduce ANTES a un booleano, y el mensaje dice el nodo o la
+cuenta: la introspección de pytest enseñaba la credencial, el token que
+casaba con el patrón o un trozo del texto.
+
+- [ ] **Paso 7: La declaración y los documentos**
+
+`tests/anonimato/README.md` se reescribe para describir el verificador tal
+como queda, y se contrasta frase a frase con el código. El README gana la
+fila de `RSNA_RAIZ` completa, la suite del formulario y los datos derivados
+del dataset que viajan en el repositorio; el manual de operación, las cinco
+variables del arnés, el aviso de que la tarea programada falla cada mañana
+sin `N8N_URL`, y lo que la herramienta de los marcadores hace con el chat del
+equipo.
+
+- [ ] **Paso 8: La suite, y los commits**
+
+```bash
+C:/venv-copiloto/Scripts/python.exe scripts/verificar_anonimato.py --raiz .
+C:/venv-copiloto/Scripts/python.exe -m pytest -q -rs
+node tests/decidir.mjs
+node tests/profesional.mjs
+node tests/mantenimiento.mjs
+node tests/formulario.mjs
+```
+
+Esperado: el verificador sale con 0; la suite, sin ningún fallo; las tres
+primeras de `node` imprimen `TODO VERDE` y la del formulario, cuántas
+comprobaciones pasaron; las cuatro salen con 0. Un commit por apartado.
+
+**Lo que se aparcó, con destino.** Al plan que construye el repositorio que
+se publica (SP5-C): si se publican las fechas de las sesiones y de las
+tutorías; los hashes de commits del repositorio de desarrollo que citan el
+código y los planes, que en un repositorio de un solo commit no existen;
+confirmar las condiciones de redistribución de los metadatos del dataset
+público; el titular de la licencia; y el texto de un aviso del workflow de
+mantenimiento, que va con el próximo despliegue de los workflows. A la
+próxima corrida de las pruebas conducidas: que tres de ellas miren el código
+HTTP, que hay que medir antes de fijarlo.
 
 ---
 
@@ -8395,6 +11359,15 @@ un repositorio recién creado decía «limpio» sin haber mirado nada), no
 miraba el árbol del commit ni los nombres de las ramas, y no cazaba el
 token de un bot en la forma en que va en una URL. Y este plan citaba
 entero `huellas.txt`: se quitó, porque una huella no es un secreto (D9).
+
+**Lo que encontró la revisión final** (tarea 9), que ninguna revisión de
+tarea había visto porque caía entre dos tareas o en el uso que el plan
+siguiente hará de lo construido: que el verificador daba por limpio un árbol
+público con las huellas de la lista dentro; que al retirar los valores de un
+workflow se quedaba el chat de una persona; que la búsqueda de secretos se
+saltaba donde no hay lista; que la vuelta atrás del primer redespliegue no
+funcionaba en un segundo intento; y que la suite fallaba en una copia sin
+`.git`.
 
 **Lo que este plan no hace:** crear ni publicar el repositorio nuevo, correr
 `scripts/verificar_anonimato.py` sobre él y sobre su commit, ni decidir si el
