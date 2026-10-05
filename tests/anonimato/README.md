@@ -47,7 +47,8 @@ Repite la búsqueda de huellas sobre cualquier árbol y añade:
   clave, contraseña dentro de una URL) y los ficheros que no deben viajar
   (`.env`, claves);
 - lo que **no ha podido mirar** —un enlace simbólico, un submódulo, un
-  fichero que no se deja leer—, que sale como hallazgo y no como limpio;
+  fichero que no se deja abrir—, que sale como hallazgo y no como limpio
+  (una carpeta que no se deja recorrer, no: más abajo);
 - el **commit**: el contenido de su árbol, el autor, quien confirma y el
   mensaje (con sus pies), contra las huellas y contra los patrones de
   secretos;
@@ -131,7 +132,7 @@ carpeta entera, también lo que git ignoraría: un `.env` que alguien haya
 creado en su copia hace fallar la de los secretos (y la de las huellas, si
 lleva un token de la lista), y el base64 de una dependencia instalada dentro
 de la carpeta, la de las tiradas largas. Cuando fallan así, su mensaje lo
-dice. Un fichero que no se deja leer (sin permiso, bloqueado) no se da por
+dice. Un fichero que no se deja abrir (sin permiso, bloqueado) no se da por
 limpio: la prueba de las tiradas largas lo da como hallazgo, con su nombre.
 
 ## Lo que esto no protege
@@ -165,6 +166,10 @@ entre comillas, el que lleva `{{`, `${` o `$(`, o empieza por `=`: un secreto
 de verdad con esa forma no salta. Detrás de un subíndice o de una coma
 (`entorno["CLAVE"] = valor`, `poner("CLAVE", valor)`), un valor sin comillas
 se toma por una variable y no se mira.
+
+**Una carpeta que no se deja recorrer.** Fuera de un repositorio de git, el
+recorrido se la salta sin decirlo, con todo lo que tenga dentro; dentro de un
+repositorio, el recorrido se detiene con un error.
 
 **No mira la carpeta `.git`.** La dirección del remoto, el historial de
 referencias y los commits que ya no alcanza ninguna rama viven ahí. El

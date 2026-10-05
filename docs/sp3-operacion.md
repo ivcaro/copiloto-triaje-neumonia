@@ -755,6 +755,13 @@ de las fechas de la sesión con el médico (`docs/sp5-sesion.md`).
    máquina, y desde que el clon tiene este cambio devuelve 1 y avisa cada
    mañana de que falta `N8N_URL`, sin que haya nada roto. La variable se pone
    antes de traer el cambio a ese clon; si ya está traído, ya.
+   Y la acción de la tarea lleva `--sin-teclado` (§5). Si la tarea se
+   registró antes, no la lleva, y repetir el `Register-ScheduledTask` del §5
+   no la reemplaza: se cambia con
+   `Set-ScheduledTask -TaskName 'Copiloto Triaje: webhooks de Telegram' -Action $acc`,
+   con el `$acc` del §5, y se comprueba con
+   `(Get-ScheduledTask -TaskName 'Copiloto Triaje: webhooks de Telegram').Actions`:
+   su `Arguments` acaba en `--sin-teclado`.
 
 3. **En la máquina de desarrollo:** `n8n/valores.local.json`, con los valores
    reales de cada marcador. Si no existe, se crea a partir de
