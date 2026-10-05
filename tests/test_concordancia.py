@@ -576,7 +576,8 @@ def test_lo_observado_y_el_criterio_no_se_contradicen_sobre_el_0_4():
     """Un barrido de límites inferiores alrededor de 0,4: si el criterio dice
     que el límite queda por debajo de 0,4 con un método, «Observado» tiene
     el 0,4 dentro con ese método; si dice que no, lo tiene fuera o el límite
-    es el propio umbral. Y cada frase cuadra con los límites que imprime."""
+    ES el umbral (a seis decimales). Las dos frases imprimen el límite con la
+    misma cifra, y cada una cuadra con la que imprime."""
     import re
     candidatos = [0.4 + d for d in (-0.3, -0.05, -0.0051, -0.005, -0.0049, -0.0004,
                                     -4e-7, -1e-16, 0.0, 1e-16, 4e-7, 0.0004, 0.0027,
@@ -586,26 +587,80 @@ def test_lo_observado_y_el_criterio_no_se_contradicen_sobre_el_0_4():
             r = {"kappa": 0.7, "ic95": [li_a, 0.95], "ic95_bca": [li_b, 0.93], "n": 24}
             r["frente_a_umbrales"] = cc.frente_a_umbrales(r)
             observado = cc._anchura_observada(r)
+            criterio = cc._criterio("El kappa ponderado", r)
             # lo que dice del 0,4 (los límites superiores dejan el 0,6 dentro)
             del_0_4 = re.search(
                 r"; el 0,4(?: y el 0,6)? quedan? (dentro con los dos métodos|fuera con "
                 r"los dos métodos|dentro con (el método analítico|el BCa) y fuera con)",
                 observado)
             assert del_0_4, observado
-            for li, metodo, clave in ((li_a, "el método analítico", "li_analitico_lt_0_4"),
-                                      (li_b, "el BCa", "li_bca_lt_0_4")):
+            for li, metodo, corto, clave in (
+                    (li_a, "el método analítico", "analítico", "li_analitico_lt_0_4"),
+                    (li_b, "el BCa", "BCa", "li_bca_lt_0_4")):
                 debajo = r["frente_a_umbrales"][clave]
                 impreso = re.search(rf"de (-?[\d,]+) a [\d,]+ con {metodo}", observado)
                 inferior = float(impreso.group(1).replace(",", "."))
                 dentro = (del_0_4.group(1) == "dentro con los dos métodos"
                           or del_0_4.group(2) == metodo)
-                # lo que dice del 0,4 cuadra con el límite que imprime...
+                # el criterio imprime ese límite con la misma cifra...
+                en_el_criterio = re.search(rf"{corto} \(?(-?\d+,\d+)", criterio)
+                assert en_el_criterio.group(1) == impreso.group(1), (li, criterio, observado)
+                # ...lo que «Observado» dice del 0,4 cuadra con la cifra que imprime...
                 assert dentro == (inferior <= 0.4), (li, observado)
-                # ...y con lo que dice el criterio de ese mismo límite
+                # ...y con lo que el criterio dice de ese mismo límite: solo un
+                # límite que ES el umbral no queda por debajo y lo tiene dentro
                 if debajo:
                     assert dentro, (li, observado)
                 else:
-                    assert not dentro or inferior == 0.4, (li, observado)
+                    assert not dentro or round(li, 6) == 0.4, (li, observado)
+
+
+def test_el_mismo_limite_se_lee_igual_en_las_tres_lineas_del_acta():
+    """La línea del kappa, la frase del criterio y «Observado» imprimen los
+    límites del mismo intervalo. Junto a una mitad, redondear antes a seis
+    decimales le cambia la segunda cifra a un límite (0,5750004 es «0,58»;
+    0,575, «0,57»), y a dos decimales a secas 0,3999 se lee «0,40» al lado de
+    «el 0,4 queda fuera»."""
+    import re
+    junto_a_una_mitad = (0.5750004190841983, 0.6250000000000001, 0.125000000001,
+                         0.3750000000000001, 0.575, 0.625)
+    junto_a_un_umbral = (0.3999, 0.3996, 0.4027, 0.4000004, 0.3999999999999999, 0.5996,
+                         0.6004, 0.395, 0.605)
+    candidatos = junto_a_una_mitad + junto_a_un_umbral + (-0.21, 0.0, 0.28)
+    for li_a in candidatos:
+        for li_b in candidatos:
+            for ls in (0.3999, 0.6250000000000001, 0.95, 1.0):
+                if ls < max(li_a, li_b):
+                    continue
+                r = {"kappa": max(li_a, li_b), "ic95": [li_a, ls], "ic95_bca": [li_b, ls],
+                     "n": 24}
+                r["frente_a_umbrales"] = cc.frente_a_umbrales(r)
+                linea = re.search(r"analítico (\S+) a (\S+); BCa (\S+) a (\S+); n = 24",
+                                  cc._kappa_texto(r)).groups()
+                observado = cc._anchura_observada(r)
+                analitico = re.search(r"de (\S+) a (\S+) con el método analítico", observado)
+                bca = re.search(r"de (\S+) a (\S+) con el BCa", observado)
+                assert linea == analitico.groups() + bca.groups(), (r, observado)
+                criterio = cc._criterio("El kappa ponderado", r)
+                assert re.search(r"analítico \(?(-?\d+,\d+)", criterio).group(1) == linea[0]
+                assert re.search(r"BCa \(?(-?\d+,\d+)", criterio).group(1) == linea[2]
+                # y lo que se lee «0,40» o «0,60» ES el umbral
+                for crudo, leido in zip((li_a, ls, li_b, ls), linea):
+                    if leido in ("0,40", "0,60"):
+                        assert round(crudo, 6) in (0.4, 0.6), (crudo, leido)
+
+
+def test_la_anchura_es_la_resta_de_lo_impreso_con_el_medio_hacia_arriba():
+    def k(analitico, bca):
+        r = {"kappa": 0.7, "ic95": list(analitico), "ic95_bca": list(bca), "n": 24}
+        r["frente_a_umbrales"] = cc.frente_a_umbrales(r)
+        return r
+    # 0,95 − 0,395 = 0,555: con coma flotante la resta da 0,55499… y salía «0,55»
+    observado = cc._anchura_observada(k((0.395, 0.95), (0.605, 0.95)))
+    assert "de 0,395 a 0,95 con el método analítico (anchura 0,56)" in observado
+    assert "de 0,605 a 0,95 con el BCa (anchura 0,35)" in observado      # 0,345
+    assert "de -0,21 a 0,3999 con el método analítico (anchura 0,61)" in (
+        cc._anchura_observada(k((-0.21, 0.3999), (0.1, 0.5))))
 
 
 def test_dentro_de_la_horquilla_da_el_recuento_y_redondea_como_el_bot():

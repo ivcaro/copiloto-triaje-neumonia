@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import csv
 import datetime
+import decimal
 import math
 import pathlib
 import statistics
@@ -477,8 +478,12 @@ def _f(x, decimales=2):
 
 
 def _kappa_texto(k: dict) -> str:
-    return (f"{_f(k['kappa'])} (IC 95 % analítico {_f(k['ic95'][0])} a {_f(k['ic95'][1])}; "
-            f"BCa {_f(k['ic95_bca'][0])} a {_f(k['ic95_bca'][1])}; n = {k['n']})")
+    """Un kappa y sus dos intervalos, en una linea. Las cifras van con
+    `_f_frente_a_umbral`, como en la frase del criterio y en «Observado»: en
+    el acta, el mismo limite se lee igual en las tres."""
+    f = _f_frente_a_umbral
+    return (f"{f(k['kappa'])} (IC 95 % analítico {f(k['ic95'][0])} a {f(k['ic95'][1])}; "
+            f"BCa {f(k['ic95_bca'][0])} a {f(k['ic95_bca'][1])}; n = {k['n']})")
 
 
 def _pct_como_el_bot(x: float) -> str:
@@ -569,22 +574,31 @@ def _anchura_observada(k: dict) -> str:
     ponerlo al lado del texto declarado antes de ella: sus limites y su
     anchura por los dos metodos, y si 0,4 y 0,6 quedan dentro.
 
-    Los limites van como en la frase del criterio, que esta dos lineas mas
-    arriba en el acta: con `_f_frente_a_umbral` (los decimales que hagan
-    falta si quedan pegados a un umbral) y comparados a seis decimales, como
-    `frente_a_umbrales`. Asi las dos frases no pueden decir cosas distintas
-    del 0,4. La anchura es la de los limites tal como se imprimen."""
+    Los limites se IMPRIMEN como en la frase del criterio y en la linea del
+    kappa, que estan mas arriba en el acta: con `_f_frente_a_umbral` sobre el
+    limite tal como se calculo (redondearlo antes a seis decimales puede
+    cambiarle la segunda cifra: 0,5750004 es «0,58» y 0,575, «0,57»). Se
+    COMPARAN con los umbrales a seis decimales, como `frente_a_umbrales`. Asi
+    las tres lineas dicen lo mismo del mismo limite. La anchura es la resta
+    de los limites tal como se imprimen, hecha en decimal y con el ,5 hacia
+    arriba: «de 0,395 a 0,95» mide 0,555, que es «0,56»."""
     if k.get("frente_a_umbrales") is None:
         return "el kappa ponderado no es calculable con estas lecturas, y su intervalo tampoco."
-    limites = {nombre: [_a_seis(x) for x in k[clave]] for clave, nombre in METODOS}
+    crudos = {nombre: list(k[clave]) for clave, nombre in METODOS}
+    limites = {nombre: [_a_seis(x) for x in par] for nombre, par in crudos.items()}
 
-    def impreso(x) -> float:
-        return float(_f_frente_a_umbral(x).replace(",", "."))
+    def impreso(x) -> decimal.Decimal:
+        return decimal.Decimal(_f_frente_a_umbral(x).replace(",", "."))
+
+    def anchura(li, ls) -> str:
+        resta = (impreso(ls) - impreso(li)).quantize(
+            decimal.Decimal("0.01"), rounding=decimal.ROUND_HALF_UP)
+        return str(resta).replace(".", ",")
 
     va = " y ".join(
         f"de {_f_frente_a_umbral(li)} a {_f_frente_a_umbral(ls)} con {nombre} "
-        f"(anchura {_f(impreso(ls) - impreso(li))})"
-        for nombre, (li, ls) in limites.items())
+        f"(anchura {anchura(li, ls)})"
+        for nombre, (li, ls) in crudos.items())
 
     def dentro(umbral):
         return [nombre for nombre, (li, ls) in limites.items() if li <= umbral <= ls]
