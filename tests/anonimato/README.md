@@ -131,7 +131,8 @@ carpeta entera, también lo que git ignoraría: un `.env` que alguien haya
 creado en su copia hace fallar la de los secretos (y la de las huellas, si
 lleva un token de la lista), y el base64 de una dependencia instalada dentro
 de la carpeta, la de las tiradas largas. Cuando fallan así, su mensaje lo
-dice.
+dice. Un fichero que no se deja leer (sin permiso, bloqueado) no se da por
+limpio: la prueba de las tiradas largas lo da como hallazgo, con su nombre.
 
 ## Lo que esto no protege
 
