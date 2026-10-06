@@ -45,6 +45,7 @@ import importlib.util
 import io
 import json
 import re
+import struct
 import sys
 import tomllib
 from pathlib import Path
@@ -54,10 +55,14 @@ import pydicom
 import pytest
 import streamlit as st
 import torch
+from PIL import Image
 from streamlit.runtime.memory_media_file_storage import MemoryMediaFileStorage
 from streamlit.testing.v1 import AppTest
 
+from copiloto_triaje.datos.dicom import leer_dicom_desde_bytes
 from copiloto_triaje.modelo.arquitectura import construir_modelo
+from copiloto_triaje.servicio.calibracion import Calibrador
+from copiloto_triaje.servicio.heckerling import combinacion
 from copiloto_triaje.servicio.inferencia import ErrorDeInferencia, Motor
 
 from test_dicom import crear_dicom, crear_dicom_con_tag_vacio
@@ -76,7 +81,7 @@ METRICAS = json.loads((REPO / "app" / "assets" / "metricas.json")
 # AppTest corre el guion en este proceso; 3 s por defecto no bastan para cargar la red.
 TIEMPO = 120
 
-FUENTE_EJEMPLO = "Prueba con ejemplo"
+FUENTE_EJEMPLO = "Usar un ejemplo"
 FUENTE_FICHERO = "Subir un DICOM"
 PESTANAS = ["Probar el modelo", "Historial de la sesión", "Acerca de"]
 ADULTOS = ("normal_pa", "neumonia_pa", "neumonia_ap")
@@ -104,8 +109,52 @@ COLUMNAS = ("n", "origen", "umbral_por_vista", "vista_del_umbral", "clasificacio
 # Los textos del bot que se buscan en la pantalla.
 DESCARGO = "Esto no es un diagnóstico."
 NO_PUDE_LEER = "No pude leer esa radiografía."
+# La frase del bot («Leer respuesta») para lo que no se pudo interpretar, sin su punto
+# final: la app le añade «, o pruebe con un ejemplo.» (M9).
 SIN_CODIGO = ("No pude interpretar el contenido del fichero. Si lo recortó al "
-              "enviarlo, vuelva a exportarlo completo.")
+              "enviarlo, vuelva a exportarlo completo")
+INESPERADO = "\n\n".join([NO_PUDE_LEER, SIN_CODIGO + ", o pruebe con un ejemplo."])
+# R24: lo que se dice de una placa que el modelo vería mal, y no se calcula.
+DIECISEIS_BITS = "\n\n".join([
+    "Esta placa es de 16 bits: los visores la enseñan bien, pero el modelo se entrenó "
+    "con placas de 8 bits, como las de RSNA, y hoy no convierte las demás: la vería "
+    "saturada, casi blanca. Así que no se calcula nada.",
+    "Expórtela en 8 bits, o pruebe con un ejemplo."])
+INVERTIDA = "\n\n".join([
+    "Esta placa guarda la escala de grises invertida: los visores la enseñan bien, pero "
+    "el modelo se entrenó con placas como las de RSNA, con el hueso claro, y hoy no las "
+    "invierte: la vería al revés, con el hueso oscuro. Así que no se calcula nada.",
+    "Expórtela con la escala de grises normal (en DICOM, MONOCHROME2), o pruebe con un "
+    "ejemplo."])
+# R27: lo que se dice mirando solo la cabecera, antes de descodificar un píxel.
+EN_COLOR = "\n\n".join([
+    "Esta placa no está en escala de grises: los visores la enseñan bien, pero el modelo "
+    "se entrenó con placas en grises, como las de RSNA, y hoy no convierte las demás. Así "
+    "que no se calcula nada.",
+    "Expórtela en escala de grises (en DICOM, MONOCHROME2), o pruebe con un ejemplo."])
+NBSP = " "
+
+
+def _lado(filas, columnas):
+    return "\n\n".join([
+        f"Esta placa declara {filas} × {columnas} píxeles, y la app no lee placas de más "
+        f"de 5{NBSP}000 de lado (una placa de tórax digital no llega a tanto). Así que no "
+        "se calcula nada.",
+        "Expórtela más pequeña, o pruebe con un ejemplo."])
+
+
+def _bits(bits, como):
+    return "\n\n".join([
+        f"Esta placa es de {bits}: los visores la enseñan bien, pero el modelo se entrenó "
+        f"con placas de 8 bits, como las de RSNA, y hoy no convierte las demás: {como}. Así "
+        "que no se calcula nada.",
+        "Expórtela en 8 bits, o pruebe con un ejemplo."])
+
+
+VARIOS_CUADROS = "\n\n".join([
+    "Este fichero trae 2 imágenes, y la app evalúa una placa sola. Así que no se calcula "
+    "nada.",
+    "Exporte solo la placa de tórax, o pruebe con un ejemplo."])
 FUERA_DE_ALCANCE = "NO PROCEDE — fuera del alcance del modelo."
 EDAD_DESCONOCIDA = "NO PROCEDE — no se puede saber la edad."
 COLETILLA_EDAD = ("No hay resultado que dar: el modelo se validó entre 18 y 100 años, "
@@ -170,6 +219,38 @@ def descargas(monkeypatch):
 
     monkeypatch.setattr(MemoryMediaFileStorage, "load_and_get_id", espia)
     return capturadas
+
+
+@pytest.fixture
+def motor_que_no_se_llama(monkeypatch):
+    """Un `Motor` que no se puede usar: cada llamada a `clasificar` o a `mapa_de_calor`
+    se apunta y revienta. La lista de llamadas tiene que acabar vacía."""
+    llamadas = []
+
+    def no_me_llames(self, *args, **kwargs):
+        llamadas.append(args)
+        raise AssertionError("el motor no se tenía que llamar")
+
+    monkeypatch.setattr(Motor, "clasificar", no_me_llames)
+    monkeypatch.setattr(Motor, "mapa_de_calor", no_me_llames)
+    return llamadas
+
+
+@pytest.fixture
+def sin_descodificar(monkeypatch):
+    """Nadie descodifica un píxel: `Dataset.pixel_array`, por donde pasan el lector del
+    proyecto, la app y el motor, se apunta y revienta EN EL ACTO, antes de reservar nada.
+    Así, si la app descodificara una placa que declara 60 000 × 60 000, la prueba falla
+    (la app daría otro mensaje y esta lista no estaría vacía) en vez de colgarse
+    reservando 3,35 GiB."""
+    descodificados = []
+
+    def no_descodifiques(self):
+        descodificados.append((self.get("Rows"), self.get("Columns")))
+        raise AssertionError("no se tenía que descodificar ni un píxel")
+
+    monkeypatch.setattr(pydicom.dataset.Dataset, "pixel_array", property(no_descodifiques))
+    return descodificados
 
 
 @pytest.fixture(scope="session")
@@ -301,14 +382,41 @@ def test_arranca_sin_excepciones_y_ensena_acerca_de():
     precio = next(t for t in tablas if "Placas" in t.columns)
     assert "Placas" not in subgrupos.columns
     assert list(precio["Placas"]) == ["PA", "AP", "Todas"]
+    uno = METRICAS["umbral_por_vista_en_prueba"]["un_umbral"]
     dos = METRICAS["umbral_por_vista_en_prueba"]["dos_umbrales"]
     assert list(precio["Especificidad, dos umbrales"])[2].startswith(
         _dec(dos["global"]["especificidad"], 2))
+    # M5: la frase del precio dice también lo que cada vista PIERDE, con las cifras
+    # del JSON: la especificidad de las PA y la sensibilidad de las AP.
+    clave = {"sensibilidad": "recall", "especificidad": "especificidad"}
+    pierde = lambda vista, medida: (f"la {medida} baja de {_dec(uno[vista][clave[medida]], 2)}"
+                                    f" a {_dec(dos[vista][clave[medida]], 2)}")
+    assert "en las placas PA, la sensibilidad sube de " in texto
+    assert pierde("PA", "especificidad") in texto
+    assert pierde("AP", "sensibilidad") in texto
+    assert pierde("global", "especificidad") in texto
+    # M3: las cotas de la RV de la imagen, las de los extremos SOSTENIDOS del
+    # calibrador versionado, recalculadas aquí con su fórmula y no con la del motor.
+    calibrador = Calibrador.desde_json(CALIBRADOR)
+    odds = lambda p: p / (1 - p)
+    cota = lambda p: odds(p) / odds(calibrador.prevalencia)
+    rv = lambda v: _dec(v, 2 if v < 10 else 1)
+    assert (f"entre {rv(cota(calibrador.probabilidad_minima_sostenida))} y "
+            f"{rv(cota(calibrador.probabilidad_maxima_sostenida))}.") in texto
+    # M7: la combinación, también cuando la clínica y la imagen se oponen (entonces
+    # `combinacion` no calcula la dependencia: ver RAMAS, más abajo).
+    assert ("cuando se oponen, esa segunda no se calcula, y el resultado es la "
+            "probabilidad bajo independencia —una, o dos si el asma no se sabe—, que el "
+            "informe da por orientativa") in texto
     # La atribución de los ejemplos, con su licencia.
     assert any("CC0" in _textos(e) for e in acerca.expander)
     # Honestidad: estas métricas son de otros pesos que los cargados (aquí, la red
     # aleatoria), y la app lo dice.
     assert any("otros pesos" in w.value for w in acerca.warning)
+    # M6: la placa viaja al servidor de la app; lo que no hace es ir a ningún OTRO.
+    cabecera = _textos(at)
+    assert "la placa no se envía a ningún otro sitio" in cabecera
+    assert "no se envía a ningún sitio" not in cabecera
 
 
 def test_avisa_de_que_los_ejemplos_no_se_han_medido():
@@ -405,6 +513,28 @@ def test_sin_hallazgos_da_solo_la_evidencia_de_la_imagen():
     assert len(at.get("vega_lite_chart")) == 1
 
 
+def test_el_boton_prueba_con_ejemplo_calcula_el_ejemplo_elegido(pesos_aleatorios):
+    """M2: el mínimo del curso pide un botón «Prueba con ejemplo». Junto al selector, y
+    calcula el ejemplo elegido, con los hallazgos y el interruptor que haya; «Calcular»
+    sigue haciendo lo mismo. Al subir un fichero, el botón no está."""
+    at = _elegir_ejemplo(_app(), "neumonia_ap")
+    # Con el botón, la opción del control ya no se llama igual: dos «Prueba con
+    # ejemplo» en la misma columna confundirían.
+    assert at.segmented_control(key="fuente").options == [FUENTE_EJEMPLO, FUENTE_FICHERO]
+    boton = at.button(key="probar_ejemplo")
+    assert boton.label == "Prueba con ejemplo"
+    boton.click().run()
+    _sin_traza(at)
+    esperado = _motor(pesos_aleatorios).clasificar(_ejemplo("neumonia_ap"))
+    obtenido = at.session_state["ultimo"]["resultado"]
+    assert {k: v for k, v in obtenido.items() if k != "milisegundos"} == {
+        k: v for k, v in esperado.items() if k != "milisegundos"}
+    assert "Resultado: ejemplo «Neumonía, AP — según su fuente»" in _textos(at.tabs[0])
+    assert [f["origen"] for f in at.session_state["historial"]] == ["ejemplo: neumonia_ap"]
+    at.segmented_control(key="fuente").set_value(FUENTE_FICHERO).run()
+    assert "probar_ejemplo" not in [b.key for b in at.button]
+
+
 def test_un_resultado_no_se_queda_delante_de_otra_entrada():
     """Si la entrada cambia, el resultado de la anterior deja de enseñarse."""
     at = _calcular(_app())
@@ -474,7 +604,7 @@ def test_un_dicom_que_pydicom_no_puede_leer_no_da_una_traza(tmp_path, hacer):
     _calcular(at)
     _sin_traza(at)
     (error,) = [e.value for e in at.tabs[0].error]
-    assert error.startswith(NO_PUDE_LEER) and SIN_CODIGO in error
+    assert error == INESPERADO
     for detalle in ("Pixel Data", "Rows", "Missing required element"):
         assert detalle not in _textos(at)
     _sin_resultado(at)
@@ -509,9 +639,186 @@ def test_un_error_inesperado_del_motor_no_llega_como_traza(monkeypatch):
     at = _calcular(_app())
     _sin_traza(at)
     (error,) = [e.value for e in at.tabs[0].error]
-    assert error.startswith(NO_PUDE_LEER)
+    assert error == INESPERADO
     assert "detalle interno" not in _textos(at)
     _sin_resultado(at)
+
+
+# --------------------------------------------------------------------------
+# R24: una placa que el modelo vería mal no se calcula
+# --------------------------------------------------------------------------
+def _de_16_bits(tmp_path):
+    """El DICOM del ayudante, con sus píxeles en 16 bits (y valores por encima de 255,
+    como los de un PACS)."""
+    ruta = _dicom(tmp_path, nombre="placa16.dcm", edad="054Y")
+    ds = pydicom.dcmread(str(ruta))
+    pixeles = (np.arange(64 * 64).reshape(64, 64) * 16).astype(np.uint16)
+    ds.BitsAllocated, ds.BitsStored, ds.HighBit = 16, 16, 15
+    ds.PixelData = pixeles.tobytes()
+    ds.save_as(str(ruta), enforce_file_format=True)
+    return ruta.read_bytes()
+
+
+def _invertida(tmp_path):
+    """El DICOM del ayudante, de 8 bits pero MONOCHROME1: blanco y negro invertidos."""
+    ruta = _dicom(tmp_path, nombre="invertida.dcm", edad="054Y")
+    ds = pydicom.dcmread(str(ruta))
+    ds.PhotometricInterpretation = "MONOCHROME1"
+    ds.save_as(str(ruta), enforce_file_format=True)
+    return ruta.read_bytes()
+
+
+def _en_color(tmp_path):
+    """El DICOM del ayudante, en RGB: tres muestras por píxel."""
+    ruta = _dicom(tmp_path, nombre="color.dcm", edad="054Y")
+    ds = pydicom.dcmread(str(ruta))
+    ds.PhotometricInterpretation, ds.SamplesPerPixel, ds.PlanarConfiguration = "RGB", 3, 0
+    ds.PixelData = bytes(64 * 64 * 3)
+    ds.save_as(str(ruta), enforce_file_format=True)
+    return ruta.read_bytes()
+
+
+def _enorme(tmp_path):
+    """Unos 600 bytes que declaran 60 000 × 60 000, en RLE: un solo fragmento con su
+    cabecera de 64 bytes (un segmento) y un segmento de dos bytes. `pixel_array`
+    intentaría reservar 3,35 GiB (medido, con un tope de memoria, en el informe)."""
+    from pydicom.encaps import encapsulate
+    from pydicom.uid import RLELossless
+    ruta = _dicom(tmp_path, nombre="enorme.dcm", edad="054Y")
+    ds = pydicom.dcmread(str(ruta))
+    ds.Rows = ds.Columns = 60000
+    ds.file_meta.TransferSyntaxUID = RLELossless
+    ds.PixelData = encapsulate([struct.pack("<16L", 1, 64, *([0] * 14)) + b"\x81\x00"])
+    ds["PixelData"].VR = "OB"
+    ds["PixelData"].is_undefined_length = True
+    ds.save_as(str(ruta), enforce_file_format=True)
+    return ruta.read_bytes()
+
+
+def _sin_fotometria(tmp_path):
+    """El DICOM del ayudante sin `PhotometricInterpretation`: no se sabe cómo leerlo."""
+    ruta = _dicom(tmp_path, nombre="incompleta.dcm", edad="054Y")
+    ds = pydicom.dcmread(str(ruta))
+    del ds.PhotometricInterpretation
+    ds.save_as(str(ruta), enforce_file_format=True)
+    return ruta.read_bytes()
+
+
+@pytest.mark.parametrize("hacer, mensaje", [
+    (_de_16_bits, DIECISEIS_BITS), (_invertida, INVERTIDA), (_en_color, EN_COLOR),
+    (_enorme, _lado(f"60{NBSP}000", f"60{NBSP}000")), (_sin_fotometria, INESPERADO)],
+    ids=["16_bits", "monochrome1", "rgb", "60000x60000", "sin_fotometria"])
+def test_una_placa_que_el_modelo_veria_mal_se_rechaza_por_la_cabecera(
+        tmp_path, motor_que_no_se_llama, sin_descodificar, hacer, mensaje):
+    """R24 y R27: el motor convierte con `Image.fromarray(arreglo).convert("RGB")`, que
+    satura todo lo que pasa de 255, no invierte una MONOCHROME1 y no lleva tope de
+    memoria. Una cifra que se sabe que no vale no se enseña, ni con aviso: rechazo
+    mirando SOLO la cabecera, sin descodificar un píxel y sin llamar al motor, sin
+    ningún bloque ni mapa, y sin entrar en el historial. Con hallazgos y con el
+    interruptor encendido, igual."""
+    datos = hacer(tmp_path)
+    assert len(datos) < 20_000                          # ninguna pesa nada
+    at = _subir(_app(), "placa.dcm", datos)
+    _poner_hallazgos(at, HALLAZGOS)
+    at.toggle(key="por_vista").set_value(True)
+    _calcular(at)
+    _sin_traza(at)
+    (error,) = [e.value for e in at.tabs[0].error]
+    assert error == mensaje
+    _sin_resultado(at)
+    assert motor_que_no_se_llama == []
+    assert sin_descodificar == []
+
+
+def test_un_entero_con_signo_lo_para_la_segunda_red(tmp_path, motor_que_no_se_llama):
+    """La cabecera de 8 bits pasa, pero con `PixelRepresentation` 1 los píxeles salen
+    `int8`: la comprobación del arreglo (la segunda red) lo para, sin llamar al motor."""
+    ruta = _dicom(tmp_path, nombre="con_signo.dcm", edad="054Y")
+    ds = pydicom.dcmread(str(ruta))
+    ds.PixelRepresentation = 1
+    ds.save_as(str(ruta), enforce_file_format=True)
+    at = _calcular(_subir(_app(), "placa.dcm", ruta.read_bytes()))
+    _sin_traza(at)
+    (error,) = [e.value for e in at.tabs[0].error]
+    assert error == _bits("8 bits con signo", "la vería mal")
+    _sin_resultado(at)
+    assert motor_que_no_se_llama == []
+
+
+def _cabecera(**cambios):
+    """La cabecera de una placa que pasa (la de `normal_pa`), con cambios: un valor lo
+    pone, `None` lo deja vacío y `QUITAR` lo borra."""
+    ds = pydicom.Dataset()
+    ds.Rows, ds.Columns, ds.BitsAllocated, ds.SamplesPerPixel = 768, 671, 8, 1
+    ds.PhotometricInterpretation = "MONOCHROME2"
+    for campo, valor in cambios.items():
+        if valor is QUITAR:
+            delattr(ds, campo)
+        else:
+            setattr(ds, campo, valor)
+    return ds
+
+
+QUITAR = object()
+CAMPOS_DE_LA_IMAGEN = ("Rows", "Columns", "BitsAllocated", "SamplesPerPixel",
+                       "PhotometricInterpretation")
+
+
+@pytest.mark.parametrize("cambios, mensaje", [
+    ({}, None),
+    ({"Rows": 5000, "Columns": 5000}, None),                    # el borde: pasa
+    ({"Rows": 5001}, _lado(f"5{NBSP}001", "671")),
+    ({"Columns": 5001}, _lado("768", f"5{NBSP}001")),
+    ({"NumberOfFrames": 1}, None),
+    ({"NumberOfFrames": 2}, VARIOS_CUADROS),
+    ({"BitsAllocated": 16}, DIECISEIS_BITS),
+    ({"BitsAllocated": 1}, _bits("1 bit", "la vería mal")),
+    ({"PhotometricInterpretation": "MONOCHROME1"}, INVERTIDA),
+    ({"PhotometricInterpretation": "RGB", "SamplesPerPixel": 3}, EN_COLOR),
+    ({"PhotometricInterpretation": "PALETTE COLOR"}, EN_COLOR),
+    ({"PhotometricInterpretation": "YBR_FULL_422", "SamplesPerPixel": 3}, EN_COLOR),
+    ({"SamplesPerPixel": 3}, EN_COLOR),
+    ({"Rows": None}, INESPERADO),                               # presente pero vacío
+    *[({campo: QUITAR}, INESPERADO) for campo in CAMPOS_DE_LA_IMAGEN],
+], ids=["pasa", "5000x5000_pasa", "rows_5001", "columns_5001", "un_cuadro_pasa",
+        "dos_cuadros", "16_bits", "1_bit", "monochrome1", "rgb", "paleta", "ybr",
+        "tres_muestras", "rows_vacio", *[f"sin_{c}" for c in CAMPOS_DE_LA_IMAGEN]])
+def test_lo_que_dice_la_cabecera(modulo_app, cambios, mensaje):
+    """R27, campo a campo: `BitsAllocated` 8, `PhotometricInterpretation` MONOCHROME2,
+    `SamplesPerPixel` 1, `Rows` y `Columns` hasta 5 000 y, además, un solo cuadro (con
+    5 000 × 5 000 por N cuadros, el mismo agujero de memoria). Si falta uno de los
+    cinco campos, la placa no se puede evaluar: el mensaje de R18."""
+    assert modulo_app.motivo_por_la_cabecera(_cabecera(**cambios)) == mensaje
+
+
+@pytest.mark.parametrize("tipo, mensaje", [
+    (np.uint8, None), (np.int8, _bits("8 bits con signo", "la vería mal")),
+    (np.uint16, DIECISEIS_BITS)], ids=["uint8", "int8", "uint16"])
+def test_la_segunda_red_mira_el_tipo_del_arreglo(modulo_app, tipo, mensaje):
+    assert modulo_app.motivo_por_los_pixeles(np.zeros((4, 4), tipo)) == mensaje
+
+
+def test_la_placa_que_se_ensena_es_la_que_recibe_el_modelo(modulo_app):
+    """Sin estirar nada: `Image.fromarray(arreglo).convert("L")`, lo mismo que el
+    motor antes de `convert("RGB")` (cada canal de su RGB es esto). Con 16 bits sería la
+    placa saturada; se rechaza antes (R24), pero lo que se enseña nunca puede ser una
+    placa más bonita que la que puntuó el modelo."""
+    pixeles = (np.arange(40 * 30).reshape(40, 30) * 50).astype(np.uint16)
+    modelo = np.asarray(Image.fromarray(pixeles).convert("RGB"))
+    vista = modulo_app.placa_para_ver(pixeles)
+    assert vista.dtype == np.uint8 and vista.shape == (40, 30)
+    assert np.array_equal(vista, modelo[..., 0])
+    assert np.array_equal(vista, np.clip(pixeles, 0, 255).astype(np.uint8))
+    # Una de 8 bits, tal cual.
+    gris = np.random.default_rng(0).integers(100, 150, (40, 30), dtype=np.uint8)
+    assert np.array_equal(modulo_app.placa_para_ver(gris), gris)
+
+
+def test_el_resultado_ensena_la_placa_que_puntuo_el_modelo():
+    at = _calcular(_elegir_ejemplo(_app(), "neumonia_pa"))
+    arreglo, _ = leer_dicom_desde_bytes(_ejemplo("neumonia_pa"))
+    assert np.array_equal(at.session_state["ultimo"]["placa"],
+                          np.asarray(Image.fromarray(arreglo).convert("L")))
 
 
 @pytest.mark.parametrize("codigo, empieza, relata", [
@@ -607,8 +914,32 @@ def test_unos_hallazgos_a_medias_no_se_calculan():
     _sin_resultado(at)
 
 
-# --------------------------------------------------------------------------
-# El interruptor del umbral por vista
+def test_la_temperatura_que_puntua_es_la_que_ensena_el_campo():
+    """M1: el campo enseña un decimal («%.1f»), y el motor recibe ese mismo número. Con
+    37,84 el campo dice 37,8, que no pasa del corte de 37,8: la temperatura no puntúa
+    (antes, el motor recibía 37,84 y sí puntuaba, con «37,8 °C» en el informe)."""
+    at = _app()
+    _poner_hallazgos(at, HALLAZGOS | {"temperatura_c": 37.84})
+    _calcular(at)
+    _sin_traza(at)
+    c = at.session_state["ultimo"]["resultado"]["combinacion"]
+    # 104 lpm y crepitantes, sin murmullo, asma no sé: 2 o 3, sin la temperatura.
+    assert c["puntuacion"] == [2, 3]
+    texto = _textos(at.tabs[0])
+    assert "Heckerling 2 o 3 de 5" in texto and "(37,8 °C, 104 lpm" in texto
+    assert at.session_state["historial"][0]["temperatura_c"] == 37.8
+
+
+@pytest.mark.parametrize("tecleada, enviada", [(37.84, 37.8), (37.86, 37.9),
+                                               (38.25, 38.3), (36.0, 36.0)])
+def test_la_temperatura_se_redondea_como_la_ensena_el_campo(modulo_app, tecleada,
+                                                            enviada):
+    """El campo formatea con «%.1f» como `toFixed` de JavaScript: la mitad hacia arriba
+    sobre el valor exacto (38,25 es exacto en binario y el campo enseña 38.3). El
+    `round` de Python iría al par (38,2): el informe diría otro número que el campo."""
+    hallazgos, falta = modulo_app._hallazgos_o_que_falta(
+        (tecleada, 104, "si", "no", "no_se"))
+    assert falta is None and hallazgos["temperatura_c"] == enviada
 # --------------------------------------------------------------------------
 @pytest.mark.parametrize("ejemplo, vista, umbral", [("normal_pa", "PA", UMBRAL_PA),
                                                     ("neumonia_ap", "AP", UMBRAL_AP)])
@@ -717,6 +1048,81 @@ def test_un_mapa_de_ceros_se_dice(monkeypatch):
     assert "El mapa vale cero en toda la placa" in _textos(at.tabs[0])
 
 
+# --------------------------------------------------------------------------
+# El aviso de dependencia y la horquilla (M3), rama por rama
+# --------------------------------------------------------------------------
+def _hallazgos(temperatura=36.5, frecuencia=80, crepitantes=False, murmullo=False,
+               asma="si"):
+    return {"temperatura_c": temperatura, "frecuencia_cardiaca": frecuencia,
+            "crepitantes": crepitantes, "murmullo_disminuido": murmullo, "asma": asma}
+
+
+_MISMA = ("⚠️ La auscultación y la imagen miran la misma consolidación, así que no son "
+          "pruebas independientes: ")
+_FIEBRE = dict(temperatura=38.5, frecuencia=110, crepitantes=True)
+
+
+# (hallazgos, RV de la imagen, lo que tiene que salir del motor, la horquilla, el aviso).
+# Cada RV está elegida para llegar a una rama; las cifras, recalculadas a mano: con
+# prevalencia 0,1466 las odds de partida son 0,1718.
+RAMAS = {
+    # 3 puntos (RV 1,64) y una imagen de 6: concordantes, manda la imagen.
+    # 0,1718 x 1,64 x 6 = 1,690 -> 63 %; 0,1718 x 6 = 1,031 -> 51 %.
+    "concordante_absorbe_la_imagen": (
+        _hallazgos(**_FIEBRE), 6.0, {"concordantes": True, "absorbe": "imagen"},
+        "entre 51 % y 63 %",
+        _MISMA + "el 63 % supone que cada una aporta información nueva, y el 51 %, que "
+                 "la auscultación no añade nada sobre la imagen. Decide usted."),
+    # 5 puntos (RV 17,5) y una imagen de 1,2: manda la clínica.
+    # 0,1718 x 17,5 x 1,2 = 3,607 -> 78 %; 0,1718 x 17,5 = 3,006 -> 75 %.
+    "concordante_absorbe_la_clinica": (
+        _hallazgos(**_FIEBRE, murmullo=True, asma="no"), 1.2,
+        {"concordantes": True, "absorbe": "clinica"}, "entre 75 % y 78 %",
+        _MISMA + "el 78 % supone que cada una aporta información nueva, y el 75 %, que "
+                 "la imagen no añade nada sobre la auscultación. Decide usted."),
+    # 3 o 4 (RV 1,64 o 7,18) y una imagen de 2: con 3 manda la imagen, con 4 la clínica.
+    "concordante_mixta": (
+        _hallazgos(**_FIEBRE, asma="no_se"), 2.0,
+        {"concordantes": True, "absorbe": "mixta"}, "entre 26 % y 71 %",
+        _MISMA + "el 71 % supone que cada una aporta información nueva, y el 26 %, que "
+                 "solo cuenta la más informativa de las dos. Decide usted."),
+    # 5 puntos y la imagen casi en su cota (77): 99,6 % -> «> 99 %», así que no se
+    # pueden nombrar los dos extremos y la frase es la corta. Y «más de 99 %».
+    "puede_exagerar_y_mas_de_99": (
+        _hallazgos(**_FIEBRE, murmullo=True, asma="no"), 77.0,
+        {"concordantes": True, "absorbe": "imagen"}, "entre 93 % y más de 99 %",
+        _MISMA + "la cifra puede exagerar. Decide usted."),
+    # 0 puntos (RV 0,12) y una imagen de 0,1: 0,2 % -> «< 1 %» y 1,7 % -> 2 %.
+    "menos_de_1": (
+        _hallazgos(), 0.1, {"concordantes": True, "absorbe": "imagen"},
+        "entre menos de 1 % y 2 %", _MISMA + "la cifra puede exagerar. Decide usted."),
+    # 2 o 3 (RV 0,70 o 1,64) contra una imagen de 3: a lados distintos de 1.
+    "depende_del_asma": (
+        _hallazgos(temperatura=38.5, frecuencia=110, asma="no_se"), 3.0,
+        {"concordantes": False, "absorbe": None}, "entre 27 % y 46 %",
+        "⚠️ Que la clínica apunte en el mismo sentido que la imagen o en el contrario "
+        "depende de si tiene asma, y además no son pruebas independientes: la horquilla "
+        "es orientativa. Decide usted."),
+    # 1 punto (RV 0,20) contra una imagen de 3: un solo número, que la frase llama «la
+    # cifra». 0,1718 x 0,2 x 3 = 0,103 -> 9 %.
+    "opuestos_en_un_numero": (
+        _hallazgos(crepitantes=True), 3.0, {"concordantes": False, "absorbe": None},
+        "9 %",
+        "⚠️ La clínica y la imagen apuntan en sentidos opuestos, y además no son pruebas "
+        "independientes: la cifra es orientativa. Decide usted."),
+}
+
+
+@pytest.mark.parametrize("rama", list(RAMAS))
+def test_el_aviso_de_dependencia_y_la_horquilla_son_los_del_bot_en_cada_rama(
+        modulo_app, rama):
+    hallazgos, rv_imagen, del_motor, horquilla, aviso = RAMAS[rama]
+    c = combinacion(float(PREVALENCIA), hallazgos, rv_imagen)
+    assert {k: c[k] for k in del_motor} == del_motor          # se llega a la rama
+    assert modulo_app.texto_de_la_horquilla(c) == horquilla
+    assert modulo_app.aviso_de_dependencia(c) == aviso
+
+
 def test_el_mapa_se_reescala_a_la_placa_sin_trasponerla(modulo_app):
     """R12: el mapa es de la imagen aplastada a 320 x 320 (`Resize((tam, tam))`, sin
     recorte), así que vuelve a la placa con un `resize` simple. Una placa no
@@ -789,10 +1195,35 @@ def test_el_historial_crece_y_su_csv_no_lleva_ni_imagen_ni_identificadores(
     assert "data:image" not in contenido
     assert not re.search(r"[A-Za-z0-9+/=]{100,}", contenido)
     assert max(len(celda) for fila in filas for celda in fila) < 40
-    # La tabla de la pantalla enseña lo mismo.
+    # La tabla de la pantalla enseña lo mismo, para una persona (M4): rótulos llanos,
+    # «—» en lo vacío, coma decimal y la temperatura como la enseña el campo.
     (tabla,) = [d.value for d in at.tabs[1].dataframe]
     assert tuple(tabla.columns) == COLUMNAS and len(tabla) == 3
     assert "zoila" not in tabla.to_csv().lower()
+    filas = tabla.to_dict("records")
+    assert [f["origen"] for f in filas] == ["fichero subido",
+                                            "Neumonía, PA — según su fuente",
+                                            "Neumonía, PA — según su fuente"]
+    assert [f["clasificacion"] for f in filas] == ["opacidad probable"] * 3
+    assert [f["vista_del_umbral"] for f in filas] == ["—", "—", "PA"]
+    assert [f["probabilidad_cruda"] for f in filas] == [
+        _dec(float(d["probabilidad_cruda"]), 4) for d in datos]
+    assert filas[2]["umbral"] == _dec(UMBRAL_PA, 4)
+    assert {k: filas[2][k] for k in ("temperatura_c", "frecuencia_cardiaca", "crepitantes",
+                                     "murmullo_disminuido", "asma",
+                                     "puntuacion_heckerling", "rv_clinica",
+                                     "prevalencia")} == {
+        "temperatura_c": "38,2", "frecuencia_cardiaca": "104", "crepitantes": "sí",
+        "murmullo_disminuido": "no", "asma": "no sé", "puntuacion_heckerling": "3 o 4",
+        "rv_clinica": "1,64–7,18", "prevalencia": "14,7 %"}
+    for clave in ("temperatura_c", "asma", "puntuacion_heckerling", "combinado_minima"):
+        assert filas[0][clave] == "—", clave
+    celdas = [str(v) for f in filas for v in f.values()]
+    for crudo in ("None", "nan", "opacidad_probable", "no_se"):
+        assert not any(crudo in c for c in celdas), crudo
+    numericas = ("probabilidad_cruda", "umbral", "probabilidad_calibrada",
+                 "razon_de_verosimilitud", "temperatura_c", "rv_clinica", "prevalencia")
+    assert not any("." in f[k] for f in filas for k in numericas)
 
 
 def test_sin_calculos_no_hay_csv(descargas):
@@ -875,7 +1306,16 @@ def test_la_configuracion_de_streamlit(modulo_app):
 def test_las_dependencias_de_la_app_van_fijadas():
     lineas = [l.split("#")[0].strip() for l in
               REQUISITOS.read_text(encoding="utf-8").splitlines()]
-    fijadas = dict(l.split("==") for l in lineas if l)
+    # M8: torch y torchvision, de las ruedas para CPU, y lo demás de PyPI: las mismas
+    # dos direcciones que `servidor/Dockerfile` pone en PIP_INDEX_URL y
+    # PIP_EXTRA_INDEX_URL. Sin ellas, `pip install -r` baja la compilación con CUDA.
+    opciones = [l for l in lineas if l.startswith("-")]
+    assert opciones == ["--index-url https://download.pytorch.org/whl/cpu",
+                        "--extra-index-url https://pypi.org/simple"]
+    servidor = (REPO / "servidor" / "Dockerfile").read_text(encoding="utf-8")
+    assert "PIP_INDEX_URL=https://download.pytorch.org/whl/cpu" in servidor
+    assert "PIP_EXTRA_INDEX_URL=https://pypi.org/simple" in servidor
+    fijadas = dict(l.split("==") for l in lineas if l and not l.startswith("-"))
     assert all(re.fullmatch(r"[A-Za-z0-9_.\-\[\]]+==[0-9][0-9A-Za-z.]*", f"{k}=={v}")
                for k, v in fijadas.items())
     assert fijadas["streamlit"] == "1.65.0"

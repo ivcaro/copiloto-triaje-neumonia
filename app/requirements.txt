@@ -3,7 +3,13 @@
 # proyecto (src/) se instala aparte, desde la raíz del repositorio:
 #     pip install -r app/requirements.txt
 #     pip install --no-deps .
-# torch y torchvision, de las ruedas para CPU, como en servidor/Dockerfile.
+
+# torch y torchvision, de las ruedas para CPU, y lo demás de PyPI: las dos direcciones
+# que servidor/Dockerfile pone en PIP_INDEX_URL y PIP_EXTRA_INDEX_URL. Sin ellas,
+# `pip install torch` en Linux baja la compilación con CUDA (unos 2,5 GB) para una app
+# que no tiene GPU.
+--index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://pypi.org/simple
 
 # Las nuevas de la app.
 streamlit==1.65.0

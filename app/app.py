@@ -53,6 +53,7 @@ from typing import NamedTuple
 import altair as alt
 import numpy as np
 import pandas as pd
+import pydicom
 import streamlit as st
 from matplotlib import colormaps
 from PIL import Image
@@ -83,14 +84,26 @@ CALIBRADOR_POR_DEFECTO = REPO / "servidor" / "calibrador.json"
 TAMANO_MAXIMO_MB = 5
 TAMANO_MAXIMO_BYTES = TAMANO_MAXIMO_MB * 1024 * 1024
 
+# Lo que la cabecera tiene que decir para que se descodifique la placa (R27). Los cinco
+# campos son obligatorios: sin uno, no se sabe cómo leerla. Y un lado de más de 5 000
+# píxeles no es una placa de tórax digital (rondan los 4 300 × 4 300): con 8 bits, una
+# muestra y un cuadro, lo más que se descodifica son 25 MB.
+CAMPOS_DE_LA_IMAGEN = ("Rows", "Columns", "BitsAllocated", "SamplesPerPixel",
+                       "PhotometricInterpretation")
+LADO_MAXIMO_DE_LA_PLACA = 5000
+
 # Límites de INTERFAZ de los hallazgos (spec §3): lo que se puede teclear. No son
 # rangos clínicos de nada; solo impiden un 380 °C. Streamlit no deja enviar un valor
 # fuera de ellos.
 TEMPERATURA_MIN, TEMPERATURA_MAX = 30.0, 45.0
 FRECUENCIA_MIN, FRECUENCIA_MAX = 20, 250
 
-FUENTE_EJEMPLO = "Prueba con ejemplo"
+# La opción del control no se llama «Prueba con ejemplo»: ese es el BOTÓN que calcula
+# el ejemplo elegido (el mínimo del curso lo pide), y dos rótulos iguales en la misma
+# columna confundirían.
+FUENTE_EJEMPLO = "Usar un ejemplo"
 FUENTE_FICHERO = "Subir un DICOM"
+BOTON_EJEMPLO = "Prueba con ejemplo"
 
 # Los ejemplos (spec §6), por lo que dice su FUENTE y no por lo que diga el modelo
 # (R15): el modelo no se ha medido con ellos y puede discrepar.
@@ -194,10 +207,12 @@ DEL_BOT = {
     "tamano": f"El archivo supera los {TAMANO_MAXIMO_MB} MB.",
 }
 # La frase del bot para lo que el servidor no supo leer y no trajo código (un DICOM
-# truncado): la que la app da ante cualquier fallo inesperado del cálculo (R18).
+# truncado): la que la app da ante cualquier fallo inesperado del cálculo (R18). Sin
+# su punto final, porque la app le añade «, o pruebe con un ejemplo.»: el fallo puede
+# no ser un recorte, y probar un ejemplo siempre se puede.
 DEL_BOT_LECTURA = {
     "sin_codigo": ("No pude interpretar el contenido del fichero. Si lo recortó al "
-                   "enviarlo, vuelva a exportarlo completo."),
+                   "enviarlo, vuelva a exportarlo completo"),
 }
 
 ETIQUETAS = {"opacidad_probable": DEL_BOT["opacidad_probable"],
@@ -207,6 +222,9 @@ ABSORBE = {"imagen": DEL_BOT["absorbe_imagen"], "clinica": DEL_BOT["absorbe_clin
            "mixta": DEL_BOT["absorbe_mixta"]}
 ASMA_EN_EL_INFORME = {"si": DEL_BOT["asma_si"], "no": DEL_BOT["asma_no"],
                       "no_se": DEL_BOT["asma_no_se"]}
+# Lo que se lee en los campos y en la tabla del historial; el CSV guarda las claves.
+SI_NO = {"si": "sí", "no": "no"}
+ASMA = {"si": "sí", "no": "no", "no_se": "no sé"}
 
 # Los textos propios de la app: lo que el bot no tiene. Cortos y en su registro.
 AYUDA_DICOM = ("Compruebe que es el DICOM de la placa y que está completo (una foto o "
@@ -214,7 +232,43 @@ AYUDA_DICOM = ("Compruebe que es el DICOM de la placa y que está completo (una 
 AYUDA_TAMANO = "Pruebe con un DICOM más pequeño o con un ejemplo."
 HALLAZGOS_INVALIDOS = ("Los hallazgos de la exploración no son válidos. Revíselos, o "
                        "quite los hallazgos para calcular solo con la imagen.")
-SIN_FICHERO = "Suba un fichero DICOM, o elija «Prueba con ejemplo»."
+SIN_FICHERO = f"Suba un fichero DICOM, o elija «{FUENTE_EJEMPLO}»."
+INESPERADO = "\n\n".join([DEL_BOT["no_pude_leer"],
+                          f"{DEL_BOT_LECTURA['sin_codigo']}, o pruebe con un ejemplo."])
+# R24 y R27: una placa que el modelo vería mal NO se calcula, ni con aviso: una cifra
+# que se sabe que no vale no se enseña («ninguna rama de error emite una
+# probabilidad»). El motor la convierte con `Image.fromarray(arreglo).convert("RGB")`,
+# que con más de 8 bits SATURA todo lo que pasa de 255 (medido en la revisión: una
+# neumonía en 16 bits baja de 0,91 a 0,48, y el mapa cae fuera del pulmón), no invierte
+# una MONOCHROME1 y no lleva tope de memoria (unos 600 bytes en RLE que declaran 60 000
+# × 60 000 hacen que `pixel_array` intente reservar 3,35 GiB). Por eso se decide con la
+# CABECERA, antes de descodificar un solo píxel. Los arreglos del motor, que hoy
+# afectan también al bot, van aparte.
+RECHAZO_BITS = (
+    "Esta placa es de {bits}: los visores la enseñan bien, pero el modelo se entrenó con "
+    "placas de 8 bits, como las de RSNA, y hoy no convierte las demás: {como}. Así que "
+    "no se calcula nada.\n\n"
+    "Expórtela en 8 bits, o pruebe con un ejemplo.")
+RECHAZO_INVERTIDA = (
+    "Esta placa guarda la escala de grises invertida: los visores la enseñan bien, pero "
+    "el modelo se entrenó con placas como las de RSNA, con el hueso claro, y hoy no las "
+    "invierte: la vería al revés, con el hueso oscuro. Así que no se calcula nada.\n\n"
+    "Expórtela con la escala de grises normal (en DICOM, MONOCHROME2), o pruebe con un "
+    "ejemplo.")
+RECHAZO_COLOR = (
+    "Esta placa no está en escala de grises: los visores la enseñan bien, pero el modelo "
+    "se entrenó con placas en grises, como las de RSNA, y hoy no convierte las demás. Así "
+    "que no se calcula nada.\n\n"
+    "Expórtela en escala de grises (en DICOM, MONOCHROME2), o pruebe con un ejemplo.")
+RECHAZO_LADO = (
+    "Esta placa declara {filas} × {columnas} píxeles, y la app no lee placas de más de "
+    "{lado} de lado (una placa de tórax digital no llega a tanto). Así que no se calcula "
+    "nada.\n\n"
+    "Expórtela más pequeña, o pruebe con un ejemplo.")
+RECHAZO_CUADROS = (
+    "Este fichero trae {cuadros} imágenes, y la app evalúa una placa sola. Así que no se "
+    "calcula nada.\n\n"
+    "Exporte solo la placa de tórax, o pruebe con un ejemplo.")
 AVISO_DEL_MAPA = ("⚠️ El mapa señala dónde mira el modelo, no por qué acierta: no es "
                   "una explicación de la puntuación ni marca lesiones.")
 MAPA_DE_CEROS = "El mapa vale cero en toda la placa: no hay ninguna zona que señalar."
@@ -245,6 +299,16 @@ def _dec(x, n: int) -> str:
     cuantizado = Decimal(float(x)).quantize(Decimal(1).scaleb(-n),
                                             rounding=ROUND_HALF_UP)
     return f"{cuantizado:.{n}f}".replace(".", ",")
+
+
+def _como_el_campo(x) -> float:
+    """La temperatura con un decimal, como la enseña su campo (M1): Streamlit la formatea
+    con «%.1f», que en el navegador redondea como `toFixed` -la mitad hacia arriba sobre
+    el valor exacto: 38,25 es exacto en binario y el campo enseña 38.3- y como `_dec`
+    la escribe en el informe. Es lo que se manda al motor: con 37,84 el campo dice 37,8,
+    que no pasa del corte, y puntuar con 37,84 sería puntuar un número que no se ve. El
+    `round` de Python iría al par (38,2)."""
+    return float(Decimal(float(x)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
 
 
 def _prob(x) -> str:
@@ -291,6 +355,15 @@ def _con_ic(valor, ic, decimales=2) -> str:
 
 def _entero(n) -> str:
     return f"{int(n):,}".replace(",", " ")
+
+
+def _cambio(medida: str, antes, despues) -> str:
+    """`la especificidad baja de 0,88 a 0,65`: el verbo sale de las dos cifras, no se
+    escribe a mano, así que la frase es cierta con cualquier JSON."""
+    a, d = _dec(antes, 2), _dec(despues, 2)
+    if a == d:
+        return f"la {medida} se queda en {a}"
+    return f"la {medida} {'sube' if despues > antes else 'baja'} de {a} a {d}"
 
 
 # --------------------------------------------------------------------------
@@ -403,27 +476,68 @@ def _subgrupo(metricas, nombre):
 # --------------------------------------------------------------------------
 # La placa y el mapa de calor
 # --------------------------------------------------------------------------
-def placa_para_ver(datos: bytes) -> np.ndarray:
-    """La placa en grises de 8 bits, como la convierte el proyecto a PNG
-    (`datos/dicom.py`, `convertir_a_png`): si no viene en `uint8`, se lleva su rango
-    a 0-255. Con su lado mayor como mucho `LADO_MAXIMO_EN_PANTALLA`. Los metadatos
-    de la cabecera no se miran."""
-    arreglo, _ = leer_dicom_desde_bytes(datos)
-    placa = np.asarray(arreglo)
-    if placa.ndim == 3 and placa.shape[-1] in (3, 4):
-        # En color: la media de los tres canales, en el mismo tipo (un RGB de 8 bits
-        # se queda en 8 bits, sin estirar su contraste).
-        placa = placa[..., :3].mean(axis=-1).astype(placa.dtype)
-    if placa.ndim != 2:
-        raise ValueError(f"una placa de forma {placa.shape} no se puede enseñar")
-    if placa.dtype != np.uint8:
-        minimo, maximo = float(placa.min()), float(placa.max())
-        rango = max(maximo - minimo, 1.0)
-        placa = ((placa.astype(np.float32) - minimo) / rango * 255).astype(np.uint8)
-    imagen = Image.fromarray(placa)
+def placa_para_ver(arreglo: np.ndarray) -> np.ndarray:
+    """La placa EXACTAMENTE como la recibe el modelo: `Image.fromarray(arreglo)` y a
+    grises, que es cada canal del `convert("RGB")` del motor. Sin estirar nada: lo que
+    se enseña nunca puede ser una placa más legible que la que se puntuó. (Las que
+    llegan aquí son de 8 bits, en grises y no invertidas: R24 y R27; con más bits esto
+    sería la placa saturada, que es justo lo que el modelo vería.) Con su lado mayor
+    como mucho `LADO_MAXIMO_EN_PANTALLA`."""
+    imagen = Image.fromarray(np.asarray(arreglo)).convert("L")
     imagen.thumbnail((LADO_MAXIMO_EN_PANTALLA, LADO_MAXIMO_EN_PANTALLA),
                      Image.Resampling.LANCZOS)
     return np.asarray(imagen)
+
+
+def _rechazo_por_los_bits(bits: int, con_signo: bool = False) -> str:
+    """`Esta placa es de 16 bits…`. Con más de 8 se satura todo lo que pasa de 255; con
+    menos, o con signo, lo que vería el modelo no es la placa, sin más."""
+    texto = f"{bits} bit{'' if bits == 1 else 's'}" + (" con signo" if con_signo else "")
+    como = ("la vería saturada, casi blanca" if bits > 8 and not con_signo
+            else "la vería mal")
+    return RECHAZO_BITS.format(bits=texto, como=como)
+
+
+def motivo_por_la_cabecera(cabecera) -> str | None:
+    """Por qué no se calcula con esta placa mirando SOLO su cabecera (R27), o `None` si
+    se puede descodificar: los cinco campos de la imagen, 8 bits, una muestra por
+    píxel, MONOCHROME2, un lado de 5 000 píxeles como mucho y un solo cuadro. Lo de los
+    cuadros no está en la lista de R27, y cierra el mismo agujero: 5 000 × 5 000 por
+    miles de cuadros también se reserva entero. Si falta un campo, o no es un número,
+    la placa no se puede evaluar: el mensaje de R18."""
+    try:
+        valores = {campo: cabecera.get(campo) for campo in CAMPOS_DE_LA_IMAGEN}
+        if any(v is None or v == "" for v in valores.values()):
+            return INESPERADO
+        filas, columnas = int(valores["Rows"]), int(valores["Columns"])
+        bits, muestras = int(valores["BitsAllocated"]), int(valores["SamplesPerPixel"])
+        cuadros = cabecera.get("NumberOfFrames")
+        cuadros = 1 if cuadros in (None, "") else int(cuadros)
+    except (TypeError, ValueError):
+        return INESPERADO
+    fotometria = str(valores["PhotometricInterpretation"]).strip().upper()
+    if filas > LADO_MAXIMO_DE_LA_PLACA or columnas > LADO_MAXIMO_DE_LA_PLACA:
+        return RECHAZO_LADO.format(filas=_entero(filas), columnas=_entero(columnas),
+                                   lado=_entero(LADO_MAXIMO_DE_LA_PLACA))
+    if cuadros > 1:
+        return RECHAZO_CUADROS.format(cuadros=_entero(cuadros))
+    if bits != 8:
+        return _rechazo_por_los_bits(bits)
+    if fotometria == "MONOCHROME1":
+        return RECHAZO_INVERTIDA
+    if fotometria != "MONOCHROME2" or muestras != 1:
+        return RECHAZO_COLOR
+    return None
+
+
+def motivo_por_los_pixeles(arreglo: np.ndarray) -> str | None:
+    """La segunda red, ya con los píxeles: lo que no sale `uint8` no lo vería el modelo
+    como las placas de RSNA (con 8 bits en la cabecera, un `int8`, si los píxeles llevan
+    signo)."""
+    if arreglo.dtype == np.uint8:
+        return None
+    return _rechazo_por_los_bits(arreglo.dtype.itemsize * 8,
+                                 con_signo=np.issubdtype(arreglo.dtype, np.signedinteger))
 
 
 def superponer(placa: np.ndarray, mapa: np.ndarray, opacidad: float) -> np.ndarray:
@@ -472,6 +586,28 @@ def calcular(motores: Motores, datos: bytes, hallazgos, por_vista: bool) -> dict
     se dice en llano (R18)."""
     if len(datos) > TAMANO_MAXIMO_BYTES:
         return {"rechazo": "\n\n".join([DEL_BOT["tamano"], AYUDA_TAMANO])}
+    # R27, ANTES de descodificar un solo píxel y antes del motor: la cabecera. Un fichero
+    # cuya cabecera no se puede leer no es un DICOM: lo dice el motor, con su código
+    # (`dicom_invalido`), sin llegar a los píxeles tampoco.
+    try:
+        cabecera = pydicom.dcmread(io.BytesIO(datos), stop_before_pixels=True)
+    except Exception:
+        cabecera = None
+    arreglo = None
+    if cabecera is not None:
+        motivo = motivo_por_la_cabecera(cabecera)
+        if motivo:
+            return {"rechazo": motivo}
+        # Con la cabecera en regla, los píxeles caben (25 MB como mucho), y se leen con el
+        # mismo lector que el motor: la segunda red (R24) y la placa que se enseña. Si
+        # no se pueden leer, lo dice el motor o la red de R18.
+        try:
+            arreglo, _ = leer_dicom_desde_bytes(datos)
+        except Exception:
+            arreglo = None
+        motivo = None if arreglo is None else motivo_por_los_pixeles(arreglo)
+        if motivo:
+            return {"rechazo": motivo}
     motor = motores.por_vista if por_vista else motores.un_umbral
     try:
         resultado = motor.clasificar(datos, hallazgos)
@@ -486,12 +622,11 @@ def calcular(motores: Motores, datos: bytes, hallazgos, por_vista: bool) -> dict
         # `AttributeError` que el motor no traduce (R18). Lo mismo que hace el bot
         # cuando el servidor cae sin código: se dice que no se pudo leer.
         REGISTRO.exception("el cálculo falló con una excepción que el motor no traduce")
-        return {"rechazo": "\n\n".join([DEL_BOT["no_pude_leer"],
-                                        DEL_BOT_LECTURA["sin_codigo"]])}
+        return {"rechazo": INESPERADO}
     salida = {"resultado": resultado, "resultado_global": resultado_global,
               "placa": None, "mapa": None, "aviso_mapa": None}
     try:
-        salida["placa"] = placa_para_ver(datos)
+        salida["placa"] = placa_para_ver(arreglo)
     except Exception:
         REGISTRO.exception("no se pudo preparar la placa para enseñarla")
     try:
@@ -542,6 +677,55 @@ def historial_en_csv(historial) -> bytes:
     escritor.writeheader()
     escritor.writerows(historial)
     return salida.getvalue().encode("utf-8")
+
+
+def _origen_para_ver(origen: str) -> str:
+    """`ejemplo: normal_pa` -> el nombre del ejemplo; «fichero subido», tal cual."""
+    prefijo = "ejemplo: "
+    if origen.startswith(prefijo):
+        return EJEMPLOS.get(origen[len(prefijo):], origen)
+    return origen
+
+
+def _lista_para_ver(texto: str, formato, union: str) -> str:
+    """`3/4` -> `3 o 4`; `1.64/7.18` -> `1,64–7,18`: las dos puntuaciones o las dos RV
+    que el CSV guarda separadas por «/», escritas como en el informe."""
+    return union.join(formato(float(v)) for v in texto.split("/"))
+
+
+# Cómo se escribe cada columna en la tabla de la pantalla (M4): como en el informe. El
+# CSV guarda los valores tal cual, para otro programa; esto es para una persona.
+FORMATOS_DE_LA_TABLA = {
+    "n": str,
+    "origen": _origen_para_ver,
+    "umbral_por_vista": str,
+    "vista_del_umbral": str,
+    "clasificacion": ETIQUETAS.get,
+    "probabilidad_cruda": lambda v: _dec(v, 4),
+    "umbral": lambda v: _dec(v, 4),
+    "probabilidad_calibrada": _prob,
+    "razon_de_verosimilitud": _rv,
+    "temperatura_c": lambda v: _dec(v, 1),
+    "frecuencia_cardiaca": lambda v: _dec(v, 0),
+    "crepitantes": SI_NO.get,
+    "murmullo_disminuido": SI_NO.get,
+    "asma": ASMA.get,
+    "puntuacion_heckerling": lambda v: _lista_para_ver(v, lambda p: str(int(p)), " o "),
+    "rv_clinica": lambda v: _lista_para_ver(v, _rv, "–"),
+    "prevalencia": lambda v: f"{_dec(v * 100, 1)} %",
+    "combinado_minima": _pct,
+    "combinado_maxima": _pct,
+}
+
+
+def historial_para_ver(historial) -> pd.DataFrame:
+    """La tabla del historial en la pantalla: las mismas filas y columnas que el CSV,
+    escritas para leerlas, con «—» donde no hay nada."""
+    return pd.DataFrame(
+        [{columna: ("—" if fila[columna] is None
+                    else FORMATOS_DE_LA_TABLA[columna](fila[columna]))
+          for columna in COLUMNAS_HISTORIAL} for fila in historial],
+        columns=COLUMNAS_HISTORIAL)
 
 
 # --------------------------------------------------------------------------
@@ -706,6 +890,7 @@ def _entrada():
     elegido, sin leer todavía ningún fichero."""
     col_placa, col_clinica = st.columns(2, gap="large")
     entrada = {"datos": None, "clave": None, "origen": None, "legible": None}
+    probar = False
     with col_placa:
         st.markdown("##### 1 · La radiografía")
         fuente = st.segmented_control(
@@ -722,8 +907,13 @@ def _entrada():
                 entrada.update(datos=subido.getvalue, clave=subido.file_id,
                                origen="fichero subido", legible="fichero subido")
         else:
-            ejemplo = st.selectbox("Ejemplo", list(EJEMPLOS), format_func=EJEMPLOS.get,
-                                   key="ejemplo")
+            col_selector, col_boton = st.columns([3, 2], vertical_alignment="bottom")
+            ejemplo = col_selector.selectbox("Ejemplo", list(EJEMPLOS),
+                                             format_func=EJEMPLOS.get, key="ejemplo")
+            # El botón que pide el mínimo del curso: calcula el ejemplo elegido, con
+            # los hallazgos y el interruptor que haya. Lo mismo que «Calcular».
+            probar = col_boton.button(BOTON_EJEMPLO, key="probar_ejemplo",
+                                      width="stretch")
             st.caption(AVISO_EJEMPLOS)
             entrada.update(datos=(CARPETA_EJEMPLOS / f"{ejemplo}.dcm").read_bytes,
                            clave=ejemplo, origen=f"ejemplo: {ejemplo}",
@@ -743,14 +933,12 @@ def _entrada():
                 "Frecuencia cardíaca (lpm)", min_value=FRECUENCIA_MIN,
                 max_value=FRECUENCIA_MAX, value=None, step=1, key="frecuencia",
                 placeholder=f"de {FRECUENCIA_MIN} a {FRECUENCIA_MAX}")
-            si_no = {"si": "sí", "no": "no"}
-            crepitantes = st.radio("Crepitantes", ("si", "no"), index=None,
-                                   format_func=si_no.get, horizontal=True,
+            crepitantes = st.radio("Crepitantes", tuple(SI_NO), index=None,
+                                   format_func=SI_NO.get, horizontal=True,
                                    key="crepitantes")
-            murmullo = st.radio("Murmullo disminuido", ("si", "no"), index=None,
-                                format_func=si_no.get, horizontal=True, key="murmullo")
-            asma = st.radio("Asma", ("si", "no", "no_se"), index=None,
-                            format_func={"si": "sí", "no": "no", "no_se": "no sé"}.get,
+            murmullo = st.radio("Murmullo disminuido", tuple(SI_NO), index=None,
+                                format_func=SI_NO.get, horizontal=True, key="murmullo")
+            asma = st.radio("Asma", tuple(ASMA), index=None, format_func=ASMA.get,
                             horizontal=True, key="asma")
             crudos = (temperatura, frecuencia, crepitantes, murmullo, asma)
         else:
@@ -767,7 +955,7 @@ def _entrada():
         calcular_ahora = st.button("Calcular", type="primary", key="calcular",
                                    width="stretch")
     entrada.update(fuente=fuente, crudos=crudos, por_vista=por_vista,
-                   calcular=calcular_ahora,
+                   calcular=calcular_ahora or probar,
                    firma=(fuente, entrada["clave"], crudos, por_vista))
     return entrada
 
@@ -788,7 +976,7 @@ def _hallazgos_o_que_falta(crudos):
                  else ", ".join(faltan[:-1]) + " y " + faltan[-1])
         return None, (f"Faltan hallazgos: {lista}. Complete los cinco, o quite los "
                       "hallazgos para calcular solo con la imagen.")
-    return {"temperatura_c": float(temperatura),
+    return {"temperatura_c": _como_el_campo(temperatura),
             "frecuencia_cardiaca": int(frecuencia),
             "crepitantes": crepitantes == "si",
             "murmullo_disminuido": murmullo == "si",
@@ -925,24 +1113,19 @@ def pantalla_historial():
     if not historial:
         st.info("Aún no hay cálculos en esta sesión.")
         return
-    numero = lambda titulo, formato: st.column_config.NumberColumn(titulo, format=formato)
     st.dataframe(
-        pd.DataFrame(historial, columns=COLUMNAS_HISTORIAL), hide_index=True,
+        historial_para_ver(historial), hide_index=True,
         column_config={
-            "n": numero("N.º", "%d"), "origen": "Origen",
-            "umbral_por_vista": "Umbral por vista", "vista_del_umbral": "Vista",
-            "clasificacion": "Clasificación",
-            "probabilidad_cruda": numero("Puntuación", "%.4f"),
-            "umbral": numero("Umbral", "%.4f"),
-            "probabilidad_calibrada": numero("Prob. calibrada", "%.4f"),
-            "razon_de_verosimilitud": numero("RV imagen", "%.2f"),
-            "temperatura_c": numero("Temp. (°C)", "%.1f"),
-            "frecuencia_cardiaca": numero("FC (lpm)", "%d"),
-            "crepitantes": "Crepitantes", "murmullo_disminuido": "Murmullo dism.",
-            "asma": "Asma", "puntuacion_heckerling": "Heckerling",
-            "rv_clinica": "RV clínica", "prevalencia": numero("Prevalencia", "%.4f"),
-            "combinado_minima": numero("Combinado mín.", "%.4f"),
-            "combinado_maxima": numero("Combinado máx.", "%.4f"),
+            "n": "N.º", "origen": "Origen", "umbral_por_vista": "Umbral por vista",
+            "vista_del_umbral": "Vista", "clasificacion": "Cribado",
+            "probabilidad_cruda": "Puntuación", "umbral": "Umbral",
+            "probabilidad_calibrada": "Prob. calibrada",
+            "razon_de_verosimilitud": "RV de la imagen", "temperatura_c": "Temp. (°C)",
+            "frecuencia_cardiaca": "FC (lpm)", "crepitantes": "Crepitantes",
+            "murmullo_disminuido": "Murmullo dism.", "asma": "Asma",
+            "puntuacion_heckerling": "Heckerling", "rv_clinica": "RV clínica",
+            "prevalencia": "Prevalencia", "combinado_minima": "Combinado, mín.",
+            "combinado_maxima": "Combinado, máx.",
         })
     st.download_button("Descargar el historial (CSV)", data=historial_en_csv(historial),
                        file_name="historial_de_la_sesion.csv", mime="text/csv",
@@ -1038,8 +1221,11 @@ def pantalla_acerca_de(motores: Motores, metricas: dict, config: Configuracion):
         "(`PREVALENCIA_LOCAL`"
         + (", la de la cohorte de derivación de la regla" if de_la_cohorte else "")
         + "). La auscultación y la placa miran la misma consolidación, así que no son "
-        "pruebas independientes: el resultado es la horquilla entre la probabilidad "
-        "bajo independencia y la que da la evidencia más informativa sola.\n"
+        "pruebas independientes: cuando apuntan al mismo lado, el resultado es la "
+        "horquilla entre la probabilidad bajo independencia y la que da la evidencia más "
+        "informativa sola; cuando se oponen, esa segunda no se calcula, y el resultado "
+        "es la probabilidad bajo independencia —una, o dos si el asma no se sabe—, que "
+        "el informe da por orientativa.\n"
         "- **Mapa de calor:** Grad-CAM (Selvaraju et al., 2017) sobre el último bloque "
         "convolucional, respecto de la puntuación de opacidad. Señala dónde mira el "
         "modelo, no por qué acierta.")
@@ -1117,19 +1303,20 @@ def pantalla_acerca_de(motores: Motores, metricas: dict, config: Configuracion):
     umbrales = metricas["umbrales_por_vista"]
     precio = metricas["umbral_por_vista_en_prueba"]
     uno, dos = precio["un_umbral"], precio["dos_umbrales"]
+    # Lo que gana Y lo que pierde cada vista, con las cifras del JSON (M5).
+    cambia = lambda clave, medida: " y ".join(
+        _cambio(m, uno[clave][c], dos[clave][c]) for m, c in medida)
+    sens, esp = ("sensibilidad", "recall"), ("especificidad", "especificidad")
     st.markdown(
         "Experimental y apagado por defecto, también en el servidor. Encendido, una "
         f"placa PA se clasifica con el umbral {_dec(umbrales['PA'], 4)} y una AP con "
         f"{_dec(umbrales['AP'], 4)}, elegidos en validación; cualquier otra vista, con "
         f"el global ({_dec(motor.umbral, 4)}). Solo cambia la etiqueta del cribado: la "
         "RV y la combinación no dependen de la vista.\n\n"
-        f"En prueba, con dos umbrales la sensibilidad de las placas PA pasa de "
-        f"{_dec(uno['PA']['recall'], 2)} a {_dec(dos['PA']['recall'], 2)} y la "
-        f"especificidad de las AP, de {_dec(uno['AP']['especificidad'], 2)} a "
-        f"{_dec(dos['AP']['especificidad'], 2)}; la especificidad de todas las placas "
-        f"pasa de {_dec(uno['global']['especificidad'], 2)} a "
-        f"{_dec(dos['global']['especificidad'], 2)}. Encenderlo en producción lo decide "
-        "la institución.")
+        f"En prueba, con dos umbrales: en las placas PA, {cambia('PA', (sens, esp))}; en "
+        f"las AP, {cambia('AP', (esp, sens))}; y en todas, "
+        f"{cambia('global', (sens, esp))}. Encenderlo en producción lo decide la "
+        "institución.")
     st.table(_tabla_del_precio(metricas), hide_index=True)
 
     st.markdown("### Los ejemplos")
@@ -1149,7 +1336,8 @@ def main():
     st.title("Copiloto de triaje para neumonía en adultos")
     st.markdown("Pruebe el mismo motor que usa el bot del profesional: la red que lee "
                 "la placa, su calibración y la combinación con la regla clínica de "
-                "Heckerling. Calcula aquí mismo; la placa no se envía a ningún sitio.")
+                "Heckerling. Calcula aquí mismo; la placa no se envía a ningún otro "
+                "sitio.")
     st.warning("**Demostración académica.** No es un producto sanitario: no la use "
                "para decidir sobre un paciente.")
     st.session_state.setdefault("historial", [])
