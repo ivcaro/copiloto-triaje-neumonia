@@ -803,9 +803,11 @@ def _medida_del_umbral(r: dict, metricas: dict) -> str:
 
 
 def texto_del_punto(r: dict, metricas: dict) -> str:
-    """`puntuación 0,5509 ≥ umbral 0,4258; …`. El comparador sale de comparar los dos
-    números que se enseñan, no de la etiqueta (como en el bot)."""
-    comparador = "≥" if r["probabilidad_cruda"] >= r["umbral"] else "<"
+    """`puntuación 0,5509 ≥ umbral 0,4258; …`. El comparador sale de la ETIQUETA del
+    motor, la verdad de la respuesta: la decidió con la puntuación sin redondear, y la
+    respuesta lleva puntuación y umbral a 4 decimales, así que comparar los dos números
+    que se enseñan podría decir «0,4258 ≥ 0,4258» junto a «sin opacidad probable»."""
+    comparador = "≥" if r["clasificacion"] == POSITIVA else "<"
     return (f"{DEL_BOT['puntuacion']}{_dec(r['probabilidad_cruda'], 4)} {comparador}"
             f"{DEL_BOT['umbral']}{_dec(r['umbral'], 4)}{_medida_del_umbral(r, metricas)}")
 

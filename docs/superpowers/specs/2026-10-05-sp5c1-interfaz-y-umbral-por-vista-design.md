@@ -35,7 +35,7 @@ probabilidad (M5).
 | D4 | **Umbral por vista** en `Motor`, opcional y apagado por defecto (§4) | M1 del workshop S4; sin él, la respuesta no cambia en nada |
 | D5 | **Mapa de calor Grad-CAM** como método de `Motor` (§5), usado solo por la app | M5 del workshop S4; un único camino de imagen a tensor |
 | D6 | **Ejemplos precargados de fuera de RSNA**, con licencia que permita redistribuirlos (§6) | El repositorio público solo referencia el conjunto de datos; nunca lo comparte (decisión del equipo, 5-oct) |
-| D7 | Las métricas de «Acerca de» salen de un **JSON de agregados** (`app/assets/metricas.json`) | Las puntuaciones por placa se quedan en local; los agregados no son el conjunto de datos |
+| D7 | Las métricas de «Acerca de» salen de un **JSON de agregados** (`app/assets/metricas.json`) | Las puntuaciones por placa no van al repositorio público (decisión del 5-oct); los agregados no son el conjunto de datos |
 | D8 | Nada del cliente en la app: ninguna dirección de servidor, dominio ni nombre. Los nombres del equipo, como en el README | Regla de anonimato de SP5-B2, con la excepción decidida para el README |
 | D9 | La interfaz, en español | El público del proyecto; el inglés, solo si sobra tiempo |
 
@@ -150,13 +150,17 @@ por placa, no.
 ## 8. Ejecución
 
     docker build -t copiloto-app -f app/Dockerfile .
-    docker run --rm -p 127.0.0.1:8501:8501 copiloto-app
+    docker run --rm -p 127.0.0.1:8501:8501 --memory=2g --memory-swap=2g copiloto-app
 
 y abrir `http://127.0.0.1:8501`. Los pesos no están en git (como en el
 servidor): el `docker build` los toma de `servidor/pesos_modelo_cpu.pt`, y el
 README dice de dónde descargarlos. Las variables `UMBRAL`, `AUC_VALIDACION` y
 `PREVALENCIA_LOCAL` se fijan en la imagen con los mismos valores que el
 `docker-compose.yml` del servidor, y la app los muestra.
+
+Sin Docker, se lanza desde `app/` (`cd app` y `streamlit run app.py`): Streamlit lee
+`.streamlit/config.toml` del directorio desde el que se lanza, y desde la raíz no hay
+ninguno.
 
 ## 9. Pruebas
 

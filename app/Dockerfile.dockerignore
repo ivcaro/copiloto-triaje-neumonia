@@ -7,17 +7,20 @@
 # mismo que hace servidor/Dockerfile.dockerignore) y que solo lee BuildKit, por defecto
 # desde Docker 23: con el constructor antiguo se ignora igual y viaja todo.
 #
-# Es una LISTA BLANCA, y de `app/`, POR RUTAS: se excluye todo y se readmite solo lo que
-# el Dockerfile copia, y de `app/`, solo lo que la app lee, fichero a fichero. Una lista
-# negra (`docs`, `tests`, `.git`…) deja pasar lo que se añada mañana y a nadie se le
-# ocurra excluir; y readmitir `app/` entera deja pasar lo que alguien suelta en esa
-# carpeta para probar en local (un `.git`, un `.pem`, un CSV, el `secrets.toml` de
+# Es una LISTA BLANCA, y de `app/` y `src/`, POR RUTAS: se excluye todo y se readmite solo
+# lo que el Dockerfile copia; de `app/`, solo lo que la app lee, fichero a fichero, y de
+# `src/`, solo los `.py` del paquete. Una lista negra (`docs`, `tests`, `.git`…) deja
+# pasar lo que se añada mañana y a nadie se le ocurra excluir; y readmitir `app/` o `src/`
+# enteras deja pasar lo que alguien suelta en esas carpetas para probar en local (un
+# `.git`, un `.pem`, unas credenciales, unas notas, un CSV, el `secrets.toml` de
 # Streamlit). Aquí, lo nuevo no entra hasta que alguien lo readmite a propósito.
 # tests/test_app_docker.py saca lo de `app/` del código de la app (lo que lee) y comprueba
 # que esta lista es exactamente esa, y con BuildKit, qué contexto llega de verdad.
 *
 !pyproject.toml
-!src
+# El paquete: lo que `pip install .` instala son sus `.py` (con `__init__.py` en cada
+# carpeta), a cualquier profundidad.
+!src/**/*.py
 !servidor/pesos_modelo_cpu.pt
 !servidor/calibrador.json
 # Lo que la app lee de su carpeta: el guion, la configuración de Streamlit (que lee del
@@ -33,14 +36,24 @@
 !app/assets/ejemplos/neumonia_ap.dcm
 !app/assets/ejemplos/rechazado_menor.dcm
 
-# Lo que sobra DENTRO de lo readmitido, que es `src/` entero (estas reglas van después:
-# gana la última que coincide).
+# Una segunda red debajo de la lista blanca (estas reglas van después: gana la última que
+# coincide). Con solo los `.py` de `src/`, ya no entran los `.pyc` de `__pycache__` ni los
+# ficheros de un `*.egg-info`, y estas reglas lo repiten a propósito.
+#
+# Cada carpeta lleva dos reglas, la carpeta y su contenido (`/**`), y no es un adorno:
+# medido con BuildKit, la exclusión de la carpeta sola NO alcanza a un `.py` de dentro que
+# `src/**/*.py` readmite, y con el contenido sí. Es lo que mantiene fuera, por ejemplo, un
+# `.py` de un `.git` o de un entorno virtual llamado `.env` metido en `src/`.
 **/__pycache__
+**/__pycache__/**
 **/*.pyc
 **/*.egg-info
+**/*.egg-info/**
 # Lo que no entra NUNCA, esté donde esté.
 **/.git
+**/.git/**
 **/.env
+**/.env/**
 **/.env.*
 **/*.env
 **/secrets.toml

@@ -329,21 +329,32 @@ y se abre `http://127.0.0.1:8501`. Lo que hay que saber:
   qué declarar.
 - El despliegue público no forma parte de esto: se decide después.
 
-**Sin Docker**, se instala desde la raíz y se lanza desde `app/`:
+**Sin Docker**, se instala desde la raíz y se lanza desde `app/`, con las dos
+variables que no tienen valor por defecto, `AUC_VALIDACION` y `PREVALENCIA_LOCAL`
+(en bash):
 
 ```
 pip install -r app/requirements.txt
 pip install --no-deps .
 cd app
-streamlit run app.py
+AUC_VALIDACION=0.8827 PREVALENCIA_LOCAL=0.1466 streamlit run app.py
 ```
 
-con las variables de entorno que dice la cabecera de `app/app.py`. **Desde `app/` y
-no desde la raíz**: Streamlit lee `.streamlit/config.toml` del directorio desde el
-que se lanza, y desde la raíz no hay ninguno, así que se pierden en silencio la
-telemetría apagada, el límite de subida de 5 MB del servidor y las trazas ocultas en
-el navegador. Docker es lo reproducible: la calibración usa scikit-learn, que en
-algunas máquinas Windows no carga.
+En PowerShell, la última línea es:
+
+```
+$env:AUC_VALIDACION = "0.8827"; $env:PREVALENCIA_LOCAL = "0.1466"; streamlit run app.py
+```
+
+Esos dos valores son los de `servidor/docker-compose.yml`, los mismos que fija la
+imagen. Las demás variables tienen valor por defecto: `UMBRAL` (el de
+`app/assets/metricas.json`, 0,4258), `RUTA_PESOS` (`servidor/pesos_modelo_cpu.pt`) y
+`RUTA_CALIBRADOR` (`servidor/calibrador.json`). **Desde `app/` y no desde la raíz**:
+Streamlit lee `.streamlit/config.toml` del directorio desde el que se lanza, y desde
+la raíz no hay ninguno, así que se pierden en silencio la telemetría apagada, el
+límite de subida de 5 MB del servidor y las trazas ocultas en el navegador. Docker es
+lo reproducible: la calibración usa scikit-learn, que en algunas máquinas Windows no
+carga.
 
 ### De dónde salen los pesos
 
@@ -370,8 +381,8 @@ se entrenó y se evaluó con RSNA y **no se ha medido con ellas**: lo que den no
 nada de su rendimiento y puede discrepar de lo que dice su fuente (con los pesos de
 esta entrega, la placa «normal» sale marcada por el cribado, y la propia página
 avisa de que la imagen no apoya ese resultado). Sirven para ver cómo funciona la
-página, no para evaluarla. El repositorio no lleva ninguna imagen de RSNA ni del
-NIH, ni ninguna fila por paciente: las métricas son agregados.
+página, no para evaluarla. La app no lleva ninguna imagen de RSNA ni del NIH, ni
+ninguna fila por paciente: sus métricas son agregados (`app/assets/metricas.json`).
 
 ### Qué hay en `app/`
 

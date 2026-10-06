@@ -8,8 +8,8 @@ también en la imagen Linux de pruebas, que no tiene Docker. Fijan lo que no se 
 ejecutar: que la base es la del servidor (la misma, por su digest), que las variables del
 despliegue valen lo que en `servidor/docker-compose.yml`, que Streamlit arranca sin
 telemetría, sin llamar a nadie y con su límite, que el contexto de la construcción es una
-lista blanca POR RUTAS y es lo que la app lee, y que la orden documentada es la que se
-prueba (R19, R21 y R22).
+lista blanca POR RUTAS (de `app/`, lo que la app lee; de `src/`, solo los `.py`) y que la
+orden documentada es la que se prueba (R19, R21 y R22).
 
 La del CONTEXTO necesita Docker con BuildKit pero no la imagen: arma un árbol de juguete con
 señuelos de lo que no puede viajar y le pide a BuildKit el contexto que recibiría (R19).
@@ -18,8 +18,9 @@ Las DE HUMO usan la imagen `copiloto-app` YA CONSTRUIDA (R20): construirla es in
 torch, minutos y cientos de MB en cada corrida de la suite, y eso es trabajo del que
 despliega, no de las pruebas. Arrancan contenedores de verdad, siempre con nombre propio y
 borrados en un `finally`, y publicados SOLO en 127.0.0.1 (o sin red ninguna). Antes miran
-que la imagen sea la de ESTE árbol (la huella de su `app/app.py`): una imagen rancia
-pasaría todas las demás y no probaría nada.
+que la imagen sea la de ESTE árbol: la huella (SHA-256, sin que importen los finales de
+línea) de todo lo que la app lee, del calibrador y de los `.py` del paquete de `src/`, que
+la imagen lleva instalado. Una imagen rancia pasaría todas las demás y no probaría nada.
 
 Sin Docker, sin su demonio o sin la imagen, las que lo necesitan se SALTAN diciendo por qué
 y con qué orden construir (desde la raíz del repositorio, con los pesos en
@@ -29,10 +30,10 @@ servidor/pesos_modelo_cpu.pt):
 
 Lo que se queda sin comprobar entonces: que la imagen arranca, que su página responde, que
 no llama a nadie al arrancar, que no corre como root, que lleva la configuración de
-Streamlit, que no trae nada de lo que no debe viajar y que la app corre sin red con los
-pesos que lleva dentro. La imagen Linux de pruebas no tiene Docker: esas pruebas se corren
-en la máquina que lo tiene (`python -m pytest tests/test_app_docker.py -rs`). Un salto se
-ve verde: `-rs` los lista.
+Streamlit, que no trae nada de lo que no debe viajar y que la app calcula un ejemplo sin
+red con los pesos que lleva dentro. La imagen Linux de pruebas no tiene Docker: esas
+pruebas se corren en la máquina que lo tiene (`python -m pytest tests/test_app_docker.py
+-rs`). Un salto se ve verde: `-rs` los lista.
 
 Los valores esperados están escritos aquí a mano o salen de los ficheros de despliegue (el
 compose, el Dockerfile del servidor, `app/.streamlit/config.toml`) y del propio código de la
@@ -63,11 +64,13 @@ DOCKERFILE = REPO / "app" / "Dockerfile"
 EXCLUSIONES = REPO / "app" / "Dockerfile.dockerignore"
 DOCKERFILE_DEL_SERVIDOR = REPO / "servidor" / "Dockerfile"
 COMPOSE = REPO / "servidor" / "docker-compose.yml"
+PYPROJECT = REPO / "pyproject.toml"
 CONFIG_DE_STREAMLIT = REPO / "app" / ".streamlit" / "config.toml"
 README = REPO / "README.md"
 CAPTURAS = REPO / "docs" / "interfaz"
 
 IMAGEN = "copiloto-app"
+PAQUETE = "copiloto_triaje"             # el paquete de `src/`, que la imagen instala
 PUERTO = 8501
 ORDEN_DE_CONSTRUIR = "docker build -t copiloto-app -f app/Dockerfile ."
 # El límite de memoria de la orden que documenta el README: la red de debajo de la guarda
@@ -75,12 +78,14 @@ ORDEN_DE_CONSTRUIR = "docker build -t copiloto-app -f app/Dockerfile ."
 # `--memory-swap` igual a `--memory`: sin él, Docker deja usar otro tanto de swap.
 LIMITE_DE_MEMORIA = ("--memory=2g", "--memory-swap=2g")
 
-# Lo que la imagen copia del repositorio FUERA de `app/` (R19). Lo de `app/` se saca del
-# código de la app (`_lo_que_la_app_lee`). Todo lo demás -`.git`, `.superpowers`,
-# `pruebas/` (puntuaciones por placa y un corpus de RSNA), `docs/`, `tests/`,
-# `notebooks/`, los `.env`, `n8n/valores.local.json`- no entra ni al contexto.
+# Lo que la imagen copia del repositorio FUERA de `app/` (R19); de `src/`, solo sus `.py`
+# (a cualquier profundidad): es lo que `pip install .` instala, y un `.pem`, unas
+# credenciales o unas notas sueltas en `src/` no entran. Lo de `app/` se saca del código de
+# la app (`_lo_que_la_app_lee`). Todo lo demás -`.git`, `.superpowers`, `pruebas/`
+# (puntuaciones por placa y un corpus de RSNA), `docs/`, `tests/`, `notebooks/`, los
+# `.env`, `n8n/valores.local.json`- no entra ni al contexto.
 LO_QUE_LA_IMAGEN_COPIA_FUERA_DE_APP = ("pyproject.toml", "servidor/calibrador.json",
-                                       "servidor/pesos_modelo_cpu.pt", "src")
+                                       "servidor/pesos_modelo_cpu.pt", "src/**/*.py")
 LO_QUE_NO_DEBE_VIAJAR = (".git", ".superpowers", "pruebas", "docs", "tests",
                          "notebooks", "scripts", "bd", "n8n", ".env",
                          "valores.local.json", "app/assets/originales")
@@ -216,12 +221,16 @@ def test_el_contexto_es_una_lista_blanca_por_rutas_y_es_la_de_lo_que_la_app_lee(
         f"readmitidas de más: {sorted(set(readmitidas) - esperadas)}; "
         f"faltan: {sorted(esperadas - set(readmitidas))}")
     assert "app" not in readmitidas, "`app/` no se readmite entera"
+    assert "src" not in readmitidas, "`src/` no se readmite entera: solo sus `.py`"
     for prohibido in LO_QUE_NO_DEBE_VIAJAR:
         assert prohibido not in readmitidas
-    # Todo lo readmitido existe (menos los pesos, que no se versionan)...
+    # Todo lo readmitido existe (menos los pesos, que no se versionan; y `src/**/*.py` es
+    # un patrón, que tiene que casar con algo)...
     for ruta in readmitidas:
-        if ruta != "servidor/pesos_modelo_cpu.pt":
-            assert (REPO / ruta).exists(), f"se readmite {ruta}, que no existe"
+        if ruta == "servidor/pesos_modelo_cpu.pt":
+            continue
+        casan = list(REPO.glob(ruta)) if "*" in ruta else [REPO / ruta]
+        assert casan and all(c.exists() for c in casan), f"se readmite {ruta}, que no existe"
     # ...y el Dockerfile y el contexto se corresponden: nada readmitido que ningún COPY
     # copie, y ningún COPY que no copie nada de lo readmitido.
     def bajo(ruta, base):
@@ -231,6 +240,20 @@ def test_el_contexto_es_una_lista_blanca_por_rutas_y_es_la_de_lo_que_la_app_lee(
         assert any(bajo(ruta, o) for o in origenes), f"ningún COPY copia {ruta}"
     for origen in origenes:
         assert any(bajo(r, origen) for r in readmitidas), f"el COPY de {origen} no copia nada"
+
+
+def test_el_paquete_no_declara_datos_porque_de_src_solo_viajan_los_py():
+    """De `src/` se readmiten solo los `.py`. Si el paquete declarara ficheros de datos
+    (`package-data`, `data-files` o un `MANIFEST.in`), `pip install .` los esperaría y la
+    imagen no los tendría: se construiría sin avisar y fallaría al usarlos. Hoy el paquete
+    es solo código."""
+    setuptools = tomllib.loads(_leer(PYPROJECT)).get("tool", {}).get("setuptools", {})
+    for clave in ("package-data", "data-files"):
+        assert clave not in setuptools, (
+            f"pyproject.toml declara `{clave}`, y la imagen solo copia los `.py` de `src/`: "
+            "readmite esos ficheros en app/Dockerfile.dockerignore")
+    assert not (REPO / "MANIFEST.in").exists(), (
+        "hay un MANIFEST.in, y la imagen solo copia los `.py` de `src/`")
 
 
 def test_la_base_es_la_del_servidor_y_va_fijada_por_digest():
@@ -407,7 +430,8 @@ def _sin_docker() -> str | None:
 # `app/`, lo que la app lee) y SEÑUELOS de lo que no puede llegar al demonio, también dentro
 # de `app/` y de `src/`, que son las carpetas donde se suelta algo para probar en local.
 ENTRAN_FUERA_DE_APP = {
-    "pyproject.toml", "src/paquete/__init__.py",
+    "pyproject.toml", "src/paquete/__init__.py", "src/paquete/modulo.py",
+    "src/paquete/subpaquete/__init__.py", "src/paquete/subpaquete/modulo.py",
     "servidor/pesos_modelo_cpu.pt", "servidor/calibrador.json",
 }
 NO_ENTRAN = {
@@ -425,9 +449,17 @@ NO_ENTRAN = {
     "app/credentials.json", "app/clave.pem", "app/server.key",
     "app/datos_pacientes.csv", "app/notas.md", "app/secrets/token.txt",
     "app/assets/placa_rsna.png", "app/assets/ejemplos/otro.dcm",
-    # dentro de `src/`, que se readmite entera
+    # dentro de `src/`, donde solo entran los `.py`: lo que alguien suelta para probar
+    "src/paquete/clave.pem", "src/paquete/server.key", "src/paquete/credentials.json",
+    "src/paquete/datos.csv", "src/paquete/secrets.toml", "src/notas.md",
+    "src/paquete/subpaquete/notas.txt",
     "src/paquete/__pycache__/modulo.cpython-312.pyc", "src/paquete.egg-info/PKG-INFO",
     "src/paquete/.git/HEAD", "src/paquete/.env",
+    # y los `.py` que hay DENTRO de carpetas que no entran nunca: la exclusión de la carpeta
+    # sola no los alcanza (BuildKit, medido), y las reglas `/**` de
+    # app/Dockerfile.dockerignore, sí
+    "src/paquete/__pycache__/cache.py", "src/paquete.egg-info/setup.py",
+    "src/otro/.git/gancho.py", "src/otro/.env/entorno.py",
 }
 
 SIN_VERIFICAR_EL_CONTEXTO = (
@@ -439,8 +471,9 @@ def test_el_contexto_de_la_construccion_es_solo_la_lista_blanca(tmp_path):
     """R19, con BuildKit de verdad y no con una lectura del fichero: se arma un árbol
     con la forma del repositorio, con lo que la imagen necesita y con señuelos de
     todo lo que no puede llegar al demonio (`pruebas/`, `.git`, los `.env`, los
-    `valores.local.json`, el `secrets.toml` de Streamlit, un `.pem` o un CSV suelto en
-    `app/`…), y se pide el contexto que recibiría la construcción: un Dockerfile de usar
+    `valores.local.json`, el `secrets.toml` de Streamlit, un `.pem`, unas credenciales o un
+    CSV suelto en `app/` o en `src/`, y hasta un `.py` dentro de un `.git` o de un `.env`
+    de `src/`), y se pide el contexto que recibiría la construcción: un Dockerfile de usar
     y tirar, `FROM scratch` + `COPY`, con una copia exacta de app/Dockerfile.dockerignore
     al lado, que es donde Docker la busca. `--output` vuelca el resultado a una carpeta,
     sin crear ninguna imagen. Con BuildKit puesto a la fuerza: el fichero de exclusiones
@@ -483,26 +516,93 @@ SIN_VERIFICAR = (
 
 
 def _huella(datos: bytes) -> str:
-    """El SHA-256 de un fichero de texto, sin que importen los finales de línea (un
-    Windows con `autocrlf` los cambia)."""
-    return hashlib.sha256(datos.replace(b"\r\n", b"\n")).hexdigest()
+    """El SHA-256 de un fichero, sin que importen los finales de línea si es de texto (un
+    Windows con `autocrlf` los cambia); uno binario -con algún NUL, como los DICOM de los
+    ejemplos- va tal cual. Lo mismo que hace `GUION_DE_LA_HUELLA` dentro de la imagen."""
+    if b"\0" not in datos:
+        datos = datos.replace(b"\r\n", b"\n")
+    return hashlib.sha256(datos).hexdigest()
+
+
+# La huella de lo que la imagen lleva de este árbol: de cada fichero, su SHA-256 con la ruta
+# que tiene en el repositorio. Corre DENTRO de la imagen: recibe pares `ruta en el
+# repositorio=ruta en la imagen` (lo que la app lee y el calibrador) y recorre por su cuenta
+# el paquete `copiloto_triaje` que `pip install` dejó instalado (en /app no queda `src/`: se
+# borra). Es la `_huella` de arriba, escrita otra vez. Sin comillas dobles: el guion viaja
+# como un argumento de `docker run`.
+GUION_DE_LA_HUELLA = r"""
+import hashlib, importlib.util, json, os, sys
+
+def huella(ruta):
+    with open(ruta, 'rb') as f:
+        datos = f.read()
+    if b'\0' not in datos:
+        datos = datos.replace(b'\r\n', b'\n')
+    return hashlib.sha256(datos).hexdigest()
+
+huellas = {}
+for par in sys.argv[1:]:
+    en_el_repositorio, _, en_la_imagen = par.partition('=')
+    if os.path.isfile(en_la_imagen):
+        huellas[en_el_repositorio] = huella(en_la_imagen)
+paquete = list(importlib.util.find_spec('copiloto_triaje').submodule_search_locations)[0]
+for carpeta, subcarpetas, ficheros in os.walk(paquete):
+    subcarpetas[:] = [s for s in subcarpetas if s != '__pycache__']
+    for nombre in ficheros:
+        if nombre.endswith('.py'):
+            ruta = os.path.join(carpeta, nombre)
+            relativa = os.path.relpath(ruta, os.path.dirname(paquete)).replace(os.sep, '/')
+            huellas['src/' + relativa] = huella(ruta)
+print(json.dumps(huellas))
+"""
+
+
+def _huellas_de_este_arbol() -> dict[str, str]:
+    """Las huellas, por su ruta en el repositorio, de lo que la imagen tiene que llevar de
+    este árbol y se puede comparar: todo lo que la app lee, el calibrador y los `.py` del
+    paquete de `src/`. Los pesos no viajan en git y no entran; lo que cambiaría con otros
+    pesos, `app/assets/metricas.json`, sí."""
+    rutas = sorted(_lo_que_la_app_lee()) + ["servidor/calibrador.json"]
+    huellas = {ruta: _huella((REPO / ruta).read_bytes()) for ruta in rutas}
+    for fuente in sorted((REPO / "src" / PAQUETE).rglob("*.py")):
+        if "__pycache__" not in fuente.parts:
+            huellas[fuente.relative_to(REPO).as_posix()] = _huella(fuente.read_bytes())
+    return huellas
+
+
+def _huellas_de_la_imagen() -> dict[str, str]:
+    """Las mismas huellas, de lo que lleva la imagen: lo de `app/` está en `/app/app`, el
+    calibrador en `/modelo` y el paquete, instalado. Un fichero que falta en la imagen no
+    sale en el resultado."""
+    pares = [f"{ruta}=/app/{ruta}" for ruta in sorted(_lo_que_la_app_lee())]
+    pares.append("servidor/calibrador.json=/modelo/calibrador.json")
+    r = _docker("run", "--rm", "--pull", "never", IMAGEN, "python", "-c",
+                GUION_DE_LA_HUELLA, *pares, timeout=120)
+    if r.returncode != 0 or not r.stdout.strip():
+        pytest.fail(f"no se pudo leer lo que lleva la imagen `{IMAGEN}`: "
+                    f"{r.stderr.strip()[-300:]}. Reconstruye con: {ORDEN_DE_CONSTRUIR}",
+                    pytrace=False)
+    return json.loads(r.stdout.strip().splitlines()[-1])
 
 
 @pytest.fixture(scope="module")
 def imagen():
     """La imagen construida, de ESTE árbol, o un salto que dice por qué y cómo
-    construirla. NO la construye (R20). Si la imagen existe pero su `app/app.py` no es
-    el de aquí, FALLA: una imagen rancia pasaría todo lo demás y no probaría nada."""
+    construirla. NO la construye (R20). Si la imagen existe pero lo que lleva no es lo de
+    aquí -algún fichero que la app lee, el calibrador o algún `.py` del paquete-, FALLA y
+    dice cuáles: una imagen rancia pasaría todo lo demás y no probaría nada."""
     motivo = _sin_docker()
     if motivo:
         pytest.skip(SIN_VERIFICAR.format(motivo=motivo))
     if _docker("image", "inspect", IMAGEN, timeout=30).returncode != 0:
         pytest.skip(SIN_VERIFICAR.format(motivo=f"no hay una imagen llamada `{IMAGEN}`"))
-    r = subprocess.run(["docker", "run", "--rm", "--pull", "never", IMAGEN, "cat",
-                        "/app/app/app.py"], capture_output=True, timeout=60)
-    if r.returncode != 0 or _huella(r.stdout) != _huella(APP.read_bytes()):
-        pytest.fail(f"la imagen `{IMAGEN}` no es de este árbol: su app/app.py no es el de "
-                    f"aquí. Reconstruye con: {ORDEN_DE_CONSTRUIR}", pytrace=False)
+    aqui, alli = _huellas_de_este_arbol(), _huellas_de_la_imagen()
+    if aqui != alli:
+        distintos = sorted(r for r in aqui.keys() | alli.keys() if aqui.get(r) != alli.get(r))
+        primeros = ", ".join(distintos[:6]) + (", …" if len(distintos) > 6 else "")
+        pytest.fail(f"la imagen `{IMAGEN}` no es de este árbol: difieren {len(distintos)} "
+                    f"de sus ficheros ({primeros}). Reconstruye con: {ORDEN_DE_CONSTRUIR}",
+                    pytrace=False)
     return IMAGEN
 
 
@@ -688,16 +788,33 @@ def test_la_imagen_por_dentro_trae_lo_que_la_app_lee_y_nada_mas_y_no_corre_como_
         "calibrador.json", "pesos_modelo_cpu.pt"]
 
 
-# Corre `app/app.py` en el contenedor, con el entorno que trae y sin ninguna red. Sin
-# comillas dobles: el guion viaja como un argumento de `docker exec`.
+# Corre `app/app.py` en el contenedor, con el entorno que trae y sin ninguna red: abre la
+# página y calcula el ejemplo normal con el botón «Prueba con ejemplo», como lo haría una
+# persona. Sin comillas dobles ni acentos: el guion viaja como un argumento de
+# `docker exec`.
 GUION_DE_LA_APP = """
 import json
 from streamlit.testing.v1 import AppTest
 
 at = AppTest.from_file('/app/app/app.py', default_timeout=240).run()
+pestanas = len(at.tabs)
+at.selectbox(key='ejemplo').set_value('normal_pa')
+at.run()
+at.button(key='probar_ejemplo').click().run()
+try:
+    ultimo = at.session_state['ultimo']
+except Exception:
+    ultimo = {}
+r = ultimo.get('resultado') or {}
 print(json.dumps({'excepciones': [str(e.value) for e in at.exception],
                   'errores': [str(e.value) for e in at.error],
-                  'pestanas': len(at.tabs)}))
+                  'pestanas': pestanas,
+                  'historial': [f['origen'] for f in at.session_state['historial']],
+                  'clasificacion': r.get('clasificacion'),
+                  'cruda': r.get('probabilidad_cruda'),
+                  'umbral': r.get('umbral'),
+                  'cribado': any('CRIBADO' in str(m.value) for m in at.markdown),
+                  'mapa': ultimo.get('mapa') is not None}))
 """
 
 
@@ -707,9 +824,13 @@ def test_la_app_corre_sin_red_con_los_pesos_de_la_imagen(imagen):
     dentro de la imagen y en un contenedor SIN RED (no hay puerto que publicar: se le
     habla por `docker exec`): si necesitara algo de fuera para arrancar -bajar pesos,
     consultar una versión, mandar una estadística-, no arrancaría. Carga el modelo
-    con los pesos y el entorno de la imagen y pinta sus pestañas, sin error. Y como sin
-    red la consulta de la IP pública FALLA y no sale «External URL», mira también la
-    señal del fallo: es el único sitio donde la consulta se vería sin Internet."""
+    con los pesos y el entorno de la imagen, pinta sus pestañas, sin error, y CALCULA un
+    ejemplo de verdad (el normal, con «Prueba con ejemplo»): el resultado, el cribado y el
+    mapa de calor. La lista de lo que la app lee sale de su código y solo ve rutas
+    escritas de una manera; lo que el cálculo del ejemplo necesite y no esté en la imagen
+    -el propio ejemplo, por ejemplo- se vería aquí. Y como sin red la consulta de la IP
+    pública FALLA y no sale «External URL», mira también la señal del fallo: es el único
+    sitio donde la consulta se vería sin Internet."""
     with _contenedor_en_marcha("--network", "none", *LIMITE_DE_MEMORIA) as c:
         limite = time.monotonic() + 90
         while True:
@@ -730,4 +851,13 @@ def test_la_app_corre_sin_red_con_los_pesos_de_la_imagen(imagen):
         # y se detiene antes.
         assert resultado["excepciones"] == [] and resultado["errores"] == [], resultado
         assert resultado["pestanas"] >= 1, resultado
+        # Y el ejemplo se calculó de verdad, con los pesos de la imagen: sin el fichero del
+        # ejemplo habría un error en pantalla, y sin el resultado, ninguna de estas cifras.
+        # El umbral es el global de la imagen (UMBRAL, el del compose), a mano.
+        assert resultado["historial"] == ["ejemplo: normal_pa"], resultado
+        assert resultado["clasificacion"] in ("opacidad_probable",
+                                              "sin_opacidad_probable"), resultado
+        assert 0 < resultado["cruda"] < 1 and resultado["umbral"] == 0.4258, resultado
+        assert resultado["cribado"], f"la página no enseña el cribado: {resultado}"
+        assert resultado["mapa"], f"no hay mapa de calor: {resultado}"
         _sin_consulta_de_ip(c.registros())

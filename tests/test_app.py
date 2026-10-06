@@ -21,6 +21,9 @@ QUÉ VIGILA
   se calcula.
 - El interruptor: cambia el umbral aplicado y enseña la vista; con otra vista, el
   global; y si la etiqueta cambia, dice cuál daría el umbral global (R17).
+- El «≥» / «<» de «puntuación … umbral …» es el de la etiqueta del motor, no el de
+  comparar los dos números redondeados que se enseñan (un empate redondeado de un
+  negativo no dice «≥»).
 - El historial crece con cada cálculo y el CSV tiene exactamente las columnas
   declaradas, ni la imagen, ni el nombre del fichero, ni nada de la cabecera.
 - El mapa se reescala a la placa sin trasponerla; los textos copiados del bot son
@@ -66,7 +69,7 @@ from copiloto_triaje.servicio.calibracion import Calibrador
 from copiloto_triaje.servicio.heckerling import combinacion
 from copiloto_triaje.servicio.inferencia import ErrorDeInferencia, Motor
 
-from test_dicom import crear_dicom, crear_dicom_con_tag_vacio
+from test_dicom import crear_dicom
 
 REPO = Path(__file__).resolve().parents[1]
 APP = REPO / "app" / "app.py"
@@ -629,8 +632,14 @@ def _sin_pixeles(tmp_path):
 
 
 def _rows_vacio(tmp_path):
-    ruta = tmp_path / "rows_vacio.dcm"
-    crear_dicom_con_tag_vacio(ruta)
+    """Un DICOM sano salvo que `Rows` está presente y SIN valor (pydicom lo devuelve como
+    `None`), con los mismos bytes en ese elemento que el de `crear_dicom_con_tag_vacio`.
+    Esa ayuda escribe la edad como «51», que no es un valor del VR AS, y pydicom avisa;
+    aquí va con el formato DICOM («054Y»), y el aviso no sale."""
+    ruta = _dicom(tmp_path, "rows_vacio.dcm", edad="054Y")
+    ds = pydicom.dcmread(str(ruta))
+    ds.Rows = None
+    ds.save_as(str(ruta), enforce_file_format=True)
     return ruta.read_bytes()
 
 
@@ -1152,6 +1161,48 @@ def test_un_umbral_del_entorno_se_aplica_y_no_se_le_atribuyen_las_metricas(
     assert "CRIBADO — sin opacidad probable" in texto and AVISO_NEGATIVO in texto
     assert any("0,5000" in w.value and _dec(UMBRAL_GLOBAL, 4) in w.value
                for w in at.tabs[2].warning)
+
+
+# --------------------------------------------------------------------------
+# El «≥» / «<» de «puntuación … umbral …» es el de la etiqueta del motor
+# --------------------------------------------------------------------------
+# La etiqueta la decide el motor con la puntuación SIN redondear, y la respuesta lleva la
+# puntuación y el umbral a 4 decimales: con una cruda de 0,42575 y un umbral de 0,4258 la
+# etiqueta es «sin opacidad probable» y la respuesta dice 0,4258 y 0,4258. Comparar esos
+# dos números diría «0,4258 ≥ 0,4258» junto a un negativo. La verdad es la etiqueta.
+@pytest.mark.parametrize("cruda, clasificacion, comparador", [
+    (UMBRAL_GLOBAL, "sin_opacidad_probable", "<"),      # el empate redondeado, negativo
+    (UMBRAL_GLOBAL, "opacidad_probable", "≥"),          # los mismos números, la otra etiqueta
+    (0.2000, "sin_opacidad_probable", "<"),
+    (0.9000, "opacidad_probable", "≥"),
+])
+def test_el_comparador_de_la_puntuacion_sale_de_la_etiqueta_del_motor(
+        modulo_app, cruda, clasificacion, comparador):
+    r = {"probabilidad_cruda": cruda, "umbral": UMBRAL_GLOBAL, "clasificacion": clasificacion}
+    texto = modulo_app.texto_del_punto(r, METRICAS)
+    assert texto.startswith(f"puntuación {_dec(cruda, 4)} {comparador} umbral "
+                            f"{_dec(UMBRAL_GLOBAL, 4)}"), texto
+    assert ("<" if comparador == "≥" else "≥") not in texto, texto
+
+
+def test_la_pantalla_pinta_menor_si_la_etiqueta_es_negativa_aunque_los_numeros_empaten(
+        monkeypatch):
+    """La respuesta del motor con la puntuación a 0,4258 y el umbral a 0,4258 y,
+    aun así, «sin_opacidad_probable» (la sin redondear caía por debajo): la pantalla
+    dice «0,4258 < umbral 0,4258», y no «≥» junto a un negativo."""
+    clasificar = Motor.clasificar
+
+    def con_la_cruda_en_el_umbral(self, datos, hallazgos=None):
+        return {**clasificar(self, datos, hallazgos), "probabilidad_cruda": UMBRAL_GLOBAL,
+                "umbral": UMBRAL_GLOBAL, "clasificacion": "sin_opacidad_probable"}
+
+    monkeypatch.setattr(Motor, "clasificar", con_la_cruda_en_el_umbral)
+    at = _calcular(_app())
+    _sin_traza(at)
+    texto = _textos(at.tabs[0])
+    assert "CRIBADO — sin opacidad probable" in texto
+    assert f"puntuación {_dec(UMBRAL_GLOBAL, 4)} < umbral {_dec(UMBRAL_GLOBAL, 4)}" in texto
+    assert "≥" not in texto
 
 
 # --------------------------------------------------------------------------
