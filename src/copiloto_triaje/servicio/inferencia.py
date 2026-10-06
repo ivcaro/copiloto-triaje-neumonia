@@ -12,8 +12,10 @@ from collections.abc import Mapping
 from numbers import Real
 from pathlib import Path
 
+import numpy as np
 import pydicom.errors
 import torch
+import torch.nn.functional as F
 from PIL import Image
 
 from copiloto_triaje.datos.dataset import construir_transformaciones
@@ -166,16 +168,17 @@ class Motor:
         return self._transformar(
             Image.fromarray(arreglo).convert("RGB")).unsqueeze(0)
 
-    def clasificar(self, datos_dicom: bytes, hallazgos: Mapping | None = None) -> dict:
-        comienzo = time.perf_counter()
-        # Los hallazgos se validan ANTES de tocar el DICOM: es barato, y si
-        # vienen mal el error es de quien llama -nuestro bot-, no de la placa.
-        validados = None
-        if hallazgos is not None:
-            try:
-                validados = validar_hallazgos(hallazgos)
-            except HallazgosInvalidos as exc:
-                raise ErrorDeInferencia("hallazgos_invalidos", str(exc)) from exc
+    @staticmethod
+    def _leer_placa_de_adulto(datos_dicom: bytes) -> tuple[np.ndarray, dict, int]:
+        """Lo que `clasificar` y `mapa_de_calor` hacen IGUAL antes de tocar el
+        modelo: leer el DICOM y comprobar que el paciente es un adulto. Devuelve
+        `(pixeles, metadatos, edad)` o levanta el `ErrorDeInferencia` que toque.
+
+        Esta en UN solo sitio para que las dos rechacen lo mismo, con el mismo
+        codigo y las mismas palabras: copiarlo dejaria que divergieran, y un
+        mapa de calor de un paciente que el modelo no admite seria dar por
+        valido lo que no lo es.
+        """
         try:
             arreglo, meta = leer_dicom_desde_bytes(datos_dicom)
         # AttributeError NO esta en esta tupla a proposito: `datos/dicom.py`
@@ -201,6 +204,19 @@ class Motor:
                 "fuera_de_alcance",
                 f"El paciente tiene {edad} años y el modelo solo es válido "
                 f"entre {EDAD_MINIMA} y {EDAD_MAXIMA}.")
+        return arreglo, meta, edad
+
+    def clasificar(self, datos_dicom: bytes, hallazgos: Mapping | None = None) -> dict:
+        comienzo = time.perf_counter()
+        # Los hallazgos se validan ANTES de tocar el DICOM: es barato, y si
+        # vienen mal el error es de quien llama -nuestro bot-, no de la placa.
+        validados = None
+        if hallazgos is not None:
+            try:
+                validados = validar_hallazgos(hallazgos)
+            except HallazgosInvalidos as exc:
+                raise ErrorDeInferencia("hallazgos_invalidos", str(exc)) from exc
+        arreglo, meta, edad = self._leer_placa_de_adulto(datos_dicom)
 
         # El umbral que decide la etiqueta del cribado (SP5-C1 §4). Sin
         # `umbrales_por_vista` es SIEMPRE el global y no se mira la vista: la
@@ -260,3 +276,63 @@ class Motor:
                                                 validados, rv)
         salida["milisegundos"] = round((time.perf_counter() - comienzo) * 1000, 1)
         return salida
+
+    def mapa_de_calor(self, datos_dicom: bytes) -> np.ndarray:
+        """El mapa de calor de la placa: Grad-CAM sobre el ultimo bloque
+        convolucional, respecto del logit de opacidad (SP5-C1 §5).
+
+        Las activaciones de ese bloque, ponderadas por el gradiente del logit
+        respecto de ellas (su media en el espacio, por canal), con ReLU,
+        interpoladas a `tam_imagen` x `tam_imagen` y divididas por su maximo.
+        Devuelve un `numpy.ndarray` float32 de esa forma con valores en [0, 1];
+        la app lo reescala a la imagen original para superponerlo. Si no hay
+        nada que atribuir -gradiente nulo, o un mapa que queda por debajo de 0 en
+        todas partes- es una matriz de ceros, no `nan`.
+
+        Rechaza lo mismo que `clasificar`, con los mismos codigos, porque
+        comparte con ella la lectura y las comprobaciones de edad.
+
+        Solo vale para EfficientNet-B0, la unica red que se despliega: compone su
+        forward a mano -`features`, `avgpool`, `classifier`- y una prueba vigila
+        que esa composicion sea la del modelo.
+        """
+        arreglo, _, _ = self._leer_placa_de_adulto(datos_dicom)
+        # Por el mismo camino que `clasificar`: el mapa es el de la imagen que
+        # el modelo ve, no el de otra.
+        x = self._tensor_desde_arreglo(arreglo)
+
+        # SIN ganchos (`register_forward_hook`) a proposito: el `Motor` es uno
+        # solo y la app lo comparte entre sesiones, que corren en hilos. Un
+        # gancho registrado aqui estaria vivo mientras OTRA sesion llama a
+        # `clasificar` y se dispararia dentro de ella, mezclando sus activaciones
+        # con las de este mapa; quitarlo en un `finally` no cierra esa ventana.
+        # Por eso el forward se compone a mano -las activaciones del ultimo
+        # bloque quedan en una variable local- y el gradiente se pide con
+        # `autograd.grad`, que ademas no deja `.grad` en ningun parametro. Nada
+        # del modelo se toca: ni el modo, ni los pesos, ni sus `requires_grad`.
+        #
+        # La imagen se marca con `requires_grad` para que haya grafo hasta las
+        # activaciones: con el backbone congelado (las pruebas) ningun parametro
+        # de `features` lo exige, y sin esto no habria por donde derivar. Con el
+        # desplegado (`cargar`, sin congelar) da igual. `enable_grad` porque quien
+        # llama puede estar bajo `torch.no_grad()`, como `clasificar`.
+        x.requires_grad_(True)
+        with torch.enable_grad():
+            activaciones = self.modelo.features(x)
+            logit = self.modelo.classifier(
+                torch.flatten(self.modelo.avgpool(activaciones), 1)).view(-1)[0]
+            (gradientes,) = torch.autograd.grad(logit, activaciones)
+
+        with torch.no_grad():
+            pesos = gradientes.mean(dim=(2, 3), keepdim=True)
+            mapa = torch.relu((pesos * activaciones).sum(dim=1, keepdim=True))
+            mapa = F.interpolate(mapa, size=(self.tam_imagen, self.tam_imagen),
+                                 mode="bilinear", align_corners=False)[0, 0]
+            # Se normaliza DESPUES de interpolar: la interpolacion baja el
+            # maximo, y asi el punto mas caliente del mapa que sale vale 1. Con
+            # maximo 0 el mapa ya es de ceros y se queda como esta; dividir daria
+            # 0/0 en todos los puntos.
+            maximo = mapa.max()
+            if maximo > 0:
+                mapa = mapa / maximo
+        return np.asarray(mapa.numpy(), dtype=np.float32)

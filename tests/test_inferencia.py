@@ -11,7 +11,12 @@ import numpy as np
 import pydicom
 import pytest
 import torch
+import torch.nn.functional as F
+from PIL import Image
 
+from copiloto_triaje.datos.dataset import construir_transformaciones
+from copiloto_triaje.datos.dicom import leer_dicom_desde_bytes
+from copiloto_triaje.modelo.arquitectura import construir_modelo, descongelar_todo
 from copiloto_triaje.servicio.calibracion import Calibrador, ajustar_calibrador
 from copiloto_triaje.servicio.heckerling import combinacion, combinar
 from copiloto_triaje.servicio.inferencia import ErrorDeInferencia, Motor
@@ -573,3 +578,333 @@ def test_cargar_pasa_los_umbrales_por_vista_al_motor(motor, tmp_path):
     assert con.umbrales_por_vista == UMBRALES_POR_VISTA
     with pytest.raises(ValueError, match="falta 'AP'"):
         Motor.cargar(**comunes, umbrales_por_vista={"PA": 0.18})
+
+
+# --- El mapa de calor (SP5-C1 §5) ---------------------------------------------
+#
+# Grad-CAM sobre el ultimo bloque de EfficientNet-B0, respecto del logit de
+# opacidad. El modelo de la fixture `motor` es trivial -no tiene `features` ni
+# `classifier`-, asi que aqui se arma la red de verdad con pesos aleatorios y
+# semilla fija: se prueba el algoritmo y el contrato del metodo, no que el mapa
+# senale algo clinico.
+#
+# Una red sin entrenar trae las estadisticas de BatchNorm de fabrica y apaga sus
+# activaciones capa tras capa: las del ultimo bloque apenas llegan a 1e-12, y el
+# logit es el sesgo de la cabeza sea cual sea la placa. De ahi dos cosas. El mapa
+# SIN normalizar vale ~1e-15 y no ~1, asi que quitar la normalizacion se nota de
+# lejos. Y una prueba que compare LOGITS tiene que quitar el sesgo y comparar en
+# relativo, o pasaria en vacio: lo que la imagen aporta al logit no llega a la
+# resolucion de un float32 puesta al lado del sesgo.
+
+# 128 px son 4 x 4 celdas en el ultimo bloque; con 32 seria una sola y no habria
+# nada que interpolar.
+TAM_MAPA = 128
+
+
+@pytest.fixture
+def motor_con_red(motor):
+    """Un `Motor` con la EfficientNet-B0 de verdad y pesos aleatorios.
+
+    La semilla se fija sin tocar el estado global de torch (`fork_rng`): las
+    demas pruebas no tienen por que enterarse. El backbone queda congelado, que
+    es lo que da `construir_modelo` por defecto, y eso obliga a `mapa_de_calor`
+    a marcar la IMAGEN como derivable: sin eso no hay grafo que atraviese
+    `features`. `Motor.cargar` lo carga sin congelar: las pruebas a las que esa
+    diferencia les importa descongelan con `descongelar_todo`.
+    """
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(0)
+        modelo = construir_modelo("efficientnet_b0", preentrenado=False)
+    return Motor(modelo=modelo, calibrador=motor.calibrador, umbral=motor.umbral,
+                 tam_imagen=TAM_MAPA, nombre_modelo="prueba",
+                 auc_validacion=motor.auc_validacion,
+                 prevalencia_local=motor.prevalencia_local)
+
+
+def _dicom_con_pixeles(tmp_path, pixeles):
+    """Los bytes de un DICOM sintetico de 54 anios con ESOS pixeles (un arreglo
+    cuadrado de uint8). `crear_dicom` escribe siempre el mismo patron, y aqui
+    hacen falta una imagen con forma y otras uniformes."""
+    ruta = tmp_path / "pixeles.dcm"
+    crear_dicom(ruta, edad="054Y", lado=pixeles.shape[0])
+    ds = pydicom.dcmread(str(ruta))
+    ds.PixelData = pixeles.astype(np.uint8).tobytes()
+    ds.save_as(str(ruta), enforce_file_format=True)
+    return ruta.read_bytes()
+
+
+def _placa_asimetrica(lado=64):
+    """Una rampa vertical con un bloque brillante arriba a la izquierda: ni
+    uniforme ni simetrica, para que un mapa traspuesto o volteado no pase por
+    bueno."""
+    pixeles = np.tile(np.linspace(0, 200, lado).astype(np.uint8)[:, None],
+                      (1, lado))
+    pixeles[4:20, 6:30] = 255
+    return pixeles
+
+
+@pytest.fixture
+def placa(tmp_path):
+    """Los bytes de un DICOM de 54 anios con la placa asimetrica."""
+    return _dicom_con_pixeles(tmp_path, _placa_asimetrica())
+
+
+_TIPOS_DE_GANCHO = ("_forward_hooks", "_forward_pre_hooks", "_backward_hooks",
+                    "_backward_pre_hooks")
+
+
+def _ganchos(modelo):
+    """Los ganchos que lleva registrados CUALQUIER modulo del modelo, como
+    {nombre del modulo: [tipos de gancho]}. Vacio si no hay ninguno."""
+    return {nombre: [t for t in _TIPOS_DE_GANCHO if getattr(modulo, t)]
+            for nombre, modulo in modelo.named_modules()
+            if any(getattr(modulo, t) for t in _TIPOS_DE_GANCHO)}
+
+
+def _espiar_entradas(modulo, modelo):
+    """Envuelve el `forward` de `modulo` y devuelve la lista donde cada llamada
+    anota lo que recibe y los ganchos que `modelo` lleva EN ESE MOMENTO."""
+    llamadas = []
+    original = modulo.forward
+
+    def espiar(x, *resto, **kwargs):
+        llamadas.append({"entrada": x, "ganchos": _ganchos(modelo)})
+        return original(x, *resto, **kwargs)
+
+    modulo.forward = espiar
+    return llamadas
+
+
+def test_el_mapa_de_calor_tiene_la_forma_y_el_tipo_del_contrato(motor_con_red, placa):
+    """`(tam_imagen, tam_imagen)` y float32, sea cual sea el tamano de la placa
+    -la de la prueba es de 64 x 64 y el modelo la ve a 128-: es el tamano de
+    entrada del modelo, y la app lo reescala a la imagen original."""
+    mapa = motor_con_red.mapa_de_calor(placa)
+    assert isinstance(mapa, np.ndarray)
+    assert mapa.dtype == np.float32
+    assert mapa.shape == (TAM_MAPA, TAM_MAPA)
+
+
+def test_el_mapa_de_calor_esta_entre_cero_y_uno_y_llega_a_uno(motor_con_red, placa):
+    """Normalizado por su maximo: el punto mas caliente vale 1. Con estos pesos
+    el mapa sin normalizar no pasa de ~1e-14 (ver arriba), asi que sin la
+    division esta prueba falla de lejos."""
+    mapa = motor_con_red.mapa_de_calor(placa)
+    # Que no pase en vacio: con la semilla 0 y esta placa el mapa no es de ceros
+    # (con otras semillas puede serlo) y entonces su maximo seria 0, no 1.
+    assert mapa.any(), "el mapa de la prueba es de ceros: no prueba la normalizacion"
+    assert mapa.min() >= 0.0
+    assert mapa.max() <= 1.0
+    assert mapa.max() == pytest.approx(1.0)
+
+
+def test_dos_llamadas_dan_el_mismo_mapa(motor_con_red, placa):
+    """El mapa es una funcion de la placa. Con el modelo en modo entrenamiento
+    el Dropout de la cabeza lo haria distinto en cada llamada. Se compara con
+    1e-6 de margen y no a la igualdad exacta de los bits: lo que esta prueba
+    persigue es un mapa que cambia de verdad, no el orden de una suma."""
+    primero = motor_con_red.mapa_de_calor(placa)
+    segundo = motor_con_red.mapa_de_calor(placa)
+    np.testing.assert_allclose(segundo, primero, rtol=0, atol=1e-6)
+
+
+@pytest.mark.parametrize("valor", [0, 128, 255], ids=["negra", "gris", "blanca"])
+def test_una_imagen_uniforme_no_da_nan(motor_con_red, tmp_path, valor):
+    """Una placa sin ningun detalle -negra, gris o blanca- da un mapa finito y
+    entre 0 y 1. La rama del mapa de ceros, la que dividiria 0 entre 0, la fija
+    la prueba de abajo."""
+    mapa = motor_con_red.mapa_de_calor(
+        _dicom_con_pixeles(tmp_path, np.full((64, 64), valor, np.uint8)))
+    assert np.isfinite(mapa).all()
+    assert mapa.min() >= 0.0 and mapa.max() <= 1.0
+
+
+@pytest.mark.parametrize("imagen", ["con_forma", "uniforme"])
+def test_con_el_gradiente_nulo_el_mapa_es_de_ceros(motor_con_red, tmp_path, imagen):
+    """Sin gradiente no hay a quien atribuirle nada: con los pesos de la cabeza
+    a cero el logit no depende de la imagen, y el mapa tiene que ser una matriz
+    de ceros, no `nan`. Dividir por el maximo sin mirar si es 0 da 0/0 en todos
+    los puntos -y normalizar entre el minimo y el maximo, tambien-. Es la rama a
+    la que llega una placa uniforme en cuanto su mapa sin normalizar queda
+    entero por debajo de 0."""
+    torch.nn.init.zeros_(motor_con_red.modelo.classifier[-1].weight)
+    pixeles = (_placa_asimetrica() if imagen == "con_forma"
+               else np.full((64, 64), 128, np.uint8))
+    mapa = motor_con_red.mapa_de_calor(_dicom_con_pixeles(tmp_path, pixeles))
+    assert mapa.dtype == np.float32 and mapa.shape == (TAM_MAPA, TAM_MAPA)
+    assert not np.isnan(mapa).any()
+    assert not mapa.any()
+
+
+def test_el_mapa_es_el_grad_cam_de_la_red(motor_con_red, placa):
+    """Contra una referencia que no usa autograd, para que la prueba no sea solo
+    de forma: un mapa sin gradientes, con otra capa, sin ReLU, traspuesto o
+    interpolado a lo bruto cumpliria el contrato de arriba y no seria Grad-CAM.
+
+    Con un promedio global y una capa lineal por cabeza, el gradiente del logit
+    respecto de cada activacion es w_c / (h * w), el mismo en todo el mapa:
+    Grad-CAM se reduce a CAM, ReLU(suma_c w_c * A_c), salvo un factor positivo
+    que la normalizacion se lleva. Se calcula asi, sobre las activaciones del
+    ultimo bloque, y el mapa del motor -que si pasa por autograd- tiene que
+    salir igual."""
+    modelo = motor_con_red.modelo
+    arreglo, _ = leer_dicom_desde_bytes(placa)
+    x = motor_con_red._tensor_desde_arreglo(arreglo)    # que usa el mapa, lo vigila otra
+    with torch.no_grad():
+        activaciones = modelo.features(x)[0]                    # (1280, 4, 4)
+        pesos = modelo.classifier[-1].weight[0]                 # (1280,)
+        cam = torch.relu(torch.einsum("c,chw->hw", pesos, activaciones))
+        assert cam.max() > 0, "la referencia de la prueba es de ceros"
+        cam = F.interpolate(cam[None, None], size=(TAM_MAPA, TAM_MAPA),
+                            mode="bilinear", align_corners=False)[0, 0]
+    esperado = (cam / cam.max()).numpy()
+
+    np.testing.assert_allclose(motor_con_red.mapa_de_calor(placa), esperado,
+                               rtol=0, atol=1e-4)
+
+
+def test_el_mapa_usa_el_tensor_que_construye_el_entrenamiento(motor_con_red, placa):
+    """Lo mismo que la prueba del preprocesamiento de arriba, para el mapa: se
+    captura lo que `mapa_de_calor` le pasa AL MODELO -a `features`, que es lo
+    primero que ve- y se compara con la conversion armada aparte, no con lo que
+    devuelva `_tensor_desde_arreglo`. Un mapa calculado sobre una imagen
+    distinta de la que clasifica seria el mapa de otra placa."""
+    modelo = motor_con_red.modelo
+    llamadas = _espiar_entradas(modelo.features, modelo)
+
+    motor_con_red.mapa_de_calor(placa)
+
+    arreglo, _ = leer_dicom_desde_bytes(placa)
+    esperado = construir_transformaciones(TAM_MAPA, entrenamiento=False)(
+        Image.fromarray(arreglo).convert("RGB")).unsqueeze(0)
+    assert llamadas, "el mapa no paso por `features`"
+    assert torch.allclose(llamadas[0]["entrada"], esperado)
+
+
+def test_el_mapa_no_registra_ganchos_ni_durante_el_calculo(motor_con_red, placa):
+    """El `Motor` es uno solo y la app lo comparte entre sesiones, que corren en
+    hilos distintos. Un gancho de `forward` registrado para capturar las
+    activaciones estaria vivo mientras OTRA sesion llama a `clasificar`, y se
+    dispararia dentro de ella mezclando sus activaciones con las de este mapa.
+    Quitarlo en un `finally` no lo evita: la ventana esta ENTRE registrarlo y
+    quitarlo. Por eso se mira el modelo durante el calculo -al entrar en
+    `features` y en `classifier`- y no solo despues."""
+    modelo = motor_con_red.modelo
+    en_features = _espiar_entradas(modelo.features, modelo)
+    en_cabeza = _espiar_entradas(modelo.classifier, modelo)
+
+    motor_con_red.mapa_de_calor(placa)
+
+    assert en_features and en_cabeza, "el mapa no paso por `features` y `classifier`"
+    for llamada in en_features + en_cabeza:
+        assert llamada["ganchos"] == {}
+    assert _ganchos(modelo) == {}
+
+
+@pytest.mark.parametrize("congelado", [True, False],
+                         ids=["backbone_congelado", "backbone_descongelado"])
+def test_el_mapa_deja_el_modelo_como_lo_encontro(motor_con_red, placa, congelado):
+    """Lo que el mapa deje cambiado en el modelo compartido lo ve la siguiente
+    peticion de cualquier sesion: ni modo entrenamiento (el Dropout de la cabeza
+    y las estadisticas de BatchNorm), ni pesos o estadisticas distintos, ni
+    banderas `requires_grad` cambiadas, ni gradientes acumulados en los
+    parametros (lo que dejaria un `backward()` en vez de `autograd.grad`).
+
+    Se mira con el backbone congelado y descongelado: `Motor.cargar` lo despliega
+    descongelado, donde un `backward()` si dejaria `.grad` en todos los pesos."""
+    modelo = motor_con_red.modelo
+    if not congelado:
+        descongelar_todo(modelo)
+    estado = {k: v.clone() for k, v in modelo.state_dict().items()}
+    banderas = {n: p.requires_grad for n, p in modelo.named_parameters()}
+
+    motor_con_red.mapa_de_calor(placa)
+
+    assert not any(m.training for m in modelo.modules())     # sigue en eval()
+    despues = modelo.state_dict()
+    assert despues.keys() == estado.keys()
+    assert all(torch.equal(despues[k], estado[k]) for k in estado)
+    assert {n: p.requires_grad for n, p in modelo.named_parameters()} == banderas
+    assert all(p.grad is None for p in modelo.parameters())
+
+
+def test_despues_del_mapa_la_clasificacion_es_la_misma(motor_con_red, placa):
+    """La misma placa, la misma respuesta, antes y despues de pedir su mapa. Es
+    la formulacion de punta a punta: en una red sin entrenar la respuesta es casi
+    solo el sesgo (ver arriba) y ve poco por si sola, asi que lo que sostiene
+    esta garantia son las comprobaciones sobre el estado del modelo, las de la
+    prueba anterior y la de los ganchos."""
+    antes = motor_con_red.clasificar(placa, HALLAZGOS)
+    motor_con_red.mapa_de_calor(placa)
+    despues = motor_con_red.clasificar(placa, HALLAZGOS)
+
+    def sin_tiempo(respuesta):
+        return {k: v for k, v in respuesta.items() if k != "milisegundos"}
+
+    assert sin_tiempo(despues) == sin_tiempo(antes)
+
+
+def test_el_mapa_se_calcula_aunque_quien_llama_tenga_los_gradientes_apagados(
+        motor_con_red, placa):
+    """`clasificar` trabaja bajo `torch.no_grad()` y la app puede envolver todo
+    lo suyo igual: el mapa enciende los gradientes para si mismo y deja el modo
+    como lo encontro -ni apagado para quien lo tenia encendido ni encendido
+    para quien lo tenia apagado."""
+    esperado = motor_con_red.mapa_de_calor(placa)
+    assert torch.is_grad_enabled()
+    with torch.no_grad():
+        mapa = motor_con_red.mapa_de_calor(placa)
+        assert not torch.is_grad_enabled()
+    assert torch.is_grad_enabled()
+    np.testing.assert_allclose(mapa, esperado, rtol=0, atol=1e-6)
+
+
+@pytest.mark.parametrize("cual, codigo", [("menor", "fuera_de_alcance"),
+                                          ("sin_edad", "edad_desconocida"),
+                                          ("no_es_dicom", "dicom_invalido")])
+def test_el_mapa_rechaza_lo_mismo_que_clasificar(motor_con_red, tmp_path, cual, codigo):
+    """Un menor, una edad que no se lee y lo que no es un DICOM se rechazan con
+    el mismo codigo y el MISMO mensaje que en `clasificar`: las dos comparten la
+    lectura y las comprobaciones de edad, y esta prueba hace fallar a quien las
+    copie en vez de compartirlas y las deje divergir. Un mapa de un paciente
+    que el modelo no admite seria dar por valido lo que no lo es."""
+    if cual == "no_es_dicom":
+        datos = b"esto no es un DICOM"
+    else:
+        ruta = tmp_path / "a.dcm"
+        crear_dicom(ruta, edad="012Y" if cual == "menor" else "")
+        datos = ruta.read_bytes()
+
+    def rechazo(llamar):
+        with pytest.raises(ErrorDeInferencia) as fallo:
+            llamar(datos)
+        return fallo.value.codigo, str(fallo.value)
+
+    por_el_mapa = rechazo(motor_con_red.mapa_de_calor)
+    assert por_el_mapa[0] == codigo
+    assert por_el_mapa == rechazo(motor_con_red.clasificar)
+
+
+def test_la_composicion_a_mano_del_forward_es_la_del_modelo(motor_con_red):
+    """`mapa_de_calor` no llama a `modelo(x)`: compone el forward a mano
+    -`features`, `avgpool`, `flatten`, `classifier`- para tener en la mano las
+    activaciones del ultimo bloque sin registrar ningun gancho. Eso solo vale
+    mientras esa composicion SEA el forward del modelo: si torchvision metiera
+    un paso mas entre el pooling y la cabeza, el mapa seria el de una red que no
+    es la que clasifica y nada mas lo avisaria.
+
+    Sin sesgo y solo en relativo (`atol=0`): con el sesgo puesto, `modelo(x)`
+    seria el sesgo (ver arriba) y cualquier composicion lo igualaria, tambien
+    con la tolerancia por defecto, que es absoluta."""
+    modelo = motor_con_red.modelo
+    torch.nn.init.zeros_(modelo.classifier[-1].bias)
+    x = torch.randn(2, 3, TAM_MAPA, TAM_MAPA,
+                    generator=torch.Generator().manual_seed(1))
+    with torch.no_grad():
+        del_modelo = modelo(x)
+        a_mano = modelo.classifier(
+            torch.flatten(modelo.avgpool(modelo.features(x)), 1))
+
+    # Que la comparacion pueda fallar: dos entradas distintas dan logits distintos.
+    assert not torch.allclose(del_modelo[0], del_modelo[1], rtol=1e-3, atol=0)
+    assert torch.allclose(a_mano, del_modelo, rtol=1e-5, atol=0)
