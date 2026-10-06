@@ -54,6 +54,8 @@ import altair as alt
 import numpy as np
 import pandas as pd
 import pydicom
+import pydicom.filereader
+import pydicom.uid
 import streamlit as st
 from matplotlib import colormaps
 from PIL import Image
@@ -233,6 +235,19 @@ AYUDA_TAMANO = "Pruebe con un DICOM más pequeño o con un ejemplo."
 HALLAZGOS_INVALIDOS = ("Los hallazgos de la exploración no son válidos. Revíselos, o "
                        "quite los hallazgos para calcular solo con la imagen.")
 SIN_FICHERO = f"Suba un fichero DICOM, o elija «{FUENTE_EJEMPLO}»."
+# Lo que se dice de un fichero que no es un DICOM: lo del motor para `dicom_invalido`,
+# y lo de la app cuando no hay metainformación que leer (R28), con las mismas palabras.
+NO_ES_UN_DICOM = "\n\n".join([DEL_BOT["no_pude_leer"], AYUDA_DICOM])
+# R28: con la sintaxis Deflated, TODO el conjunto de datos tras el grupo 0002 va
+# comprimido con zlib, y pydicom lo infla entero en cuanto se le pide la cabecera
+# (`dcmread(..., stop_before_pixels=True)`): un fichero de 398 KiB con 400 MiB de ceros
+# dentro llevó el pico de memoria de 54 a 854 MiB. Se mira la sintaxis antes, en el
+# grupo 0002, que nunca va comprimido, y no se abre.
+RECHAZO_DEFLATED = (
+    "Este fichero viene comprimido entero (en DICOM, «Deflated Explicit VR Little "
+    "Endian»), y la app no lo descomprime: podría ocupar cientos de veces lo que pesa. "
+    "Así que no se calcula nada.\n\n"
+    "Expórtelo sin comprimir, o pruebe con un ejemplo.")
 INESPERADO = "\n\n".join([DEL_BOT["no_pude_leer"],
                           f"{DEL_BOT_LECTURA['sin_codigo']}, o pruebe con un ejemplo."])
 # R24 y R27: una placa que el modelo vería mal NO se calcula, ni con aviso: una cifra
@@ -489,6 +504,27 @@ def placa_para_ver(arreglo: np.ndarray) -> np.ndarray:
     return np.asarray(imagen)
 
 
+def sintaxis_de_transferencia(datos: bytes) -> str | None:
+    """La sintaxis de transferencia del fichero, leída SOLO del grupo 0002 -la
+    metainformación, que nunca va comprimida- y sin tocar el conjunto de datos (R28).
+    `None` si no la hay: sin el prefijo «DICM», con el grupo cortado o sin ese campo, la
+    placa no se puede evaluar (sin él, pydicom no sabe descodificar los píxeles).
+
+    Es lo que hace `pydicom.filereader.read_file_meta_info`, que solo acepta una ruta:
+    `read_preamble` y `_read_file_meta_info`, que lee elemento a elemento y para en el
+    primero que no es del grupo 0002. Es privada, y por eso va con `pydicom==3.0.2`
+    fijado; si cambiara, ningún DICOM pasaría de aquí y las pruebas lo dirían."""
+    try:
+        fichero = io.BytesIO(datos)
+        pydicom.filereader.read_preamble(fichero, False)
+        sintaxis = pydicom.filereader._read_file_meta_info(fichero).get(
+            "TransferSyntaxUID")
+    except Exception:
+        return None
+    sintaxis = str(sintaxis or "").strip()
+    return sintaxis or None
+
+
 def _rechazo_por_los_bits(bits: int, con_signo: bool = False) -> str:
     """`Esta placa es de 16 bits…`. Con más de 8 se satura todo lo que pasa de 255; con
     menos, o con signo, lo que vería el modelo no es la placa, sin más."""
@@ -576,7 +612,7 @@ def _rechazo(exc: ErrorDeInferencia) -> str:
     if exc.codigo == "hallazgos_invalidos":
         return HALLAZGOS_INVALIDOS
     # `dicom_invalido`, y cualquier código que esta app no conozca.
-    return "\n\n".join([DEL_BOT["no_pude_leer"], AYUDA_DICOM])
+    return NO_ES_UN_DICOM
 
 
 def calcular(motores: Motores, datos: bytes, hallazgos, por_vista: bool) -> dict:
@@ -586,9 +622,16 @@ def calcular(motores: Motores, datos: bytes, hallazgos, por_vista: bool) -> dict
     se dice en llano (R18)."""
     if len(datos) > TAMANO_MAXIMO_BYTES:
         return {"rechazo": "\n\n".join([DEL_BOT["tamano"], AYUDA_TAMANO])}
-    # R27, ANTES de descodificar un solo píxel y antes del motor: la cabecera. Un fichero
-    # cuya cabecera no se puede leer no es un DICOM: lo dice el motor, con su código
-    # (`dicom_invalido`), sin llegar a los píxeles tampoco.
+    # R28, ANTES de cualquier `dcmread` del conjunto de datos: el grupo 0002. Sin él no
+    # se puede evaluar; con la sintaxis Deflated, leer la cabecera ya lo inflaría entero.
+    sintaxis = sintaxis_de_transferencia(datos)
+    if sintaxis is None:
+        return {"rechazo": NO_ES_UN_DICOM}
+    if pydicom.uid.UID(sintaxis).is_deflated:
+        return {"rechazo": RECHAZO_DEFLATED}
+    # R27, ANTES de descodificar un solo píxel y antes del motor: la cabecera. Si no se
+    # puede leer, lo dice el motor, con su código (`dicom_invalido`), sin llegar a los
+    # píxeles tampoco.
     try:
         cabecera = pydicom.dcmread(io.BytesIO(datos), stop_before_pixels=True)
     except Exception:

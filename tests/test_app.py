@@ -48,6 +48,7 @@ import re
 import struct
 import sys
 import tomllib
+import zlib
 from pathlib import Path
 
 import numpy as np
@@ -155,6 +156,18 @@ VARIOS_CUADROS = "\n\n".join([
     "Este fichero trae 2 imágenes, y la app evalúa una placa sola. Así que no se calcula "
     "nada.",
     "Exporte solo la placa de tórax, o pruebe con un ejemplo."])
+# R28: lo que se dice mirando solo la metainformación (el grupo 0002).
+DEFLATED = "\n\n".join([
+    "Este fichero viene comprimido entero (en DICOM, «Deflated Explicit VR Little "
+    "Endian»), y la app no lo descomprime: podría ocupar cientos de veces lo que pesa. "
+    "Así que no se calcula nada.",
+    "Expórtelo sin comprimir, o pruebe con un ejemplo."])
+# Lo que el motor dice de un fichero que no es un DICOM (`dicom_invalido`): ahora lo
+# dice la app antes de leer nada, con las mismas palabras.
+NO_ES_UN_DICOM = "\n\n".join([
+    NO_PUDE_LEER,
+    "Compruebe que es el DICOM de la placa y que está completo (una foto o un JPEG no "
+    "sirven), o pruebe con un ejemplo."])
 FUERA_DE_ALCANCE = "NO PROCEDE — fuera del alcance del modelo."
 EDAD_DESCONOCIDA = "NO PROCEDE — no se puede saber la edad."
 COLETILLA_EDAD = ("No hay resultado que dar: el modelo se validó entre 18 y 100 años, "
@@ -251,6 +264,31 @@ def sin_descodificar(monkeypatch):
 
     monkeypatch.setattr(pydicom.dataset.Dataset, "pixel_array", property(no_descodifiques))
     return descodificados
+
+
+@pytest.fixture
+def sin_leer_el_conjunto(monkeypatch):
+    """Devuelve `vigilar()`: desde que se llama, ninguna lectura del CONJUNTO de datos
+    -`pydicom.dcmread` y, por debajo, `read_partial`, que es donde pydicom infla un
+    deflated- ni ningún `zlib.decompress`: se apuntan y revientan en el acto. Leer el
+    grupo 0002 (`read_preamble` y `_read_file_meta_info`) sí se puede. Se activa DESPUÉS
+    de escribir el fichero de la prueba, que también usa pydicom."""
+    lecturas = []
+
+    def espia(nombre):
+        def no_leas(*args, **kwargs):
+            lecturas.append(nombre)
+            raise AssertionError(f"no se tenía que llamar a {nombre}")
+        return no_leas
+
+    def vigilar():
+        monkeypatch.setattr(pydicom, "dcmread", espia("pydicom.dcmread"))
+        monkeypatch.setattr(pydicom.filereader, "dcmread", espia("filereader.dcmread"))
+        monkeypatch.setattr(pydicom.filereader, "read_partial", espia("read_partial"))
+        monkeypatch.setattr(zlib, "decompress", espia("zlib.decompress"))
+        return lecturas
+
+    return vigilar
 
 
 @pytest.fixture(scope="session")
@@ -565,7 +603,8 @@ def test_un_fichero_que_no_es_dicom_da_dicom_invalido_sin_el_detalle_de_pydicom(
     _calcular(at)
     _sin_traza(at)
     errores = [e.value for e in at.tabs[0].error]
-    assert len(errores) == 1 and errores[0].startswith(NO_PUDE_LEER)
+    # Desde R28 lo dice la app antes de leer nada, con las palabras del motor.
+    assert errores == [NO_ES_UN_DICOM]
     # El detalle de pydicom (que habla del prefijo «DICM») es de un tercero: el bot no
     # lo relata, y la app tampoco.
     assert "DICM" not in _textos(at)
@@ -745,6 +784,97 @@ def test_un_entero_con_signo_lo_para_la_segunda_red(tmp_path, motor_que_no_se_ll
     assert motor_que_no_se_llama == []
 
 
+# --------------------------------------------------------------------------
+# R28: antes de leer el conjunto de datos, solo la metainformación (el grupo 0002)
+# --------------------------------------------------------------------------
+def _deflated(tmp_path):
+    """El DICOM del ayudante con la sintaxis Deflated Explicit VR Little Endian, escrita
+    por pydicom: TODO el conjunto de datos tras el grupo 0002, comprimido con zlib. Leer
+    su cabecera con `dcmread(..., stop_before_pixels=True)` ya lo infla entero (con 400
+    MiB de ceros dentro, un fichero de 398 KiB llevó el pico de 54 a 854 MiB: informe)."""
+    ruta = _dicom(tmp_path, nombre="deflated.dcm", edad="054Y")
+    ds = pydicom.dcmread(str(ruta))
+    ds.file_meta.TransferSyntaxUID = pydicom.uid.DeflatedExplicitVRLittleEndian
+    ds.save_as(str(ruta), enforce_file_format=True)
+    return ruta.read_bytes()
+
+
+def _sin_sintaxis(tmp_path):
+    """Un grupo 0002 que se lee, pero sin `TransferSyntaxUID`, y un conjunto de datos
+    sano detrás: pydicom lee la cabecera y no sabe descodificar los píxeles."""
+    ruta = _dicom(tmp_path, nombre="sin_sintaxis.dcm", edad="054Y")
+    ds = pydicom.dcmread(str(ruta))
+    del ds.file_meta.TransferSyntaxUID
+    ds.preamble = bytes(128)
+    salida = io.BytesIO()
+    pydicom.dcmwrite(salida, ds, enforce_file_format=False, implicit_vr=False,
+                     little_endian=True)
+    return salida.getvalue()
+
+
+def test_un_dicom_deflated_se_rechaza_sin_inflarlo(tmp_path, motor_que_no_se_llama,
+                                                   sin_leer_el_conjunto):
+    """R28: la sintaxis se mira en el grupo 0002, que nunca va comprimido, ANTES de
+    cualquier `dcmread`. Deflated: rechazo en lenguaje llano, nada se infla, el motor no
+    se llama y el historial no crece. Con hallazgos y el interruptor encendido, igual."""
+    datos = _deflated(tmp_path)
+    # Lo es de verdad (se comprueba antes de los espías, leyéndolo entero: es pequeño).
+    assert pydicom.dcmread(io.BytesIO(datos)).file_meta.TransferSyntaxUID == (
+        pydicom.uid.DeflatedExplicitVRLittleEndian)
+    lecturas = sin_leer_el_conjunto()
+    at = _subir(_app(), "deflated.dcm", datos)
+    _poner_hallazgos(at, HALLAZGOS)
+    at.toggle(key="por_vista").set_value(True)
+    _calcular(at)
+    _sin_traza(at)
+    (error,) = [e.value for e in at.tabs[0].error]
+    assert error == DEFLATED
+    _sin_resultado(at)
+    assert motor_que_no_se_llama == [] and lecturas == []
+
+
+def _solo_el_preambulo(tmp_path):
+    return _ejemplo("normal_pa")[:132]                  # 128 bytes y «DICM», nada más
+
+
+def _metainformacion_cortada(tmp_path):
+    return _ejemplo("normal_pa")[:150]                  # el grupo 0002, a medias
+
+
+def _texto(tmp_path):
+    return b"esto no es un DICOM"
+
+
+@pytest.mark.parametrize("hacer", [_texto, _solo_el_preambulo, _metainformacion_cortada,
+                                   _sin_sintaxis],
+                         ids=["texto", "solo_el_preambulo", "0002_cortado",
+                              "0002_sin_sintaxis"])
+def test_un_fichero_sin_metainformacion_legible_no_se_evalua(
+        tmp_path, motor_que_no_se_llama, sin_leer_el_conjunto, hacer):
+    """R28: sin el prefijo «DICM», con el grupo 0002 cortado o sin la sintaxis de
+    transferencia, la placa no se puede evaluar. Se dice en llano, con las palabras que
+    el motor da a lo que no es un DICOM, sin leer el conjunto de datos y sin llamar al
+    motor."""
+    datos = hacer(tmp_path)
+    lecturas = sin_leer_el_conjunto()
+    at = _calcular(_subir(_app(), "placa.dcm", datos))
+    _sin_traza(at)
+    (error,) = [e.value for e in at.tabs[0].error]
+    assert error == NO_ES_UN_DICOM
+    _sin_resultado(at)
+    assert motor_que_no_se_llama == [] and lecturas == []
+
+
+def test_una_placa_sana_pasa_la_metainformacion_y_se_calcula(tmp_path):
+    """Lo contrario: con la sintaxis de siempre (Explicit VR Little Endian), la app sigue
+    adelante y calcula."""
+    at = _calcular(_subir(_app(), "placa.dcm", _dicom(tmp_path, edad="054Y")
+                          .read_bytes()))
+    _sin_traza(at)
+    assert at.session_state["ultimo"]["resultado"]["clasificacion"]
+    assert len(at.session_state["historial"]) == 1
+
+
 def _cabecera(**cambios):
     """La cabecera de una placa que pasa (la de `normal_pa`), con cambios: un valor lo
     pone, `None` lo deja vacío y `QUITAR` lo borra."""
@@ -848,8 +978,8 @@ def test_cada_rechazo_del_motor_se_dice_en_lenguaje_llano(monkeypatch, codigo, e
 @pytest.mark.parametrize("de_mas", [0, 1], ids=["5_MB_justos", "un_byte_de_mas"])
 def test_un_fichero_de_mas_de_5_mb_se_rechaza_antes_de_leerlo(de_mas):
     """R14: la app comprueba ella misma el tamaño (el `config.toml` de `app/` no se
-    aplica si se lanza desde la raíz). 5 MB justos pasan, y llegan al motor (que no
-    puede leer ceros); uno más, no."""
+    aplica si se lanza desde la raíz). 5 MB justos pasan el tamaño, y se quedan en la
+    metainformación (unos ceros no son un DICOM: R28); uno más, ni eso."""
     at = _subir(_app(), "grande.dcm", b"\0" * (5 * 1024 * 1024 + de_mas))
     assert at.file_uploader(key="dicom").proto.max_upload_size_mb == 5
     _calcular(at)
@@ -858,7 +988,7 @@ def test_un_fichero_de_mas_de_5_mb_se_rechaza_antes_de_leerlo(de_mas):
     if de_mas:
         assert error.startswith("El archivo supera los 5 MB.")
     else:
-        assert error.startswith(NO_PUDE_LEER)
+        assert error == NO_ES_UN_DICOM
     _sin_resultado(at)
 
 
