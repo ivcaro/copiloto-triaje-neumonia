@@ -3,6 +3,11 @@ data/
 datasets/
 *.dcm
 *.zip
+# La excepción: los cuatro DICOM de ejemplo de la app (SP5-C1). No son del conjunto
+# de datos sino de fuera de RSNA, con licencia que permite redistribuirlos
+# (app/assets/LICENCIAS.md), y los hace app/empaquetar_ejemplos.py. Sin esta línea,
+# `git add -A` los dejaría fuera sin avisar y la prueba de los binarios no los vería.
+!app/assets/ejemplos/*.dcm
 
 # Artefactos del modelo
 models/
@@ -77,3 +82,8 @@ n8n/valores.local.json
 # La lista en claro del anonimato (spec de SP5 §6.1) vive FUERA del
 # repositorio. Por si alguien la copia aqui: tampoco se versiona.
 tests/anonimato/lista*.txt
+
+# El espacio de trabajo de los agentes (ledgers e informes, con nombres y rutas): hoy
+# solo `.superpowers/sdd/.gitignore` lo deja fuera, y una carpeta hermana se
+# publicaría con un `git add -A`.
+.superpowers/

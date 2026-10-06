@@ -22,6 +22,10 @@ Proyecto Integrador (UEES, Maestría en IA). Sub-proyectos:
   sistema calcula lo que dice calcular y cuánto se desvía bajo cada supuesto
   de dependencia entre clínica e imagen. El procedimiento de la sesión con el
   médico, en `docs/sp5-sesion.md`.
+- **SP5-C1 — interfaz de usuario.** Una página web (Streamlit) con la que
+  cualquier persona prueba el mismo motor que usa el bot, sin cuenta de
+  Telegram: `app/`, en Docker, con ejemplos precargados, el mapa de calor de la
+  placa y una sección «Acerca de». Ver «Interfaz de usuario».
 
 La arquitectura se fijó **midiendo**, no a priori: las tres candidatas empatan
 en AUC 0,874-0,889, un margen del orden de la varianza entre dos ejecuciones de
@@ -147,7 +151,9 @@ sale 0, o se detiene en la primera que falla y sale 1.
 
 Varias pruebas necesitan algo que no está siempre: el dataset (`RSNA_RAIZ`),
 la dirección de n8n (`N8N_URL`), el contenedor del copiloto, una Postgres
-desechable, el túnel a la base del VPS o los secretos de Telegram.
+desechable, el túnel a la base del VPS, los secretos de Telegram o la imagen
+Docker de la interfaz (`copiloto-app`, que no construyen las pruebas: ver
+«Interfaz de usuario»).
 **Se saltan en vez de fallar**, con el motivo escrito y el comando para
 levantarlo, porque un `ConnectionRefusedError` repetido ensena a no mirar los
 fallos. El precio es que **un skip se ve verde**:
@@ -228,6 +234,193 @@ la de siempre.
 `0.1466` (la cohorte de Heckerling). Diseño y cifras:
 `docs/superpowers/specs/2026-09-26-sp4-combinacion-bayesiana-design.md`.
 
+## Interfaz de usuario
+
+`app/` es la **interfaz de usuario** del proyecto: una página web hecha con
+Streamlit en la que cualquier persona prueba el modelo sin cuenta de Telegram,
+sin estar en la lista blanca y sin pasar por el cuestionario del paciente. No es
+otro sistema: es **la puerta de evaluación del mismo motor** que usa el bot del
+profesional. Carga el mismo `Motor` (`src/copiloto_triaje/servicio/inferencia.py`),
+con los mismos pesos, la misma calibración y la misma combinación con la regla de
+Heckerling, y calcula en su propio proceso: no llama al servidor, a n8n ni a
+Telegram, y la placa no sale de ese proceso. El producto sigue siendo el bot; esta
+página es la forma de probarlo sin montar nada. Es una demostración académica, no
+un producto sanitario, y no sirve para decidir sobre un paciente: la propia página
+lo dice.
+
+Qué hace:
+
+- **Entrada con validación.** Un DICOM subido (hasta 5 MB, como el servidor) o uno
+  de los cuatro ejemplos: la opción «Usar un ejemplo» los ofrece, y el botón
+  «Prueba con ejemplo» calcula el elegido (también vale «Calcular»). Los cinco
+  hallazgos de la regla de Heckerling, opcionales en bloque y con límites de
+  interfaz; y un interruptor «Umbral por vista (experimental)», apagado por
+  defecto.
+- **Indicador de carga y errores en lenguaje llano.** Lo que no se puede evaluar sale
+  dicho a una persona y con lo que puede hacer, nunca como una traza: un fichero que
+  no es un DICOM o no se puede leer, una edad desconocida o fuera de los 18-100
+  años, unos hallazgos inválidos y, mirando solo la cabecera y antes de descodificar
+  un solo píxel, las placas que el modelo vería mal (que no son de 8 bits, con la
+  escala de grises invertida —MONOCHROME1— o en color, de más de 5 000 píxeles de
+  lado, con varios cuadros) y un DICOM comprimido entero («Deflated»), que la página
+  no abre.
+- **El resultado**, en los bloques del informe del bot —cribado, evidencia de la
+  imagen, clínica y combinado—, con la puntuación frente al umbral y la horquilla
+  en gráficos, y el **mapa de calor** sobre la placa (Grad-CAM), con su
+  advertencia: señala dónde mira el modelo, no por qué acierta ni dónde está una
+  lesión.
+- **El historial de la sesión**, que se descarga en CSV sin la imagen ni nada de la
+  cabecera del DICOM.
+- **«Acerca de»**: el modelo, los datos (con sus referencias), las métricas por
+  subgrupo con sus intervalos, las limitaciones, el precio del umbral por vista y
+  la licencia de los ejemplos.
+
+![La pestaña «Probar el modelo» con «Usar un ejemplo», el ejemplo «Neumonía, PA» y los cinco hallazgos: el resultado en bloques y el mapa de calor sobre la placa](docs/interfaz/probar-con-ejemplo.png)
+
+![El ejemplo «Rechazado: menor de edad»: el motor se niega a evaluar una placa con una edad fuera de 18-100 años y la página lo dice en lenguaje llano](docs/interfaz/rechazado.png)
+
+![La pestaña «Acerca de»: qué hace y qué no, y el modelo con su regla de Heckerling](docs/interfaz/acerca-de-modelo.png)
+
+![«Acerca de»: las métricas por subgrupo con sus intervalos, y las limitaciones](docs/interfaz/acerca-de-metricas.png)
+
+### Cómo se ejecuta
+
+Desde la raíz del repositorio, con Docker:
+
+```
+docker build -t copiloto-app -f app/Dockerfile .
+docker run --rm -p 127.0.0.1:8501:8501 --memory=2g --memory-swap=2g copiloto-app
+```
+
+y se abre `http://127.0.0.1:8501`. Lo que hay que saber:
+
+- **`127.0.0.1:` delante del puerto, siempre.** Sin él, Docker publica el 8501 en
+  todas las interfaces de la máquina, y la página no pide ninguna contraseña.
+- **Con un límite de memoria, siempre** (`--memory=2g --memory-swap=2g`): es la red
+  de debajo. La página rechaza por la cabecera, antes de descodificar un solo píxel,
+  lo que declara unas dimensiones desmesuradas, pero el motor y el servidor siguen sin
+  esa guarda: con el lector del motor, un DICOM de cientos de bytes que declara
+  60 000 × 60 000 hace reservar 3,4 GiB, y con el límite lo que muere es el contenedor
+  y no la máquina. `--memory-swap` igual a `--memory`, porque sin él Docker deja usar
+  otro tanto de swap. La página usa menos de 500 MiB tras los cuatro ejemplos y el mapa
+  de calor (`docker stats`): 2 GB, los del servidor, son margen de sobra.
+- **La construcción tiene que correr desde la raíz**: es su contexto.
+  `app/Dockerfile.dockerignore` es una lista blanca que deja fuera de él todo lo que
+  la imagen no copia (`.git`, `pruebas/`, `docs/`, `tests/`, los `.env`…) y, de
+  `app/`, todo lo que la página no lee. Ese fichero, el de un Dockerfile concreto, lo
+  lee BuildKit (por defecto desde Docker 23): con el constructor antiguo se ignora y
+  el repositorio entero viaja al demonio.
+- **La imagen pesa**: torch en CPU y sus dependencias, 2,5 GB en disco. La primera
+  construcción las descarga y tarda unos minutos. Para una demostración es
+  aceptable. Una vez construida no necesita red: ni para cargar el modelo ni para
+  arrancar.
+- **La primera página que se abre carga el modelo** (unos segundos, con su
+  indicador); a partir de ahí cada cálculo tarda décimas de segundo en CPU.
+- **Corre sin privilegios, sin telemetría y sin llamar a nadie al arrancar.**
+  Streamlit manda estadísticas de uso por defecto, y en modo `headless` pregunta a
+  un servicio de fuera cuál es la IP pública de la máquina; la imagen apaga las dos
+  cosas, y una prueba vigila que no vuelvan (`tests/test_app_docker.py`).
+- **Las cifras del despliegue** —`UMBRAL`, `AUC_VALIDACION` y
+  `PREVALENCIA_LOCAL`— se fijan en la imagen con los mismos valores que el
+  `docker-compose.yml` del servidor (con la fuente de cada una en los comentarios
+  de ese fichero), y la página los enseña en «Acerca de». Se pueden cambiar al
+  arrancar con `-e`. `AUC_VALIDACION` y `PREVALENCIA_LOCAL` no tienen valor por
+  defecto en el código, como en el servidor: sin ellas, la página no calcula y dice
+  qué declarar.
+- El despliegue público no forma parte de esto: se decide después.
+
+**Sin Docker**, se instala desde la raíz y se lanza desde `app/`, con las dos
+variables que no tienen valor por defecto, `AUC_VALIDACION` y `PREVALENCIA_LOCAL`
+(en bash):
+
+```
+pip install -r app/requirements.txt
+pip install --no-deps .
+cd app
+AUC_VALIDACION=0.8827 PREVALENCIA_LOCAL=0.1466 streamlit run app.py
+```
+
+En PowerShell, la última línea es:
+
+```
+$env:AUC_VALIDACION = "0.8827"; $env:PREVALENCIA_LOCAL = "0.1466"; streamlit run app.py
+```
+
+Esos dos valores son los de `servidor/docker-compose.yml`, los mismos que fija la
+imagen. Las demás variables tienen valor por defecto: `UMBRAL` (el de
+`app/assets/metricas.json`, 0,4258), `RUTA_PESOS` (`servidor/pesos_modelo_cpu.pt`) y
+`RUTA_CALIBRADOR` (`servidor/calibrador.json`). **Desde `app/` y no desde la raíz**:
+Streamlit lee `.streamlit/config.toml` del directorio desde el que se lanza, y desde
+la raíz no hay ninguno, así que se pierden en silencio la telemetría apagada, el
+límite de subida de 5 MB del servidor y las trazas ocultas en el navegador. Docker es
+lo reproducible: la calibración usa scikit-learn, que en algunas máquinas Windows no
+carga.
+
+### De dónde salen los pesos
+
+Los pesos (16 MB) **no viajan en el repo**: están en `.gitignore`, igual que para
+el servidor, y se copian por separado. `docker build` los toma de
+`servidor/pesos_modelo_cpu.pt`, los mismos que usa el servidor; salen del
+entrenamiento (`notebooks/entrenar_gpu.ipynb` los deja como `pesos_modelo_cpu.pt`:
+ver «Reproducir desde cero»). Sin ese fichero, la construcción se detiene en su
+`COPY` y no deja ninguna imagen. Las métricas de «Acerca de» son las de **esos**
+pesos: `app/assets/metricas.json` lleva el SHA-256 de los que se midieron, y la
+página avisa si los cargados son otros o si el umbral no es aquel con el que se
+midieron.
+
+### Los ejemplos
+
+«Usar un ejemplo» ofrece cuatro: una radiografía normal en PA, una con opacidad
+en PA, una con opacidad en AP y el «rechazado», que es la normal con una edad de 15
+años (inventada) para ver cómo el sistema se niega a evaluar lo que no puede.
+
+**Son de otra fuente.** Las tres radiografías son de Wikimedia Commons, con
+licencia CC0, de fuera de RSNA y del NIH, empaquetadas como DICOM; la fuente, la
+licencia y la atribución de cada una están en `app/assets/LICENCIAS.md`. El modelo
+se entrenó y se evaluó con RSNA y **no se ha medido con ellas**: lo que den no dice
+nada de su rendimiento y puede discrepar de lo que dice su fuente (con los pesos de
+esta entrega, la placa «normal» sale marcada por el cribado, y la propia página
+avisa de que la imagen no apoya ese resultado). Sirven para ver cómo funciona la
+página, no para evaluarla. La app no lleva ninguna imagen de RSNA ni del NIH, ni
+ninguna fila por paciente: sus métricas son agregados (`app/assets/metricas.json`).
+
+### Qué hay en `app/`
+
+| Ruta | Qué es |
+| :--- | :--- |
+| `app/app.py` | La interfaz: una sola página de Streamlit con tres pestañas, «Probar el modelo», «Historial de la sesión» y «Acerca de» |
+| `app/requirements.txt` | Sus dependencias, con la versión exacta: las del proyecto y las nuevas de la página |
+| `app/Dockerfile` | La imagen: la base del servidor (la misma, por su digest), torch en CPU, y los pesos y el calibrador dentro |
+| `app/Dockerfile.dockerignore` | Lo que entra al contexto de la construcción, en lista blanca y de `app/` por rutas: solo lo que la página lee. Se llama así y no `.dockerignore` porque el contexto es la raíz del repositorio, y Docker ignoraría en silencio un `app/.dockerignore` |
+| `app/.streamlit/config.toml` | La configuración de Streamlit: límite de subida de 5 MB, sin telemetría, sin trazas en el navegador. Streamlit la lee del directorio desde el que se lanza, y la imagen lo lanza desde `app/` |
+| `app/assets/ejemplos/` | Los cuatro DICOM de «Usar un ejemplo» |
+| `app/assets/originales/` | Las tres radiografías reducidas (PNG) de las que salen. Sirven para rehacer los ejemplos; no entran a la imagen |
+| `app/assets/metricas.json` | Las métricas de «Acerca de», en agregados, con la huella de los pesos y de las puntuaciones de las que salen |
+| `app/assets/LICENCIAS.md` | Fuente, autor, licencia y atribución de cada ejemplo |
+| `app/empaquetar_ejemplos.py` | Guion: empaqueta los PNG originales como los DICOM de ejemplo, con los mismos bytes cada vez |
+| `app/generar_metricas.py` | Guion: calcula `metricas.json` desde las puntuaciones congeladas de prueba (las de cada placa no viajan al repositorio público) |
+
+Las capturas de arriba están en `docs/interfaz/`. Se hicieron con la imagen
+construida y los pesos de verdad, y cada una se miró antes de declararla
+(`tests/anonimato/README.md`).
+
+### Pruebas de la interfaz
+
+La página se prueba con `streamlit.testing.v1.AppTest` (`tests/test_app.py`,
+`tests/test_app_ejemplos.py` y `tests/test_app_metricas.py`), que corren en la imagen
+Linux de pruebas. La imagen tiene la suya, `tests/test_app_docker.py`: comprueba lo
+que dicen el Dockerfile y este README, qué contexto de construcción llega al demonio, y
+arranca contenedores de verdad (publicados solo en `127.0.0.1`, o sin red, y con el
+límite de memoria de la orden de arriba) para ver que la página responde, que no llama
+a nadie al arrancar y que la app corre con los pesos de la imagen. **No construye la
+imagen**: usa `copiloto-app` si está, y comprueba que es de este árbol (si no lo es,
+falla y dice cómo reconstruirla); si no hay Docker o no está construida, se salta
+diciendo por qué y con la orden de construirla.
+
+```
+C:\venv-copiloto\Scripts\python.exe -m pytest tests/test_app_docker.py -rs
+```
+
 ## Documentos
 
 - Diseño SP1: `docs/superpowers/specs/2026-09-16-sp1-nucleo-imagen-design.md`
@@ -236,6 +429,8 @@ la de siempre.
 - Plan SP2: `docs/superpowers/plans/2026-09-23-sp2-servidor-mcp.md`
 - Diseño SP4: `docs/superpowers/specs/2026-09-26-sp4-combinacion-bayesiana-design.md`
 - Plan SP4: `docs/superpowers/plans/2026-09-26-sp4-combinacion-bayesiana.md`
+- Diseño SP5-C1: `docs/superpowers/specs/2026-10-05-sp5c1-interfaz-y-umbral-por-vista-design.md`
+- Plan SP5-C1: `docs/superpowers/plans/2026-10-05-sp5c1-interfaz-y-umbral-por-vista.md`
 - Despliegue: `docs/sp2-despliegue.md`
 - Operación: `docs/sp3-operacion.md`
 - Anonimato del repositorio: `tests/anonimato/README.md`

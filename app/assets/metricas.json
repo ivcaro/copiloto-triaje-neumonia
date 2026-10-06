@@ -1,0 +1,325 @@
+{
+  "generado": "2026-10-05",
+  "pesos_sha256": "bb985e1f792e1cfee150ec57bdc6d706f7484499fa999da3406a5798260e8d47",
+  "puntuaciones_sha256": "414dd3a5cfc58320ac3f69ef090c9dcdc9ea887a00c2c5d5d054f6a22bf45a00",
+  "umbral": 0.4258,
+  "umbrales_por_vista": {
+    "PA": 0.1798,
+    "AP": 0.5815
+  },
+  "global": {
+    "n": 3811,
+    "positivos": 844,
+    "auc": 0.884837,
+    "recall": 0.881517,
+    "recall_ic": [
+      0.857965,
+      0.901611
+    ],
+    "especificidad": 0.702393,
+    "especificidad_ic": [
+      0.685688,
+      0.718574
+    ]
+  },
+  "subgrupos": [
+    {
+      "nombre": "Todas las placas",
+      "n": 3811,
+      "positivos": 844,
+      "auc": 0.884837,
+      "recall": 0.881517,
+      "recall_ic": [
+        0.857965,
+        0.901611
+      ],
+      "especificidad": 0.702393,
+      "especificidad_ic": [
+        0.685688,
+        0.718574
+      ]
+    },
+    {
+      "nombre": "Mujeres",
+      "n": 1677,
+      "positivos": 353,
+      "auc": 0.886009,
+      "recall": 0.866856,
+      "recall_ic": [
+        0.827436,
+        0.898376
+      ],
+      "especificidad": 0.721299,
+      "especificidad_ic": [
+        0.696534,
+        0.744784
+      ]
+    },
+    {
+      "nombre": "Hombres",
+      "n": 2134,
+      "positivos": 491,
+      "auc": 0.883122,
+      "recall": 0.892057,
+      "recall_ic": [
+        0.861503,
+        0.916523
+      ],
+      "especificidad": 0.687158,
+      "especificidad_ic": [
+        0.664323,
+        0.709119
+      ]
+    },
+    {
+      "nombre": "18 a 39 años",
+      "n": 1081,
+      "positivos": 263,
+      "auc": 0.902159,
+      "recall": 0.901141,
+      "recall_ic": [
+        0.859091,
+        0.931641
+      ],
+      "especificidad": 0.726161,
+      "especificidad_ic": [
+        0.694598,
+        0.75561
+      ]
+    },
+    {
+      "nombre": "40 a 59 años",
+      "n": 1766,
+      "positivos": 388,
+      "auc": 0.888558,
+      "recall": 0.89433,
+      "recall_ic": [
+        0.859781,
+        0.921147
+      ],
+      "especificidad": 0.69521,
+      "especificidad_ic": [
+        0.670391,
+        0.718945
+      ]
+    },
+    {
+      "nombre": "60 años o más",
+      "n": 964,
+      "positivos": 193,
+      "auc": 0.854163,
+      "recall": 0.829016,
+      "recall_ic": [
+        0.769607,
+        0.875581
+      ],
+      "especificidad": 0.690013,
+      "especificidad_ic": [
+        0.656492,
+        0.721649
+      ]
+    },
+    {
+      "nombre": "Placa PA (de pie)",
+      "n": 2087,
+      "positivos": 202,
+      "auc": 0.882039,
+      "recall": 0.693069,
+      "recall_ic": [
+        0.626355,
+        0.752577
+      ],
+      "especificidad": 0.880106,
+      "especificidad_ic": [
+        0.864663,
+        0.894003
+      ]
+    },
+    {
+      "nombre": "Placa AP (portátil)",
+      "n": 1724,
+      "positivos": 642,
+      "auc": 0.82884,
+      "recall": 0.94081,
+      "recall_ic": [
+        0.9198,
+        0.956576
+      ],
+      "especificidad": 0.392791,
+      "especificidad_ic": [
+        0.36412,
+        0.422221
+      ]
+    },
+    {
+      "nombre": "PA, mujeres",
+      "n": 943,
+      "positivos": 93,
+      "auc": 0.873662,
+      "recall": 0.645161,
+      "recall_ic": [
+        0.543933,
+        0.734873
+      ],
+      "especificidad": 0.903529,
+      "especificidad_ic": [
+        0.881828,
+        0.9216
+      ]
+    },
+    {
+      "nombre": "PA, hombres",
+      "n": 1144,
+      "positivos": 109,
+      "auc": 0.891752,
+      "recall": 0.733945,
+      "recall_ic": [
+        0.644058,
+        0.807903
+      ],
+      "especificidad": 0.86087,
+      "especificidad_ic": [
+        0.838447,
+        0.880623
+      ]
+    },
+    {
+      "nombre": "PA, 60 años o más",
+      "n": 561,
+      "positivos": 55,
+      "auc": 0.85451,
+      "recall": 0.636364,
+      "recall_ic": [
+        0.504225,
+        0.750697
+      ],
+      "especificidad": 0.869565,
+      "especificidad_ic": [
+        0.837414,
+        0.896147
+      ]
+    },
+    {
+      "nombre": "AP, mujeres",
+      "n": 734,
+      "positivos": 260,
+      "auc": 0.851574,
+      "recall": 0.946154,
+      "recall_ic": [
+        0.911658,
+        0.967658
+      ],
+      "especificidad": 0.394515,
+      "especificidad_ic": [
+        0.351532,
+        0.439194
+      ]
+    },
+    {
+      "nombre": "AP, hombres",
+      "n": 990,
+      "positivos": 382,
+      "auc": 0.811876,
+      "recall": 0.937173,
+      "recall_ic": [
+        0.90822,
+        0.95742
+      ],
+      "especificidad": 0.391447,
+      "especificidad_ic": [
+        0.353449,
+        0.430809
+      ]
+    }
+  ],
+  "umbral_por_vista_en_prueba": {
+    "un_umbral": {
+      "PA": {
+        "n": 2087,
+        "positivos": 202,
+        "recall": 0.693069,
+        "recall_ic": [
+          0.626355,
+          0.752577
+        ],
+        "especificidad": 0.880106,
+        "especificidad_ic": [
+          0.864663,
+          0.894003
+        ]
+      },
+      "AP": {
+        "n": 1724,
+        "positivos": 642,
+        "recall": 0.94081,
+        "recall_ic": [
+          0.9198,
+          0.956576
+        ],
+        "especificidad": 0.392791,
+        "especificidad_ic": [
+          0.36412,
+          0.422221
+        ]
+      },
+      "global": {
+        "n": 3811,
+        "positivos": 844,
+        "recall": 0.881517,
+        "recall_ic": [
+          0.857965,
+          0.901611
+        ],
+        "especificidad": 0.702393,
+        "especificidad_ic": [
+          0.685688,
+          0.718574
+        ]
+      }
+    },
+    "dos_umbrales": {
+      "PA": {
+        "n": 2087,
+        "positivos": 202,
+        "recall": 0.891089,
+        "recall_ic": [
+          0.84061,
+          0.92697
+        ],
+        "especificidad": 0.646154,
+        "especificidad_ic": [
+          0.62429,
+          0.667423
+        ]
+      },
+      "AP": {
+        "n": 1724,
+        "positivos": 642,
+        "recall": 0.88785,
+        "recall_ic": [
+          0.861098,
+          0.909989
+        ],
+        "especificidad": 0.560998,
+        "especificidad_ic": [
+          0.531264,
+          0.590301
+        ]
+      },
+      "global": {
+        "n": 3811,
+        "positivos": 844,
+        "recall": 0.888626,
+        "recall_ic": [
+          0.865615,
+          0.908114
+        ],
+        "especificidad": 0.615099,
+        "especificidad_ic": [
+          0.597453,
+          0.632448
+        ]
+      }
+    }
+  }
+}

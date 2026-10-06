@@ -146,6 +146,43 @@ async def test_salud_publica_la_prevalencia_local(motor):
         assert (await cliente.get("/salud")).json()["prevalencia_local"] == 0.1466
 
 
+# Las claves de `/salud` en el despliegue de siempre, con el umbral por vista
+# apagado. Encendido se suma una: `umbrales_por_vista` (SP5-C1 §4).
+CLAVES_DE_SALUD = {"estado", "modelo", "umbral", "calibrador",
+                   "prevalencia_local"}
+
+
+@pytest.mark.asyncio
+async def test_salud_apagado_publica_exactamente_las_claves_de_siempre(motor):
+    """Apagado, `/salud` es el de hoy, clave por clave. La PRESENCIA de
+    `umbrales_por_vista` es la senal de que el umbral por vista esta encendido:
+    una clave que apareciera siempre -aunque valiera `None`- obligaria a mirar
+    el valor, y cambiaria el `/salud` de todo despliegue que no lo enciende."""
+    async with cliente_de(motor) as cliente:
+        salud = (await cliente.get("/salud")).json()
+    assert set(salud) == CLAVES_DE_SALUD
+
+
+@pytest.mark.asyncio
+async def test_salud_dice_que_el_umbral_por_vista_esta_encendido(motor):
+    """Encendido, `/salud` lo publica con el mapeo con el que se construyo el
+    `Motor`: es la forma de saber, desde fuera, que la etiqueta del cribado
+    depende de la vista. Lo demas sigue donde estaba, y no sobra nada."""
+    por_vista = {"PA": 0.1798, "AP": 0.5815}
+    encendido = Motor(modelo=motor.modelo, calibrador=motor.calibrador,
+                      umbral=motor.umbral, tam_imagen=motor.tam_imagen,
+                      nombre_modelo=motor.nombre_modelo,
+                      auc_validacion=motor.auc_validacion,
+                      prevalencia_local=motor.prevalencia_local,
+                      umbrales_por_vista=por_vista)
+    async with cliente_de(encendido) as cliente:
+        salud = (await cliente.get("/salud")).json()
+    assert salud["umbrales_por_vista"] == por_vista
+    assert set(salud) == CLAVES_DE_SALUD | {"umbrales_por_vista"}
+    # `umbral` sigue siendo el global: el de cada vista va en la clave nueva.
+    assert salud["umbral"] == motor.umbral
+
+
 @pytest.mark.asyncio
 async def test_rest_clasifica_un_dicom(motor, tmp_path):
     ruta = tmp_path / "a.dcm"

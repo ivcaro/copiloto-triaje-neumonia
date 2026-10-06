@@ -11,6 +11,7 @@ perdio una vez con `AUC_VALIDACION`-.
 
 Se ejecuta en un subproceso porque el fichero carga el modelo al importarse.
 """
+import json
 import os
 import re
 import subprocess
@@ -29,6 +30,26 @@ ARRANCAR = RAIZ / "servidor" / "arrancar.py"
 NEGATIVA = "Falta la variable de entorno AUC_VALIDACION"
 NEGATIVA_PREVALENCIA = "Falta la variable de entorno PREVALENCIA_LOCAL"
 OBLIGATORIAS = ("AUC_VALIDACION", "PREVALENCIA_LOCAL")
+# El umbral por vista (SP5-C1 §4): opcionales y APAGADAS por defecto, pero van
+# juntas. La negativa de una sola es esta frase, por la misma razon que las
+# de arriba: los nombres tambien salen en los traceback de otros fallos.
+POR_VISTA = ("UMBRAL_PA", "UMBRAL_AP")
+NEGATIVA_UMBRALES = "UMBRAL_PA y UMBRAL_AP van juntas"
+
+
+def _entorno(**entorno):
+    """El entorno de un arranque de prueba, con rutas de pesos inexistentes a
+    proposito salvo que `entorno` diga otra cosa. Se quitan LAS DOS
+    obligatorias y las DOS del umbral por vista, para que una puesta en la
+    maquina de quien corre las pruebas no las deje pasar -ni encienda lo que
+    debe estar apagado-."""
+    env = {k: v for k, v in os.environ.items()
+           if k not in OBLIGATORIAS + POR_VISTA}
+    env["PYTHONPATH"] = str(RAIZ / "src")
+    env["RUTA_PESOS"] = str(RAIZ / "no_existen_estos_pesos.pt")
+    env["RUTA_CALIBRADOR"] = str(RAIZ / "no_existe_este_calibrador.json")
+    env.update(entorno)
+    return env
 
 
 def _arrancar(**entorno):
@@ -36,15 +57,10 @@ def _arrancar(**entorno):
 
     Asi el arranque muere siempre, y lo que la prueba mira es DE QUE muere: si
     de una variable que falta o de los pesos que no estan. Nunca llega a
-    `uvicorn.run`. Se quitan del entorno LAS DOS obligatorias, para que una
-    puesta en la maquina de quien corre las pruebas no las deje pasar.
+    `uvicorn.run`.
     """
-    env = {k: v for k, v in os.environ.items() if k not in OBLIGATORIAS}
-    env["PYTHONPATH"] = str(RAIZ / "src")
-    env["RUTA_PESOS"] = str(RAIZ / "no_existen_estos_pesos.pt")
-    env["RUTA_CALIBRADOR"] = str(RAIZ / "no_existe_este_calibrador.json")
-    env.update(entorno)
-    return subprocess.run([sys.executable, str(ARRANCAR)], env=env,
+    return subprocess.run([sys.executable, str(ARRANCAR)],
+                          env=_entorno(**entorno),
                           capture_output=True, text=True, timeout=300)
 
 
@@ -91,6 +107,117 @@ def test_una_prevalencia_que_no_es_probabilidad_se_rechaza_al_arrancar():
     salida = resultado.stdout + resultado.stderr
     assert "entre 0 y 1" in salida, salida
     assert "no_existen_estos_pesos.pt" not in salida, salida
+
+
+# --- El umbral por vista (SP5-C1 §4) -----------------------------------------
+#
+# `UMBRAL_PA` y `UMBRAL_AP`: las dos o ninguna. Sin ninguna, el umbral por
+# vista esta apagado y el arranque es el de siempre -las pruebas de arriba lo
+# demuestran: ninguna las define-. Con una sola, o con un valor que no es una
+# probabilidad, el arranque se niega y dice cual.
+
+@pytest.mark.parametrize("sola, otra_vacia", [
+    ("UMBRAL_PA", False), ("UMBRAL_AP", False), ("UMBRAL_PA", True)],
+    ids=["solo_PA", "solo_AP", "PA_y_AP_vacia"])
+def test_con_un_solo_umbral_por_vista_el_arranque_dice_que_hacen_falta_las_dos(
+        sola, otra_vacia):
+    """Una variable VACIA cuenta como no definida (un compose que la pasa
+    como `${UMBRAL_AP:-}` la deja asi), igual que en las obligatorias."""
+    falta = "UMBRAL_AP" if sola == "UMBRAL_PA" else "UMBRAL_PA"
+    resultado = _arrancar(AUC_VALIDACION="0.8827", PREVALENCIA_LOCAL="0.1466",
+                          **{sola: "0.3"}, **({falta: ""} if otra_vacia else {}))
+
+    assert resultado.returncode != 0
+    salida = resultado.stdout + resultado.stderr
+    assert NEGATIVA_UMBRALES in salida, salida
+    assert "hacen falta las dos" in salida, salida
+    # dice CUAL falta, y se niega ANTES de intentar cargar nada
+    assert f"Falta {falta}" in salida, salida
+    assert "no_existen_estos_pesos.pt" not in salida, salida
+
+
+@pytest.mark.parametrize("variable, valor", [
+    ("UMBRAL_PA", "1.5"), ("UMBRAL_AP", "0"), ("UMBRAL_PA", "nan"),
+    ("UMBRAL_AP", "alto")])
+def test_un_umbral_por_vista_que_no_es_probabilidad_se_rechaza_al_arrancar(
+        variable, valor):
+    """Fuera de (0, 1), `nan` o un texto: el mensaje dice CUAL de las dos y
+    que valor tenia, y no es la negativa de la pareja: la otra esta bien."""
+    otra = "UMBRAL_AP" if variable == "UMBRAL_PA" else "UMBRAL_PA"
+    resultado = _arrancar(AUC_VALIDACION="0.8827", PREVALENCIA_LOCAL="0.1466",
+                          **{variable: valor, otra: "0.3"})
+
+    assert resultado.returncode != 0
+    salida = resultado.stdout + resultado.stderr
+    assert f"{variable} vale {valor!r}" in salida, salida
+    assert "estrictamente entre 0 y 1" in salida, salida
+    assert NEGATIVA_UMBRALES not in salida, salida
+    assert "no_existen_estos_pesos.pt" not in salida, salida
+
+
+def test_con_los_dos_umbrales_por_vista_el_arranque_pasa_de_esa_comprobacion():
+    """La hermana de las dos anteriores: con las dos validas ya no se queja de
+    ninguna y llega a lo siguiente, que aqui son los pesos inexistentes."""
+    resultado = _arrancar(AUC_VALIDACION="0.8827", PREVALENCIA_LOCAL="0.1466",
+                          UMBRAL_PA="0.1798", UMBRAL_AP="0.5815")
+
+    salida = resultado.stdout + resultado.stderr
+    assert NEGATIVA_UMBRALES not in salida, salida
+    assert "estrictamente entre 0 y 1" not in salida, salida
+    assert "no_existen_estos_pesos.pt" in salida, salida
+
+
+def test_los_umbrales_por_vista_llegan_al_motor_cada_uno_a_su_vista(tmp_path):
+    """Lo que las de arriba no ven: que con las dos validas el motor se
+    construye con CADA valor en SU vista -un PA y un AP cruzados aplicarian a
+    cada placa el umbral de la otra, y nada mas lo notaria-, y que sin ellas se
+    construye sin umbral por vista. Se ejecuta `arrancar.py` con `runpy`, que
+    no lo trata como `__main__`: construye el motor y NO se pone a servir. Los
+    pesos son una red real sin entrenar, guardada aqui."""
+    import torch
+    from copiloto_triaje.modelo.arquitectura import construir_modelo
+
+    pesos = tmp_path / "pesos.pt"
+    torch.save(construir_modelo("efficientnet_b0", congelar_backbone=False,
+                                preentrenado=False).state_dict(), pesos)
+    comunes = dict(AUC_VALIDACION="0.8827", PREVALENCIA_LOCAL="0.1466",
+                   RUTA_PESOS=str(pesos),
+                   RUTA_CALIBRADOR=str(RAIZ / "servidor" / "calibrador.json"))
+    codigo = ("import json, runpy, sys; "
+              "print(json.dumps(runpy.run_path(sys.argv[1])['motor']"
+              ".umbrales_por_vista))")
+
+    def lo_que_lleva_el_motor(**entorno):
+        resultado = subprocess.run(
+            [sys.executable, "-c", codigo, str(ARRANCAR)],
+            env=_entorno(**comunes, **entorno), capture_output=True, text=True,
+            timeout=300)
+        assert resultado.returncode == 0, resultado.stdout + resultado.stderr
+        return json.loads(resultado.stdout.splitlines()[-1])
+
+    assert lo_que_lleva_el_motor() is None
+    assert lo_que_lleva_el_motor(UMBRAL_PA="0.1798", UMBRAL_AP="0.5815") == {
+        "PA": 0.1798, "AP": 0.5815}
+
+
+def test_el_compose_no_enciende_el_umbral_por_vista():
+    """«El compose no las define: en produccion, apagado. Encenderlo lo decide
+    la institucion» (§4). Si alguien las pusiera aqui, el servidor desplegado
+    empezaria a etiquetar con otro umbral sin que nadie lo hubiera decidido."""
+    compose = (RAIZ / "servidor" / "docker-compose.yml").read_text(encoding="utf-8")
+    for variable in POR_VISTA:
+        assert variable not in compose, variable
+
+
+def test_la_guia_documenta_el_umbral_por_vista_como_apagado_por_defecto():
+    """La tabla de variables de la guia (paso 10) lleva las dos, y dice que
+    sin ellas el umbral por vista esta apagado."""
+    filas = {variable: [linea for linea in _guia().splitlines()
+                        if linea.startswith(f"| `{variable}` |")]
+             for variable in POR_VISTA}
+    for variable, lineas in filas.items():
+        assert len(lineas) == 1, (variable, lineas)
+        assert "apagado si no se definen" in lineas[0], lineas[0]
 
 
 def test_el_compose_declara_la_prevalencia_con_su_fuente():

@@ -99,13 +99,35 @@ La prueba de huellas no puede leer imágenes. Se revisaron a mano, una a una:
 | las 6 imágenes incrustadas en `notebooks/eda_rsna.ipynb` | 28-sep-2026 | son las mismas seis figuras; mismos metadatos |
 | los metadatos de los tres notebooks | 29-sep-2026 | del notebook: `kernelspec` y `language_info` y, en el de Colab, `accelerator` y `colab` (con el nombre del propio notebook); de las celdas: en `eda_rsna.ipynb`, las horas de ejecución. Los otros dos notebooks no tienen salidas |
 | las 10 figuras de `docs/validacion-semisintetica/` | 29-sep-2026 | contenido (gráficos de la simulación, sin nombres, rutas, marcas de agua ni pies; el título lleva el rótulo «simulación semisintética») y metadatos (`Software`, `dpi`, `Title` y `Description`, que es la huella del JSON de resultados con el que `scripts/validar_combinacion.py` dibujó cada una) |
+| los 3 PNG de `app/assets/originales/` | 5-oct-2026 | contenido (radiografías de tórax de adultos de Wikimedia Commons, CC0, de fuera de RSNA y del NIH, reducidas a 768 px y en gris; solo llevan las letras de lateralidad «Dx» y «Sin» —la «Sin» de dos de ellas, `neumonia_pa` y `neumonia_ap`, está boca abajo: volteada en vertical, con el orden de las letras conservado— y, en `neumonia_pa`, un pequeño marcador redondo en el borde del tórax; sin nombres, fechas, números ni marcas de agua) y metadatos (ninguno: el fichero solo tiene los trozos `IHDR`, `IDAT` e `IEND`, y su SHA-256 lo hace cumplir) |
+| los 4 DICOM de `app/assets/ejemplos/` | 5-oct-2026 | contenido (los píxeles de esos PNG; `rechazado_menor.dcm` repite los de `normal_pa.dcm`) y cabecera, elemento por elemento: `PatientName` vacío, `PatientID` `EJEMPLO-n`, edad, sexo y vista de ejemplo, UID de la raíz `2.25` sacados del nombre de cada ejemplo y lo mínimo de una imagen de 8 bits sin comprimir; ninguna fecha, hora, centro ni equipo; el preámbulo a ceros y nada detrás de los píxeles |
+| las 4 capturas de `docs/interfaz/` | 6-oct-2026 | contenido (la página de la app, solo la página, sin barra del navegador, sin ruta ni nada de la máquina: «Probar el modelo» con «Usar un ejemplo» y el ejemplo «Neumonía, PA», sus cinco hallazgos inventados, el resultado y el mapa de calor sobre la placa —la misma radiografía que `app/assets/originales/neumonia_pa.png`, con las mismas marcas que su fila de arriba y nada más—; el ejemplo «rechazado»; y dos recortes de «Acerca de», el modelo y las métricas con su tabla por subgrupo. Todo el texto es el de la propia app y la literatura que cita: ningún nombre de las personas del proyecto ni de su institución, ninguna dirección, ningún identificador) y metadatos (ninguno: el fichero solo tiene los trozos `IHDR`, `IDAT` e `IEND`, y su SHA-256 lo hace cumplir). Se hicieron con la imagen Docker construida y los pesos de verdad, con el navegador de Playwright, y se recortó el blanco sobrante y se volvieron a escribir solo con sus píxeles |
 
 Varias pruebas de `tests/test_anonimato.py` atan esa revisión:
 
 - `BINARIOS_REVISADOS` es la lista de los binarios revisados: un binario
   nuevo hace fallar la suite hasta que se revisa y se declara aquí. Fuera de
   un repositorio de git —una descarga en ZIP— no se sabe qué está
-  versionado, y la prueba se salta diciéndolo.
+  versionado, y la prueba se salta diciéndolo. Solo caben PNG y DICOM: son
+  los que miran las pruebas de metadatos.
+- Los DICOM de los ejemplos de la app no pueden ir a la lista de lo ignorado
+  (`*.dcm`, que es el conjunto de datos): el `.gitignore` los exceptúa por su
+  carpeta, `app/assets/ejemplos/`, y solo a ellos. Si no, un `git add -A` los
+  dejaría fuera sin avisar y esta prueba no los vería.
+- `HUELLAS_DE_LOS_BINARIOS` fija, por su SHA-256, los siete binarios de
+  `app/assets/` (los tres PNG de `originales/` y los cuatro DICOM de
+  `ejemplos/`) y las cuatro capturas de `docs/interfaz/`, como
+  `IMAGENES_DE_LOS_NOTEBOOKS` fija las imágenes de los notebooks. Declararlos
+  solo por su nombre no vería que otra imagen ocupase su sitio, que un PNG
+  ganase un trozo auxiliar (una fecha, un texto) ni que un DICOM se regenerase
+  con otra cabecera; con la huella, un binario que cambia, o que falta, hace
+  fallar la suite, que dice el fichero y no vuelca bytes. Otra prueba exige que
+  todo binario declarado bajo `app/assets/` o `docs/interfaz/` tenga su huella
+  (y que no sobre ninguna), para que el próximo no se declare solo por su
+  nombre. **Las huellas se rehacen a la vez que los binarios** (otra imagen, un
+  cambio de `app/empaquetar_ejemplos.py`, otra versión de pydicom, otra captura
+  porque la pantalla cambió) **y solo después de volver a mirarlos**: la huella
+  dice «es el que se miró», no «está bien».
 - `IMAGENES_DE_LOS_NOTEBOOKS` fija, por su SHA-256, las imágenes incrustadas
   en cada notebook: una imagen nueva, o una que cambie al volver a ejecutar
   el notebook, hace fallar la suite hasta que se revisa. Y como una imagen se
@@ -122,6 +144,14 @@ Varias pruebas de `tests/test_anonimato.py` atan esa revisión:
   revisa. Con la lista entera, los valores de los metadatos de las imágenes
   se miran también contra las huellas; con solo la del centinela, esa parte
   se salta diciéndolo.
+- Las etiquetas de la cabecera de cada DICOM, la de su `file_meta` y la de su
+  conjunto de datos, tienen que estar en `ETIQUETAS_DICOM_PERMITIDAS`, y sus
+  nombres de persona, fechas y horas, vacíos: un DICOM guardado de nuevo con
+  el nombre de un centro o de un equipo, o con una fecha, hace fallar la suite
+  hasta que se revisa. Con la lista entera, los valores de la cabecera se
+  miran también contra las huellas; con solo la del centinela, esa parte se
+  salta diciéndolo. Los píxeles no son una etiqueta: solo los ve la revisión
+  a mano.
 
 Cuando no hay hallazgos pero sí binarios, el script no dice «limpio» a secas:
 dice cuántos binarios quedan sin recorrer. Las imágenes incrustadas no las

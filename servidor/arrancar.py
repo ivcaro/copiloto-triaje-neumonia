@@ -55,8 +55,42 @@ if not 0.0 < PREVALENCIA_LOCAL < 1.0:
         f"PREVALENCIA_LOCAL vale {PREVALENCIA_LOCAL!r} y tiene que ser una "
         "probabilidad estrictamente entre 0 y 1 (p. ej. 0.1466).")
 
+
+def _umbral_de_entorno(nombre):
+    """El valor de la variable, que tiene que ser un numero estrictamente entre
+    0 y 1. `nan` no cumple ninguna comparacion e `inf` no esta por debajo de 1:
+    caen en la misma guarda que un 1,5. Un texto tambien, con su mensaje y no
+    con el traceback de `float()`."""
+    crudo = os.environ[nombre]
+    try:
+        valor = float(crudo)
+    except ValueError:
+        valor = float("nan")
+    if not 0.0 < valor < 1.0:
+        raise SystemExit(
+            f"{nombre} vale {crudo!r} y tiene que ser un numero estrictamente "
+            "entre 0 y 1.")
+    return valor
+
+
+# El umbral por vista (SP5-C1 §4): una mitigacion de equidad y, a diferencia de
+# las dos anteriores, OPCIONAL y APAGADA por defecto: el compose no las define y
+# encenderla lo decide la institucion. Las dos o ninguna: con una sola, una de
+# las vistas se quedaria con el umbral global sin que nadie lo hubiera decidido.
+# Una variable vacia cuenta como no definida, igual que en las obligatorias.
+UMBRALES_POR_VISTA = None
+if os.environ.get("UMBRAL_PA") or os.environ.get("UMBRAL_AP"):
+    faltan = [n for n in ("UMBRAL_PA", "UMBRAL_AP") if not os.environ.get(n)]
+    if faltan:
+        raise SystemExit(
+            "UMBRAL_PA y UMBRAL_AP van juntas: hacen falta las dos, o ninguna. "
+            f"Falta {faltan[0]}. Sin ninguna, el umbral por vista queda "
+            "apagado y toda placa se clasifica con UMBRAL.")
+    UMBRALES_POR_VISTA = {"PA": _umbral_de_entorno("UMBRAL_PA"),
+                          "AP": _umbral_de_entorno("UMBRAL_AP")}
+
 motor = Motor.cargar(RUTA_PESOS, RUTA_CALIBRADOR, UMBRAL, AUC_VALIDACION,
-                     PREVALENCIA_LOCAL)
+                     PREVALENCIA_LOCAL, umbrales_por_vista=UMBRALES_POR_VISTA)
 app = construir_aplicacion(motor)
 
 if __name__ == "__main__":
