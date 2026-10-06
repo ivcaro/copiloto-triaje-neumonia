@@ -607,10 +607,9 @@ def motor_con_red(motor):
 
     La semilla se fija sin tocar el estado global de torch (`fork_rng`): las
     demas pruebas no tienen por que enterarse. El backbone queda congelado, que
-    es lo que da `construir_modelo` por defecto, y eso obliga a `mapa_de_calor`
-    a marcar la IMAGEN como derivable: sin eso no hay grafo que atraviese
-    `features`. `Motor.cargar` lo carga sin congelar: las pruebas a las que esa
-    diferencia les importa descongelan con `descongelar_todo`.
+    es lo que da `construir_modelo` por defecto; `Motor.cargar` lo carga sin
+    congelar, y las pruebas a las que esa diferencia les importa descongelan con
+    `descongelar_todo`.
     """
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(0)
@@ -801,6 +800,29 @@ def test_el_mapa_no_registra_ganchos_ni_durante_el_calculo(motor_con_red, placa)
     assert _ganchos(modelo) == {}
 
 
+def test_el_mapa_graba_el_grafo_solo_en_la_cabeza(motor_con_red, placa):
+    """El gradiente de Grad-CAM -el del logit respecto de las activaciones del
+    ultimo bloque- solo atraviesa la cabeza (`avgpool`, `flatten`, `classifier`):
+    el backbone se calcula sin grafo y sus activaciones entran en la cabeza como
+    una hoja que pide gradiente. Grabar el grafo por todo `features` da el MISMO
+    mapa -por eso ninguna otra prueba lo nota- pero guarda las intermedias de
+    cada capa para un backward que nunca se ejecuta: unos 150 MiB mas de pico por
+    llamada con el modelo real, y el `Motor` es uno solo y lo comparten las
+    sesiones.
+
+    Se mira con el backbone descongelado, como lo despliega `Motor.cargar`:
+    congelado, un `features` calculado con grafo no grabaria nada de todos modos."""
+    modelo = motor_con_red.modelo
+    descongelar_todo(modelo)
+    en_pooling = _espiar_entradas(modelo.avgpool, modelo)
+
+    motor_con_red.mapa_de_calor(placa)
+
+    assert en_pooling, "el mapa no paso por `avgpool`"
+    activaciones = en_pooling[0]["entrada"]
+    assert activaciones.requires_grad and activaciones.is_leaf
+
+
 @pytest.mark.parametrize("congelado", [True, False],
                          ids=["backbone_congelado", "backbone_descongelado"])
 def test_el_mapa_deja_el_modelo_como_lo_encontro(motor_con_red, placa, congelado):
@@ -811,7 +833,8 @@ def test_el_mapa_deja_el_modelo_como_lo_encontro(motor_con_red, placa, congelado
     parametros (lo que dejaria un `backward()` en vez de `autograd.grad`).
 
     Se mira con el backbone congelado y descongelado: `Motor.cargar` lo despliega
-    descongelado, donde un `backward()` si dejaria `.grad` en todos los pesos."""
+    descongelado y las pruebas lo arman congelado, y ni el mapa ni lo que le
+    queda al modelo pueden depender de eso."""
     modelo = motor_con_red.modelo
     if not congelado:
         descongelar_todo(modelo)

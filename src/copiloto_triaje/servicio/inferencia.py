@@ -295,6 +295,10 @@ class Motor:
         Solo vale para EfficientNet-B0, la unica red que se despliega: compone su
         forward a mano -`features`, `avgpool`, `classifier`- y una prueba vigila
         que esa composicion sea la del modelo.
+
+        Necesita autograd: bajo `torch.inference_mode()` falla con un
+        `RuntimeError` ("element 0 of tensors does not require grad..."); bajo
+        `torch.no_grad()` funciona, porque activa el gradiente dentro.
         """
         arreglo, _, _ = self._leer_placa_de_adulto(datos_dicom)
         # Por el mismo camino que `clasificar`: el mapa es el de la imagen que
@@ -302,23 +306,22 @@ class Motor:
         x = self._tensor_desde_arreglo(arreglo)
 
         # SIN ganchos (`register_forward_hook`) a proposito: el `Motor` es uno
-        # solo y la app lo comparte entre sesiones, que corren en hilos. Un
-        # gancho registrado aqui estaria vivo mientras OTRA sesion llama a
-        # `clasificar` y se dispararia dentro de ella, mezclando sus activaciones
-        # con las de este mapa; quitarlo en un `finally` no cierra esa ventana.
-        # Por eso el forward se compone a mano -las activaciones del ultimo
-        # bloque quedan en una variable local- y el gradiente se pide con
-        # `autograd.grad`, que ademas no deja `.grad` en ningun parametro. Nada
-        # del modelo se toca: ni el modo, ni los pesos, ni sus `requires_grad`.
+        # solo y la app lo comparte entre sesiones, que corren en hilos, y un
+        # gancho registrado aqui se dispararia dentro de la clasificacion de OTRA
+        # sesion; quitarlo en un `finally` no cierra esa ventana. Por eso el
+        # forward se compone a mano -las activaciones del ultimo bloque quedan en
+        # una variable local- y el gradiente se pide con `autograd.grad`, que no
+        # deja `.grad` en ningun parametro. Del modelo no se toca nada.
         #
-        # La imagen se marca con `requires_grad` para que haya grafo hasta las
-        # activaciones: con el backbone congelado (las pruebas) ningun parametro
-        # de `features` lo exige, y sin esto no habria por donde derivar. Con el
-        # desplegado (`cargar`, sin congelar) da igual. `enable_grad` porque quien
-        # llama puede estar bajo `torch.no_grad()`, como `clasificar`.
-        x.requires_grad_(True)
-        with torch.enable_grad():
+        # El gradiente de Grad-CAM, el del logit respecto de esas activaciones,
+        # solo atraviesa la cabeza: el backbone se calcula sin grafo y las
+        # activaciones entran en ella como una hoja. Grabar el grafo por todo
+        # `features` daria el mismo mapa y unos 150 MiB mas de pico por llamada.
+        # `enable_grad` porque quien llama puede estar bajo `torch.no_grad()`.
+        with torch.no_grad():
             activaciones = self.modelo.features(x)
+        activaciones.requires_grad_(True)
+        with torch.enable_grad():
             logit = self.modelo.classifier(
                 torch.flatten(self.modelo.avgpool(activaciones), 1)).view(-1)[0]
             (gradientes,) = torch.autograd.grad(logit, activaciones)
