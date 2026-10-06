@@ -1418,6 +1418,22 @@ umbral solo decide la etiqueta. Sin las variables, la respuesta es la de siempre
 clave por clave. Con una sola de las dos, o con un valor fuera de (0, 1),
 `arrancar.py` se niega a arrancar y dice cuál.
 
+`/salud` también lo publica, pero **solo encendido**
+(`"umbrales_por_vista": {"PA": 0.1798, "AP": 0.5815}`, los valores con los que
+arrancó): apagado, `/salud` es el de siempre, y que la clave esté o no es la
+forma de saber, desde fuera, si la etiqueta del cribado depende de la vista.
+**Encenderlo cambia el contrato con el bot del profesional**: la respuesta de
+`clasificar_radiografia` lleva una clave más, `umbral_por_vista` (en singular: no
+es la clave de `/salud`), así que las dos pruebas de `tests/test_contrato_sp4.py`
+que comparan el conjunto de claves fallan contra un contenedor así —a propósito:
+el contrato ya no es el de SP4—, y el nodo «Desenlace» del bot no dice de dónde
+sale el umbral. Con el umbral de AP (0,5815) por encima del global, una placa AP
+puede salir «sin opacidad probable» con una razón de verosimilitud mayor que 1
+(con el calibrador desplegado, pasa de 1 a partir de una puntuación cruda de
+0,5786 y llega a 1,16 en 0,5815): la imagen sube la probabilidad y la etiqueta
+dice lo contrario, un caso que «Desenlace» da por imposible. Por eso, **antes de
+encenderlo en el servidor del bot hay que revisar «Desenlace»**.
+
 ## 11. Cuando algo va mal
 
 | Síntoma | Causa | Arreglo |

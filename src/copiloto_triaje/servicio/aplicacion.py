@@ -161,7 +161,10 @@ def construir_aplicacion(motor: Motor,
                 "calibrador": motor.calibrador.procedencia,
                 # SP4: la prueba de que este contenedor es el nuevo. Sin esta
                 # clave, `tests/test_contrato_sp4.py` se salta y lo dice.
-                "prevalencia_local": motor.prevalencia_local}
+                "prevalencia_local": motor.prevalencia_local,
+                # SP5-C1: solo encendido; dice que la etiqueta usa la vista.
+                **({} if motor.umbrales_por_vista is None
+                   else {"umbrales_por_vista": dict(motor.umbrales_por_vista)})}
 
     @api.post("/inferir")
     async def inferir(archivo: UploadFile = File(...),
