@@ -63,7 +63,9 @@ from PIL import Image
 from streamlit.runtime.memory_media_file_storage import MemoryMediaFileStorage
 from streamlit.testing.v1 import AppTest
 
-from copiloto_triaje.datos.dicom import leer_dicom_desde_bytes
+from copiloto_triaje.datos.dicom import (
+    PlacaNoEvaluable, comprobar_la_cabecera, comprobar_los_pixeles, leer_dicom_desde_bytes,
+)
 from copiloto_triaje.modelo.arquitectura import construir_modelo
 from copiloto_triaje.servicio.calibracion import Calibrador
 from copiloto_triaje.servicio.heckerling import combinacion
@@ -779,8 +781,9 @@ def test_una_placa_que_el_modelo_veria_mal_se_rechaza_por_la_cabecera(
 
 
 def test_un_entero_con_signo_lo_para_la_segunda_red(tmp_path, motor_que_no_se_llama):
-    """La cabecera de 8 bits pasa, pero con `PixelRepresentation` 1 los píxeles salen
-    `int8`: la comprobación del arreglo (la segunda red) lo para, sin llamar al motor."""
+    """8 bits, pero con `PixelRepresentation` 1: los píxeles saldrían `int8`. Desde SP5-B4
+    lo para ya la cabecera (la regla del motor mira el signo; antes lo paraba la segunda
+    red, con los píxeles leídos), con el mismo mensaje y sin llamar al motor."""
     ruta = _dicom(tmp_path, nombre="con_signo.dcm", edad="054Y")
     ds = pydicom.dcmread(str(ruta))
     ds.PixelRepresentation = 1
@@ -930,15 +933,29 @@ def test_lo_que_dice_la_cabecera(modulo_app, cambios, mensaje):
     """R27, campo a campo: `BitsAllocated` 8, `PhotometricInterpretation` MONOCHROME2,
     `SamplesPerPixel` 1, `Rows` y `Columns` hasta 5 000 y, además, un solo cuadro (con
     5 000 × 5 000 por N cuadros, el mismo agujero de memoria). Si falta uno de los
-    cinco campos, la placa no se puede evaluar: el mensaje de R18."""
-    assert modulo_app.motivo_por_la_cabecera(_cabecera(**cambios)) == mensaje
+    cinco campos, la placa no se puede evaluar: el mensaje de R18. Desde SP5-B4 la regla
+    es la del motor (datos/dicom.py) y la app la traduce: se prueban las dos juntas."""
+    assert _lo_que_dice_la_app(modulo_app, comprobar_la_cabecera,
+                               _cabecera(**cambios)) == mensaje
 
 
 @pytest.mark.parametrize("tipo, mensaje", [
     (np.uint8, None), (np.int8, _bits("8 bits con signo", "la vería mal")),
     (np.uint16, DIECISEIS_BITS)], ids=["uint8", "int8", "uint16"])
 def test_la_segunda_red_mira_el_tipo_del_arreglo(modulo_app, tipo, mensaje):
-    assert modulo_app.motivo_por_los_pixeles(np.zeros((4, 4), tipo)) == mensaje
+    assert _lo_que_dice_la_app(modulo_app, comprobar_los_pixeles,
+                               np.zeros((4, 4), tipo)) == mensaje
+
+
+def _lo_que_dice_la_app(modulo_app, comprobar, dato):
+    """Lo que la app dice de una cabecera suelta o de un arreglo: la regla del motor
+    (`comprobar`, de datos/dicom.py) y la traducción de la app (`mensaje_de_la_placa`),
+    las dos por las que pasa `calcular`. `None` si la regla lo deja pasar."""
+    try:
+        comprobar(dato)
+    except PlacaNoEvaluable as exc:
+        return modulo_app.mensaje_de_la_placa(exc)
+    return None
 
 
 def test_la_placa_que_se_ensena_es_la_que_recibe_el_modelo(modulo_app):

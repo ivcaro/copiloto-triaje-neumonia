@@ -65,8 +65,7 @@ from matplotlib import colormaps
 from PIL import Image
 
 from copiloto_triaje.datos.dicom import (
-    LADO_MAXIMO_DE_LA_PLACA, PlacaNoEvaluable, comprobar_la_cabecera,
-    comprobar_los_pixeles, leer_dicom_desde_bytes,
+    LADO_MAXIMO_DE_LA_PLACA, PlacaNoEvaluable, leer_dicom_desde_bytes,
 )
 from copiloto_triaje.servicio.heckerling import (
     PREVALENCIA_COHORTE, PULSO_CORTE_LPM, RV_POR_PUNTUACION, TEMPERATURA_CORTE_C,
@@ -527,8 +526,9 @@ def mensaje_de_la_placa(exc: PlacaNoEvaluable) -> str:
 
     El signo solo se nombra con 8 bits: con más, la app habla de los bits, como cuando
     la cabecera ni lo miraba. Lo que no se puede leer -una cabecera a la que le falta un
-    campo, un fichero sin la imagen- y cualquier motivo que la app no conozca llevan el
-    mensaje de R18."""
+    campo, un fichero sin la imagen, una compresión sin descodificador (`compresion`, que
+    antes llegaba aquí como un RuntimeError)- y cualquier motivo que la app no conozca
+    llevan el mensaje de R18, como hasta ahora."""
     if exc.motivo == "sin_metainformacion":
         return NO_ES_UN_DICOM
     if exc.motivo == "deflated":
@@ -546,28 +546,6 @@ def mensaje_de_la_placa(exc: PlacaNoEvaluable) -> str:
     if exc.motivo == "color":
         return RECHAZO_COLOR
     return INESPERADO
-
-
-def motivo_por_la_cabecera(cabecera) -> str | None:
-    """Lo que la app dice de una cabecera suelta (un `Dataset` sin los píxeles), o
-    `None` si se puede descodificar: la regla del motor (`comprobar_la_cabecera`) y la
-    traducción de la app (`mensaje_de_la_placa`). `calcular` pasa por las mismas dos
-    dentro de `leer_dicom_desde_bytes`; esta las deja ver campo a campo."""
-    try:
-        comprobar_la_cabecera(cabecera)
-    except PlacaNoEvaluable as exc:
-        return mensaje_de_la_placa(exc)
-    return None
-
-
-def motivo_por_los_pixeles(arreglo: np.ndarray) -> str | None:
-    """Lo mismo para la segunda red, ya con los píxeles (`comprobar_los_pixeles`): lo que
-    no sale `uint8` no lo vería el modelo como las placas de RSNA."""
-    try:
-        comprobar_los_pixeles(arreglo)
-    except PlacaNoEvaluable as exc:
-        return mensaje_de_la_placa(exc)
-    return None
 
 
 def superponer(placa: np.ndarray, mapa: np.ndarray, opacidad: float) -> np.ndarray:

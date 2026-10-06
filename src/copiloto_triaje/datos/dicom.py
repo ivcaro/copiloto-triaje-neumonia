@@ -21,6 +21,7 @@ import numpy as np
 import pydicom
 import pydicom.errors
 import pydicom.filereader
+import pydicom.pixels
 import pydicom.uid
 from PIL import Image
 
@@ -100,6 +101,9 @@ _TEXTOS = {
         "entrenó."),
     "sin_pixeles": ("el fichero trae la cabecera pero no la imagen: puede que esté "
                     "recortado."),
+    "compresion": (
+        "el fichero viene comprimido con una sintaxis de transferencia que aquí no se sabe "
+        "descomprimir (falta su descodificador), así que no se puede leer la imagen."),
 }
 
 
@@ -124,6 +128,8 @@ class PlacaNoEvaluable(ValueError):
                              una muestra por pixel
         sin_pixeles          la cabecera esta en regla, pero el fichero no trae la
                              imagen (recortado)
+        compresion           una sintaxis comprimida sin descodificador disponible
+                             aqui (JPEG-LS, JPEG Lossless, HTJ2K... sin su plugin)
 
     Los datos van como enteros (y `con_signo`, un booleano), y el texto sale de
     `_TEXTOS`: nunca interpola texto de pydicom ni bytes del fichero.
@@ -181,7 +187,11 @@ def comprobar_que_se_puede_evaluar(datos: bytes) -> None:
     conjunto de datos va comprimido con zlib, y pydicom lo infla entero en cuanto
     se le pide la cabecera (un fichero de 214 KiB inflaba cientos de MiB): se
     rechaza sin abrirlo. Despues, la cabecera, leida con `stop_before_pixels`:
-    `comprobar_la_cabecera`.
+    `comprobar_la_cabecera`. Y por ultimo, que haya con que descomprimir la
+    sintaxis (`_hay_descodificador`): sin su plugin, JPEG-LS, JPEG Lossless o HTJ2K
+    llegaban hasta `pixel_array` y salian con un RuntimeError, un 500. Va despues de
+    la cabecera para que, si la placa ademas tiene otro defecto, la app siga diciendo
+    el de siempre.
 
     Si pydicom no sabe leer la cabecera, su excepcion sale tal cual: el motor la
     traduce a `dicom_invalido` con su clausula de siempre, y lo que no es un DICOM
@@ -194,6 +204,21 @@ def comprobar_que_se_puede_evaluar(datos: bytes) -> None:
     if pydicom.uid.UID(sintaxis).is_deflated:
         raise PlacaNoEvaluable("deflated")
     comprobar_la_cabecera(pydicom.dcmread(io.BytesIO(datos), stop_before_pixels=True))
+    if not _hay_descodificador(sintaxis):
+        raise PlacaNoEvaluable("compresion")
+
+
+def _hay_descodificador(sintaxis: str) -> bool:
+    """Si pydicom tiene con que descodificar los pixeles de esa sintaxis en ESTA
+    instalacion: un descodificador para ella (`get_decoder` lanza
+    NotImplementedError si no lo hay: JPEG 2000 Parte 2, MPEG...) y con algun plugin
+    disponible (`is_available`). Medido con pydicom 3.0.2 y Pillow: las sin comprimir,
+    RLE, JPEG Baseline y Extended y JPEG 2000 si; JPEG Lossless, JPEG-LS y HTJ2K, sin
+    su plugin, no."""
+    try:
+        return pydicom.pixels.get_decoder(sintaxis).is_available
+    except NotImplementedError:
+        return False
 
 
 def _campos_de_la_imagen(cabecera) -> dict | None:
@@ -281,11 +306,20 @@ def leer_dicom_desde_bytes(datos: bytes) -> tuple[np.ndarray, dict]:
     `comprobar_los_pixeles`. Todo rechazo es `PlacaNoEvaluable`; lo que pydicom no
     sabe leer sale con su excepcion de siempre. Para una placa que pasa, lo que
     devuelve es lo de antes, byte a byte.
+
+    La cabecera se mira DOS veces, y no sobra ninguna: la primera, leida hasta el
+    Pixel Data, antes de la lectura entera; la segunda, sobre el conjunto leido
+    entero y antes de `pixel_array`, porque lo que se descodifica sale de ESE, y en
+    un DICOM no conforme un campo de la imagen repetido DETRAS del Pixel Data gana
+    (la ultima aparicion pisa a la primera): se saltaba la regla con una cabecera en
+    regla y unas `Rows` de 60 000 detras. Va despues de `sin_pixeles`: a un
+    recortado le falta la imagen, y eso es lo que se le dice.
     """
     comprobar_que_se_puede_evaluar(datos)
     ds = pydicom.dcmread(io.BytesIO(datos))
     if "PixelData" not in ds:
         raise PlacaNoEvaluable("sin_pixeles")
+    comprobar_la_cabecera(ds)
     arreglo = ds.pixel_array
     comprobar_los_pixeles(arreglo)
     return arreglo, _extraer_metadatos(ds)

@@ -1397,7 +1397,13 @@ Todas salen con `dicom_invalido`:
 | más de un cuadro | evalúa una placa sola, y todos los cuadros se reservarían en memoria |
 | más de 5 000 píxeles de lado | ninguna placa de tórax digital llega (rondan 4 300 × 4 300): unos 600 bytes que declaraban 60 000 × 60 000 hacían reservar 3,4 GiB y el contenedor moría |
 | una cabecera sin alguno de los campos que dicen cómo leer la imagen, o con uno vacío | pydicom no la sabría descodificar |
+| comprimido con una sintaxis que el servidor no sabe descomprimir: JPEG-LS, JPEG Lossless, HTJ2K… (sin su plugin), o JPEG 2000 Parte 2 | no se puede leer la placa (hasta SP5-B4, un 500). Sí se leen las sin comprimir, RLE, JPEG Baseline y Extended y JPEG 2000 |
 | la cabecera pero no la imagen: un fichero recortado | no hay placa que leer (hasta SP5-B4 salía sin código: un 500 por REST) |
+
+La cabecera se mira dos veces: leída hasta el Pixel Data, antes de leer el fichero
+entero, y otra vez sobre el fichero entero, antes de descodificar, porque en un DICOM
+no conforme un campo de la imagen repetido detrás del Pixel Data gana en la lectura
+entera, que es de la que sale la imagen.
 
 El detalle es un texto nuestro, sin nada de pydicom ni del fichero salvo enteros
 de la cabecera, por ejemplo:
@@ -1406,10 +1412,21 @@ de la cabecera, por ejemplo:
 dicom_invalido: La placa no se puede evaluar: es de 16 bits, y el modelo solo evalúa placas de 8 bits sin signo, como las de RSNA con las que se entrenó.
 ```
 
+Los demás fallos de lectura, los que la regla no cubre (por ejemplo `Rows` a 0, un
+`BitsStored` mayor que `BitsAllocated` o un píxel sin comprimir recortado), siguen
+saliendo como hasta ahora: `dicom_invalido` con el texto de pydicom en el detalle
+(`El fichero no es un DICOM legible: …`), que el bot tampoco relata.
+
 **El profesional no lo ve.** Ante `dicom_invalido` el bot dice «No pude leer esa
 radiografía.» y «Sigo esperando el archivo.», no relata el detalle —va a
 `consultas.error`— y espera otro fichero. Las 26 684 placas de RSNA pasan la
 regla.
+
+La sesión con el médico (la imagen `h7-sesion`) se grabó ANTES de este cambio: su
+perfil 08, el fichero recortado, lleva la pista del bot «Si lo recortó al enviarlo,
+vuelva a exportarlo completo», que daba cuando el servidor caía sin código. Con este
+cambio desplegado, el bot contesta a ese caso solo «No pude leer esa radiografía.»
+(y «Sigo esperando el archivo.»).
 
 ## 10. Variables de entorno
 

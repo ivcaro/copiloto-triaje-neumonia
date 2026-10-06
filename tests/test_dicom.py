@@ -10,12 +10,16 @@ from unittest.mock import patch
 
 import numpy as np
 import pydicom
+import pydicom.pixels
 import pytest
 from PIL import Image
 from pydicom.dataset import Dataset, FileMetaDataset
 from pydicom.encaps import encapsulate
 from pydicom.uid import (
-    DeflatedExplicitVRLittleEndian, ExplicitVRLittleEndian, RLELossless, generate_uid,
+    JPEG2000, DeflatedExplicitVRLittleEndian, ExplicitVRBigEndian, ExplicitVRLittleEndian,
+    HTJ2KLossless, ImplicitVRLittleEndian, JPEG2000Lossless, JPEG2000MCLossless,
+    JPEGBaseline8Bit, JPEGExtended12Bit, JPEGLosslessSV1, JPEGLSLossless, RLELossless,
+    generate_uid,
 )
 
 from copiloto_triaje.datos.dicom import (
@@ -338,6 +342,9 @@ EN_COLOR = (
     "MONOCHROME2 con una muestra por píxel), como las de RSNA con las que se entrenó.")
 SIN_PIXELES = ("el fichero trae la cabecera pero no la imagen: puede que esté "
                "recortado.")
+COMPRESION = (
+    "el fichero viene comprimido con una sintaxis de transferencia que aquí no se sabe "
+    "descomprimir (falta su descodificador), así que no se puede leer la imagen.")
 
 
 def _bits(texto):
@@ -478,10 +485,42 @@ def _recortada(tmp_path):
     el elemento -avisa de que el fichero se acaba antes del delimitador- y
     `pixel_array` lanzaria un AttributeError."""
     def cambiar(ds):
-        ds.compress(RLELossless, (np.arange(64 * 64) % 256).astype(np.uint8)
-                    .reshape(64, 64))
+        ds.compress(RLELossless, PIXELES_DE_LA_PLACA)
     datos = _placa(tmp_path, cambiar, "rle.dcm")
     return datos[: len(datos) - 200]
+
+
+# Los pixeles que escribe `crear_dicom` con lado 64.
+PIXELES_DE_LA_PLACA = (np.arange(64 * 64) % 256).astype(np.uint8).reshape(64, 64)
+
+
+def _con_pillow(formato, **opciones):
+    """Los pixeles de la placa comprimidos por Pillow (JPEG o el codestream de JPEG
+    2000), para encapsularlos con la sintaxis que toque."""
+    salida = io.BytesIO()
+    Image.fromarray(PIXELES_DE_LA_PLACA).save(salida, format=formato, **opciones)
+    return salida.getvalue()
+
+
+def _comprimida(sintaxis, fragmento):
+    """Un `cambiar` que encapsula `fragmento` como el Pixel Data con esa sintaxis."""
+    def cambiar(ds):
+        ds.file_meta.TransferSyntaxUID = sintaxis
+        ds.PixelData = encapsulate([fragmento])
+        ds["PixelData"].VR = "OB"
+        ds["PixelData"].is_undefined_length = True
+    return cambiar
+
+
+def _jpeg():
+    return _con_pillow("JPEG", quality=95)
+
+
+def _j2k(sin_perdida=True):
+    if sin_perdida:
+        return _con_pillow("JPEG2000", no_jp2=True, irreversible=False)
+    return _con_pillow("JPEG2000", no_jp2=True, irreversible=True,
+                       quality_mode="rates", quality_layers=[10])
 
 
 # (identificador, como se fabrica, motivo, los datos del motivo, su texto)
@@ -529,6 +568,10 @@ NO_EVALUABLES = [
      CABECERA_INCOMPLETA),
     ("sin_pixel_data", _sin_pixel_data, "sin_pixeles", {}, SIN_PIXELES),
     ("recortada", _recortada, "sin_pixeles", {}, SIN_PIXELES),
+    # JPEG 2000 Parte 2 (multicomponente): pydicom 3.0.2 no tiene descodificador para
+    # ella con ningun plugin, asi que el caso no depende de lo que haya instalado.
+    ("jpeg2000_parte_2", lambda t: _placa(t, _comprimida(JPEG2000MCLossless, _j2k())),
+     "compresion", {}, COMPRESION),
 ]
 
 
@@ -569,14 +612,17 @@ def test_cada_motivo_se_rechaza_con_su_codigo_sus_datos_y_un_texto_nuestro(
      "bits"),
     (_con(PixelRepresentation=1, PhotometricInterpretation="MONOCHROME1"), "fotometria"),
     (lambda ds: (_en_color(ds), setattr(ds, "PixelRepresentation", 1)), "color"),
+    (lambda ds: (_de_16_bits()(ds), _comprimida(JPEG2000MCLossless, _j2k())(ds)), "bits"),
 ], ids=["16_bits_y_6000_filas", "16_bits_y_dos_cuadros", "16_bits_en_color",
-        "signo_e_invertida", "signo_y_color"])
+        "signo_e_invertida", "signo_y_color", "16_bits_y_sin_descodificador"])
 def test_con_varias_cosas_mal_manda_la_primera_en_el_orden_de_la_app(
         tmp_path, nadie_descodifica, cambiar, motivo):
     """El orden es el de la app (R27), para que alli cada placa siga recibiendo el
     mensaje de siempre: el tamano y los cuadros, los bits, la escala invertida y el
     color; y el signo, el ULTIMO (en la app lo paraba la segunda red, ya con los
-    pixeles)."""
+    pixeles). La sintaxis sin descodificador va detras de la cabecera: con 16 bits,
+    la app sigue diciendo lo de los 16 bits, como cuando esa placa le llegaba al
+    motor y reventaba con un RuntimeError."""
     with pytest.raises(PlacaNoEvaluable) as fallo:
         comprobar_que_se_puede_evaluar(_placa(tmp_path, cambiar))
     assert fallo.value.motivo == motivo
@@ -693,6 +739,153 @@ def test_un_deflated_con_cientos_de_mib_dentro_se_rechaza_sin_inflarlo(
     assert fallo.value.motivo == "deflated"
     assert lecturas == [] and nadie_infla == [] and nadie_descodifica == []
     assert pico < 4 * 2**20, f"pico de {pico / 2**20:.1f} MiB"
+
+
+# --------------------------------------------------------------------------
+# Los campos de la imagen repetidos DETRAS del Pixel Data (ronda 1, I1)
+# --------------------------------------------------------------------------
+def _us(grupo, elemento, valor):
+    """Un elemento US de Explicit VR Little Endian, ya codificado."""
+    return struct.pack("<HH", grupo, elemento) + b"US" + struct.pack("<HH", 2, valor)
+
+
+def _cs(grupo, elemento, texto):
+    """Un elemento CS de Explicit VR Little Endian, ya codificado (longitud par)."""
+    valor = texto.encode("ascii")
+    valor += b" " * (len(valor) % 2)
+    return struct.pack("<HH", grupo, elemento) + b"CS" + struct.pack("<H", len(valor)) + valor
+
+
+def _bomba_detras_de_una_rle(tmp_path):
+    """Una placa sana en RLE con `Rows` y `Columns` de 60 000 escritos OTRA VEZ detras
+    del Pixel Data, que es el ultimo elemento: un DICOM no conforme. La cabecera leida
+    hasta el Pixel Data dice 64 x 64; la lectura entera, 60 000 x 60 000, y con ella el
+    descodificador de RLE reservaria 3,35 GiB (el revisor lo vio tumbar el contenedor
+    del servidor con su limite de 2 GiB)."""
+    sana = _placa(tmp_path, lambda ds: ds.compress(RLELossless, PIXELES_DE_LA_PLACA),
+                  "rle.dcm")
+    return sana + _us(0x0028, 0x0010, 60000) + _us(0x0028, 0x0011, 60000)
+
+
+def _invertida_detras(tmp_path):
+    """Una placa sana con `PhotometricInterpretation` MONOCHROME1 escrito otra vez
+    detras del Pixel Data: sin mirar el conjunto entero, recibia una cifra."""
+    return _placa(tmp_path) + _cs(0x0028, 0x0004, "MONOCHROME1")
+
+
+# (identificador, como se fabrica, lo que dice la lectura entera, motivo, datos, texto)
+REPETIDOS_DETRAS = [
+    ("60000x60000_detras_de_una_rle", _bomba_detras_de_una_rle, ("Rows", 60000),
+     "tamano", {"filas": 60000, "columnas": 60000}, _tamano(60000, 60000)),
+    ("monochrome1_detras", _invertida_detras, ("PhotometricInterpretation", "MONOCHROME1"),
+     "fotometria", {}, INVERTIDA),
+]
+
+
+@pytest.mark.parametrize("hacer, campo_y_valor, motivo, datos, texto",
+                         [r[1:] for r in REPETIDOS_DETRAS],
+                         ids=[r[0] for r in REPETIDOS_DETRAS])
+def test_un_campo_repetido_detras_del_pixel_data_no_se_salta_la_regla(
+        tmp_path, nadie_descodifica, nadie_infla, hacer, campo_y_valor, motivo, datos,
+        texto):
+    """Lo que se descodifica sale de la lectura ENTERA, donde la ultima aparicion de un
+    campo pisa a la primera: la regla se mira tambien ahi, despues de `sin_pixeles` y
+    antes de `pixel_array`. Sin descodificar un pixel y sin subir la memoria."""
+    placa = hacer(tmp_path)
+    # Lo que hace la trampa: la cabecera hasta el Pixel Data esta en regla (la primera
+    # mirada la deja pasar) y la lectura entera ve otra cosa.
+    assert comprobar_que_se_puede_evaluar(placa) is None
+    campo, valor = campo_y_valor
+    assert pydicom.dcmread(io.BytesIO(placa)).get(campo) == valor
+    tracemalloc.start()
+    try:
+        with pytest.raises(PlacaNoEvaluable) as fallo:
+            leer_dicom_desde_bytes(placa)
+        _, pico = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert fallo.value.motivo == motivo
+    assert {clave: getattr(fallo.value, clave) for clave in datos} == datos
+    assert str(fallo.value) == texto
+    assert nadie_descodifica == [] and nadie_infla == []
+    assert pico < 4 * 2**20, f"pico de {pico / 2**20:.1f} MiB"
+
+
+# --------------------------------------------------------------------------
+# Las sintaxis comprimidas: las de siempre se leen, y sin descodificador, rechazo
+# (ronda 1, M2)
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("cambiar, sin_perdida", [
+    (lambda ds: setattr(ds.file_meta, "TransferSyntaxUID", ImplicitVRLittleEndian), True),
+    (lambda ds: ds.compress(RLELossless, PIXELES_DE_LA_PLACA), True),
+    (lambda ds: _comprimida(JPEGBaseline8Bit, _jpeg())(ds), False),
+    (lambda ds: _comprimida(JPEGExtended12Bit, _jpeg())(ds), False),
+    (lambda ds: _comprimida(JPEG2000Lossless, _j2k())(ds), True),
+    (lambda ds: _comprimida(JPEG2000, _j2k(sin_perdida=False))(ds), False),
+], ids=["implicit_vr_little_endian", "rle", "jpeg_baseline", "jpeg_extended",
+        "jpeg2000_sin_perdida", "jpeg2000"])
+def test_las_sintaxis_de_siempre_pasan_la_regla_y_se_leen(tmp_path, cambiar,
+                                                          sin_perdida):
+    """Que el rechazo por falta de descodificador no se lleve ninguna placa valida: las
+    sin comprimir, RLE, JPEG Baseline y Extended y JPEG 2000 tienen con que leerse (RSNA
+    es JPEG Baseline; los ejemplos de la app, Explicit VR Little Endian), y la placa que
+    sale es la de siempre: igual pixel a pixel si la sintaxis no pierde nada."""
+    datos = _placa(tmp_path, cambiar)
+    assert comprobar_que_se_puede_evaluar(datos) is None
+    arreglo, _ = leer_dicom_desde_bytes(datos)
+    assert arreglo.dtype == np.uint8 and arreglo.shape == (64, 64)
+    if sin_perdida:
+        assert np.array_equal(arreglo, PIXELES_DE_LA_PLACA)
+
+
+@pytest.mark.parametrize("sintaxis", [ExplicitVRLittleEndian, ImplicitVRLittleEndian,
+                                      ExplicitVRBigEndian, RLELossless, JPEGBaseline8Bit,
+                                      JPEGExtended12Bit, JPEG2000Lossless, JPEG2000])
+def test_las_sintaxis_de_siempre_tienen_descodificador_aqui(sintaxis):
+    """Lo que la regla le pregunta a pydicom, para cada sintaxis que tiene que seguir
+    leyendose. (Explicit VR Big Endian no se puede fabricar con pydicom 3, que no
+    convierte de una a otra; se mira solo su descodificador.)"""
+    assert pydicom.pixels.get_decoder(sintaxis).is_available
+
+
+@pytest.mark.parametrize("sintaxis, fragmento", [
+    (JPEGLSLossless, _jpeg), (JPEGLosslessSV1, _jpeg), (HTJ2KLossless, _j2k)],
+    ids=["jpeg_ls", "jpeg_lossless", "htj2k"])
+def test_una_sintaxis_sin_su_plugin_se_rechaza_por_la_cabecera(
+        tmp_path, nadie_descodifica, sintaxis, fragmento):
+    """JPEG-LS, JPEG Lossless y HTJ2K necesitan un plugin que ni la imagen de pruebas
+    ni la del servidor llevan: llegaban hasta `pixel_array` y salian con un
+    RuntimeError, un 500. Ahora, `compresion`, sin descodificar nada. Donde si hay
+    plugin, no hay nada que comprobar."""
+    if pydicom.pixels.get_decoder(sintaxis).is_available:
+        pytest.skip(f"aquí hay con qué descodificar {sintaxis.name}: no se rechaza")
+    datos = _placa(tmp_path, _comprimida(sintaxis, fragmento()))
+    for leer in (comprobar_que_se_puede_evaluar, leer_dicom_desde_bytes):
+        with pytest.raises(PlacaNoEvaluable) as fallo:
+            leer(datos)
+        assert (fallo.value.motivo, str(fallo.value)) == ("compresion", COMPRESION)
+    assert nadie_descodifica == []
+
+
+class _SinPlugin:
+    is_available = False
+
+
+def _sin_descodificador(sintaxis):
+    raise NotImplementedError(f"ningún descodificador para {sintaxis}")
+
+
+@pytest.mark.parametrize("get_decoder", [lambda sintaxis: _SinPlugin(),
+                                         _sin_descodificador],
+                         ids=["sin_plugin", "sin_descodificador"])
+def test_sin_con_que_descomprimir_se_rechaza(tmp_path, monkeypatch, get_decoder):
+    """La regla, sin depender de lo instalado: si pydicom dice que no hay descodificador
+    (`NotImplementedError`) o que no tiene plugin (`is_available`), `compresion`."""
+    datos = _placa(tmp_path)
+    monkeypatch.setattr(pydicom.pixels, "get_decoder", get_decoder)
+    with pytest.raises(PlacaNoEvaluable) as fallo:
+        comprobar_que_se_puede_evaluar(datos)
+    assert fallo.value.motivo == "compresion"
 
 
 @pytest.mark.parametrize("tipo, bits, con_signo", [

@@ -23,7 +23,9 @@ from copiloto_triaje.servicio import inferencia
 from copiloto_triaje.servicio.inferencia import ErrorDeInferencia, Motor
 
 # reutiliza el generador de DICOM sinteticos, y los que el motor no puede evaluar
-from test_dicom import DE_PYDICOM, NO_EVALUABLES, _la_bomba, crear_dicom
+from test_dicom import (
+    DE_PYDICOM, NO_EVALUABLES, REPETIDOS_DETRAS, _la_bomba, crear_dicom,
+)
 
 
 @pytest.fixture
@@ -345,6 +347,21 @@ def test_lo_que_no_se_puede_evaluar_es_dicom_invalido_con_nuestro_texto(
     bajo = " " + mensaje.lower() + " "
     assert not [p for p in SIN_TILDE + TUTEO if p in bajo], mensaje
     assert nadie_descodifica == [] and nadie_infla == []
+
+
+@pytest.mark.parametrize("hacer, texto", [(r[1], r[5]) for r in REPETIDOS_DETRAS],
+                         ids=[r[0] for r in REPETIDOS_DETRAS])
+@pytest.mark.parametrize("llamar", ["clasificar", "mapa_de_calor"])
+def test_un_campo_repetido_detras_del_pixel_data_tampoco_pasa_por_el_motor(
+        motor, tmp_path, nadie_descodifica, llamar, hacer, texto):
+    """Ronda 1, I1: un DICOM no conforme con los campos de la imagen otra vez DETRAS
+    del Pixel Data (60 000 x 60 000 en una RLE, o MONOCHROME1) tumbaba el contenedor o
+    recibia una cifra. Ahora, `dicom_invalido` con nuestro texto, sin descodificar."""
+    with pytest.raises(ErrorDeInferencia) as fallo:
+        getattr(motor, llamar)(hacer(tmp_path))
+    assert fallo.value.codigo == "dicom_invalido"
+    assert str(fallo.value) == PREFIJO_NO_EVALUABLE + texto
+    assert nadie_descodifica == []
 
 
 def test_la_segunda_red_tambien_llega_al_motor_como_dicom_invalido(motor, tmp_path,

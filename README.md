@@ -218,7 +218,8 @@ Y **no evalúa la placa que vería mal o que no cabe en memoria**, decidiéndolo
 la cabecera antes de descodificar un solo píxel (SP5-B4): solo acepta placas como
 las de RSNA —8 bits sin signo, `MONOCHROME2`, una muestra por píxel, un cuadro y
 5 000 píxeles de lado como mucho— y rechaza también un DICOM comprimido entero
-(«Deflated»), uno sin metainformación legible y uno recortado, sin la imagen. Sale
+(«Deflated»), uno comprimido con una sintaxis que no sabe descomprimir (JPEG-LS,
+por ejemplo), uno sin metainformación legible y uno recortado, sin la imagen. Sale
 con `dicom_invalido`, y el bot dice «No pude leer esa radiografía.» y espera otro
 fichero. La lista, en el §9 de `docs/sp2-despliegue.md`.
 
