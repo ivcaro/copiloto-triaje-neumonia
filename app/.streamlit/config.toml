@@ -1,0 +1,24 @@
+# La configuración de Streamlit para la app de demostración (SP5-C1).
+#
+# OJO: Streamlit lee `.streamlit/config.toml` del directorio desde el que se LANZA, no
+# del de app.py. Con `streamlit run app/app.py` desde la raíz del repositorio este
+# fichero NO se aplica: hay que lanzar desde app/ o pasar las mismas opciones en la
+# orden (`--server.maxUploadSize=5`, …). Por eso app.py comprueba ella misma el tamaño
+# y le pone el límite a su campo de subida.
+
+[server]
+# 5 MB, el mismo límite que el servidor (MAXIMO_BYTES de servicio/aplicacion.py).
+maxUploadSize = 5
+
+[browser]
+# Por defecto, Streamlit manda estadísticas de uso a sus servidores. Una app que
+# recibe radiografías no manda nada a nadie.
+gatherUsageStats = false
+
+[client]
+# En el navegador, ni trazas ni tipos de excepción: un mensaje genérico, y el detalle a
+# la consola. La app ya captura lo que puede fallar; esto es la red de debajo.
+showErrorDetails = "none"
+# Sin las opciones de desarrollo de Streamlit (publicar, volver a ejecutar, vaciar la
+# caché) en la barra de quien evalúa.
+toolbarMode = "viewer"

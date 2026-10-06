@@ -1,0 +1,29 @@
+# Las dependencias de la app de demostración (SP5-C1), con su versión exacta: las
+# mismas con las que pasan sus pruebas en la imagen Linux de pruebas. El paquete del
+# proyecto (src/) se instala aparte, desde la raíz del repositorio:
+#     pip install -r app/requirements.txt
+#     pip install --no-deps .
+# torch y torchvision, de las ruedas para CPU, como en servidor/Dockerfile.
+
+# Las nuevas de la app.
+streamlit==1.65.0
+altair==6.3.0
+matplotlib==3.11.2
+
+# Las del proyecto: las que pyproject.toml ya fija, con esa versión...
+torch==2.14.0
+torchvision==0.29.0
+pydicom==3.0.2
+# ...y las que allí van con un mínimo, en la versión con la que se prueban.
+pillow==12.3.0
+numpy==2.5.2
+pandas==3.0.5
+scikit-learn==1.9.1
+scipy==1.18.1
+
+# Las del servidor. La app no las importa, pero pyproject.toml las declara y un
+# `pip install .` sin `--no-deps` las traería: con la versión de servidor/Dockerfile.
+mcp==2.2.0
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+python-multipart==0.0.32
