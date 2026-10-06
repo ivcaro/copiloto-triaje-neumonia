@@ -8,13 +8,18 @@ QUÉ VIGILA
   que dice LICENCIAS.md y no lleva nada más de paciente: ningún nombre, ninguna
   fecha ni hora, ningún otro identificador que el `EJEMPLO-n`. Hay uno por tipo
   (normal en PA, opacidad en PA y una AP) y el «rechazado», con 15 años.
-- Cada uno tiene en LICENCIAS.md su fuente, su autor, su licencia y su atribución, y
-  el documento avisa de que no son de RSNA ni del NIH y de que el modelo no se ha
-  medido con ellos.
+- Cada uno tiene en LICENCIAS.md su fuente, su autor, su licencia (CC0 1.0 y ninguna
+  otra), su atribución y lo que dice su página de origen del consentimiento de la
+  persona, con la fecha en que se consultó; y el documento avisa de que no son de
+  RSNA ni del NIH y de que el modelo no se ha medido con ellos.
 - Se pueden rehacer: volver a empaquetar los PNG da los mismos bytes, los píxeles
   del DICOM son los del PNG y el guion sabe reducir las descargas de Commons (con la
-  comprobación de su SHA-1).
+  comprobación de su SHA-1), las tres o ninguna.
+- Las carpetas llevan justo los ejemplos que se versionan (no lo que haya en el disco).
 - El motor acepta a los tres adultos y rechaza al menor con `fuera_de_alcance`.
+
+Los SHA-256 de los siete binarios los fija `tests/test_anonimato.py`, junto a su
+declaración de anonimato.
 
 Los valores esperados están escritos aquí a mano, no sacados de la tabla del guion:
 una tabla equivocada no puede dar por buena a la prueba que la comprueba.
@@ -40,6 +45,7 @@ CARPETA_EJEMPLOS = REPO / "app" / "assets" / "ejemplos"
 CARPETA_ORIGINALES = REPO / "app" / "assets" / "originales"
 LICENCIAS = REPO / "app" / "assets" / "LICENCIAS.md"
 CALIBRADOR = REPO / "servidor" / "calibrador.json"
+SCRIPT_DE_ANONIMATO = REPO / "scripts" / "verificar_anonimato.py"
 
 LADO_MAYOR = 768
 UN_MEGA = 1024 * 1024
@@ -83,10 +89,17 @@ LITERAL_DE_LA_LICENCIA = ("This file is made available under the Creative Common
                           "CC0 1.0 Universal Public Domain Dedication.")
 CREDITO = "Mikael Häggström, vía Wikimedia Commons, CC0 1.0"
 
+# Lo que dice de cada ejemplo su `Consentimiento` en LICENCIAS.md: de las dos con
+# neumonía, que su página de origen dice que la persona lo dio; de la normal, que no
+# consta (la página no lo menciona) y, del «rechazado», que sale de ella.
+CON_CONSENTIMIENTO = ("neumonia_pa", "neumonia_ap")
+SIN_CONSENTIMIENTO = ("normal_pa", "rechazado_menor")
+FECHA_DE_CONSULTA = "5-oct-2026"
+
 # Las etiquetas de LICENCIAS.md: `- **Etiqueta:** valor`, en la sección de cada DICOM.
 ETIQUETAS = ("Qué muestra", "Imagen original", "Página de origen", "Autor", "Licencia",
-             "Atribución", "SHA-1 del original", "Qué se cambió", "Edad en el DICOM",
-             "Sexo en el DICOM", "Vista en el DICOM")
+             "Atribución", "Consentimiento", "SHA-1 del original", "Qué se cambió",
+             "Edad en el DICOM", "Sexo en el DICOM", "Vista en el DICOM")
 
 SECONDARY_CAPTURE = "1.2.840.10008.5.1.4.1.1.7"
 # Los UID que cambian de un ejemplo a otro: se miran aparte.
@@ -119,6 +132,19 @@ def guion():
     sys.modules["empaquetar_ejemplos"] = modulo
     spec.loader.exec_module(modulo)
     return modulo
+
+
+@pytest.fixture(scope="module")
+def versionados():
+    """Los ficheros que se publicarían (los que tienen seguimiento y los que no lo
+    tienen ni están ignorados), con la misma definición que la prueba de anonimato:
+    lo que haya en el disco y git ignore -un `desktop.ini` o un `Thumbs.db` que cree
+    OneDrive- no cuenta. Fuera de un repositorio de git, todo lo que hay."""
+    spec = importlib.util.spec_from_file_location("verificar_anonimato",
+                                                  SCRIPT_DE_ANONIMATO)
+    va = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(va)
+    return [p.relative_to(REPO).as_posix() for p in va.ficheros_versionados(REPO)]
 
 
 def _datos(nombre):
@@ -167,22 +193,36 @@ def _jpeg(carpeta, nombre, ancho, alto, color=None):
     return ruta
 
 
+# Tres descargas de juguete, más grandes que 768 px, como las de verdad: (ancho, alto).
+DESCARGAS_DE_JUGUETE = {"normal_pa": (900, 1100), "neumonia_pa": (1000, 850),
+                        "neumonia_ap": (950, 950)}
+
+
+def _descargas_de_juguete(carpeta, cual=None, fallo=None):
+    """Las tres descargas de juguete en `carpeta`, y la tabla de SHA-1 que les
+    corresponde. La de `cual` va mal: con `fallo="sha1"`, la tabla dice otro SHA-1;
+    con `fallo="color"`, la imagen está en color (y su SHA-1 sí cuadra)."""
+    Path(carpeta).mkdir(parents=True, exist_ok=True)
+    sha1 = {}
+    for nombre, (ancho, alto) in DESCARGAS_DE_JUGUETE.items():
+        color = (200, 30, 30) if (fallo == "color" and nombre == cual) else None
+        ruta = _jpeg(carpeta, f"{nombre}.jpg", ancho, alto, color=color)
+        sha1[nombre] = "0" * 40 if (fallo == "sha1" and nombre == cual) else _sha1(ruta)
+    return sha1
+
+
 # --------------------------------------------------------------------------
 # Lo que hay en las carpetas
 # --------------------------------------------------------------------------
-def test_las_carpetas_llevan_justo_los_ejemplos():
-    assert sorted(p.name for p in CARPETA_EJEMPLOS.iterdir()) == sorted(
-        f"{n}.dcm" for n in EJEMPLOS)
-    assert sorted(p.name for p in CARPETA_ORIGINALES.iterdir()) == sorted(
-        f"{n}.png" for n in IMAGENES)
-
-
-def test_las_descargas_grandes_no_se_versionan():
-    """Las originales de Commons (hasta 2765 px) no viajan: solo las reducidas."""
-    grandes = [p.relative_to(REPO).as_posix()
-               for p in (REPO / "app").rglob("*")
-               if p.suffix.lower() in {".jpg", ".jpeg", ".tif", ".tiff"}]
-    assert grandes == []
+def test_las_carpetas_llevan_justo_los_ejemplos(versionados):
+    """Lo versionado, no lo que haya en el disco: ni un `desktop.ini` de OneDrive la
+    hace fallar, ni un DICOM que el `.gitignore` esconda la deja pasar. (Que ninguna
+    descarga grande de Commons se versiona en ningún sitio ya lo garantiza la prueba
+    de los binarios de `test_anonimato.py`: solo admite PNG y DICOM declarados.)"""
+    assert [n for n in versionados if n.startswith("app/assets/ejemplos/")] == sorted(
+        f"app/assets/ejemplos/{n}.dcm" for n in EJEMPLOS)
+    assert [n for n in versionados if n.startswith("app/assets/originales/")] == sorted(
+        f"app/assets/originales/{n}.png" for n in IMAGENES)
 
 
 @pytest.mark.parametrize("nombre", EJEMPLOS)
@@ -416,15 +456,49 @@ def test_reducir_no_acepta_una_imagen_en_color(guion, tmp_path):
     assert not destino.exists()
 
 
+def test_reducir_las_tres_escribe_las_tres(guion, tmp_path, monkeypatch):
+    sha1 = _descargas_de_juguete(tmp_path / "descargas")
+    monkeypatch.setattr(guion, "SHA1_DE_LOS_ORIGINALES", sha1)
+    rutas = guion.reducir_originales(tmp_path / "descargas", tmp_path / "nuevos")
+    assert [p.name for p in rutas] == [f"{n}.png" for n in IMAGENES]
+    for ruta in rutas:
+        with Image.open(ruta) as imagen:
+            assert imagen.mode == "L" and max(imagen.size) == LADO_MAYOR
+
+
+@pytest.mark.parametrize("fallo", ["sha1", "color"])
+@pytest.mark.parametrize("cual", IMAGENES)
+def test_reducir_las_tres_con_una_mala_no_cambia_nada(guion, tmp_path, monkeypatch,
+                                                      cual, fallo):
+    """Una de las tres mal (la primera, la segunda o la tercera: con la segunda o la
+    tercera, reducir y escribir de una en una dejaba ya escritas las anteriores) no
+    deja PNG nuevos mezclados con los de antes."""
+    sha1 = _descargas_de_juguete(tmp_path / "descargas", cual, fallo)
+    monkeypatch.setattr(guion, "SHA1_DE_LOS_ORIGINALES", sha1)
+    destino = tmp_path / "originales"
+    destino.mkdir()
+    for nombre in IMAGENES:                                   # lo que ya había
+        Image.new("L", (8, 8), 7).save(destino / f"{nombre}.png")
+    antes = {p.name: p.read_bytes() for p in destino.iterdir()}
+    with pytest.raises(ValueError, match=f"{cual}.jpg"):
+        guion.reducir_originales(tmp_path / "descargas", destino)
+    assert {p.name: p.read_bytes() for p in destino.iterdir()} == antes
+
+
+def test_reducir_las_tres_con_la_ultima_mala_no_crea_ni_la_carpeta(guion, tmp_path,
+                                                                   monkeypatch):
+    sha1 = _descargas_de_juguete(tmp_path / "descargas", "neumonia_ap", "sha1")
+    monkeypatch.setattr(guion, "SHA1_DE_LOS_ORIGINALES", sha1)
+    with pytest.raises(ValueError, match="neumonia_ap.jpg"):
+        guion.reducir_originales(tmp_path / "descargas", tmp_path / "originales")
+    assert not (tmp_path / "originales").exists()
+
+
 def test_el_guion_va_de_las_descargas_a_los_dicom(guion, tmp_path, monkeypatch, capsys):
     """De punta a punta, con tres descargas de juguete: `--reducir`, y luego los
     cuatro DICOM, que el lector del proyecto lee."""
     descargas = tmp_path / "descargas"
-    descargas.mkdir()
-    tamanos = {"normal_pa": (900, 1100), "neumonia_pa": (1000, 850),
-               "neumonia_ap": (950, 950)}
-    sha1 = {n: _sha1(_jpeg(descargas, f"{n}.jpg", *tamano))
-            for n, tamano in tamanos.items()}
+    sha1 = _descargas_de_juguete(descargas)
     monkeypatch.setattr(guion, "SHA1_DE_LOS_ORIGINALES", sha1)
     monkeypatch.setattr(guion, "CARPETA_ORIGINALES", tmp_path / "originales")
     monkeypatch.setattr(guion, "CARPETA_EJEMPLOS", tmp_path / "ejemplos")
@@ -450,16 +524,33 @@ def test_el_guion_sin_argumentos_empaqueta_lo_que_hay(guion, tmp_path, monkeypat
         assert (tmp_path / f"{nombre}.dcm").read_bytes() == _datos(nombre)
 
 
-def test_el_guion_con_una_descarga_equivocada_sale_con_1(guion, tmp_path, monkeypatch,
-                                                         capsys):
-    descargas = tmp_path / "descargas"
-    descargas.mkdir()
-    for nombre in IMAGENES:
-        _jpeg(descargas, f"{nombre}.jpg", 900, 800)           # no son las de Commons
+def test_el_guion_con_la_ultima_descarga_equivocada_sale_con_1_y_no_escribe_nada(
+        guion, tmp_path, monkeypatch, capsys):
+    """Las dos primeras están bien y la tercera no es la de Commons: ni los PNG ni
+    los DICOM."""
+    sha1 = _descargas_de_juguete(tmp_path / "descargas", "neumonia_ap", "sha1")
+    monkeypatch.setattr(guion, "SHA1_DE_LOS_ORIGINALES", sha1)
     monkeypatch.setattr(guion, "CARPETA_ORIGINALES", tmp_path / "originales")
     monkeypatch.setattr(guion, "CARPETA_EJEMPLOS", tmp_path / "ejemplos")
-    assert guion.principal(["--reducir", str(descargas)]) == 1
+    assert guion.principal(["--reducir", str(tmp_path / "descargas")]) == 1
+    error = capsys.readouterr().err
+    assert "SHA-1" in error and "neumonia_ap.jpg" in error
+    assert not (tmp_path / "originales").exists()
+    assert not (tmp_path / "ejemplos").exists()
+
+
+def test_el_guion_con_una_descarga_que_no_es_la_de_commons_sale_con_1(
+        guion, tmp_path, monkeypatch, capsys):
+    """Con la tabla de SHA-1 de verdad, unas descargas de juguete no son las de
+    Commons: salida 1 y nada escrito."""
+    (tmp_path / "descargas").mkdir()
+    for nombre, (ancho, alto) in DESCARGAS_DE_JUGUETE.items():
+        _jpeg(tmp_path / "descargas", f"{nombre}.jpg", ancho, alto)
+    monkeypatch.setattr(guion, "CARPETA_ORIGINALES", tmp_path / "originales")
+    monkeypatch.setattr(guion, "CARPETA_EJEMPLOS", tmp_path / "ejemplos")
+    assert guion.principal(["--reducir", str(tmp_path / "descargas")]) == 1
     assert "SHA-1" in capsys.readouterr().err
+    assert not (tmp_path / "originales").exists()
     assert not (tmp_path / "ejemplos").exists()
 
 
@@ -489,12 +580,44 @@ def test_cada_ejemplo_tiene_fuente_autor_licencia_y_atribucion(nombre):
     assert FICHEROS_ORIGINALES[imagen] in seccion["Imagen original"]
     assert seccion["Página de origen"] == PAGINAS[imagen]
     assert "Mikael Häggström" in seccion["Autor"]
-    assert "CC0 1.0" in seccion["Licencia"]
-    assert LITERAL_DE_LA_LICENCIA in seccion["Licencia"]
     assert CREDITO in seccion["Atribución"]
     assert _texto_plano(seccion["SHA-1 del original"]) == SHA1[imagen]
     cambio = seccion["Qué se cambió"]
     assert "768" in cambio and "escala de grises" in cambio and "DICOM" in cambio
+
+
+@pytest.mark.parametrize("nombre", EJEMPLOS)
+def test_la_licencia_declarada_es_cc0_y_ninguna_otra(nombre):
+    """El literal que se cita de la página de origen ya dice «CC0 1.0»: con
+    `"CC0 1.0" in licencia` una sección que declarase otra licencia («CC BY-SA 4.0,
+    dedicación…») pasaría igual. Se mira cómo empieza la declaración y que, fuera de
+    la cita, no asome ninguna de las otras (BY, SA, NC, ND)."""
+    licencia = _licencias()[f"{nombre}.dcm"]["Licencia"]
+    assert licencia.startswith("CC0 1.0 Universal")
+    assert LITERAL_DE_LA_LICENCIA in licencia
+    fuera_de_la_cita = licencia.replace(LITERAL_DE_LA_LICENCIA, "")
+    assert re.search(r"(?i)\b(by|sa|nc|nd)\b", fuera_de_la_cita) is None
+
+
+@pytest.mark.parametrize("nombre", EJEMPLOS)
+def test_el_consentimiento_dice_lo_que_dice_la_pagina_y_cuando(nombre):
+    """Lo que consta del consentimiento de la persona de cada imagen: lo que dice su
+    página de origen el día que se consultó, y nada más. De las dos con neumonía, que
+    lo dio por escrito, con la publicación en línea; de la normal y de la que sale de
+    ella, que no consta (su página no lo menciona). Nunca que el repositorio lo haya
+    comprobado."""
+    texto = _licencias()[f"{nombre}.dcm"]["Consentimiento"]
+    assert "página de origen" in texto and FECHA_DE_CONSULTA in texto
+    assert re.search(r"(?i)verificad|confirmad|garantiz|acreditad", texto) is None
+    if nombre in CON_CONSENTIMIENTO:
+        assert "consentimiento informado" in texto
+        assert "publicación en línea" in texto
+        assert not texto.startswith("No consta")
+    else:
+        assert nombre in SIN_CONSENTIMIENTO
+        assert texto.startswith("No consta") and "no menciona" in texto
+        assert "no hay" not in texto.lower()
+        assert "informado" not in texto and "publicación en línea" not in texto
 
 
 def test_el_rechazado_dice_que_su_edad_es_inventada():

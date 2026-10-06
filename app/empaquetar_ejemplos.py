@@ -15,8 +15,10 @@ salen del nombre de cada ejemplo y no del azar, y la cabecera no lleva fechas ni
 Con --reducir rehace antes los PNG desde las descargas de Wikimedia Commons. Espera
 en CARPETA los ficheros normal_pa.jpg, neumonia_pa.jpg y neumonia_ap.jpg, comprueba el
 SHA-1 de cada uno contra el de su página de origen (app/assets/LICENCIAS.md), baja el
-lado mayor a 768 px y los guarda en gris. Las descargas, de hasta 2765 px, no se
-versionan: este paso solo hace falta para rehacer los PNG.
+lado mayor a 768 px y los guarda en gris. Reduce los tres en memoria y solo escribe
+cuando los tres están bien: uno que no es el de Commons, o que está en color, no deja
+nada escrito. Las descargas, de hasta 2765 px, no se versionan: este paso solo hace
+falta para rehacer los PNG.
 
 La cabecera de cada DICOM lleva lo que leen el motor y la app (edad, sexo, vista, y
 el identificador `EJEMPLO-n`), los UID y lo mínimo de una imagen de 8 bits
@@ -199,12 +201,10 @@ def _escalado(lado: int, mayor: int) -> int:
     return max(1, (lado * LADO_MAYOR + mayor // 2) // mayor)
 
 
-def reducir_original(origen: Path, destino: Path, sha1_esperado: str) -> None:
-    """De una descarga de Commons al PNG de originales/: comprueba su SHA-1, la pasa
-    a escala de grises de 8 bits y baja el lado mayor a 768 px (LANCZOS). Una imagen
-    que ya cabe no se amplía. Si el SHA-1 o los canales no cuadran, no escribe nada.
-    """
-    origen, destino = Path(origen), Path(destino)
+def _reducida(origen: Path, sha1_esperado: str) -> Image.Image:
+    """La descarga de `origen` ya reducida, en memoria: comprueba su SHA-1, la pasa a
+    escala de grises de 8 bits y baja el lado mayor a 768 px (LANCZOS). Una imagen
+    que ya cabe no se amplía. No escribe nada."""
     datos = origen.read_bytes()
     sha1 = hashlib.sha1(datos, usedforsecurity=False).hexdigest()
     if sha1 != sha1_esperado:
@@ -217,8 +217,39 @@ def reducir_original(origen: Path, destino: Path, sha1_esperado: str) -> None:
     if mayor > LADO_MAYOR:
         gris = gris.resize((_escalado(ancho, mayor), _escalado(alto, mayor)),
                            Image.Resampling.LANCZOS)
+    return gris
+
+
+def _guardar_png(imagen: Image.Image, destino: Path) -> None:
+    """Un PNG sin ningún trozo auxiliar (ni dpi, ni texto, ni fecha)."""
     destino.parent.mkdir(parents=True, exist_ok=True)
-    gris.save(destino, format="PNG", optimize=True)
+    imagen.save(destino, format="PNG", optimize=True)
+
+
+def reducir_original(origen: Path, destino: Path, sha1_esperado: str) -> None:
+    """De una descarga de Commons al PNG `destino`: la reduce (ver `_reducida`) y la
+    guarda. Si el SHA-1 o los canales no cuadran, no escribe nada."""
+    _guardar_png(_reducida(Path(origen), sha1_esperado), Path(destino))
+
+
+def reducir_originales(descargas: Path, destino: Path | None = None) -> list[Path]:
+    """De las tres descargas de Commons que hay en `descargas` (normal_pa.jpg,
+    neumonia_pa.jpg y neumonia_ap.jpg) a los tres PNG de `destino` (por defecto,
+    originales/), y devuelve sus rutas.
+
+    Las reduce las tres en memoria y solo escribe cuando las tres están bien, como
+    `empaquetar` con los DICOM: una descarga que no es la de Commons (otro SHA-1) o que
+    está en color no deja en `destino` unos PNG nuevos mezclados con los de antes.
+    """
+    destino = CARPETA_ORIGINALES if destino is None else Path(destino)
+    reducidas = {nombre: _reducida(Path(descargas) / f"{nombre}.jpg", sha1)
+                 for nombre, sha1 in SHA1_DE_LOS_ORIGINALES.items()}
+    rutas = []
+    for nombre, imagen in reducidas.items():
+        ruta = destino / f"{nombre}.png"
+        _guardar_png(imagen, ruta)
+        rutas.append(ruta)
+    return rutas
 
 
 # --------------------------------------------------------------------------
@@ -234,10 +265,8 @@ def principal(argumentos: list[str] | None = None) -> int:
     opciones = analizador.parse_args(argumentos)
     try:
         if opciones.reducir is not None:
-            for nombre, sha1 in SHA1_DE_LOS_ORIGINALES.items():
-                reducir_original(opciones.reducir / f"{nombre}.jpg",
-                                 CARPETA_ORIGINALES / f"{nombre}.png", sha1)
-                print(f"reducida: {nombre}.png")
+            for ruta in reducir_originales(opciones.reducir):
+                print(f"reducida: {ruta.name}")
         for ruta in empaquetar():
             print(f"empaquetado: {ruta.name} ({ruta.stat().st_size} bytes)")
     except (ValueError, OSError) as error:

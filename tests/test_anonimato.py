@@ -83,6 +83,31 @@ BINARIOS_REVISADOS = (
 )
 METADATOS_PERMITIDOS = {"Software", "dpi", "Title", "Description"}
 
+# Los binarios de `app/assets/` (los tres PNG y los cuatro DICOM de los ejemplos),
+# fijados además por el SHA-256 de sus bytes, como están fijadas las imágenes de los
+# notebooks: declararlos solo por su nombre no ve que otra imagen ocupe su sitio, que
+# un PNG gane un trozo auxiliar (una fecha, un texto) ni que un DICOM se regenere con
+# otra cabecera. Un binario que cambia hace fallar la suite, que dice el fichero y no
+# vuelca sus bytes, hasta que alguien lo vuelve a mirar. Las huellas se rehacen a la
+# vez que los binarios (otra imagen, otro guion, otra versión de pydicom) y solo
+# después de volver a mirarlos: tests/anonimato/README.md.
+HUELLAS_DE_LOS_BINARIOS = {
+    "app/assets/ejemplos/neumonia_ap.dcm":
+        "f881d545a7e0bbefe7840cfc0ebb871476eb549e83904d7416ea67a98c46bc8e",
+    "app/assets/ejemplos/neumonia_pa.dcm":
+        "df6c6ea765928ea83209b29f38a09b667be4ff5dd1c1eca147fde3f81651df61",
+    "app/assets/ejemplos/normal_pa.dcm":
+        "77e88f7c5e3c9915ddd54ae372cfc345a5efb1ba8c56747b68cda2903ee509b4",
+    "app/assets/ejemplos/rechazado_menor.dcm":
+        "186694a0b962ad3af1a2ccc620c99d3ba42af4ac217452e0fda812bdcc5c849f",
+    "app/assets/originales/neumonia_ap.png":
+        "2d6bc6b1d1989c81c87e492b1f9ec4aa4e3692435b855d541e19da1641378f73",
+    "app/assets/originales/neumonia_pa.png":
+        "b77ea8c678dd487e8cd25da5302fe8623ca7ad2cc513e41cecc1ce0fe2e29e8b",
+    "app/assets/originales/normal_pa.png":
+        "211bffe38225a88d56d8fc7b790d6568f1990fda19146bd01bec0c742c787820",
+}
+
 # Las etiquetas que puede llevar la cabecera de un DICOM versionado (los ejemplos
 # de la app), la del `file_meta` y la del conjunto de datos, revisadas a mano. Una
 # etiqueta nueva -un nombre, una fecha, un equipo, un comentario- hace fallar la
@@ -2038,6 +2063,50 @@ def test_los_binarios_versionados_son_los_revisados():
         pytest.skip(FUERA_DE_GIT)
     hallados = sorted(p.relative_to(RAIZ).as_posix() for p in va.binarios(RAIZ))
     assert hallados == sorted(BINARIOS_REVISADOS)
+
+
+def _binarios_que_cambiaron(raiz, huellas):
+    """Los nombres de `huellas` cuyo fichero, bajo `raiz`, falta o ya no tiene ese
+    SHA-256. Solo nombres: ni los bytes ni las huellas."""
+    return sorted(
+        nombre for nombre, huella in huellas.items()
+        if not (raiz / nombre).is_file()
+        or hashlib.sha256((raiz / nombre).read_bytes()).hexdigest() != huella)
+
+
+def test_todo_binario_declarado_de_app_tiene_su_huella():
+    """Un binario de `app/assets/` no se declara solo por su nombre: lleva su
+    SHA-256 en HUELLAS_DE_LOS_BINARIOS, y esa lista no lleva huellas de binarios
+    que no estén declarados."""
+    declarados = {n for n in BINARIOS_REVISADOS if n.startswith("app/assets/")}
+    sin_huella = sorted(declarados - set(HUELLAS_DE_LOS_BINARIOS))
+    sin_declarar = sorted(set(HUELLAS_DE_LOS_BINARIOS) - declarados)
+    if sin_huella or sin_declarar:
+        pytest.fail("binarios de app/assets/ declarados sin su SHA-256 en "
+                    f"HUELLAS_DE_LOS_BINARIOS: {', '.join(sin_huella) or '-'}; "
+                    "huellas de binarios que no están en BINARIOS_REVISADOS: "
+                    f"{', '.join(sin_declarar) or '-'}", pytrace=False)
+
+
+def test_los_binarios_de_app_son_los_revisados_byte_a_byte():
+    cambiados = _binarios_que_cambiaron(RAIZ, HUELLAS_DE_LOS_BINARIOS)
+    if cambiados:
+        pytest.fail("binarios que ya no son los revisados (su SHA-256 es otro, o "
+                    f"faltan): {', '.join(cambiados)}. Hay que volver a mirarlos y, "
+                    "solo después, rehacer su huella aquí y su fila de "
+                    "tests/anonimato/README.md", pytrace=False)
+
+
+def test_un_binario_cambiado_o_ausente_se_nombra_sin_volcar_sus_bytes(tmp_path):
+    (tmp_path / "a.bin").write_bytes(b"uno")
+    (tmp_path / "b.bin").write_bytes(b"dos")
+    huellas = {nombre: hashlib.sha256(datos).hexdigest()
+               for nombre, datos in (("a.bin", b"uno"), ("b.bin", b"dos"),
+                                     ("c.bin", b"tres"))}
+    assert _binarios_que_cambiaron(tmp_path, huellas) == ["c.bin"]      # c.bin falta
+    (tmp_path / "b.bin").write_bytes(b"dos con un trozo de mas")
+    assert _binarios_que_cambiaron(tmp_path, huellas) == ["b.bin", "c.bin"]
+    assert _binarios_que_cambiaron(tmp_path, {}) == []
 
 
 def _mirar_imagen(datos, nombre):
