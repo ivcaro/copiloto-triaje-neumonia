@@ -3,6 +3,11 @@ data/
 datasets/
 *.dcm
 *.zip
+# La excepción: los cuatro DICOM de ejemplo de la app (SP5-C1). No son del conjunto
+# de datos sino de fuera de RSNA, con licencia que permite redistribuirlos
+# (app/assets/LICENCIAS.md), y los hace app/empaquetar_ejemplos.py. Sin esta línea,
+# `git add -A` los dejaría fuera sin avisar y la prueba de los binarios no los vería.
+!app/assets/ejemplos/*.dcm
 
 # Artefactos del modelo
 models/

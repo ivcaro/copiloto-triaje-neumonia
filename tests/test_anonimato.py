@@ -57,6 +57,13 @@ COPIA, INDICE, COMMIT = "copia de trabajo", "indice", "commit"
 # Un binario nuevo hace fallar la prueba hasta que alguien lo abre, lo mira y
 # lo añade aquí y a la declaración.
 BINARIOS_REVISADOS = (
+    "app/assets/ejemplos/neumonia_ap.dcm",
+    "app/assets/ejemplos/neumonia_pa.dcm",
+    "app/assets/ejemplos/normal_pa.dcm",
+    "app/assets/ejemplos/rechazado_menor.dcm",
+    "app/assets/originales/neumonia_ap.png",
+    "app/assets/originales/neumonia_pa.png",
+    "app/assets/originales/normal_pa.png",
     "docs/eda/01_distribucion_clases.png",
     "docs/eda/02_edad_y_atipicos.png",
     "docs/eda/03_vista_confusor.png",
@@ -75,6 +82,25 @@ BINARIOS_REVISADOS = (
     "docs/validacion-semisintetica/pendiente_rejilla.png",
 )
 METADATOS_PERMITIDOS = {"Software", "dpi", "Title", "Description"}
+
+# Las etiquetas que puede llevar la cabecera de un DICOM versionado (los ejemplos
+# de la app), la del `file_meta` y la del conjunto de datos, revisadas a mano. Una
+# etiqueta nueva -un nombre, una fecha, un equipo, un comentario- hace fallar la
+# prueba hasta que alguien la mira y la añade aquí y a la declaración. Los píxeles
+# no son una etiqueta: solo los ve la revisión a mano.
+ETIQUETAS_DICOM_PERMITIDAS = {
+    "FileMetaInformationGroupLength", "FileMetaInformationVersion",
+    "MediaStorageSOPClassUID", "MediaStorageSOPInstanceUID", "TransferSyntaxUID",
+    "ImplementationClassUID", "ImplementationVersionName",
+    "SOPClassUID", "SOPInstanceUID", "Modality", "ConversionType", "PatientName",
+    "PatientID", "PatientSex", "PatientAge", "BodyPartExamined", "ViewPosition",
+    "StudyInstanceUID", "SeriesInstanceUID", "SamplesPerPixel",
+    "PhotometricInterpretation", "Rows", "Columns", "BitsAllocated", "BitsStored",
+    "HighBit", "PixelRepresentation", "PixelData",
+}
+# Los valores de estos tipos (nombre de persona, fecha, fecha y hora, hora) van
+# vacíos: un nombre o una fecha de verdad no se puede comparar con la lista.
+TIPOS_DICOM_SIEMPRE_VACIOS = ("PN", "DA", "DT", "TM")
 
 # Las imagenes incrustadas en cada notebook que se publica, por el SHA-256 de
 # sus bytes (ya decodificados de base64), ordenadas. Son huellas de IMAGENES,
@@ -2044,9 +2070,18 @@ def _sin_huellas_en_los_valores(textos):
     assert not con_huella, "metadatos con una cadena de la lista"
 
 
+def test_cada_binario_revisado_es_un_png_o_un_dicom():
+    """Las pruebas de metadatos miran PNG y DICOM: otra clase de binario se les
+    escaparía a las dos, y no se puede declarar sin una prueba que lo mire."""
+    de_mas = [n for n in BINARIOS_REVISADOS if not n.endswith((".png", ".dcm"))]
+    assert de_mas == []
+
+
 def test_los_png_no_llevan_metadatos_que_identifiquen():
     textos = []
     for nombre in BINARIOS_REVISADOS:
+        if not nombre.endswith(".png"):
+            continue
         formato, texto = _mirar_imagen((RAIZ / nombre).read_bytes(), nombre)
         assert formato == "PNG", nombre
         textos.append((nombre, texto))
@@ -2078,6 +2113,90 @@ def test_un_metadato_detras_de_los_datos_de_la_imagen_tambien_se_mira(
     with pytest.raises(pytest.fail.Exception) as error:
         _mirar_imagen(ruta.read_bytes(), "juguete.png")
     assert "juguete.png" in str(error.value) and "Author" in str(error.value)
+    assert "Neutro" not in str(error.value)
+
+
+def _mirar_dicom(datos, nombre):
+    """Mira un DICOM versionado: las etiquetas de su cabecera (la del `file_meta`
+    y la del conjunto de datos) tienen que estar en ETIQUETAS_DICOM_PERMITIDAS, y
+    sus nombres de persona, fechas y horas, vacíos. Devuelve el texto de sus
+    valores, sin los píxeles, que se mira después contra las huellas. Si falla,
+    dice el DICOM y la etiqueta, nunca el valor."""
+    import pydicom
+    ds = pydicom.dcmread(io.BytesIO(datos))
+    elementos = list(ds.file_meta) + list(ds)
+    de_mas = sorted(e.keyword or str(e.tag) for e in elementos
+                    if e.keyword not in ETIQUETAS_DICOM_PERMITIDAS)
+    if de_mas:
+        pytest.fail(f"{nombre}: etiquetas DICOM que no son las revisadas: "
+                    f"{', '.join(de_mas)}", pytrace=False)
+    con_contenido = sorted(e.keyword for e in elementos
+                           if e.VR in TIPOS_DICOM_SIEMPRE_VACIOS and str(e.value))
+    if con_contenido:
+        pytest.fail(f"{nombre}: nombres, fechas u horas con contenido: "
+                    f"{', '.join(con_contenido)}", pytrace=False)
+    return " ".join(str(e.value) for e in elementos
+                    if e.keyword != "PixelData" and not isinstance(e.value, bytes))
+
+
+def test_los_dicom_no_llevan_etiquetas_que_identifiquen():
+    textos = [(nombre, _mirar_dicom((RAIZ / nombre).read_bytes(), nombre))
+              for nombre in BINARIOS_REVISADOS if nombre.endswith(".dcm")]
+    assert textos, "no hay ningún DICOM declarado: la prueba no ha mirado nada"
+    _sin_huellas_en_los_valores(textos)
+
+
+def _dicom_de_juguete(**de_mas):
+    """Un DICOM de 2x2 con la cabecera mínima de los ejemplos, más los campos que
+    se le pasen (`InstitutionName="..."`)."""
+    from pydicom.dataset import Dataset, FileMetaDataset
+    from pydicom.uid import ExplicitVRLittleEndian
+    ds = Dataset()
+    ds.SOPClassUID = "1.2.840.10008.5.1.4.1.1.7"
+    ds.SOPInstanceUID = "2.25.1"
+    ds.PatientName = ""
+    ds.PatientID = "EJEMPLO-0"
+    ds.SamplesPerPixel = 1
+    ds.PhotometricInterpretation = "MONOCHROME2"
+    ds.Rows, ds.Columns = 2, 2
+    ds.BitsAllocated, ds.BitsStored, ds.HighBit = 8, 8, 7
+    ds.PixelRepresentation = 0
+    ds.PixelData = bytes(4)
+    for etiqueta, valor in de_mas.items():
+        setattr(ds, etiqueta, valor)
+    ds.file_meta = FileMetaDataset()
+    ds.file_meta.MediaStorageSOPClassUID = ds.SOPClassUID
+    ds.file_meta.MediaStorageSOPInstanceUID = ds.SOPInstanceUID
+    ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    salida = io.BytesIO()
+    ds.save_as(salida, enforce_file_format=True)
+    return salida.getvalue()
+
+
+def test_un_dicom_limpio_pasa_y_da_el_texto_de_sus_valores():
+    texto = _mirar_dicom(_dicom_de_juguete(), "limpio.dcm")
+    assert "EJEMPLO-0" in texto and "2.25.1" in texto
+
+
+@pytest.mark.parametrize("de_mas,etiqueta", [
+    pytest.param({"InstitutionName": "Centro Neutro"}, "InstitutionName", id="centro"),
+    pytest.param({"StationName": "Equipo Neutro"}, "StationName", id="equipo"),
+    pytest.param({"PatientBirthDate": "19900101"}, "PatientBirthDate", id="nacimiento"),
+    pytest.param({"StudyDate": "20260101"}, "StudyDate", id="fecha_del_estudio"),
+    pytest.param({"ImageComments": "Comentario Neutro"}, "ImageComments",
+                 id="comentario"),
+])
+def test_una_etiqueta_dicom_de_mas_se_mira(de_mas, etiqueta):
+    with pytest.raises(pytest.fail.Exception) as error:
+        _mirar_dicom(_dicom_de_juguete(**de_mas), "juguete.dcm")
+    assert "juguete.dcm" in str(error.value) and etiqueta in str(error.value)
+    assert "Neutro" not in str(error.value) and "2026" not in str(error.value)
+
+
+def test_un_nombre_de_persona_con_contenido_se_mira():
+    with pytest.raises(pytest.fail.Exception) as error:
+        _mirar_dicom(_dicom_de_juguete(PatientName="Apellido^Neutro"), "juguete.dcm")
+    assert "juguete.dcm" in str(error.value) and "PatientName" in str(error.value)
     assert "Neutro" not in str(error.value)
 
 
