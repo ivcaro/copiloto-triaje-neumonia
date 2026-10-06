@@ -70,6 +70,10 @@ BINARIOS_REVISADOS = (
     "docs/eda/04_sexo.png",
     "docs/eda/05_correlaciones.png",
     "docs/eda/06_cajas.png",
+    "docs/interfaz/acerca-de-metricas.png",
+    "docs/interfaz/acerca-de-modelo.png",
+    "docs/interfaz/probar-con-ejemplo.png",
+    "docs/interfaz/rechazado.png",
     "docs/validacion-semisintetica/contencion_rejilla.png",
     "docs/validacion-semisintetica/fiabilidad_0a.png",
     "docs/validacion-semisintetica/fiabilidad_r1-000_r0-030.png",
@@ -83,14 +87,15 @@ BINARIOS_REVISADOS = (
 )
 METADATOS_PERMITIDOS = {"Software", "dpi", "Title", "Description"}
 
-# Los binarios de `app/assets/` (los tres PNG y los cuatro DICOM de los ejemplos),
-# fijados además por el SHA-256 de sus bytes, como están fijadas las imágenes de los
-# notebooks: declararlos solo por su nombre no ve que otra imagen ocupe su sitio, que
-# un PNG gane un trozo auxiliar (una fecha, un texto) ni que un DICOM se regenere con
-# otra cabecera. Un binario que cambia hace fallar la suite, que dice el fichero y no
-# vuelca sus bytes, hasta que alguien lo vuelve a mirar. Las huellas se rehacen a la
-# vez que los binarios (otra imagen, otro guion, otra versión de pydicom) y solo
-# después de volver a mirarlos: tests/anonimato/README.md.
+# Los binarios de `app/assets/` (los tres PNG y los cuatro DICOM de los ejemplos) y las
+# capturas de la interfaz de `docs/interfaz/` (las del README), fijados además por el
+# SHA-256 de sus bytes, como están fijadas las imágenes de los notebooks: declararlos
+# solo por su nombre no ve que otra imagen ocupe su sitio, que un PNG gane un trozo
+# auxiliar (una fecha, un texto) ni que un DICOM se regenere con otra cabecera. Un
+# binario que cambia hace fallar la suite, que dice el fichero y no vuelca sus bytes,
+# hasta que alguien lo vuelve a mirar. Las huellas se rehacen a la vez que los binarios
+# (otra imagen, otro guion, otra versión de pydicom, otra captura de una pantalla que
+# cambió) y solo después de volver a mirarlos: tests/anonimato/README.md.
 HUELLAS_DE_LOS_BINARIOS = {
     "app/assets/ejemplos/neumonia_ap.dcm":
         "f881d545a7e0bbefe7840cfc0ebb871476eb549e83904d7416ea67a98c46bc8e",
@@ -106,6 +111,14 @@ HUELLAS_DE_LOS_BINARIOS = {
         "b77ea8c678dd487e8cd25da5302fe8623ca7ad2cc513e41cecc1ce0fe2e29e8b",
     "app/assets/originales/normal_pa.png":
         "211bffe38225a88d56d8fc7b790d6568f1990fda19146bd01bec0c742c787820",
+    "docs/interfaz/acerca-de-metricas.png":
+        "95f85e8d2b51a4e2c4b89366639adc0e214d12a2a7cae12f5b01bcef3d7dbf22",
+    "docs/interfaz/acerca-de-modelo.png":
+        "fd4f73b50d6eca3750e22ab5b4cec2d626547694ee53e4182cc66374636c1911",
+    "docs/interfaz/probar-con-ejemplo.png":
+        "b530dd3b4d293499c62dd6902a85e816ab9ef387997f97dc4ff67002a6ac6b44",
+    "docs/interfaz/rechazado.png":
+        "9f4dc3096edf2798de4be148d0808f8b9c7e256f6712a924db0286ee95adce1b",
 }
 
 # Las etiquetas que puede llevar la cabecera de un DICOM versionado (los ejemplos
@@ -2075,15 +2088,16 @@ def _binarios_que_cambiaron(raiz, huellas):
 
 
 def test_todo_binario_declarado_de_app_tiene_su_huella():
-    """Un binario de `app/assets/` no se declara solo por su nombre: lleva su
-    SHA-256 en HUELLAS_DE_LOS_BINARIOS, y esa lista no lleva huellas de binarios
-    que no estén declarados."""
-    declarados = {n for n in BINARIOS_REVISADOS if n.startswith("app/assets/")}
+    """Un binario de `app/assets/` o de `docs/interfaz/` (las capturas de la interfaz)
+    no se declara solo por su nombre: lleva su SHA-256 en HUELLAS_DE_LOS_BINARIOS, y
+    esa lista no lleva huellas de binarios que no estén declarados."""
+    declarados = {n for n in BINARIOS_REVISADOS
+                  if n.startswith(("app/assets/", "docs/interfaz/"))}
     sin_huella = sorted(declarados - set(HUELLAS_DE_LOS_BINARIOS))
     sin_declarar = sorted(set(HUELLAS_DE_LOS_BINARIOS) - declarados)
     if sin_huella or sin_declarar:
-        pytest.fail("binarios de app/assets/ declarados sin su SHA-256 en "
-                    f"HUELLAS_DE_LOS_BINARIOS: {', '.join(sin_huella) or '-'}; "
+        pytest.fail("binarios de app/assets/ o de docs/interfaz/ declarados sin su "
+                    f"SHA-256 en HUELLAS_DE_LOS_BINARIOS: {', '.join(sin_huella) or '-'}; "
                     "huellas de binarios que no están en BINARIOS_REVISADOS: "
                     f"{', '.join(sin_declarar) or '-'}", pytrace=False)
 

@@ -101,6 +101,7 @@ La prueba de huellas no puede leer imágenes. Se revisaron a mano, una a una:
 | las 10 figuras de `docs/validacion-semisintetica/` | 29-sep-2026 | contenido (gráficos de la simulación, sin nombres, rutas, marcas de agua ni pies; el título lleva el rótulo «simulación semisintética») y metadatos (`Software`, `dpi`, `Title` y `Description`, que es la huella del JSON de resultados con el que `scripts/validar_combinacion.py` dibujó cada una) |
 | los 3 PNG de `app/assets/originales/` | 5-oct-2026 | contenido (radiografías de tórax de adultos de Wikimedia Commons, CC0, de fuera de RSNA y del NIH, reducidas a 768 px y en gris; solo llevan las letras de lateralidad «Dx» y «Sin» —la «Sin» de dos de ellas, `neumonia_pa` y `neumonia_ap`, está boca abajo: volteada en vertical, con el orden de las letras— y, en `neumonia_pa`, un pequeño marcador redondo en el borde del tórax; sin nombres, fechas, números ni marcas de agua) y metadatos (ninguno: el fichero solo tiene los trozos `IHDR`, `IDAT` e `IEND`, y su SHA-256 lo hace cumplir) |
 | los 4 DICOM de `app/assets/ejemplos/` | 5-oct-2026 | contenido (los píxeles de esos PNG; `rechazado_menor.dcm` repite los de `normal_pa.dcm`) y cabecera, elemento por elemento: `PatientName` vacío, `PatientID` `EJEMPLO-n`, edad, sexo y vista de ejemplo, UID de la raíz `2.25` sacados del nombre de cada ejemplo y lo mínimo de una imagen de 8 bits sin comprimir; ninguna fecha, hora, centro ni equipo; el preámbulo a ceros y nada detrás de los píxeles |
+| las 4 capturas de `docs/interfaz/` | 6-oct-2026 | contenido (la página de la app, solo la página, sin barra del navegador, sin ruta ni nada de la máquina: «Probar el modelo» con «Usar un ejemplo» y el ejemplo «Neumonía, PA», sus cinco hallazgos inventados, el resultado y el mapa de calor sobre la placa —la misma radiografía que `app/assets/originales/neumonia_pa.png`, con las mismas marcas que su fila de arriba y nada más—; el ejemplo «rechazado»; y dos recortes de «Acerca de», el modelo y las métricas con su tabla por subgrupo. Todo el texto es el de la propia app y la literatura que cita: ningún nombre de persona ni de institución, ninguna dirección, ningún identificador) y metadatos (ninguno: el fichero solo tiene los trozos `IHDR`, `IDAT` e `IEND`, y su SHA-256 lo hace cumplir). Se hicieron con la imagen Docker construida y los pesos de verdad, con el navegador de Playwright, y se recortó el blanco sobrante y se volvieron a escribir solo con sus píxeles |
 
 Varias pruebas de `tests/test_anonimato.py` atan esa revisión:
 
@@ -115,17 +116,18 @@ Varias pruebas de `tests/test_anonimato.py` atan esa revisión:
   dejaría fuera sin avisar y esta prueba no los vería.
 - `HUELLAS_DE_LOS_BINARIOS` fija, por su SHA-256, los siete binarios de
   `app/assets/` (los tres PNG de `originales/` y los cuatro DICOM de
-  `ejemplos/`), como `IMAGENES_DE_LOS_NOTEBOOKS` fija las imágenes de los
-  notebooks. Declararlos solo por su nombre no vería que otra imagen ocupase su
-  sitio, que un PNG ganase un trozo auxiliar (una fecha, un texto) ni que un
-  DICOM se regenerase con otra cabecera; con la huella, un binario que cambia,
-  o que falta, hace fallar la suite, que dice el fichero y no vuelca bytes.
-  Otra prueba exige que todo binario declarado bajo `app/assets/` tenga su
-  huella (y que no sobre ninguna), para que el próximo no se declare solo por
-  su nombre. **Las huellas se rehacen a la vez que los binarios** (otra imagen,
-  un cambio de `app/empaquetar_ejemplos.py`, otra versión de pydicom) **y solo
-  después de volver a mirarlos**: la huella dice «es el que se miró», no «está
-  bien».
+  `ejemplos/`) y las cuatro capturas de `docs/interfaz/`, como
+  `IMAGENES_DE_LOS_NOTEBOOKS` fija las imágenes de los notebooks. Declararlos
+  solo por su nombre no vería que otra imagen ocupase su sitio, que un PNG
+  ganase un trozo auxiliar (una fecha, un texto) ni que un DICOM se regenerase
+  con otra cabecera; con la huella, un binario que cambia, o que falta, hace
+  fallar la suite, que dice el fichero y no vuelca bytes. Otra prueba exige que
+  todo binario declarado bajo `app/assets/` o `docs/interfaz/` tenga su huella
+  (y que no sobre ninguna), para que el próximo no se declare solo por su
+  nombre. **Las huellas se rehacen a la vez que los binarios** (otra imagen, un
+  cambio de `app/empaquetar_ejemplos.py`, otra versión de pydicom, otra captura
+  porque la pantalla cambió) **y solo después de volver a mirarlos**: la huella
+  dice «es el que se miró», no «está bien».
 - `IMAGENES_DE_LOS_NOTEBOOKS` fija, por su SHA-256, las imágenes incrustadas
   en cada notebook: una imagen nueva, o una que cambie al volver a ejecutar
   el notebook, hace fallar la suite hasta que se revisa. Y como una imagen se

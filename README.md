@@ -250,14 +250,20 @@ lo dice.
 
 Qué hace:
 
-- **Entrada con validación.** Un DICOM subido (hasta 5 MB, como el servidor) o el
-  botón «Prueba con ejemplo»; los cinco hallazgos de la regla de Heckerling,
-  opcionales en bloque y con límites de interfaz; y un interruptor «Umbral por
-  vista (experimental)», apagado por defecto.
-- **Indicador de carga y errores en lenguaje llano.** Lo que no se puede evaluar
-  (un DICOM que no se puede leer ni interpretar, una edad desconocida o fuera de los
-  18-100 años, unos hallazgos inválidos) sale dicho a una persona y con lo que puede
-  hacer, nunca como una traza.
+- **Entrada con validación.** Un DICOM subido (hasta 5 MB, como el servidor) o uno
+  de los cuatro ejemplos: la opción «Usar un ejemplo» los ofrece, y el botón
+  «Prueba con ejemplo» calcula el elegido (también vale «Calcular»). Los cinco
+  hallazgos de la regla de Heckerling, opcionales en bloque y con límites de
+  interfaz; y un interruptor «Umbral por vista (experimental)», apagado por
+  defecto.
+- **Indicador de carga y errores en lenguaje llano.** Lo que no se puede evaluar sale
+  dicho a una persona y con lo que puede hacer, nunca como una traza: un fichero que
+  no es un DICOM o no se puede leer, una edad desconocida o fuera de los 18-100
+  años, unos hallazgos inválidos y, mirando solo la cabecera y antes de descodificar
+  un solo píxel, las placas que el modelo vería mal (que no son de 8 bits, con la
+  escala de grises invertida —MONOCHROME1— o en color, de más de 5 000 píxeles de
+  lado, con varios cuadros) y un DICOM comprimido entero («Deflated»), que la página
+  no abre.
 - **El resultado**, en los bloques del informe del bot —cribado, evidencia de la
   imagen, clínica y combinado—, con la puntuación frente al umbral y la horquilla
   en gráficos, y el **mapa de calor** sobre la placa (Grad-CAM), con su
@@ -268,6 +274,14 @@ Qué hace:
 - **«Acerca de»**: el modelo, los datos (con sus referencias), las métricas por
   subgrupo con sus intervalos, las limitaciones, el precio del umbral por vista y
   la licencia de los ejemplos.
+
+![La pestaña «Probar el modelo» con «Usar un ejemplo», el ejemplo «Neumonía, PA» y los cinco hallazgos: el resultado en bloques y el mapa de calor sobre la placa](docs/interfaz/probar-con-ejemplo.png)
+
+![El ejemplo «Rechazado: menor de edad»: el motor se niega a evaluar una placa con una edad fuera de 18-100 años y la página lo dice en lenguaje llano](docs/interfaz/rechazado.png)
+
+![La pestaña «Acerca de»: qué hace y qué no, y el modelo con su regla de Heckerling](docs/interfaz/acerca-de-modelo.png)
+
+![«Acerca de»: las métricas por subgrupo con sus intervalos, y las limitaciones](docs/interfaz/acerca-de-metricas.png)
 
 ### Cómo se ejecuta
 
@@ -282,24 +296,24 @@ y se abre `http://127.0.0.1:8501`. Lo que hay que saber:
 
 - **`127.0.0.1:` delante del puerto, siempre.** Sin él, Docker publica el 8501 en
   todas las interfaces de la máquina, y la página no pide ninguna contraseña.
-- **Con un límite de memoria, siempre** (`--memory=2g --memory-swap=2g`). La página
-  lee los DICOM que le sube quien la usa, y la cabecera de uno de pocos KB puede
-  declarar unas dimensiones enormes: el lector reserva la memoria de todo ese tamaño
-  antes de ver que los datos no la llenan (un fichero de 742 bytes que declaraba
-  40 000 × 40 000 píxeles le hizo reservar 1,5 GB). Con el límite, lo peor que pasa es
-  que muere el contenedor y no la máquina; `--memory-swap` igual a `--memory` porque,
-  sin él, Docker deja usar otro tanto de swap y el límite deja de serlo. Medido tras
-  usar la página con los cuatro ejemplos, el mapa de calor y las tres pestañas, la
-  app ocupa 457 MiB (`docker stats`; 1,1 GiB de pico si se cuenta la caché de
-  ficheros, que el núcleo recupera antes de matar nada): 2 GB, los mismos del
-  servidor, son margen de sobra.
+- **Con un límite de memoria, siempre** (`--memory=2g --memory-swap=2g`): es la red
+  de debajo. La página rechaza por la cabecera, antes de descodificar un solo píxel,
+  lo que declara unas dimensiones desmesuradas, pero el motor y el servidor siguen sin
+  esa guarda: con el lector del motor, un DICOM de cientos de bytes que declara
+  60 000 × 60 000 hace reservar 3,4 GiB, y con el límite lo que muere es el contenedor
+  y no la máquina. `--memory-swap` igual a `--memory`, porque sin él Docker deja usar
+  otro tanto de swap. La página usa menos de 500 MiB tras los cuatro ejemplos y el mapa
+  de calor (`docker stats`): 2 GB, los del servidor, son margen de sobra.
 - **La construcción tiene que correr desde la raíz**: es su contexto.
   `app/Dockerfile.dockerignore` es una lista blanca que deja fuera de él todo lo que
-  la imagen no copia (`.git`, `pruebas/`, `docs/`, `tests/`, los `.env`…).
+  la imagen no copia (`.git`, `pruebas/`, `docs/`, `tests/`, los `.env`…) y, de
+  `app/`, todo lo que la página no lee. Ese fichero, el de un Dockerfile concreto, lo
+  lee BuildKit (por defecto desde Docker 23): con el constructor antiguo se ignora y
+  el repositorio entero viaja al demonio.
 - **La imagen pesa**: torch en CPU y sus dependencias, 2,5 GB en disco. La primera
-  construcción las descarga; medida con la base ya en la caché y buena conexión,
-  tardó 2 min 24 s. Para una demostración es aceptable. Una vez construida no
-  necesita red: ni para cargar el modelo ni para arrancar.
+  construcción las descarga y tarda unos minutos. Para una demostración es
+  aceptable. Una vez construida no necesita red: ni para cargar el modelo ni para
+  arrancar.
 - **La primera página que se abre carga el modelo** (unos segundos, con su
   indicador); a partir de ahí cada cálculo tarda décimas de segundo en CPU.
 - **Corre sin privilegios, sin telemetría y sin llamar a nadie al arrancar.**
@@ -313,11 +327,23 @@ y se abre `http://127.0.0.1:8501`. Lo que hay que saber:
   arrancar con `-e`. `AUC_VALIDACION` y `PREVALENCIA_LOCAL` no tienen valor por
   defecto en el código, como en el servidor: sin ellas, la página no calcula y dice
   qué declarar.
-- **Sin Docker**: `pip install -r app/requirements.txt` y después `pip install
-  --no-deps .`, las variables de la cabecera de `app/app.py` y `streamlit run
-  app/app.py`. Docker es lo reproducible: la calibración usa scikit-learn, que en
-  algunas máquinas Windows no carga.
 - El despliegue público no forma parte de esto: se decide después.
+
+**Sin Docker**, se instala desde la raíz y se lanza desde `app/`:
+
+```
+pip install -r app/requirements.txt
+pip install --no-deps .
+cd app
+streamlit run app.py
+```
+
+con las variables de entorno que dice la cabecera de `app/app.py`. **Desde `app/` y
+no desde la raíz**: Streamlit lee `.streamlit/config.toml` del directorio desde el
+que se lanza, y desde la raíz no hay ninguno, así que se pierden en silencio la
+telemetría apagada, el límite de subida de 5 MB del servidor y las trazas ocultas en
+el navegador. Docker es lo reproducible: la calibración usa scikit-learn, que en
+algunas máquinas Windows no carga.
 
 ### De dónde salen los pesos
 
@@ -333,7 +359,7 @@ midieron.
 
 ### Los ejemplos
 
-«Prueba con ejemplo» ofrece cuatro: una radiografía normal en PA, una con opacidad
+«Usar un ejemplo» ofrece cuatro: una radiografía normal en PA, una con opacidad
 en PA, una con opacidad en AP y el «rechazado», que es la normal con una edad de 15
 años (inventada) para ver cómo el sistema se niega a evaluar lo que no puede.
 
@@ -354,25 +380,30 @@ NIH, ni ninguna fila por paciente: las métricas son agregados.
 | `app/app.py` | La interfaz: una sola página de Streamlit con tres pestañas, «Probar el modelo», «Historial de la sesión» y «Acerca de» |
 | `app/requirements.txt` | Sus dependencias, con la versión exacta: las del proyecto y las nuevas de la página |
 | `app/Dockerfile` | La imagen: la base del servidor (la misma, por su digest), torch en CPU, y los pesos y el calibrador dentro |
-| `app/Dockerfile.dockerignore` | Lo que entra al contexto de la construcción, en lista blanca. Se llama así y no `.dockerignore` porque el contexto es la raíz del repositorio, y Docker ignoraría en silencio un `app/.dockerignore` |
+| `app/Dockerfile.dockerignore` | Lo que entra al contexto de la construcción, en lista blanca y de `app/` por rutas: solo lo que la página lee. Se llama así y no `.dockerignore` porque el contexto es la raíz del repositorio, y Docker ignoraría en silencio un `app/.dockerignore` |
 | `app/.streamlit/config.toml` | La configuración de Streamlit: límite de subida de 5 MB, sin telemetría, sin trazas en el navegador. Streamlit la lee del directorio desde el que se lanza, y la imagen lo lanza desde `app/` |
-| `app/assets/ejemplos/` | Los cuatro DICOM de «Prueba con ejemplo» |
+| `app/assets/ejemplos/` | Los cuatro DICOM de «Usar un ejemplo» |
 | `app/assets/originales/` | Las tres radiografías reducidas (PNG) de las que salen. Sirven para rehacer los ejemplos; no entran a la imagen |
 | `app/assets/metricas.json` | Las métricas de «Acerca de», en agregados, con la huella de los pesos y de las puntuaciones de las que salen |
 | `app/assets/LICENCIAS.md` | Fuente, autor, licencia y atribución de cada ejemplo |
 | `app/empaquetar_ejemplos.py` | Guion: empaqueta los PNG originales como los DICOM de ejemplo, con los mismos bytes cada vez |
 | `app/generar_metricas.py` | Guion: calcula `metricas.json` desde las puntuaciones congeladas de prueba (las de cada placa no viajan al repositorio público) |
 
+Las capturas de arriba están en `docs/interfaz/`. Se hicieron con la imagen
+construida y los pesos de verdad, y cada una se miró antes de declararla
+(`tests/anonimato/README.md`).
+
 ### Pruebas de la interfaz
 
 La página se prueba con `streamlit.testing.v1.AppTest` (`tests/test_app.py`,
 `tests/test_app_ejemplos.py` y `tests/test_app_metricas.py`), que corren en la imagen
 Linux de pruebas. La imagen tiene la suya, `tests/test_app_docker.py`: comprueba lo
-que dice el Dockerfile y qué contexto de construcción llega al demonio, y arranca
-contenedores de verdad (publicados solo en `127.0.0.1`, o sin red, y con el límite de
-memoria de la orden de arriba) para ver que la página responde, que no llama a nadie
-al arrancar y que la app corre con los pesos de la imagen. **No construye la imagen**:
-usa `copiloto-app` si está y, si no hay Docker o no está construida, se salta
+que dicen el Dockerfile y este README, qué contexto de construcción llega al demonio, y
+arranca contenedores de verdad (publicados solo en `127.0.0.1`, o sin red, y con el
+límite de memoria de la orden de arriba) para ver que la página responde, que no llama
+a nadie al arrancar y que la app corre con los pesos de la imagen. **No construye la
+imagen**: usa `copiloto-app` si está, y comprueba que es de este árbol (si no lo es,
+falla y dice cómo reconstruirla); si no hay Docker o no está construida, se salta
 diciendo por qué y con la orden de construirla.
 
 ```

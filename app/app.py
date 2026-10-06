@@ -6,9 +6,16 @@ mismo `Motor` (`servicio/inferencia.py`), con los mismos pesos, la misma calibra
 y la misma combinación con la regla de Heckerling. Calcula en su propio proceso: no
 llama al servidor, a n8n ni a Telegram, y la placa no sale de aquí (D2).
 
-USO, desde la raíz del repositorio y con el paquete instalado:
+USO, con el paquete instalado, DESDE LA CARPETA `app/`:
 
-    streamlit run app/app.py
+    cd app
+    streamlit run app.py
+
+Desde `app/` y no desde la raíz del repositorio: Streamlit lee `.streamlit/config.toml` del
+directorio desde el que se LANZA, y desde la raíz no hay ninguno. Se pierden, en silencio,
+la telemetría apagada, el límite de subida del servidor (de 5 MB pasa a 200; la app
+comprueba además los 5 MB ella misma), las trazas ocultas en el navegador y la barra de
+herramientas reducida. La imagen Docker (`app/Dockerfile`) ya la lanza desde `app/`.
 
 EL ENTORNO, con la misma disciplina que `servidor/arrancar.py`:
 

@@ -5,19 +5,20 @@
 #   docker build -t copiloto-app -f app/Dockerfile .
 #   docker run --rm -p 127.0.0.1:8501:8501 --memory=2g --memory-swap=2g copiloto-app
 #
-# y se abre http://127.0.0.1:8501. El `-p` lleva SIEMPRE 127.0.0.1: sin él, Docker
-# publica el puerto en todas las interfaces de la máquina, y la app no pide ninguna
-# contraseña.
+# y se abre http://127.0.0.1:8501. La construcción necesita BuildKit (por defecto desde
+# Docker 23): el fichero de exclusiones de este Dockerfile, app/Dockerfile.dockerignore,
+# solo lo lee BuildKit, y con el constructor antiguo viajaría el repositorio entero.
 #
-# Y el límite de memoria, también SIEMPRE. La app lee los DICOM que le sube quien la
-# usa, y la cabecera de uno de pocos KB puede declarar unas dimensiones enormes: con RLE,
-# el lector reserva la memoria de todo ese tamaño antes de ver que los datos no lo llenan
-# (742 bytes que declaraban 40 000 x 40 000 píxeles le hicieron reservar 1,5 GB; con
-# 60 000 x 60 000, el contenedor con este límite murió y la máquina siguió igual). Medido
-# con los cuatro ejemplos, el mapa de calor y las tres pestañas, la app usa 457 MiB (1,1 GiB
-# de pico si se cuenta la caché de ficheros, que el núcleo recupera antes de matar nada):
-# 2 GB, lo mismo que el servidor, es margen de sobra. `--memory-swap` igual a `--memory`:
-# sin él, Docker deja usar otro tanto de swap, y el límite deja de serlo.
+# El `-p` lleva SIEMPRE 127.0.0.1: sin él, Docker publica el puerto en todas las
+# interfaces de la máquina, y la app no pide ninguna contraseña. Y el límite de memoria,
+# también SIEMPRE: es la red de debajo. La app rechaza por la cabecera, antes de descodificar
+# un solo píxel, lo que declara más de 5 000 píxeles de lado, varios cuadros o más de 8
+# bits, y no abre un DICOM comprimido entero; pero el motor y el servidor siguen sin esa
+# guarda (con el lector del motor, un DICOM de cientos de bytes que declara 60 000 x 60 000
+# hace reservar 3,4 GiB, y con este límite lo que muere es el contenedor y no la máquina).
+# `--memory-swap` igual a `--memory`: sin él, Docker deja usar otro tanto de swap y el
+# límite deja de serlo. La app usa menos de 500 MiB (docker stats) tras los cuatro
+# ejemplos y el mapa de calor: 2 GB, lo mismo que el servidor, es margen de sobra.
 
 # La base del servidor, la MISMA y por su digest (servidor/Dockerfile explica por qué
 # un digest y cómo actualizarlo a propósito). La app es la puerta de evaluación del
@@ -40,10 +41,14 @@ COPY app/requirements.txt app/requirements.txt
 RUN pip install --no-cache-dir -r app/requirements.txt
 
 # Después el paquete del proyecto, SIN sus dependencias: ya están, con su versión. Un
-# `pip install .` a secas las resolvería otra vez y podría traer otra.
+# `pip install .` a secas las resolvería otra vez y podría traer otra. Y, instalado, el
+# árbol de la construcción sobra: fuera. No encoge la imagen (son 0,7 MB, y la capa del
+# COPY los guarda); es para que dentro no haya un `src/` que alguien tome por el código
+# que corre, que es el instalado.
 COPY pyproject.toml ./
 COPY src ./src
-RUN pip install --no-cache-dir --no-deps .
+RUN pip install --no-cache-dir --no-deps . \
+ && rm -rf /app/src /app/build /app/pyproject.toml
 
 # Los pesos y el calibrador van DENTRO de la imagen, como en la del servidor: son 16 MB
 # y así el contenedor es autocontenido y no llama a nadie para cargar el modelo.
@@ -61,7 +66,8 @@ ENV UMBRAL=0.4258 \
     RUTA_PESOS=/modelo/pesos_modelo_cpu.pt \
     RUTA_CALIBRADOR=/modelo/calibrador.json
 
-# La app, lo último, que es lo que más cambia.
+# La app, lo último, que es lo que más cambia. `COPY app` copia solo lo que
+# app/Dockerfile.dockerignore readmite, fichero a fichero: lo que la app lee.
 COPY app ./app
 
 # Sin root: la imagen recibe ficheros de fuera y los lee (DICOM), y un fallo de ese
@@ -88,10 +94,13 @@ EXPOSE 8501
 #                                una dirección sin fijar): se comprobó, y la «External
 #                                URL» salía en los registros. Ocultar el mensaje corta
 #                                antes de preguntar. tests/test_app_docker.py vigila que
-#                                esa línea no salga. (La comprobación de orígenes de
-#                                las peticiones solo pregunta por la IP pública para un
-#                                origen que no sea localhost ni 127.0.0.1, y con
-#                                `-p 127.0.0.1:…` no llega otro.)
+#                                esa línea no salga, con y sin Internet. (La comprobación
+#                                de orígenes de las peticiones también puede preguntar
+#                                por la IP pública, pero solo ante un `Origin` que no sea
+#                                localhost ni 127.0.0.1: lo mandaría, a propósito, una
+#                                página de fuera abierta en el navegador de quien evalúa,
+#                                y Streamlit pregunta antes de rechazarla con un 403. No
+#                                es del arranque.)
 #   --browser.gatherUsageStats=false   Streamlit manda estadísticas de uso por defecto.
 #   --server.address=0.0.0.0     escucha en todas las interfaces DEL CONTENEDOR, que es
 #                                lo que hace falta para que Docker publique el puerto.
