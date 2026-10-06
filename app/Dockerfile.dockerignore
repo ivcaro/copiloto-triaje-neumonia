@@ -1,0 +1,44 @@
+# El nombre NO es `.dockerignore`: el contexto de construcción es la raíz del repo
+# (`docker build -f app/Dockerfile .`), y ahí Docker solo lee un `.dockerignore` que
+# esté en la RAÍZ del contexto. Un `app/.dockerignore` se ignora en silencio, y el
+# contexto entero -con `pruebas/`, que lleva puntuaciones por placa y un corpus de
+# RSNA- viajaría al demonio. La forma soportada de tener reglas propias por Dockerfile
+# es `<ruta-del-dockerfile>.dockerignore` junto al Dockerfile, que es este fichero (lo
+# mismo que hace servidor/Dockerfile.dockerignore).
+#
+# Es una LISTA BLANCA: se excluye todo y se readmite solo lo que el Dockerfile copia.
+# Una lista negra (`docs`, `tests`, `.git`…) deja pasar lo que se añada mañana al
+# repositorio y a nadie se le ocurra excluir: un `.env`, un volcado, un corpus. Aquí,
+# lo nuevo no entra hasta que alguien lo readmite a propósito (salvo dentro de `app/`,
+# que se readmite entera: las reglas de más abajo cierran lo que ahí se deja por
+# descuido). tests/test_app_docker.py comprueba que lo readmitido es exactamente lo que
+# el Dockerfile copia, y con BuildKit, qué contexto llega de verdad.
+*
+!pyproject.toml
+!src
+!app
+!servidor/pesos_modelo_cpu.pt
+!servidor/calibrador.json
+
+# Lo que sobra DENTRO de lo readmitido (estas reglas van después: gana la última que
+# coincide).
+**/__pycache__
+**/*.pyc
+**/*.egg-info
+# Lo que no entra NUNCA, esté donde esté dentro de lo readmitido: `app/` se readmite
+# entero, y en su carpeta es donde alguien deja, para probar en local, un `.env` o el
+# `.streamlit/secrets.toml` que Streamlit lee (y que `COPY app` metería en la imagen).
+**/.env
+**/.env.*
+**/*.env
+**/secrets.toml
+**/*.local.json
+# Las radiografías originales de los ejemplos y los guiones que las empaquetan y que
+# calculan las métricas son herramientas de quien mantiene la app: la imagen lleva los
+# DICOM y el JSON ya hechos (app/assets/ejemplos y app/assets/metricas.json).
+app/assets/originales
+app/empaquetar_ejemplos.py
+app/generar_metricas.py
+# Y estos dos, que son de la construcción y no de lo que se ejecuta.
+app/Dockerfile
+app/Dockerfile.dockerignore
