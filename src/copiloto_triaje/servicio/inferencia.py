@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Mapping
+from numbers import Real
 from pathlib import Path
 
 import pydicom.errors
@@ -26,6 +27,50 @@ from copiloto_triaje.servicio.heckerling import (
 
 EDAD_MINIMA = 18
 EDAD_MAXIMA = 100
+
+# Las unicas vistas con umbral propio (SP5-C1 §4): la `ViewPosition` de la
+# cabecera. Cualquier otra -una lateral, una etiqueta vacia o ausente- usa el
+# umbral global.
+VISTAS_CON_UMBRAL = ("PA", "AP")
+
+
+def _validar_umbrales_por_vista(umbrales) -> dict:
+    """Los umbrales por vista, comprobados y COPIADOS a un `dict` propio.
+
+    Exactamente `PA` y `AP`, cada una un numero estrictamente entre 0 y 1: la
+    misma guarda que `prevalencia_local`, y por la misma razon. `nan` no cumple
+    ninguna comparacion e `inf` no esta por debajo de 1, asi que caen en la
+    misma que un 1,5; un texto no es un umbral aunque `float()` se lo coma, y
+    `True` y `False` valen 1 y 0. Todo es `ValueError` y dice QUE esta mal: lo
+    lee quien despliega, al arrancar, no un profesional con una placa delante.
+
+    Se guarda una copia porque guardar el mapa de quien llama dejaria que
+    cambiarlo despues se saltara esta validacion.
+    """
+    if not isinstance(umbrales, Mapping):
+        raise ValueError("umbrales_por_vista tiene que ser un mapa con las "
+                         f"claves 'PA' y 'AP', y es {umbrales!r}")
+    detalle = []
+    faltan = [repr(v) for v in VISTAS_CON_UMBRAL if v not in umbrales]
+    sobran = [repr(k) for k in umbrales if k not in VISTAS_CON_UMBRAL]
+    if faltan:
+        detalle.append("falta " + ", ".join(faltan))
+    if sobran:
+        detalle.append("sobra " + ", ".join(sobran))
+    if detalle:
+        raise ValueError("umbrales_por_vista tiene que llevar exactamente las "
+                         "claves 'PA' y 'AP': " + "; ".join(detalle))
+    validos = {}
+    for vista in VISTAS_CON_UMBRAL:
+        valor = umbrales[vista]
+        # La comparacion va sobre el valor tal cual y la conversion a `float`,
+        # despues: un entero enorme se rechaza aqui, no revienta en `float()`.
+        if not isinstance(valor, Real) or not 0.0 < valor < 1.0:
+            raise ValueError(
+                f"umbrales_por_vista[{vista!r}] vale {valor!r} y tiene que ser "
+                "un numero estrictamente entre 0 y 1")
+        validos[vista] = float(valor)
+    return validos
 
 
 class ErrorDeInferencia(Exception):
@@ -45,7 +90,8 @@ class Motor:
 
     def __init__(self, modelo, calibrador: Calibrador, umbral: float,
                  tam_imagen: int, nombre_modelo: str, auc_validacion: float,
-                 prevalencia_local: float):
+                 prevalencia_local: float,
+                 umbrales_por_vista: Mapping[str, float] | None = None):
         self.modelo = modelo
         self.modelo.eval()
         self.calibrador = calibrador
@@ -61,6 +107,13 @@ class Motor:
         if not 0.0 < self.prevalencia_local < 1.0:
             raise ValueError("prevalencia_local tiene que ser una probabilidad "
                              f"estrictamente entre 0 y 1, y es {prevalencia_local!r}")
+        # El umbral por vista (SP5-C1 §4): una mitigacion de equidad, y un
+        # parametro de despliegue OPCIONAL y APAGADO por defecto. Con `None`,
+        # la respuesta es la de SP3 y SP4 clave por clave. Encenderlo lo decide
+        # la institucion, no el codigo: por eso no hay valores por defecto.
+        self.umbrales_por_vista = (
+            None if umbrales_por_vista is None
+            else _validar_umbrales_por_vista(umbrales_por_vista))
         # Una sola instancia: construir_transformaciones en cada peticion
         # recrearia los mismos objetos por nada.
         self._transformar = construir_transformaciones(tam_imagen,
@@ -70,7 +123,8 @@ class Motor:
     def cargar(cls, ruta_pesos, ruta_calibrador, umbral: float,
                auc_validacion: float, prevalencia_local: float,
                arquitectura: str = "efficientnet_b0",
-               tam_imagen: int = 320) -> "Motor":
+               tam_imagen: int = 320,
+               umbrales_por_vista: Mapping[str, float] | None = None) -> "Motor":
         """Carga como lo hara el contenedor: en CPU y con weights_only.
 
         `auc_validacion` es obligatorio y sin default: es una cifra que se
@@ -80,6 +134,9 @@ class Motor:
         sin que nadie lo actualizara, y cada respuesta seguiria citando la
         cifra vieja como si fuera la del modelo nuevo.
         `prevalencia_local` es obligatoria por la misma razon.
+
+        `umbrales_por_vista` es lo contrario: opcional, y apagado si no se da.
+        Se pasa al constructor tal cual, que lo valida.
         """
         ruta_pesos, ruta_calibrador = Path(ruta_pesos), Path(ruta_calibrador)
         if not ruta_pesos.is_file():
@@ -92,7 +149,7 @@ class Motor:
                                           weights_only=True))
         return cls(modelo, Calibrador.desde_json(ruta_calibrador), umbral,
                    tam_imagen, f"{arquitectura}_{tam_imagen}px", auc_validacion,
-                   prevalencia_local)
+                   prevalencia_local, umbrales_por_vista=umbrales_por_vista)
 
     def _tensor_desde_arreglo(self, arreglo) -> torch.Tensor:
         """La conversion, en UN solo sitio: aqui y solo aqui se decide como
@@ -145,6 +202,22 @@ class Motor:
                 f"El paciente tiene {edad} años y el modelo solo es válido "
                 f"entre {EDAD_MINIMA} y {EDAD_MAXIMA}.")
 
+        # El umbral que decide la etiqueta del cribado (SP5-C1 §4). Sin
+        # `umbrales_por_vista` es SIEMPRE el global y no se mira la vista: la
+        # respuesta es la de hoy. Con el, la `ViewPosition` de la cabecera
+        # -sin espacios ni minusculas- elige el de PA o el de AP, y cualquier
+        # otra cosa deja el global. Solo la etiqueta cambia: la evidencia de
+        # abajo y la combinacion no dependen de la vista.
+        umbral = self.umbral
+        por_vista = None
+        if self.umbrales_por_vista is not None:
+            vista = (meta.get("vista") or "").strip().upper()
+            if vista in self.umbrales_por_vista:
+                umbral = self.umbrales_por_vista[vista]
+                por_vista = {"vista": vista, "aplicado": True}
+            else:
+                por_vista = {"vista": None, "aplicado": False}
+
         # El arreglo ya esta leido: se reusa en vez de volver a decodificar el
         # DICOM. _tensor_desde_arreglo es el UNICO lugar que hace esta
         # conversion; no hay una segunda copia que pueda desincronizarse.
@@ -169,8 +242,11 @@ class Motor:
             # neumonia- que la radiografia no respalda.
             "probabilidad_calibrada": self.calibrador.calibrar(cruda),
             "razon_de_verosimilitud": rv,
-            "umbral": round(self.umbral, 4),
-            "clasificacion": ("opacidad_probable" if cruda >= self.umbral
+            # `umbral` es el APLICADO. Con el parametro, `umbral_por_vista` va
+            # justo detras; sin el, no hay tal clave.
+            "umbral": round(umbral, 4),
+            **({} if por_vista is None else {"umbral_por_vista": por_vista}),
+            "clasificacion": ("opacidad_probable" if cruda >= umbral
                               else "sin_opacidad_probable"),
             "edad_paciente": edad,
             "modelo": self.nombre_modelo,

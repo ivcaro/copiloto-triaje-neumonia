@@ -3,12 +3,17 @@
 Se prueba aqui, en el paquete y no contra el servidor, para que corran sin
 levantar Docker y en menos de un segundo.
 """
+import math
+import warnings
+from types import MappingProxyType
+
 import numpy as np
+import pydicom
 import pytest
 import torch
 
 from copiloto_triaje.servicio.calibracion import Calibrador, ajustar_calibrador
-from copiloto_triaje.servicio.heckerling import combinar
+from copiloto_triaje.servicio.heckerling import combinacion, combinar
 from copiloto_triaje.servicio.inferencia import ErrorDeInferencia, Motor
 
 from test_dicom import crear_dicom  # reutiliza el generador de DICOM sinteticos
@@ -319,3 +324,252 @@ def test_la_prevalencia_local_es_obligatoria_y_una_probabilidad():
         with pytest.raises(ValueError):
             Motor(**comunes, prevalencia_local=mala)
     assert Motor(**comunes, prevalencia_local=0.1466).prevalencia_local == 0.1466
+
+
+# --- El umbral por vista (SP5-C1 §4) -----------------------------------------
+#
+# Una mitigacion de equidad: la etiqueta del cribado usa un umbral para las
+# placas PA y otro para las AP. Es un parametro de despliegue OPCIONAL y esta
+# APAGADO por defecto: sin el, la respuesta es la de SP3 y SP4 clave por clave.
+# El umbral solo decide la etiqueta; la evidencia y la combinacion no cambian.
+
+# El umbral global del `motor` es 0,5, asi que cada puntuacion de las pruebas
+# cae en un sitio distinto: 0,30 queda por debajo del global y de AP y por
+# encima de PA; 0,54 queda por encima del global y por debajo de AP.
+UMBRALES_POR_VISTA = {"PA": 0.18, "AP": 0.58}
+
+
+def _logit(p):
+    return math.log(p / (1.0 - p))
+
+
+class _PuntuacionFija(torch.nn.Module):
+    """Un modelo que da SIEMPRE la misma puntuacion, sea cual sea la placa: lo
+    unico que importa aqui es en que lado de cada umbral cae."""
+
+    def __init__(self, puntuacion):
+        super().__init__()
+        self.logit = _logit(puntuacion)
+
+    def forward(self, x):
+        return torch.full((x.shape[0], 1), self.logit)
+
+
+def _con_puntuacion(base, puntuacion, **extra):
+    """Un motor como `base` pero con un modelo de puntuacion fija. `extra` son
+    los parametros que cada prueba quiere probar (`umbrales_por_vista`)."""
+    return Motor(modelo=_PuntuacionFija(puntuacion), calibrador=base.calibrador,
+                 umbral=base.umbral, tam_imagen=base.tam_imagen,
+                 nombre_modelo=base.nombre_modelo,
+                 auc_validacion=base.auc_validacion,
+                 prevalencia_local=base.prevalencia_local, **extra)
+
+
+def _dicom_de_vista(tmp_path, vista):
+    """Los bytes de un DICOM sintetico de 54 anios con esa `ViewPosition`.
+
+    Con `vista=None` la cabecera NO lleva la etiqueta (un equipo que no la
+    escribe), que no es lo mismo que llevarla vacia.
+    """
+    ruta = tmp_path / "vista.dcm"
+    with warnings.catch_warnings():
+        # pydicom avisa de que " pa " o "ll" no son valores validos de CS: es
+        # justo lo que hay que escribir para ver que el motor lo lee igual.
+        warnings.simplefilter("ignore", UserWarning)
+        crear_dicom(ruta, edad="054Y", vista="" if vista is None else vista)
+    if vista is None:
+        ds = pydicom.dcmread(str(ruta))
+        del ds.ViewPosition
+        ds.save_as(str(ruta), enforce_file_format=True)
+        assert "ViewPosition" not in pydicom.dcmread(str(ruta))
+    return ruta.read_bytes()
+
+
+def _claves(por_vista=False, con_hallazgos=False):
+    """Las claves de la respuesta, en su orden: `umbral_por_vista` va justo
+    detras de `umbral`, y `milisegundos` sigue siendo la ultima."""
+    claves = ["probabilidad_cruda", "probabilidad_calibrada",
+              "razon_de_verosimilitud", "umbral"]
+    if por_vista:
+        claves.append("umbral_por_vista")
+    claves += ["clasificacion", "edad_paciente", "modelo", "auc_validacion"]
+    if con_hallazgos:
+        claves.append("combinacion")
+    return claves + ["milisegundos"]
+
+
+CON_Y_SIN_HALLAZGOS = pytest.mark.parametrize(
+    "hallazgos", [None, HALLAZGOS], ids=["sin_hallazgos", "con_hallazgos"])
+
+
+@pytest.mark.parametrize("vista", ["PA", "AP", "LL"])
+@CON_Y_SIN_HALLAZGOS
+def test_sin_umbrales_por_vista_la_respuesta_no_cambia(motor, tmp_path, hallazgos,
+                                                       vista):
+    """La regla de oro del parametro: apagado, la respuesta es la de hoy, clave
+    por clave, con y sin `hallazgos` y sea cual sea la vista de la placa. Se
+    mira de las dos formas de no pedirlo -sin el parametro y con `None`-, y los
+    valores se calculan aqui aparte, no con lo que devuelve el motor."""
+    datos = _dicom_de_vista(tmp_path, vista)
+    # 0,30: por debajo del umbral global (0,5) y por encima del que tendria PA
+    # (0,18). Si la vista se mirara aunque el parametro no este, saldria otra
+    # etiqueta.
+    cruda = float(torch.sigmoid(torch.tensor([_logit(0.30)]))[0])
+    rv = motor.calibrador.razon_de_verosimilitud(cruda)
+    esperada = {
+        "probabilidad_cruda": round(cruda, 4),
+        "probabilidad_calibrada": motor.calibrador.calibrar(cruda),
+        "razon_de_verosimilitud": rv,
+        "umbral": 0.5,
+        "clasificacion": "sin_opacidad_probable",
+        "edad_paciente": 54,
+        "modelo": "prueba",
+        "auc_validacion": 0.88,
+    }
+    if hallazgos is not None:
+        esperada["combinacion"] = combinacion(motor.prevalencia_local,
+                                              hallazgos, rv)
+
+    for sin_parametro in (_con_puntuacion(motor, 0.30),
+                          _con_puntuacion(motor, 0.30, umbrales_por_vista=None)):
+        assert sin_parametro.umbrales_por_vista is None
+        salida = sin_parametro.clasificar(datos, hallazgos)
+        assert list(salida) == _claves(con_hallazgos=hallazgos is not None)
+        assert "umbral_por_vista" not in salida
+        assert {k: v for k, v in salida.items() if k != "milisegundos"} == esperada
+
+
+@pytest.mark.parametrize("puntuacion, vista, umbral, clasificacion", [
+    (0.30, "PA", 0.18, "opacidad_probable"),        # el global la dejaria en sin_
+    (0.30, "AP", 0.58, "sin_opacidad_probable"),
+    (0.54, "PA", 0.18, "opacidad_probable"),
+    (0.54, "AP", 0.58, "sin_opacidad_probable"),    # el global la dejaria en opacidad_
+])
+@CON_Y_SIN_HALLAZGOS
+def test_con_umbrales_por_vista_cada_vista_usa_el_suyo(motor, tmp_path, hallazgos,
+                                                       puntuacion, vista, umbral,
+                                                       clasificacion):
+    con = _con_puntuacion(motor, puntuacion, umbrales_por_vista=UMBRALES_POR_VISTA)
+    salida = con.clasificar(_dicom_de_vista(tmp_path, vista), hallazgos)
+
+    # `umbral` es el APLICADO, no el global: quien lee la respuesta ve contra
+    # que se comparo la puntuacion.
+    assert salida["umbral"] == umbral
+    assert salida["clasificacion"] == clasificacion
+    assert salida["umbral_por_vista"] == {"vista": vista, "aplicado": True}
+    assert list(salida) == _claves(por_vista=True,
+                                   con_hallazgos=hallazgos is not None)
+
+
+@pytest.mark.parametrize("vista", ["LL", "", None],
+                         ids=["lateral", "etiqueta_vacia", "sin_etiqueta"])
+def test_una_vista_desconocida_usa_el_umbral_global(motor, tmp_path, vista):
+    """Ni PA ni AP: no hay umbral de vista que aplicar. Se usa el global y la
+    respuesta lo dice, en vez de adivinar la vista."""
+    con = _con_puntuacion(motor, 0.30, umbrales_por_vista=UMBRALES_POR_VISTA)
+    salida = con.clasificar(_dicom_de_vista(tmp_path, vista))
+
+    assert salida["umbral"] == 0.5
+    # Con el de PA (0,18) esta misma placa saldria opacidad_probable.
+    assert salida["clasificacion"] == "sin_opacidad_probable"
+    assert salida["umbral_por_vista"] == {"vista": None, "aplicado": False}
+
+
+@pytest.mark.parametrize("escrita, leida", [(" pa ", "PA"), ("ap", "AP"),
+                                            (" Ap", "AP")])
+def test_la_vista_se_lee_sin_espacios_ni_minusculas(motor, tmp_path, escrita, leida):
+    con = _con_puntuacion(motor, 0.30, umbrales_por_vista=UMBRALES_POR_VISTA)
+    salida = con.clasificar(_dicom_de_vista(tmp_path, escrita))
+
+    assert salida["umbral_por_vista"] == {"vista": leida, "aplicado": True}
+    assert salida["umbral"] == UMBRALES_POR_VISTA[leida]
+
+
+@pytest.mark.parametrize("vista, cambia_la_etiqueta", [("PA", True), ("AP", False)])
+def test_el_umbral_por_vista_no_toca_la_evidencia_ni_la_combinacion(
+        motor, tmp_path, vista, cambia_la_etiqueta):
+    """El umbral solo decide la etiqueta del cribado. Calibrar la razon de
+    verosimilitud por vista queda fuera: la evidencia que SP4 combina con la
+    clinica es la misma con el parametro encendido y apagado."""
+    datos = _dicom_de_vista(tmp_path, vista)
+    encendido = _con_puntuacion(motor, 0.30,
+                                umbrales_por_vista=UMBRALES_POR_VISTA)
+    sin = _con_puntuacion(motor, 0.30).clasificar(datos, HALLAZGOS)
+    con = encendido.clasificar(datos, HALLAZGOS)
+
+    for clave in ("probabilidad_cruda", "probabilidad_calibrada",
+                  "razon_de_verosimilitud", "combinacion"):
+        assert con[clave] == sin[clave], clave
+    # Y nada mas cambia que lo que depende del umbral.
+    del_umbral = {"umbral", "umbral_por_vista", "clasificacion", "milisegundos"}
+    assert ({k: v for k, v in con.items() if k not in del_umbral}
+            == {k: v for k, v in sin.items() if k not in del_umbral})
+    # Que el parametro SI actuaba: la prueba no pasa por estar apagado.
+    assert con["umbral"] != sin["umbral"]
+    assert (con["clasificacion"] != sin["clasificacion"]) is cambia_la_etiqueta
+
+
+MAL_FORMADOS = [
+    ("falta_AP", {"PA": 0.18}, ("falta 'AP'",)),
+    ("falta_PA", {"AP": 0.58}, ("falta 'PA'",)),
+    ("faltan_las_dos", {}, ("falta 'PA', 'AP'",)),
+    ("sobra_una", {"PA": 0.18, "AP": 0.58, "LL": 0.3}, ("sobra 'LL'",)),
+    ("claves_en_minuscula", {"pa": 0.18, "ap": 0.58},
+     ("falta 'PA', 'AP'", "sobra 'pa', 'ap'")),
+    ("cero", {"PA": 0.0, "AP": 0.58}, ("'PA'", "0.0")),
+    ("uno", {"PA": 0.18, "AP": 1.0}, ("'AP'", "1.0")),
+    ("negativo", {"PA": -0.2, "AP": 0.58}, ("'PA'", "-0.2")),
+    ("mayor_que_uno", {"PA": 0.18, "AP": 1.5}, ("'AP'", "1.5")),
+    ("nan", {"PA": float("nan"), "AP": 0.58}, ("'PA'", "nan")),
+    ("infinito", {"PA": 0.18, "AP": float("inf")}, ("'AP'", "inf")),
+    ("texto", {"PA": 0.18, "AP": "alto"}, ("'AP'", "'alto'")),
+    ("nada", {"PA": None, "AP": 0.58}, ("'PA'", "None")),
+    ("booleano", {"PA": True, "AP": 0.58}, ("'PA'", "True")),
+    ("no_es_un_mapa", [0.18, 0.58], ("mapa",)),
+]
+
+
+@pytest.mark.parametrize("malos, dice", [m[1:] for m in MAL_FORMADOS],
+                         ids=[m[0] for m in MAL_FORMADOS])
+def test_unos_umbrales_por_vista_mal_formados_se_rechazan_al_construir(
+        motor, malos, dice):
+    """Exactamente PA y AP, cada una un numero finito estrictamente entre 0 y
+    1 -la misma guarda que la prevalencia-. Y el `ValueError` dice QUE esta
+    mal: quien despliega lo lee en el arranque, no en una placa."""
+    with pytest.raises(ValueError) as fallo:
+        _con_puntuacion(motor, 0.30, umbrales_por_vista=malos)
+    for trozo in dice:
+        assert trozo in str(fallo.value), str(fallo.value)
+
+
+def test_unos_umbrales_por_vista_bien_formados_se_aceptan_y_se_copian(motor):
+    """Vale cualquier mapa, no solo un `dict`, y el motor guarda SU copia: si
+    guardara el mapa de quien lo construyo, cambiarlo despues se saltaria la
+    validacion de arriba."""
+    originales = {"AP": 0.5815, "PA": 0.1798}
+    con = _con_puntuacion(motor, 0.30,
+                          umbrales_por_vista=MappingProxyType(originales))
+    assert con.umbrales_por_vista == {"PA": 0.1798, "AP": 0.5815}
+
+    originales["PA"] = 7.0
+    assert con.umbrales_por_vista == {"PA": 0.1798, "AP": 0.5815}
+
+
+def test_cargar_pasa_los_umbrales_por_vista_al_motor(motor, tmp_path):
+    """`Motor.cargar` es la puerta del servidor: tiene que llevar el parametro
+    hasta el constructor tal cual -y sus errores con el-. Se carga una red real
+    sin entrenar, guardada aqui, para no depender de los pesos desplegados."""
+    from copiloto_triaje.modelo.arquitectura import construir_modelo
+
+    pesos = tmp_path / "pesos.pt"
+    torch.save(construir_modelo("efficientnet_b0", congelar_backbone=False,
+                                preentrenado=False).state_dict(), pesos)
+    calibrador = motor.calibrador.a_json(tmp_path / "calibrador.json")
+    comunes = dict(ruta_pesos=pesos, ruta_calibrador=calibrador, umbral=0.4258,
+                   auc_validacion=0.8827, prevalencia_local=0.1466)
+
+    assert Motor.cargar(**comunes).umbrales_por_vista is None
+    con = Motor.cargar(**comunes, umbrales_por_vista=UMBRALES_POR_VISTA)
+    assert con.umbrales_por_vista == UMBRALES_POR_VISTA
+    with pytest.raises(ValueError, match="falta 'AP'"):
+        Motor.cargar(**comunes, umbrales_por_vista={"PA": 0.18})

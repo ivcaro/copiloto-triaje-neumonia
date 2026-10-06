@@ -1373,13 +1373,17 @@ sobre adultos.
 ## 10. Variables de entorno
 
 Se declaran en el `docker-compose.yml`. Solo hay que tocarlas si se reentrena
-el modelo o hay un dato local de prevalencia (SP4).
+el modelo o hay un dato local de prevalencia (SP4). Las dos variables del
+umbral por vista no están en el compose: se añaden solo si la institución
+decide encenderlo.
 
 | Variable | Valor por defecto | Qué es |
 | :--- | :--- | :--- |
 | `UMBRAL` | `0.4258` | punto de operación; el de especificidad 0,70 y recall 0,8815 |
 | `AUC_VALIDACION` | **ninguno: es obligatoria** (el compose la pone a `0.8827`) | AUC en validación, **se le muestra al profesional** en cada respuesta |
 | `PREVALENCIA_LOCAL` | **ninguno: es obligatoria** (el compose la pone a `0.1466`) | probabilidad previa de la combinación bayesiana (SP4 §5): 134/914, la cohorte de derivación de Heckerling. **Se le muestra al profesional** en cada informe con combinación. Se cambia aquí, con su fuente, cuando haya dato del entorno real |
+| `UMBRAL_PA` | **ninguno: apagado si no se definen** (el compose no las define) | umbral de la etiqueta del cribado para las placas cuya cabecera DICOM dice vista **PA**. Va **junto con `UMBRAL_AP`**: las dos o ninguna. Ejemplo: `0.1798`, el del workshop S4 (elegido en validación, tabla 3) |
+| `UMBRAL_AP` | **ninguno: apagado si no se definen** (el compose no las define) | lo mismo para las placas de vista **AP**. Ejemplo: `0.5815`, el del workshop S4 (elegido en validación, tabla 3) |
 | `RUTA_PESOS` | `/modelo/pesos_modelo_cpu.pt` | dentro de la imagen |
 | `RUTA_CALIBRADOR` | `/modelo/calibrador.json` | dentro de la imagen |
 | `OMP_NUM_THREADS` | `2` | hilos que usa torch. **Tiene que valer lo mismo que `cpus`** del bloque de límites: torch no lee el cgroup y sin esto abriría un hilo por núcleo del host |
@@ -1400,6 +1404,19 @@ justo cuando conviene notarlo.
 `PREVALENCIA_LOCAL` sigue la misma regla y por la misma razón. Y `/salud` la
 publica (`"prevalencia_local": 0.1466`): es la forma de saber, desde fuera, que
 el contenedor que responde ya es el de SP4.
+
+`UMBRAL_PA` y `UMBRAL_AP` son lo contrario: el **umbral por vista** (SP5-C1 §4),
+una mitigación de equidad que queda **apagada** mientras no se definan, y el
+`docker-compose.yml` no las define. Encenderla lo decide la institución, con sus
+valores a la vista. Con las dos, la etiqueta del cribado (`clasificacion`) usa el
+umbral de la vista que dice la cabecera DICOM (`PA` o `AP`, sin espacios ni
+minúsculas) y el global `UMBRAL` si la vista es otra o no viene. La respuesta lo
+dice: `umbral` pasa a ser el **aplicado** y aparece `umbral_por_vista`
+(`{"vista": "PA", "aplicado": true}`, o `{"vista": null, "aplicado": false}` si
+se usó el global). **La razón de verosimilitud y la combinación no cambian**: el
+umbral solo decide la etiqueta. Sin las variables, la respuesta es la de siempre,
+clave por clave. Con una sola de las dos, o con un valor fuera de (0, 1),
+`arrancar.py` se niega a arrancar y dice cuál.
 
 ## 11. Cuando algo va mal
 
