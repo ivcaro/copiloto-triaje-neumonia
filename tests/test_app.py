@@ -890,6 +890,10 @@ def _cabecera(**cambios):
     ds = pydicom.Dataset()
     ds.Rows, ds.Columns, ds.BitsAllocated, ds.SamplesPerPixel = 768, 671, 8, 1
     ds.PhotometricInterpretation = "MONOCHROME2"
+    # SP5-B4: la regla es la del motor (datos/dicom.py), que pide además los dos campos
+    # sin los que pydicom no descodifica (sin uno, un AttributeError), como los trae
+    # `normal_pa`.
+    ds.BitsStored, ds.PixelRepresentation = 8, 0
     for campo, valor in cambios.items():
         if valor is QUITAR:
             delattr(ds, campo)

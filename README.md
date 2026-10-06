@@ -214,6 +214,14 @@ El modelo **se niega** a opinar sobre pacientes fuera de 18-100 años, leyendo l
 edad de la cabecera DICOM: se entrenó y se validó sobre adultos, y devolver un
 número que nadie validó sería peor que no devolver nada.
 
+Y **no evalúa la placa que vería mal o que no cabe en memoria**, decidiéndolo por
+la cabecera antes de descodificar un solo píxel (SP5-B4): solo acepta placas como
+las de RSNA —8 bits sin signo, `MONOCHROME2`, una muestra por píxel, un cuadro y
+5 000 píxeles de lado como mucho— y rechaza también un DICOM comprimido entero
+(«Deflated»), uno sin metainformación legible y uno recortado, sin la imagen. Sale
+con `dicom_invalido`, y el bot dice «No pude leer esa radiografía.» y espera otro
+fichero. La lista, en el §9 de `docs/sp2-despliegue.md`.
+
 Latencia medida dentro del contenedor con la CPU acotada a 2 núcleos: 38 ms por
 REST y 43 ms por MCP, contra un presupuesto de 4 s.
 
@@ -298,12 +306,13 @@ y se abre `http://127.0.0.1:8501`. Lo que hay que saber:
   todas las interfaces de la máquina, y la página no pide ninguna contraseña.
 - **Con un límite de memoria, siempre** (`--memory=2g --memory-swap=2g`): es la red
   de debajo. La página rechaza por la cabecera, antes de descodificar un solo píxel,
-  lo que declara unas dimensiones desmesuradas, pero el motor y el servidor siguen sin
-  esa guarda: con el lector del motor, un DICOM de cientos de bytes que declara
-  60 000 × 60 000 hace reservar 3,4 GiB, y con el límite lo que muere es el contenedor
-  y no la máquina. `--memory-swap` igual a `--memory`, porque sin él Docker deja usar
-  otro tanto de swap. La página usa menos de 500 MiB tras los cuatro ejemplos y el mapa
-  de calor (`docker stats`): 2 GB, los del servidor, son margen de sobra.
+  lo que declara unas dimensiones desmesuradas —es la regla del motor, la misma que
+  aplica el servidor desde SP5-B4: sin ella, un DICOM de cientos de bytes que declara
+  60 000 × 60 000 hacía reservar 3,4 GiB—, y si algo se le escapara, con el límite lo
+  que muere es el contenedor y no la máquina. `--memory-swap` igual a `--memory`,
+  porque sin él Docker deja usar otro tanto de swap. La página usa menos de 500 MiB
+  tras los cuatro ejemplos y el mapa de calor (`docker stats`): 2 GB, los del
+  servidor, son margen de sobra.
 - **La construcción tiene que correr desde la raíz**: es su contexto.
   `app/Dockerfile.dockerignore` es una lista blanca que deja fuera de él todo lo que
   la imagen no copia (`.git`, `pruebas/`, `docs/`, `tests/`, los `.env`…) y, de

@@ -211,3 +211,52 @@ def rsna_raiz():
 def pesos_desplegados():
     """Los pesos desplegados. Sin el fichero, la prueba se salta."""
     return pesos_desplegados_o_salta()
+
+
+# --------------------------------------------------------------------------
+# Los espias de la regla de lo que el motor puede evaluar (SP5-B4)
+# --------------------------------------------------------------------------
+@pytest.fixture
+def nadie_descodifica(monkeypatch):
+    """Nadie descodifica un pixel: `Dataset.pixel_array` y, por debajo, el
+    `DecodeRunner` por el que pasa toda descodificacion de pydicom 3, se apuntan
+    y revientan EN EL ACTO, antes de reservar nada. Asi, si la regla dejara pasar
+    una placa que declara 60 000 x 60 000, la prueba FALLA en vez de colgarse
+    reservando 3,35 GiB. Devuelve la lista de intentos, que tiene que acabar
+    vacia."""
+    import pydicom.dataset
+    from pydicom.pixels.decoders import base
+
+    intentos = []
+
+    def espia(nombre):
+        def no_descodifiques(*args, **kwargs):
+            intentos.append(nombre)
+            raise AssertionError(f"no se tenia que descodificar ni un pixel ({nombre})")
+        return no_descodifiques
+
+    monkeypatch.setattr(pydicom.dataset.Dataset, "pixel_array",
+                        property(espia("Dataset.pixel_array")))
+    monkeypatch.setattr(base.DecodeRunner, "__init__", espia("DecodeRunner"))
+    return intentos
+
+
+@pytest.fixture
+def nadie_infla(monkeypatch):
+    """Nadie infla nada: `zlib.decompress` -con el que pydicom infla ENTERO un
+    conjunto de datos «Deflated» en cuanto se le pide la cabecera- y
+    `zlib.decompressobj` se apuntan y revientan en el acto. Devuelve la lista de
+    intentos, que tiene que acabar vacia."""
+    import zlib
+
+    intentos = []
+
+    def espia(nombre):
+        def no_infles(*args, **kwargs):
+            intentos.append(nombre)
+            raise AssertionError(f"no se tenia que inflar nada ({nombre})")
+        return no_infles
+
+    monkeypatch.setattr(zlib, "decompress", espia("zlib.decompress"))
+    monkeypatch.setattr(zlib, "decompressobj", espia("zlib.decompressobj"))
+    return intentos

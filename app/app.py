@@ -60,14 +60,14 @@ from typing import NamedTuple
 import altair as alt
 import numpy as np
 import pandas as pd
-import pydicom
-import pydicom.filereader
-import pydicom.uid
 import streamlit as st
 from matplotlib import colormaps
 from PIL import Image
 
-from copiloto_triaje.datos.dicom import leer_dicom_desde_bytes
+from copiloto_triaje.datos.dicom import (
+    LADO_MAXIMO_DE_LA_PLACA, PlacaNoEvaluable, comprobar_la_cabecera,
+    comprobar_los_pixeles, leer_dicom_desde_bytes,
+)
 from copiloto_triaje.servicio.heckerling import (
     PREVALENCIA_COHORTE, PULSO_CORTE_LPM, RV_POR_PUNTUACION, TEMPERATURA_CORTE_C,
 )
@@ -93,13 +93,11 @@ CALIBRADOR_POR_DEFECTO = REPO / "servidor" / "calibrador.json"
 TAMANO_MAXIMO_MB = 5
 TAMANO_MAXIMO_BYTES = TAMANO_MAXIMO_MB * 1024 * 1024
 
-# Lo que la cabecera tiene que decir para que se descodifique la placa (R27). Los cinco
-# campos son obligatorios: sin uno, no se sabe cómo leerla. Y un lado de más de 5 000
-# píxeles no es una placa de tórax digital (rondan los 4 300 × 4 300): con 8 bits, una
-# muestra y un cuadro, lo más que se descodifica son 25 MB.
-CAMPOS_DE_LA_IMAGEN = ("Rows", "Columns", "BitsAllocated", "SamplesPerPixel",
-                       "PhotometricInterpretation")
-LADO_MAXIMO_DE_LA_PLACA = 5000
+# Lo que la placa tiene que ser para que se calcule (R24, R27 y R28) ya no se decide aquí:
+# es la regla del motor, `comprobar_que_se_puede_evaluar` en datos/dicom.py (SP5-B4), que
+# `leer_dicom_desde_bytes` aplica antes de descodificar un solo píxel, con sus límites
+# (`LADO_MAXIMO_DE_LA_PLACA`). La app traduce cada motivo a sus mensajes:
+# `mensaje_de_la_placa`.
 
 # Límites de INTERFAZ de los hallazgos (spec §3): lo que se puede teclear. No son
 # rangos clínicos de nada; solo impiden un 380 °C. Streamlit no deja enviar un valor
@@ -243,13 +241,14 @@ HALLAZGOS_INVALIDOS = ("Los hallazgos de la exploración no son válidos. Revís
                        "quite los hallazgos para calcular solo con la imagen.")
 SIN_FICHERO = f"Suba un fichero DICOM, o elija «{FUENTE_EJEMPLO}»."
 # Lo que se dice de un fichero que no es un DICOM: lo del motor para `dicom_invalido`,
-# y lo de la app cuando no hay metainformación que leer (R28), con las mismas palabras.
+# y lo de la app cuando no hay metainformación que leer (R28, motivo
+# `sin_metainformacion`), con las mismas palabras.
 NO_ES_UN_DICOM = "\n\n".join([DEL_BOT["no_pude_leer"], AYUDA_DICOM])
-# R28: con la sintaxis Deflated, TODO el conjunto de datos tras el grupo 0002 va
-# comprimido con zlib, y pydicom lo infla entero en cuanto se le pide la cabecera
-# (`dcmread(..., stop_before_pixels=True)`): un fichero de 398 KiB con 400 MiB de ceros
-# dentro llevó el pico de memoria de 54 a 854 MiB. Se mira la sintaxis antes, en el
-# grupo 0002, que nunca va comprimido, y no se abre.
+# R28 (motivo `deflated`): con la sintaxis Deflated, TODO el conjunto de datos tras el
+# grupo 0002 va comprimido con zlib, y pydicom lo infla entero en cuanto se le pide la
+# cabecera (`dcmread(..., stop_before_pixels=True)`): un fichero de 398 KiB con 400 MiB
+# de ceros dentro llevó el pico de memoria de 54 a 854 MiB. La regla del motor mira la
+# sintaxis antes, en el grupo 0002, que nunca va comprimido, y no lo abre.
 RECHAZO_DEFLATED = (
     "Este fichero viene comprimido entero (en DICOM, «Deflated Explicit VR Little "
     "Endian»), y la app no lo descomprime: podría ocupar cientos de veces lo que pesa. "
@@ -264,8 +263,9 @@ INESPERADO = "\n\n".join([DEL_BOT["no_pude_leer"],
 # neumonía en 16 bits baja de 0,91 a 0,48, y el mapa cae fuera del pulmón), no invierte
 # una MONOCHROME1 y no lleva tope de memoria (unos 600 bytes en RLE que declaran 60 000
 # × 60 000 hacen que `pixel_array` intente reservar 3,35 GiB). Por eso se decide con la
-# CABECERA, antes de descodificar un solo píxel. Los arreglos del motor, que hoy
-# afectan también al bot, van aparte.
+# CABECERA, antes de descodificar un solo píxel: desde SP5-B4 lo decide la regla del
+# motor (datos/dicom.py), que es también la del bot, y estos son sus motivos dichos con
+# las palabras de la app (`mensaje_de_la_placa`).
 RECHAZO_BITS = (
     "Esta placa es de {bits}: los visores la enseñan bien, pero el modelo se entrenó con "
     "placas de 8 bits, como las de RSNA, y hoy no convierte las demás: {como}. Así que "
@@ -511,27 +511,6 @@ def placa_para_ver(arreglo: np.ndarray) -> np.ndarray:
     return np.asarray(imagen)
 
 
-def sintaxis_de_transferencia(datos: bytes) -> str | None:
-    """La sintaxis de transferencia del fichero, leída SOLO del grupo 0002 -la
-    metainformación, que nunca va comprimida- y sin tocar el conjunto de datos (R28).
-    `None` si no la hay: sin el prefijo «DICM», con el grupo cortado o sin ese campo, la
-    placa no se puede evaluar (sin él, pydicom no sabe descodificar los píxeles).
-
-    Es lo que hace `pydicom.filereader.read_file_meta_info`, que solo acepta una ruta:
-    `read_preamble` y `_read_file_meta_info`, que lee elemento a elemento y para en el
-    primero que no es del grupo 0002. Es privada, y por eso va con `pydicom==3.0.2`
-    fijado; si cambiara, ningún DICOM pasaría de aquí y las pruebas lo dirían."""
-    try:
-        fichero = io.BytesIO(datos)
-        pydicom.filereader.read_preamble(fichero, False)
-        sintaxis = pydicom.filereader._read_file_meta_info(fichero).get(
-            "TransferSyntaxUID")
-    except Exception:
-        return None
-    sintaxis = str(sintaxis or "").strip()
-    return sintaxis or None
-
-
 def _rechazo_por_los_bits(bits: int, con_signo: bool = False) -> str:
     """`Esta placa es de 16 bits…`. Con más de 8 se satura todo lo que pasa de 255; con
     menos, o con signo, lo que vería el modelo no es la placa, sin más."""
@@ -541,46 +520,54 @@ def _rechazo_por_los_bits(bits: int, con_signo: bool = False) -> str:
     return RECHAZO_BITS.format(bits=texto, como=como)
 
 
-def motivo_por_la_cabecera(cabecera) -> str | None:
-    """Por qué no se calcula con esta placa mirando SOLO su cabecera (R27), o `None` si
-    se puede descodificar: los cinco campos de la imagen, 8 bits, una muestra por
-    píxel, MONOCHROME2, un lado de 5 000 píxeles como mucho y un solo cuadro. Lo de los
-    cuadros no está en la lista de R27, y cierra el mismo agujero: 5 000 × 5 000 por
-    miles de cuadros también se reserva entero. Si falta un campo, o no es un número,
-    la placa no se puede evaluar: el mensaje de R18."""
-    try:
-        valores = {campo: cabecera.get(campo) for campo in CAMPOS_DE_LA_IMAGEN}
-        if any(v is None or v == "" for v in valores.values()):
-            return INESPERADO
-        filas, columnas = int(valores["Rows"]), int(valores["Columns"])
-        bits, muestras = int(valores["BitsAllocated"]), int(valores["SamplesPerPixel"])
-        cuadros = cabecera.get("NumberOfFrames")
-        cuadros = 1 if cuadros in (None, "") else int(cuadros)
-    except (TypeError, ValueError):
-        return INESPERADO
-    fotometria = str(valores["PhotometricInterpretation"]).strip().upper()
-    if filas > LADO_MAXIMO_DE_LA_PLACA or columnas > LADO_MAXIMO_DE_LA_PLACA:
-        return RECHAZO_LADO.format(filas=_entero(filas), columnas=_entero(columnas),
+def mensaje_de_la_placa(exc: PlacaNoEvaluable) -> str:
+    """Una placa que el motor no puede evaluar (su regla, en datos/dicom.py), dicha con
+    las palabras de la app: un mensaje por motivo, los de siempre (R24, R27 y R28). El
+    texto del motor no se enseña: es para el servidor y sus registros.
+
+    El signo solo se nombra con 8 bits: con más, la app habla de los bits, como cuando
+    la cabecera ni lo miraba. Lo que no se puede leer -una cabecera a la que le falta un
+    campo, un fichero sin la imagen- y cualquier motivo que la app no conozca llevan el
+    mensaje de R18."""
+    if exc.motivo == "sin_metainformacion":
+        return NO_ES_UN_DICOM
+    if exc.motivo == "deflated":
+        return RECHAZO_DEFLATED
+    if exc.motivo == "tamano":
+        return RECHAZO_LADO.format(filas=_entero(exc.filas),
+                                   columnas=_entero(exc.columnas),
                                    lado=_entero(LADO_MAXIMO_DE_LA_PLACA))
-    if cuadros > 1:
-        return RECHAZO_CUADROS.format(cuadros=_entero(cuadros))
-    if bits != 8:
-        return _rechazo_por_los_bits(bits)
-    if fotometria == "MONOCHROME1":
+    if exc.motivo == "cuadros":
+        return RECHAZO_CUADROS.format(cuadros=_entero(exc.cuadros))
+    if exc.motivo == "bits":
+        return _rechazo_por_los_bits(exc.bits, exc.con_signo and exc.bits == 8)
+    if exc.motivo == "fotometria":
         return RECHAZO_INVERTIDA
-    if fotometria != "MONOCHROME2" or muestras != 1:
+    if exc.motivo == "color":
         return RECHAZO_COLOR
+    return INESPERADO
+
+
+def motivo_por_la_cabecera(cabecera) -> str | None:
+    """Lo que la app dice de una cabecera suelta (un `Dataset` sin los píxeles), o
+    `None` si se puede descodificar: la regla del motor (`comprobar_la_cabecera`) y la
+    traducción de la app (`mensaje_de_la_placa`). `calcular` pasa por las mismas dos
+    dentro de `leer_dicom_desde_bytes`; esta las deja ver campo a campo."""
+    try:
+        comprobar_la_cabecera(cabecera)
+    except PlacaNoEvaluable as exc:
+        return mensaje_de_la_placa(exc)
     return None
 
 
 def motivo_por_los_pixeles(arreglo: np.ndarray) -> str | None:
-    """La segunda red, ya con los píxeles: lo que no sale `uint8` no lo vería el modelo
-    como las placas de RSNA (con 8 bits en la cabecera, un `int8`, si los píxeles llevan
-    signo)."""
-    if arreglo.dtype == np.uint8:
-        return None
-    return _rechazo_por_los_bits(arreglo.dtype.itemsize * 8,
-                                 con_signo=np.issubdtype(arreglo.dtype, np.signedinteger))
+    """Lo mismo para la segunda red, ya con los píxeles (`comprobar_los_pixeles`): lo que
+    no sale `uint8` no lo vería el modelo como las placas de RSNA."""
+    try:
+        comprobar_los_pixeles(arreglo)
+    except PlacaNoEvaluable as exc:
+        return mensaje_de_la_placa(exc)
+    return None
 
 
 def superponer(placa: np.ndarray, mapa: np.ndarray, opacidad: float) -> np.ndarray:
@@ -608,8 +595,9 @@ def superponer(placa: np.ndarray, mapa: np.ndarray, opacidad: float) -> np.ndarr
 def _rechazo(exc: ErrorDeInferencia) -> str:
     """Un rechazo del motor en lenguaje llano, como lo dice el bot (§9 de SP3). El
     detalle del motor se relata SOLO en los dos rechazos por edad, cuyo texto compone
-    nuestro código (un literal y un entero). El de `dicom_invalido` lleva el texto de
-    pydicom sobre bytes ajenos, y el de `hallazgos_invalidos`, nombres de campo."""
+    nuestro código (un literal y un entero). El de `dicom_invalido` puede llevar el texto
+    de pydicom sobre bytes ajenos (la cláusula genérica del motor), y el de
+    `hallazgos_invalidos`, nombres de campo."""
     if exc.codigo == "fuera_de_alcance":
         return "\n\n".join([DEL_BOT["fuera_de_alcance"], str(exc),
                             DEL_BOT["coletilla_edad"]])
@@ -629,35 +617,18 @@ def calcular(motores: Motores, datos: bytes, hallazgos, por_vista: bool) -> dict
     se dice en llano (R18)."""
     if len(datos) > TAMANO_MAXIMO_BYTES:
         return {"rechazo": "\n\n".join([DEL_BOT["tamano"], AYUDA_TAMANO])}
-    # R28, ANTES de cualquier `dcmread` del conjunto de datos: el grupo 0002. Sin él no
-    # se puede evaluar; con la sintaxis Deflated, leer la cabecera ya lo inflaría entero.
-    sintaxis = sintaxis_de_transferencia(datos)
-    if sintaxis is None:
-        return {"rechazo": NO_ES_UN_DICOM}
-    if pydicom.uid.UID(sintaxis).is_deflated:
-        return {"rechazo": RECHAZO_DEFLATED}
-    # R27, ANTES de descodificar un solo píxel y antes del motor: la cabecera. Si no se
-    # puede leer, lo dice el motor, con su código (`dicom_invalido`), sin llegar a los
-    # píxeles tampoco.
+    # R24, R27 y R28, ANTES del motor: el mismo lector que él, que aplica la regla del
+    # motor (datos/dicom.py) antes de nada -la metainformación sin abrir el conjunto de
+    # datos y la cabecera sin descodificar un solo píxel; después, la placa entera y la
+    # segunda red- y da la placa que se enseña. Lo que la regla rechaza se dice con las
+    # palabras de la app; lo que pydicom no sabe leer lo dice el motor, con su código
+    # (`dicom_invalido`), o la red de R18.
     try:
-        cabecera = pydicom.dcmread(io.BytesIO(datos), stop_before_pixels=True)
+        arreglo, _ = leer_dicom_desde_bytes(datos)
+    except PlacaNoEvaluable as exc:
+        return {"rechazo": mensaje_de_la_placa(exc)}
     except Exception:
-        cabecera = None
-    arreglo = None
-    if cabecera is not None:
-        motivo = motivo_por_la_cabecera(cabecera)
-        if motivo:
-            return {"rechazo": motivo}
-        # Con la cabecera en regla, los píxeles caben (25 MB como mucho), y se leen con el
-        # mismo lector que el motor: la segunda red (R24) y la placa que se enseña. Si
-        # no se pueden leer, lo dice el motor o la red de R18.
-        try:
-            arreglo, _ = leer_dicom_desde_bytes(datos)
-        except Exception:
-            arreglo = None
-        motivo = None if arreglo is None else motivo_por_los_pixeles(arreglo)
-        if motivo:
-            return {"rechazo": motivo}
+        arreglo = None
     motor = motores.por_vista if por_vista else motores.un_umbral
     try:
         resultado = motor.clasificar(datos, hallazgos)
@@ -668,9 +639,9 @@ def calcular(motores: Motores, datos: bytes, hallazgos, por_vista: bool) -> dict
     except ErrorDeInferencia as exc:
         return {"rechazo": _rechazo(exc)}
     except Exception:
-        # Un DICOM sin píxeles o con `Rows` vacío hace que pydicom lance un
-        # `AttributeError` que el motor no traduce (R18). Lo mismo que hace el bot
-        # cuando el servidor cae sin código: se dice que no se pudo leer.
+        # Lo que el motor no traduce (R18): un DICOM sin píxeles o con `Rows` vacío ya no
+        # llega aquí (lo para la regla, arriba), pero sí cualquier otro fallo. Lo mismo
+        # que hace el bot cuando el servidor cae sin código: se dice que no se pudo leer.
         REGISTRO.exception("el cálculo falló con una excepción que el motor no traduce")
         return {"rechazo": INESPERADO}
     salida = {"resultado": resultado, "resultado_global": resultado_global,

@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from PIL import Image
 
 from copiloto_triaje.datos.dataset import construir_transformaciones
-from copiloto_triaje.datos.dicom import leer_dicom_desde_bytes
+from copiloto_triaje.datos.dicom import PlacaNoEvaluable, leer_dicom_desde_bytes
 from copiloto_triaje.datos.preparacion import edad_en_anios
 from copiloto_triaje.modelo.arquitectura import construir_modelo
 from copiloto_triaje.servicio.calibracion import Calibrador
@@ -181,6 +181,18 @@ class Motor:
         """
         try:
             arreglo, meta = leer_dicom_desde_bytes(datos_dicom)
+        # SP5-B4: la placa que el motor no puede evaluar (la regla de
+        # `datos/dicom.py`, decidida antes de descodificar un pixel). Va ANTES de la
+        # clausula generica, que tambien la atraparia -es un ValueError- y le
+        # antepondria «El fichero no es un DICOM legible». Su texto es NUESTRO, de
+        # una plantilla con solo enteros: ni texto de pydicom ni bytes del fichero.
+        # El codigo es el de siempre, `dicom_invalido`, y el bot no cambia: dice
+        # «No pude leer esa radiografia.», no relata el detalle y espera otro
+        # fichero.
+        except PlacaNoEvaluable as exc:
+            raise ErrorDeInferencia(
+                "dicom_invalido",
+                f"La placa no se puede evaluar: {exc}") from exc
         # AttributeError NO esta en esta tupla a proposito: `datos/dicom.py`
         # documenta que los errores de PROGRAMACION deben propagarse
         # ruidosamente, no camuflarse como "DICOM invalido". Si estuviera,

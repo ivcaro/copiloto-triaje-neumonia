@@ -74,7 +74,8 @@ PAQUETE = "copiloto_triaje"             # el paquete de `src/`, que la imagen in
 PUERTO = 8501
 ORDEN_DE_CONSTRUIR = "docker build -t copiloto-app -f app/Dockerfile ."
 # El límite de memoria de la orden que documenta el README: la red de debajo de la guarda
-# que la app ya tiene en la cabecera del DICOM (el motor y el servidor no la tienen).
+# que la app tiene en la cabecera del DICOM (la regla del motor, que desde SP5-B4 es también
+# la del servidor).
 # `--memory-swap` igual a `--memory`: sin él, Docker deja usar otro tanto de swap.
 LIMITE_DE_MEMORIA = ("--memory=2g", "--memory-swap=2g")
 

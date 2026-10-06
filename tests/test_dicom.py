@@ -1,4 +1,11 @@
+import csv
+import io
 import os
+import struct
+import tracemalloc
+import warnings
+import zlib
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -6,11 +13,17 @@ import pydicom
 import pytest
 from PIL import Image
 from pydicom.dataset import Dataset, FileMetaDataset
-from pydicom.uid import ExplicitVRLittleEndian, generate_uid
+from pydicom.encaps import encapsulate
+from pydicom.uid import (
+    DeflatedExplicitVRLittleEndian, ExplicitVRLittleEndian, RLELossless, generate_uid,
+)
 
 from copiloto_triaje.datos.dicom import (
+    PlacaNoEvaluable, comprobar_los_pixeles, comprobar_que_se_puede_evaluar,
     convertir_a_png, convertir_lote, leer_dicom, leer_dicom_desde_bytes,
 )
+
+REPO = Path(__file__).resolve().parents[1]
 
 
 def crear_dicom(ruta, patient_id="P0001", edad="51", sexo="F", vista="PA", lado=64):
@@ -278,7 +291,493 @@ def test_leer_dicom_desde_bytes_da_lo_mismo_que_desde_ruta(tmp_path):
 
 
 def test_leer_dicom_desde_bytes_rechaza_lo_que_no_es_dicom():
-    """Un PNG, un JSON o basura tienen que fallar con el error de pydicom, no
-    con un AttributeError tres capas mas arriba."""
-    with pytest.raises(pydicom.errors.InvalidDicomError):
+    """Un PNG, un JSON o basura tienen que fallar con un motivo, no con un
+    AttributeError tres capas mas arriba. Desde SP5-B4 el motivo es NUESTRO
+    -`sin_metainformacion`, con nuestro texto- y no el error de pydicom, cuyo
+    texto el servidor devolveria y el bot registraria."""
+    with pytest.raises(PlacaNoEvaluable) as fallo:
         leer_dicom_desde_bytes(b"esto no es un DICOM")
+    assert fallo.value.motivo == "sin_metainformacion"
+
+
+# ==========================================================================
+# SP5-B4: la regla de lo que el motor puede evaluar, decidida por la cabecera
+# ==========================================================================
+#
+# El motor convierte la placa con `Image.fromarray(arreglo).convert("RGB")`, que
+# con mas de 8 bits satura casi a blanco (una neumonia en 16 bits baja de 0,91 a
+# 0,48) y a una MONOCHROME1 la ve al reves; y `pixel_array` no lleva tope de
+# memoria. La regla de `datos/dicom.py` decide con la metainformacion y la
+# cabecera, ANTES de descodificar un pixel. Aqui, cada motivo con un DICOM
+# fabricado en la prueba, y su texto escrito a mano: es NUESTRO -el servidor lo
+# devuelve y el bot lo registra-, nunca de pydicom ni con bytes del fichero.
+
+# Los siete campos sin los que pydicom no sabe descodificar la imagen: sin uno,
+# `pixel_array` lanza un AttributeError (medido con pydicom 3.0.2).
+CAMPOS_DE_LA_IMAGEN = ("Rows", "Columns", "BitsAllocated", "BitsStored",
+                       "SamplesPerPixel", "PhotometricInterpretation",
+                       "PixelRepresentation")
+
+# Los textos de cada motivo, a mano. El motor les antepone «La placa no se puede
+# evaluar: ».
+SIN_METAINFORMACION = (
+    "el fichero no trae la metainformación de un DICOM (el grupo 0002, con una "
+    "sintaxis de transferencia que se conozca), así que no se sabe cómo leerlo.")
+DEFLATED = (
+    "el fichero viene comprimido entero (en DICOM, «Deflated Explicit VR Little "
+    "Endian»), y no se descomprime: podría ocupar cientos de veces lo que pesa.")
+CABECERA_INCOMPLETA = (
+    "a la cabecera le falta alguno de los campos que dicen cómo leer la imagen "
+    "(filas, columnas, bits, signo, muestras por píxel o fotometría), o lo trae sin "
+    "un valor que se entienda.")
+INVERTIDA = (
+    "guarda la escala de grises invertida (en DICOM, MONOCHROME1), y el modelo solo "
+    "evalúa placas MONOCHROME2, como las de RSNA con las que se entrenó.")
+EN_COLOR = (
+    "no está en escala de grises, y el modelo solo evalúa placas en grises (en DICOM, "
+    "MONOCHROME2 con una muestra por píxel), como las de RSNA con las que se entrenó.")
+SIN_PIXELES = ("el fichero trae la cabecera pero no la imagen: puede que esté "
+               "recortado.")
+
+
+def _bits(texto):
+    return (f"es de {texto}, y el modelo solo evalúa placas de 8 bits sin signo, como "
+            "las de RSNA con las que se entrenó.")
+
+
+def _tamano(filas, columnas):
+    return (f"declara {filas} × {columnas} píxeles, y no se leen placas de más de "
+            "5000 de lado (una placa de tórax digital ronda los 4300 × 4300).")
+
+
+def _cuadros(cuadros):
+    return f"el fichero trae {cuadros} imágenes, y se evalúa una placa sola."
+
+
+# Fragmentos de los mensajes de pydicom que se han visto en estos casos: ninguno
+# puede llegar al texto de un rechazo.
+DE_PYDICOM = ("DICM", "Pixel Data", "Missing required", "Unable to", "(0028",
+              "(0002", "Transfer Syntax UID", "pydicom", "dataset", "element")
+
+
+def _placa(tmp_path, cambiar=None, nombre="placa.dcm"):
+    """Los bytes de una placa sana de 54 anios (`crear_dicom`: 64 x 64, 8 bits,
+    MONOCHROME2, Explicit VR Little Endian), despues de `cambiar(ds)`."""
+    ruta = tmp_path / nombre
+    crear_dicom(ruta, edad="054Y")
+    if cambiar is not None:
+        ds = pydicom.dcmread(str(ruta))
+        cambiar(ds)
+        ds.save_as(str(ruta), enforce_file_format=True)
+    return ruta.read_bytes()
+
+
+def _con(**campos):
+    """Un `cambiar` que pone esos campos (con `None`, presente y vacio)."""
+    def cambiar(ds):
+        for campo, valor in campos.items():
+            setattr(ds, campo, valor)
+    return cambiar
+
+
+def _sin(campo):
+    def cambiar(ds):
+        delattr(ds, campo)
+    return cambiar
+
+
+def _de_16_bits(con_signo=False):
+    def cambiar(ds):
+        ds.BitsAllocated, ds.BitsStored, ds.HighBit = 16, 16, 15
+        ds.PixelRepresentation = 1 if con_signo else 0
+        ds.PixelData = (np.arange(64 * 64).reshape(64, 64) * 16).astype(
+            np.int16 if con_signo else np.uint16).tobytes()
+    return cambiar
+
+
+def _de_1_bit(ds):
+    ds.BitsAllocated, ds.BitsStored, ds.HighBit = 1, 1, 0
+    ds.PixelData = bytes(64 * 64 // 8)
+
+
+def _en_color(ds):
+    ds.PhotometricInterpretation, ds.SamplesPerPixel, ds.PlanarConfiguration = (
+        "RGB", 3, 0)
+    ds.PixelData = bytes(64 * 64 * 3)
+
+
+def _dos_cuadros(ds):
+    ds.NumberOfFrames = 2
+    ds.PixelData = bytes(2 * 64 * 64)
+
+
+def _cuadros_ilegibles(tmp_path):
+    """`NumberOfFrames` con un valor que no es un numero ("ab"): se escribe "12" y
+    se cambia en los bytes, porque pydicom no deja escribir un IS invalido."""
+    datos = _placa(tmp_path, _con(NumberOfFrames=12))
+    elemento = b"\x28\x00\x08\x00IS\x02\x0012"
+    assert datos.count(elemento) == 1
+    return datos.replace(elemento, b"\x28\x00\x08\x00IS\x02\x00ab")
+
+
+def _la_bomba(tmp_path):
+    """Unos 600 bytes que declaran 60 000 x 60 000, en RLE: un solo fragmento con
+    su cabecera de 64 bytes (un segmento) y un segmento de dos bytes. `pixel_array`
+    intentaria reservar 3,35 GiB."""
+    def cambiar(ds):
+        ds.Rows = ds.Columns = 60000
+        ds.file_meta.TransferSyntaxUID = RLELossless
+        ds.PixelData = encapsulate(
+            [struct.pack("<16L", 1, 64, *([0] * 14)) + b"\x81\x00"])
+        ds["PixelData"].VR = "OB"
+        ds["PixelData"].is_undefined_length = True
+    return _placa(tmp_path, cambiar, "bomba.dcm")
+
+
+def _deflated(tmp_path):
+    """La placa sana con la sintaxis Deflated Explicit VR Little Endian, escrita
+    por pydicom: TODO el conjunto de datos tras el grupo 0002, comprimido."""
+    def cambiar(ds):
+        ds.file_meta.TransferSyntaxUID = DeflatedExplicitVRLittleEndian
+    return _placa(tmp_path, cambiar, "deflated.dcm")
+
+
+def _sin_sintaxis(tmp_path):
+    """Un grupo 0002 que se lee, pero sin `TransferSyntaxUID`, y un conjunto de
+    datos sano detras."""
+    ruta = tmp_path / "sin_sintaxis.dcm"
+    crear_dicom(ruta, edad="054Y")
+    ds = pydicom.dcmread(str(ruta))
+    del ds.file_meta.TransferSyntaxUID
+    ds.preamble = bytes(128)
+    salida = io.BytesIO()
+    pydicom.dcmwrite(salida, ds, enforce_file_format=False, implicit_vr=False,
+                     little_endian=True)
+    return salida.getvalue()
+
+
+def _sintaxis_desconocida(tmp_path):
+    """La placa sana con una sintaxis de transferencia que no es ninguna: el UID
+    de 19 caracteres de Explicit VR Little Endian se cambia en los bytes por otro
+    de la misma longitud (pydicom no deja escribir con una sintaxis que no
+    conoce). pydicom lee su cabecera, y al descodificar lanza NotImplementedError,
+    que el motor no traduce."""
+    datos = _placa(tmp_path)
+    viejo, nuevo = b"1.2.840.10008.1.2.1\x00", b"1.2.3.4.5.6.7.8.9.1\x00"
+    assert datos.count(viejo) == 1
+    return datos.replace(viejo, nuevo)
+
+
+def _sin_pixel_data(tmp_path):
+    return _placa(tmp_path, _sin("PixelData"), "sin_pixeles.dcm")
+
+
+def _recortada(tmp_path):
+    """Una placa en RLE de verdad, cortada antes del final de su Pixel Data (como
+    la del perfil «fichero corrupto» del corpus, que es JPEG): pydicom la lee sin
+    el elemento -avisa de que el fichero se acaba antes del delimitador- y
+    `pixel_array` lanzaria un AttributeError."""
+    def cambiar(ds):
+        ds.compress(RLELossless, (np.arange(64 * 64) % 256).astype(np.uint8)
+                    .reshape(64, 64))
+    datos = _placa(tmp_path, cambiar, "rle.dcm")
+    return datos[: len(datos) - 200]
+
+
+# (identificador, como se fabrica, motivo, los datos del motivo, su texto)
+NO_EVALUABLES = [
+    ("texto", lambda t: b"esto no es un DICOM", "sin_metainformacion", {},
+     SIN_METAINFORMACION),
+    ("solo_el_preambulo", lambda t: _placa(t)[:132], "sin_metainformacion", {},
+     SIN_METAINFORMACION),
+    ("0002_cortado", lambda t: _placa(t)[:150], "sin_metainformacion", {},
+     SIN_METAINFORMACION),
+    ("0002_sin_sintaxis", _sin_sintaxis, "sin_metainformacion", {},
+     SIN_METAINFORMACION),
+    ("sintaxis_desconocida", _sintaxis_desconocida, "sin_metainformacion", {},
+     SIN_METAINFORMACION),
+    ("deflated", _deflated, "deflated", {}, DEFLATED),
+    ("16_bits", lambda t: _placa(t, _de_16_bits()), "bits",
+     {"bits": 16, "con_signo": False}, _bits("16 bits")),
+    ("16_bits_con_signo", lambda t: _placa(t, _de_16_bits(con_signo=True)), "bits",
+     {"bits": 16, "con_signo": True}, _bits("16 bits con signo")),
+    ("8_bits_con_signo", lambda t: _placa(t, _con(PixelRepresentation=1)), "bits",
+     {"bits": 8, "con_signo": True}, _bits("8 bits con signo")),
+    ("1_bit", lambda t: _placa(t, _de_1_bit), "bits",
+     {"bits": 1, "con_signo": False}, _bits("1 bit")),
+    ("monochrome1", lambda t: _placa(t, _con(PhotometricInterpretation="MONOCHROME1")),
+     "fotometria", {}, INVERTIDA),
+    ("rgb", lambda t: _placa(t, _en_color), "color", {}, EN_COLOR),
+    ("paleta", lambda t: _placa(t, _con(PhotometricInterpretation="PALETTE COLOR")),
+     "color", {}, EN_COLOR),
+    ("tres_muestras_en_grises", lambda t: _placa(t, _con(SamplesPerPixel=3)), "color",
+     {}, EN_COLOR),
+    ("dos_cuadros", lambda t: _placa(t, _dos_cuadros), "cuadros", {"cuadros": 2},
+     _cuadros(2)),
+    ("rows_5001", lambda t: _placa(t, _con(Rows=5001)), "tamano",
+     {"filas": 5001, "columnas": 64}, _tamano(5001, 64)),
+    ("columns_5001", lambda t: _placa(t, _con(Columns=5001)), "tamano",
+     {"filas": 64, "columnas": 5001}, _tamano(64, 5001)),
+    ("bomba_60000x60000", _la_bomba, "tamano", {"filas": 60000, "columnas": 60000},
+     _tamano(60000, 60000)),
+    ("rows_vacio", lambda t: _placa(t, _con(Rows=None)), "cabecera_incompleta", {},
+     CABECERA_INCOMPLETA),
+    *[(f"sin_{campo}", (lambda c: lambda t: _placa(t, _sin(c)))(campo),
+       "cabecera_incompleta", {}, CABECERA_INCOMPLETA)
+      for campo in CAMPOS_DE_LA_IMAGEN],
+    ("cuadros_ilegibles", _cuadros_ilegibles, "cabecera_incompleta", {},
+     CABECERA_INCOMPLETA),
+    ("sin_pixel_data", _sin_pixel_data, "sin_pixeles", {}, SIN_PIXELES),
+    ("recortada", _recortada, "sin_pixeles", {}, SIN_PIXELES),
+]
+
+
+@pytest.mark.parametrize("hacer, motivo, datos, texto", [n[1:] for n in NO_EVALUABLES],
+                         ids=[n[0] for n in NO_EVALUABLES])
+def test_cada_motivo_se_rechaza_con_su_codigo_sus_datos_y_un_texto_nuestro(
+        tmp_path, nadie_descodifica, nadie_infla, hacer, motivo, datos, texto):
+    """Cada DICOM que el motor no puede evaluar se rechaza con `PlacaNoEvaluable`,
+    su motivo, los enteros que lo explican y NUESTRO texto, sin descodificar un
+    pixel y sin inflar nada. La cabecera decide sola, salvo `sin_pixeles`: ahi la
+    cabecera esta en regla, y lo que falta lo dice la lectura entera, antes de
+    `pixel_array`."""
+    with warnings.catch_warnings():
+        # pydicom avisa al leer la recortada (el fichero se acaba antes del
+        # delimitador) y de los valores que se escriben mal a proposito.
+        warnings.simplefilter("ignore", UserWarning)
+        placa = hacer(tmp_path)
+        with pytest.raises(PlacaNoEvaluable) as fallo:
+            leer_dicom_desde_bytes(placa)
+        exc = fallo.value
+        assert exc.motivo == motivo
+        assert {clave: getattr(exc, clave) for clave in datos} == datos
+        assert str(exc) == texto
+        assert not [f for f in DE_PYDICOM if f in str(exc)]
+        if motivo == "sin_pixeles":
+            assert comprobar_que_se_puede_evaluar(placa) is None
+        else:
+            with pytest.raises(PlacaNoEvaluable) as otra:
+                comprobar_que_se_puede_evaluar(placa)
+            assert (otra.value.motivo, str(otra.value)) == (motivo, texto)
+    assert nadie_descodifica == [] and nadie_infla == []
+
+
+@pytest.mark.parametrize("cambiar, motivo", [
+    (lambda ds: (_de_16_bits()(ds), setattr(ds, "Rows", 6000)), "tamano"),
+    (lambda ds: (_de_16_bits()(ds), setattr(ds, "NumberOfFrames", 2)), "cuadros"),
+    (lambda ds: (_de_16_bits()(ds), setattr(ds, "PhotometricInterpretation", "RGB")),
+     "bits"),
+    (_con(PixelRepresentation=1, PhotometricInterpretation="MONOCHROME1"), "fotometria"),
+    (lambda ds: (_en_color(ds), setattr(ds, "PixelRepresentation", 1)), "color"),
+], ids=["16_bits_y_6000_filas", "16_bits_y_dos_cuadros", "16_bits_en_color",
+        "signo_e_invertida", "signo_y_color"])
+def test_con_varias_cosas_mal_manda_la_primera_en_el_orden_de_la_app(
+        tmp_path, nadie_descodifica, cambiar, motivo):
+    """El orden es el de la app (R27), para que alli cada placa siga recibiendo el
+    mensaje de siempre: el tamano y los cuadros, los bits, la escala invertida y el
+    color; y el signo, el ULTIMO (en la app lo paraba la segunda red, ya con los
+    pixeles)."""
+    with pytest.raises(PlacaNoEvaluable) as fallo:
+        comprobar_que_se_puede_evaluar(_placa(tmp_path, cambiar))
+    assert fallo.value.motivo == motivo
+    assert nadie_descodifica == []
+
+
+def test_una_placa_sana_de_8_bits_pasa_la_regla_y_se_lee_como_siempre(tmp_path):
+    ruta = tmp_path / "a.dcm"
+    esperado = crear_dicom(ruta, edad="054Y")
+    datos = ruta.read_bytes()
+    assert comprobar_que_se_puede_evaluar(datos) is None
+    arreglo, meta = leer_dicom_desde_bytes(datos)
+    assert arreglo.dtype == np.uint8 and np.array_equal(arreglo, esperado)
+    assert meta["edad"] == "054Y" and (meta["filas"], meta["columnas"]) == (64, 64)
+
+
+@pytest.mark.parametrize("cambiar",
+                         [_con(NumberOfFrames=1), _con(Rows=5000, Columns=5000)],
+                         ids=["un_cuadro", "5000x5000"])
+def test_los_bordes_pasan_la_regla(tmp_path, nadie_descodifica, cambiar):
+    """Un cuadro declarado y 5 000 x 5 000 justos (la cabecera; los pixeles no se
+    miran) pasan, como pasaban en la app."""
+    assert comprobar_que_se_puede_evaluar(_placa(tmp_path, cambiar)) is None
+    assert nadie_descodifica == []
+
+
+def test_una_placa_sana_en_rle_pasa_y_se_lee(tmp_path):
+    """Una sintaxis comprimida que no es Deflated no se rechaza por serlo: RSNA
+    llega en JPEG Baseline. Aqui, RLE, que pydicom descodifica sin plugins."""
+    pixeles = (np.arange(64 * 64) % 256).astype(np.uint8).reshape(64, 64)
+    datos = _placa(tmp_path, lambda ds: ds.compress(RLELossless, pixeles), "rle.dcm")
+    assert comprobar_que_se_puede_evaluar(datos) is None
+    assert np.array_equal(leer_dicom_desde_bytes(datos)[0], pixeles)
+
+
+def test_la_bomba_de_60000_x_60000_se_rechaza_sin_reservar_la_memoria(
+        tmp_path, nadie_descodifica):
+    """Unos cientos de bytes que declaran 60 000 x 60 000 en RLE: `pixel_array`
+    reservaria 3,35 GiB (el contenedor del bot muere y se reinicia). Se rechaza
+    por la cabecera: el espia no salta, y el pico de memoria que mide tracemalloc
+    -que ve las reservas de numpy- se queda en nada."""
+    datos = _la_bomba(tmp_path)
+    assert len(datos) < 1000
+    tracemalloc.start()
+    try:
+        with pytest.raises(PlacaNoEvaluable) as fallo:
+            leer_dicom_desde_bytes(datos)
+        _, pico = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert (fallo.value.motivo, fallo.value.filas, fallo.value.columnas) == (
+        "tamano", 60000, 60000)
+    assert nadie_descodifica == []
+    assert pico < 4 * 2**20, f"pico de {pico / 2**20:.1f} MiB"
+
+
+MIB_DENTRO_DEL_DEFLATED = 200
+
+
+@pytest.fixture(scope="session")
+def deflated_con_cientos_de_mib(tmp_path_factory):
+    """Unos 200 KiB que, inflados, son mas de 200 MiB: la metainformacion de un
+    DICOM Deflated escrito por pydicom y, detras, la cabecera de la placa sana con
+    un Pixel Data de ceros, comprimido a trozos (sin tener nunca los 200 MiB en
+    memoria). Leer su cabecera con `stop_before_pixels` lo infla entero (medido:
+    pico de 437 MiB). Se comprueba lo que lleva dentro inflando a trozos de 1 MiB,
+    antes de que ningun espia este puesto."""
+    pequeno = _deflated(tmp_path_factory.mktemp("deflated"))
+    assert pequeno[132:136] == b"\x02\x00\x00\x00"                  # (0002,0000)
+    fin_0002 = 144 + struct.unpack("<I", pequeno[140:144])[0]
+    dentro = zlib.decompress(pequeno[fin_0002:], -zlib.MAX_WBITS)
+    pixel_data = dentro.index(b"\xe0\x7f\x10\x00")
+    compresor = zlib.compressobj(9, zlib.DEFLATED, -zlib.MAX_WBITS)
+    trozos = [compresor.compress(
+        dentro[:pixel_data] + b"\xe0\x7f\x10\x00OB\x00\x00"
+        + struct.pack("<I", MIB_DENTRO_DEL_DEFLATED * 2**20))]
+    un_mib = bytes(2**20)
+    trozos += [compresor.compress(un_mib) for _ in range(MIB_DENTRO_DEL_DEFLATED)]
+    trozos.append(compresor.flush())
+    datos = pequeno[:fin_0002] + b"".join(trozos)
+    inflador, resto, inflado = zlib.decompressobj(-zlib.MAX_WBITS), datos[fin_0002:], 0
+    while resto:
+        inflado += len(inflador.decompress(resto, 2**20))
+        resto = inflador.unconsumed_tail
+    assert inflado > MIB_DENTRO_DEL_DEFLATED * 2**20
+    assert len(datos) < 300 * 1024
+    return datos
+
+
+def test_un_deflated_con_cientos_de_mib_dentro_se_rechaza_sin_inflarlo(
+        deflated_con_cientos_de_mib, monkeypatch, nadie_infla, nadie_descodifica):
+    """La sintaxis se mira en el grupo 0002, que nunca va comprimido, ANTES de
+    cualquier `dcmread` del conjunto de datos: ni se lee (los espias de
+    `dcmread` y de `read_partial`, que es donde pydicom infla), ni se infla (el
+    de zlib), y el pico de memoria se queda en nada."""
+    lecturas = []
+
+    def espia(nombre):
+        def no_leas(*args, **kwargs):
+            lecturas.append(nombre)
+            raise AssertionError(f"no se tenia que llamar a {nombre}")
+        return no_leas
+
+    monkeypatch.setattr(pydicom, "dcmread", espia("pydicom.dcmread"))
+    monkeypatch.setattr(pydicom.filereader, "dcmread", espia("filereader.dcmread"))
+    monkeypatch.setattr(pydicom.filereader, "read_partial", espia("read_partial"))
+    tracemalloc.start()
+    try:
+        with pytest.raises(PlacaNoEvaluable) as fallo:
+            leer_dicom_desde_bytes(deflated_con_cientos_de_mib)
+        _, pico = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert fallo.value.motivo == "deflated"
+    assert lecturas == [] and nadie_infla == [] and nadie_descodifica == []
+    assert pico < 4 * 2**20, f"pico de {pico / 2**20:.1f} MiB"
+
+
+@pytest.mark.parametrize("tipo, bits, con_signo", [
+    (np.int8, 8, True), (np.uint16, 16, False), (np.int16, 16, True),
+    (np.float32, 32, False)], ids=["int8", "uint16", "int16", "float32"])
+def test_la_segunda_red_para_lo_que_no_sale_uint8(tmp_path, monkeypatch, tipo, bits,
+                                                   con_signo):
+    """Si con la cabecera en regla pydicom diera otra cosa que `uint8`, la
+    segunda red lo para despues de `pixel_array`: lo que no es uint8 el modelo no
+    lo ve como las placas de RSNA."""
+    datos = _placa(tmp_path)
+    monkeypatch.setattr(pydicom.dataset.Dataset, "pixel_array",
+                        property(lambda self: np.zeros((64, 64), tipo)))
+    with pytest.raises(PlacaNoEvaluable) as fallo:
+        leer_dicom_desde_bytes(datos)
+    assert (fallo.value.motivo, fallo.value.bits, fallo.value.con_signo) == (
+        "bits", bits, con_signo)
+    with pytest.raises(PlacaNoEvaluable):
+        comprobar_los_pixeles(np.zeros((4, 4), tipo))
+    assert comprobar_los_pixeles(np.zeros((4, 4), np.uint8)) is None
+
+
+def test_leer_dicom_por_ruta_no_aplica_la_regla(tmp_path):
+    """`leer_dicom` es la lectura del entrenamiento y del EDA, sobre RSNA, y
+    `convertir_a_png` reescala lo que no es uint8: la regla es del servicio, y
+    por ruta un DICOM de 16 bits se sigue leyendo tal cual."""
+    ruta = tmp_path / "16.dcm"
+    ruta.write_bytes(_placa(tmp_path, _de_16_bits()))
+    arreglo, _ = leer_dicom(ruta)
+    assert arreglo.dtype == np.uint16
+
+
+# --------------------------------------------------------------------------
+# Ningun falso rechazo en RSNA (se salta sin el corpus o sin el dataset)
+# --------------------------------------------------------------------------
+CORPUS = REPO / "pruebas" / "corpus"
+
+
+def _lo_que_rechaza(rutas) -> dict:
+    """{nombre: motivo} de lo que la regla rechaza entre esas rutas."""
+    rechazados = {}
+    for ruta in rutas:
+        try:
+            comprobar_que_se_puede_evaluar(ruta.read_bytes())
+        except PlacaNoEvaluable as exc:
+            rechazados[ruta.name] = exc.motivo
+    return rechazados
+
+
+def test_la_regla_no_rechaza_ninguna_placa_del_corpus_de_la_sesion(
+        rsna_raiz, nadie_descodifica):
+    """Las placas de RSNA de los casos del corpus (`pruebas/corpus/`, que no se
+    versiona), por su patientId, y las dos fabricadas que siguen siendo placas
+    sanas -sin la edad, y con relleno detras-, pasan la regla sin descodificar un
+    pixel. La recortada del perfil «fichero corrupto» se rechaza por lo que es:
+    trae la cabecera y no la imagen."""
+    if not CORPUS.is_dir():
+        pytest.skip("CORPUS DE LA SESIÓN SIN COMPROBAR: no está pruebas/corpus/, que "
+                    "no se versiona. Se genera con `python "
+                    "pruebas/reproducir_casos.py --sin-bots` (con RSNA_RAIZ y el "
+                    "copiloto), y se repite.")
+    casos = sorted({p.stem for p in CORPUS.glob("*/*.txt")
+                    if not p.stem.endswith("-FABRICADO")})
+    assert len(casos) >= 40, casos
+    crudo = rsna_raiz / "crudo" / "stage_2_train_images"
+    fabricados = CORPUS / "_fabricados"
+    assert _lo_que_rechaza([crudo / f"{caso}.dcm" for caso in casos]) == {}
+    assert _lo_que_rechaza([fabricados / "sin-edad-FABRICADO.dcm",
+                            fabricados / "relleno-FABRICADO.dcm"]) == {}
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        with pytest.raises(PlacaNoEvaluable) as fallo:
+            leer_dicom_desde_bytes((fabricados / "truncado-FABRICADO.dcm").read_bytes())
+    assert fallo.value.motivo == "sin_pixeles"
+    assert nadie_descodifica == []
+
+
+def test_la_regla_no_rechaza_ninguna_placa_del_conjunto_de_prueba_de_rsna(
+        rsna_raiz, nadie_descodifica):
+    """Las 3 811 placas de prueba de RSNA (`manifiestos/test.csv`) pasan la regla,
+    sin descodificar un pixel. La pasada por las 26 684, una vez y fuera de la
+    suite, esta en el informe de SP5-B4."""
+    with open(rsna_raiz / "manifiestos" / "test.csv", encoding="utf-8") as f:
+        casos = [fila["patientId"] for fila in csv.DictReader(f)]
+    assert len(casos) > 3000
+    crudo = rsna_raiz / "crudo" / "stage_2_train_images"
+    assert _lo_que_rechaza([crudo / f"{caso}.dcm" for caso in casos]) == {}
+    assert nadie_descodifica == []

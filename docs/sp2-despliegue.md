@@ -1354,7 +1354,7 @@ depende de la puerta**, y esto importa para programar el cliente:
 | :--- | :--- | :--- | :--- |
 | `fuera_de_alcance` | paciente fuera de 18-100 años | 422 | `isError: true` |
 | `edad_desconocida` | la cabecera DICOM no declara edad interpretable | 422 | `isError: true` |
-| `dicom_invalido` | los bytes no son un DICOM legible | 422 | `isError: true` |
+| `dicom_invalido` | los bytes no son un DICOM legible, o la placa no se puede evaluar (abajo) | 422 | `isError: true` |
 | `payload_excesivo` | más de 5 MB (5 242 880 bytes) descodificados | 413 | `isError: true` |
 | `base64_invalido` | el `dicom_base64` no es base64 válido | — | `isError: true` |
 
@@ -1369,6 +1369,38 @@ MCP : {"result":{"content":[{"text":"Error executing tool clasificar_radiografia
 Que el modelo **se niegue** a opinar sobre un menor es comportamiento
 deseado, no un fallo del despliegue: los pesos se entrenaron y se validaron
 sobre adultos.
+
+### Las placas que no se evalúan (SP5-B4)
+
+Antes de descodificar un solo píxel, el servidor mira la metainformación y la
+cabecera del DICOM y **no evalúa** la placa que el modelo vería mal o que no cabe
+en memoria. La regla está en un solo sitio, `comprobar_que_se_puede_evaluar` de
+`src/copiloto_triaje/datos/dicom.py`, y la interfaz de demostración usa la misma.
+Todas salen con `dicom_invalido`:
+
+| Lo que trae el fichero | Por qué no se evalúa |
+| :--- | :--- |
+| sin la metainformación de un DICOM (el preámbulo con `DICM` y el grupo 0002), o con una sintaxis de transferencia que no se conoce | no se sabe cómo leerlo |
+| la sintaxis Deflated: todo el conjunto de datos comprimido con zlib | leer siquiera su cabecera lo infla entero (unos cientos de KiB pueden ser cientos de MiB) |
+| más o menos de 8 bits, o con signo | el modelo se entrenó con placas de 8 bits sin signo, las de RSNA: una de 16 bits la vería saturada, casi blanca, y daría una cifra que no vale |
+| `MONOCHROME1`, la escala de grises invertida | la vería al revés |
+| en color: otra fotometría que `MONOCHROME2`, o más de una muestra por píxel | se entrenó con placas en grises |
+| más de un cuadro | evalúa una placa sola, y todos los cuadros se reservarían en memoria |
+| más de 5 000 píxeles de lado | ninguna placa de tórax digital llega (rondan 4 300 × 4 300): unos 600 bytes que declaraban 60 000 × 60 000 hacían reservar 3,4 GiB y el contenedor moría |
+| una cabecera sin alguno de los campos que dicen cómo leer la imagen, o con uno vacío | pydicom no la sabría descodificar |
+| la cabecera pero no la imagen: un fichero recortado | no hay placa que leer (hasta SP5-B4 salía sin código: un 500 por REST) |
+
+El detalle es un texto nuestro, sin nada de pydicom ni del fichero salvo enteros
+de la cabecera, por ejemplo:
+
+```
+dicom_invalido: La placa no se puede evaluar: es de 16 bits, y el modelo solo evalúa placas de 8 bits sin signo, como las de RSNA con las que se entrenó.
+```
+
+**El profesional no lo ve.** Ante `dicom_invalido` el bot dice «No pude leer esa
+radiografía.» y «Sigo esperando el archivo.», no relata el detalle —va a
+`consultas.error`— y espera otro fichero. Las 26 684 placas de RSNA pasan la
+regla.
 
 ## 10. Variables de entorno
 
