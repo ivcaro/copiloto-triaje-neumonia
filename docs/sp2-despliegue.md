@@ -386,7 +386,8 @@ Y salta al **paso 5**, la comprobación del hash, que no sobra en ningún camino
 > **Lo que el clon deja en el disco del cliente.** El árbol completo son 5,3 MB,
 > de los cuales 4 MB son `docs/eda/metadatos_eda.csv`: 26 685 filas de
 > metadatos por paciente del concurso RSNA. No entra en la imagen —el
-> `Dockerfile.dockerignore` excluye `docs/`— pero sí queda en `/opt/copiloto`.
+> `Dockerfile.dockerignore` es una lista blanca de lo que la imagen copia, y
+> `docs/` no está en ella— pero sí queda en `/opt/copiloto`.
 > Si no quieres eso en la máquina del cliente, el camino B no lo lleva, o se
 > saca el CSV del repositorio.
 
@@ -619,6 +620,14 @@ docker compose build
 
 Tarda unos 2 minutos la primera vez; casi todo es la descarga de torch
 (196,3 MB). La imagen resultante es `copiloto-mcp:0.1.0`.
+
+El contexto de la construcción es la raíz del repositorio, y lo filtra
+`servidor/Dockerfile.dockerignore`: desde SP5-B4, una **lista blanca** con solo lo
+que copia el Dockerfile (`pyproject.toml`, los `.py` de `src/`, los pesos, el
+calibrador y `arrancar.py`). Ni `pruebas/`, ni `n8n/`, ni un `.env` llegan al
+demonio. Ese fichero lo lee BuildKit, que es el de `docker compose build`; con el
+constructor antiguo se ignoraría y viajaría el repositorio entero.
+`tests/test_servidor_docker.py` lo comprueba con BuildKit de verdad.
 
 Todo lo que se instala está clavado a una versión exacta, **incluida la imagen
 base, que se referencia por digest** y no por la etiqueta `python:3.12-slim`. Es
