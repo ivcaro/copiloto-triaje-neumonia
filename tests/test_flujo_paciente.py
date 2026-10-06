@@ -299,6 +299,24 @@ def test_los_botones_de_cada_pregunta_son_los_del_spec():
     assert vistos == esperado
 
 
+def test_el_consentimiento_dice_lo_que_pasa_con_los_datos():
+    """D11, y la mitigación M2 del análisis ético (5-oct-2026): el
+    consentimiento nombra al tercero por el que pasan los datos, dice que el
+    resultado lo calcula una IA y da los plazos reales, también el de la copia
+    que queda en `consultas`. Y ya no promete lo que no era verdad: que el
+    identificador de Telegram nunca va unido a las respuestas (mientras se
+    contesta, sí) ni que solo las ve el médico (las ve también el equipo)."""
+    texto = _nodo(_flujo(), "Pedir consentimiento")["parameters"]["text"]
+    for debe in ("Telegram", "inteligencia artificial", "NO un diagnóstico",
+                 "7 días", "2 días", "31 de diciembre de 2026",
+                 "equipo del proyecto", "urgencias AHORA"):
+        assert debe in texto, debe
+    for falso in ("NO va unido a sus respuestas", "Solo las verá el médico"):
+        assert falso not in texto, falso
+    assert len(texto) <= 4096      # el límite de un mensaje de Telegram
+    assert "{{" not in texto       # un literal, no una expresión de n8n
+
+
 def test_cada_pregunta_declara_la_clave_del_spec():
     """La tabla del nodo `Decidir` es la UNICA fuente de la que sale la clave
     con la que se guarda cada respuesta. Se compara literal contra el §4.4."""
