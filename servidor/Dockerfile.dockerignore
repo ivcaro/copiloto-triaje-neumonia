@@ -3,12 +3,48 @@
 # RAIZ del contexto. Un `servidor/.dockerignore` se ignora en silencio -
 # comprobado: con el, `tests/` seguia entrando al contexto-. La forma soportada
 # de tener reglas propias por Dockerfile es `<ruta-del-dockerfile>.dockerignore`
-# junto al Dockerfile, que es este fichero.
+# junto al Dockerfile, que es este fichero, y solo lo lee BuildKit (por defecto
+# desde Docker 23, y el de `docker compose build`): con el constructor antiguo se
+# ignora y viaja todo.
+#
+# Es una LISTA BLANCA (SP5-B4), como la de la app (app/Dockerfile.dockerignore): se
+# excluye todo y se readmite solo lo que servidor/Dockerfile copia. Hasta SP5-B4 era
+# una lista negra (`docs`, `tests`, `.git`...), y dejaba entrar `pruebas/` -con
+# puntuaciones por placa y un corpus de RSNA-, `n8n/` con su `valores.local.json`,
+# `.superpowers/` y cualquier `.env`: lo que se anade manana y a nadie se le ocurre
+# excluir. Aqui, lo nuevo no entra hasta que alguien lo readmite a proposito.
+# tests/test_servidor_docker.py comprueba que esta lista es la de lo que copia el
+# Dockerfile y, con BuildKit, que contexto llega de verdad.
+*
+!pyproject.toml
+# El paquete: lo que `pip install .` instala son sus `.py` (con `__init__.py` en cada
+# carpeta), a cualquier profundidad.
+!src/**/*.py
+!servidor/pesos_modelo_cpu.pt
+!servidor/calibrador.json
+!servidor/arrancar.py
+
+# Una segunda red debajo de la lista blanca (estas reglas van despues: gana la ultima
+# que coincide). Con solo los `.py` de `src/`, ya no entran los `.pyc` de
+# `__pycache__` ni los ficheros de un `*.egg-info`, y estas reglas lo repiten a
+# proposito.
+#
+# Cada carpeta lleva dos reglas, la carpeta y su contenido (`/**`), y no es un
+# adorno: medido con BuildKit, la exclusion de la carpeta sola NO alcanza a un `.py`
+# de dentro que `src/**/*.py` readmite, y con el contenido si. Es lo que mantiene
+# fuera, por ejemplo, un `.py` de un `.git` o de un entorno virtual llamado `.env`
+# metido en `src/`.
 **/__pycache__
+**/__pycache__/**
 **/*.pyc
-.pytest_cache
-.git
-docs
-tests
-notebooks
-scripts
+**/*.egg-info
+**/*.egg-info/**
+# Lo que no entra NUNCA, este donde este.
+**/.git
+**/.git/**
+**/.env
+**/.env/**
+**/.env.*
+**/*.env
+**/secrets.toml
+**/*.local.json

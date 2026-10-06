@@ -13,9 +13,10 @@
 # interfaces de la máquina, y la app no pide ninguna contraseña. Y el límite de memoria,
 # también SIEMPRE: es la red de debajo. La app rechaza por la cabecera, antes de descodificar
 # un solo píxel, lo que declara más de 5 000 píxeles de lado, varios cuadros o más de 8
-# bits, y no abre un DICOM comprimido entero; pero el motor y el servidor siguen sin esa
-# guarda (con el lector del motor, un DICOM de cientos de bytes que declara 60 000 x 60 000
-# hace reservar 3,4 GiB, y con este límite lo que muere es el contenedor y no la máquina).
+# bits, y no abre un DICOM comprimido entero: es la regla del motor (datos/dicom.py, SP5-B4),
+# la misma del servidor. Sin ella, un DICOM de cientos de bytes que declara 60 000 x 60 000
+# hacía reservar 3,4 GiB; si algo se le escapara, con este límite lo que muere es el
+# contenedor y no la máquina.
 # `--memory-swap` igual a `--memory`: sin él, Docker deja usar otro tanto de swap y el
 # límite deja de serlo. La app usa menos de 500 MiB (docker stats) tras los cuatro
 # ejemplos y el mapa de calor: 2 GB, lo mismo que el servidor, es margen de sobra.

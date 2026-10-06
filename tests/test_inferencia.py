@@ -19,9 +19,13 @@ from copiloto_triaje.datos.dicom import leer_dicom_desde_bytes
 from copiloto_triaje.modelo.arquitectura import construir_modelo, descongelar_todo
 from copiloto_triaje.servicio.calibracion import Calibrador, ajustar_calibrador
 from copiloto_triaje.servicio.heckerling import combinacion, combinar
+from copiloto_triaje.servicio import inferencia
 from copiloto_triaje.servicio.inferencia import ErrorDeInferencia, Motor
 
-from test_dicom import crear_dicom  # reutiliza el generador de DICOM sinteticos
+# reutiliza el generador de DICOM sinteticos, y los que el motor no puede evaluar
+from test_dicom import (
+    DE_PYDICOM, NO_EVALUABLES, REPETIDOS_DETRAS, _la_bomba, crear_dicom,
+)
 
 
 @pytest.fixture
@@ -187,6 +191,16 @@ def test_el_modelo_queda_en_modo_evaluacion(motor):
     assert motor.modelo.training is False
 
 
+# Palabras que en espanol llevan tilde y aparecen a menudo sin ella, y formas de
+# tuteo (el sistema trata de usted): lo que no puede llevar un mensaje que lee una
+# persona.
+SIN_TILDE = ("anios", "valido", "codigo", "numero", "maximo", "minimo",
+             "diagnostico", "analisis", "radiografia", "informacion",
+             "despues", "tambien", "aqui", "esta.", "mas ")
+TUTEO = (" pide ", " manda ", " envia ", " comprueba ", " revisa ",
+         " vuelve a ", " intenta ")
+
+
 def test_los_mensajes_que_lee_un_clinico_estan_bien_escritos():
     """Los detalles de `ErrorDeInferencia` los lee una persona, no un programa.
 
@@ -208,14 +222,6 @@ def test_los_mensajes_que_lee_un_clinico_estan_bien_escritos():
     raiz = pathlib.Path(__file__).resolve().parents[1] / "src" / "copiloto_triaje"
     fuentes = [raiz / "servicio" / "inferencia.py",
                raiz / "servicio" / "aplicacion.py"]
-
-    # Palabras que en espanol llevan tilde y aparecen a menudo sin ella.
-    SIN_TILDE = ("anios", "valido", "codigo", "numero", "maximo", "minimo",
-                 "diagnostico", "analisis", "radiografia", "informacion",
-                 "despues", "tambien", "aqui", "esta.", "mas ")
-    # Formas de tuteo: el sistema trata de usted.
-    TUTEO = (" pide ", " manda ", " envia ", " comprueba ", " revisa ",
-             " vuelve a ", " intenta ")
 
     # Solo los textos de los errores: `raise ErrorDeInferencia(codigo, detalle)`.
     LLAMADA = re.compile(
@@ -300,6 +306,92 @@ def test_unos_hallazgos_invalidos_se_rechazan_antes_de_leer_el_dicom(motor):
                          {**HALLAZGOS, "crepitantes": "false"})
     assert exc.value.codigo == "hallazgos_invalidos"
     assert "crepitantes" in str(exc.value)
+
+
+def test_los_hallazgos_se_siguen_validando_antes_que_la_placa(motor, tmp_path,
+                                                             nadie_descodifica):
+    """D4 con la regla de SP5-B4: unos hallazgos mal formados se rechazan antes de
+    mirar siquiera la cabecera, tambien con la bomba de 60 000 x 60 000."""
+    with pytest.raises(ErrorDeInferencia) as exc:
+        motor.clasificar(_la_bomba(tmp_path), {**HALLAZGOS, "crepitantes": "false"})
+    assert exc.value.codigo == "hallazgos_invalidos"
+    assert nadie_descodifica == []
+
+
+# --- Lo que el motor no puede evaluar (SP5-B4) ---------------------------------
+#
+# La regla vive en `datos/dicom.py` (y sus pruebas, en test_dicom.py). Aqui, que
+# el motor la traduce a `dicom_invalido` con NUESTRO texto -nunca el de pydicom,
+# que el bot registraria-, igual en `clasificar` que en `mapa_de_calor`, y sin
+# descodificar ni inflar nada. Hasta SP5-B4, una placa de 16 bits daba una cifra
+# que no valia, la bomba tumbaba el contenedor y un fichero recortado o con `Rows`
+# vacio lanzaba un AttributeError que el motor no traduce.
+PREFIJO_NO_EVALUABLE = "La placa no se puede evaluar: "
+
+
+@pytest.mark.parametrize("hacer, motivo, datos, texto", [n[1:] for n in NO_EVALUABLES],
+                         ids=[n[0] for n in NO_EVALUABLES])
+@pytest.mark.parametrize("llamar", ["clasificar", "mapa_de_calor"])
+def test_lo_que_no_se_puede_evaluar_es_dicom_invalido_con_nuestro_texto(
+        motor, tmp_path, nadie_descodifica, nadie_infla, llamar, hacer, motivo, datos,
+        texto):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        placa = hacer(tmp_path)
+        with pytest.raises(ErrorDeInferencia) as fallo:
+            getattr(motor, llamar)(placa)
+    mensaje = str(fallo.value)
+    assert fallo.value.codigo == "dicom_invalido"
+    assert mensaje == PREFIJO_NO_EVALUABLE + texto
+    assert not [f for f in DE_PYDICOM if f in mensaje]
+    bajo = " " + mensaje.lower() + " "
+    assert not [p for p in SIN_TILDE + TUTEO if p in bajo], mensaje
+    assert nadie_descodifica == [] and nadie_infla == []
+
+
+@pytest.mark.parametrize("hacer, texto", [(r[1], r[5]) for r in REPETIDOS_DETRAS],
+                         ids=[r[0] for r in REPETIDOS_DETRAS])
+@pytest.mark.parametrize("llamar", ["clasificar", "mapa_de_calor"])
+def test_un_campo_repetido_detras_del_pixel_data_tampoco_pasa_por_el_motor(
+        motor, tmp_path, nadie_descodifica, llamar, hacer, texto):
+    """Ronda 1, I1: un DICOM no conforme con los campos de la imagen otra vez DETRAS
+    del Pixel Data (60 000 x 60 000 en una RLE, o MONOCHROME1) tumbaba el contenedor o
+    recibia una cifra. Ahora, `dicom_invalido` con nuestro texto, sin descodificar."""
+    with pytest.raises(ErrorDeInferencia) as fallo:
+        getattr(motor, llamar)(hacer(tmp_path))
+    assert fallo.value.codigo == "dicom_invalido"
+    assert str(fallo.value) == PREFIJO_NO_EVALUABLE + texto
+    assert nadie_descodifica == []
+
+
+def test_la_segunda_red_tambien_llega_al_motor_como_dicom_invalido(motor, tmp_path,
+                                                                   monkeypatch):
+    """Si con la cabecera en regla pydicom diera otra cosa que `uint8`, el motor
+    no calcula: `dicom_invalido`, con el texto de los bits."""
+    ruta = tmp_path / "a.dcm"
+    crear_dicom(ruta, edad="054Y")
+    monkeypatch.setattr(pydicom.dataset.Dataset, "pixel_array",
+                        property(lambda self: np.zeros((64, 64), np.uint16)))
+    with pytest.raises(ErrorDeInferencia) as fallo:
+        motor.clasificar(ruta.read_bytes())
+    assert fallo.value.codigo == "dicom_invalido"
+    assert str(fallo.value).startswith(PREFIJO_NO_EVALUABLE + "es de 16 bits")
+
+
+def test_un_attributeerror_del_lector_sigue_sin_disfrazarse_de_dicom_invalido(
+        motor, tmp_path, monkeypatch):
+    """El motor sigue sin capturar `AttributeError`: un error de programacion en el
+    lector tiene que verse, no decirle al profesional que su placa esta corrupta.
+    Lo que era un AttributeError de pydicom POR LOS DATOS (un recortado, `Rows`
+    vacio) ya no llega ahi: la regla lo para antes, y eso lo fijan las de arriba."""
+    def con_una_errata(datos):
+        raise AttributeError("una errata en el lector")
+
+    monkeypatch.setattr(inferencia, "leer_dicom_desde_bytes", con_una_errata)
+    ruta = tmp_path / "a.dcm"
+    crear_dicom(ruta, edad="054Y")
+    with pytest.raises(AttributeError, match="una errata"):
+        motor.clasificar(ruta.read_bytes())
 
 
 def test_el_rechazo_por_edad_gana_a_la_combinacion(motor, tmp_path):
