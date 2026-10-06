@@ -24,7 +24,7 @@
   },
   "subgrupos": [
     {
-      "nombre": "Todas",
+      "nombre": "Todas las placas",
       "n": 3811,
       "positivos": 844,
       "auc": 0.884837,
@@ -120,7 +120,7 @@
       ]
     },
     {
-      "nombre": "Placa PA",
+      "nombre": "Placa PA (de pie)",
       "n": 2087,
       "positivos": 202,
       "auc": 0.882039,
@@ -136,7 +136,7 @@
       ]
     },
     {
-      "nombre": "Placa AP",
+      "nombre": "Placa AP (portátil)",
       "n": 1724,
       "positivos": 642,
       "auc": 0.82884,
@@ -184,6 +184,22 @@
       ]
     },
     {
+      "nombre": "PA, 60 años o más",
+      "n": 561,
+      "positivos": 55,
+      "auc": 0.85451,
+      "recall": 0.636364,
+      "recall_ic": [
+        0.504225,
+        0.750697
+      ],
+      "especificidad": 0.869565,
+      "especificidad_ic": [
+        0.837414,
+        0.896147
+      ]
+    },
+    {
       "nombre": "AP, mujeres",
       "n": 734,
       "positivos": 260,
@@ -213,38 +229,6 @@
       "especificidad_ic": [
         0.353449,
         0.430809
-      ]
-    },
-    {
-      "nombre": "PA, 60 años o más",
-      "n": 561,
-      "positivos": 55,
-      "auc": 0.85451,
-      "recall": 0.636364,
-      "recall_ic": [
-        0.504225,
-        0.750697
-      ],
-      "especificidad": 0.869565,
-      "especificidad_ic": [
-        0.837414,
-        0.896147
-      ]
-    },
-    {
-      "nombre": "AP, 60 años o más",
-      "n": 403,
-      "positivos": 138,
-      "auc": 0.774679,
-      "recall": 0.905797,
-      "recall_ic": [
-        0.845493,
-        0.94412
-      ],
-      "especificidad": 0.34717,
-      "especificidad_ic": [
-        0.292403,
-        0.406304
       ]
     }
   ],

@@ -3,7 +3,7 @@
 
 USO
     python app/generar_metricas.py
-    python app/generar_metricas.py --umbral-pa 0.18 --umbral-ap 0.58 --salida OTRO.json
+    python app/generar_metricas.py --umbral 0.5 --umbral-pa 0.18 --umbral-ap 0.58 --salida OTRO.json
 
 Lee las puntuaciones crudas congeladas del conjunto de PRUEBA
 (docs/validacion-semisintetica/crudas_prueba.csv, con su .sha256 al lado) y deja
@@ -19,10 +19,12 @@ con opacidad puntúe más que una sin ella, con los empates a la mitad (los rang
 medios). Una placa se marca (`opacidad_probable`) cuando su puntuación es MAYOR O
 IGUAL que el umbral, como en el motor.
 
-Los subgrupos son los de la tabla 2 del workshop S4: todas, sexo, tres tramos de
-edad (18 a 39, 40 a 59 y 60 o más), vista y los cruces de la vista con el sexo y con
-los 60 o más. Los umbrales por vista son los de la tabla 3 de ese workshop, elegidos
-en validación (PA 0,1798 y AP 0,5815); se pueden cambiar con --umbral-pa y --umbral-ap.
+Los subgrupos son los de la tabla 2 del workshop S4, sus 13 filas con sus nombres y en
+su orden: todas las placas, sexo, tres tramos de edad (18 a 39, 40 a 59 y 60 o más),
+vista y los cruces de la vista con el sexo y, en PA, con los 60 o más. Los umbrales por
+vista son los de la tabla 3 de ese workshop, elegidos en validación (PA 0,1798 y AP
+0,5815); el global es el del servidor (0,4258). Los tres se pueden cambiar con --umbral,
+--umbral-pa y --umbral-ap.
 
 En el JSON todo lo que mide va entre 0 y 1 (no en porcentaje) y con 6 decimales; lo
 que no se puede medir (un subgrupo sin positivas no tiene AUC ni recall) va como null.
@@ -80,21 +82,22 @@ class Subgrupo(NamedTuple):
         return dentro
 
 
+# Las 13 filas de la tabla 2 del workshop S4, con sus nombres y en su orden: el JSON
+# las lleva tal cual y la app las pinta tal cual.
 SUBGRUPOS = (
-    Subgrupo("Todas"),
+    Subgrupo("Todas las placas"),
     Subgrupo("Mujeres", sexo="F"),
     Subgrupo("Hombres", sexo="M"),
     Subgrupo("18 a 39 años", edad_desde=18, edad_hasta=39),
     Subgrupo("40 a 59 años", edad_desde=40, edad_hasta=59),
     Subgrupo("60 años o más", edad_desde=60),
-    Subgrupo("Placa PA", vista="PA"),
-    Subgrupo("Placa AP", vista="AP"),
+    Subgrupo("Placa PA (de pie)", vista="PA"),
+    Subgrupo("Placa AP (portátil)", vista="AP"),
     Subgrupo("PA, mujeres", sexo="F", vista="PA"),
     Subgrupo("PA, hombres", sexo="M", vista="PA"),
+    Subgrupo("PA, 60 años o más", vista="PA", edad_desde=60),
     Subgrupo("AP, mujeres", sexo="F", vista="AP"),
     Subgrupo("AP, hombres", sexo="M", vista="AP"),
-    Subgrupo("PA, 60 años o más", vista="PA", edad_desde=60),
-    Subgrupo("AP, 60 años o más", vista="AP", edad_desde=60),
 )
 
 

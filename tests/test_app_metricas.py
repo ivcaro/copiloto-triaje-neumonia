@@ -5,8 +5,10 @@ JSON de agregados que escribe, `app/assets/metricas.json`.
 QUÉ VIGILA
 - Las cuentas, sobre diez placas de juguete hechas a mano: el AUC por
   Mann-Whitney con rangos medios (contra la definición por pares, con empates),
-  el intervalo de Wilson, el umbral con `>=` (como el motor), el umbral por vista
-  y qué se hace con una vista que no es PA ni AP.
+  el intervalo de Wilson, el umbral con `>=` (como el motor), el umbral global
+  como parámetro (con otro valor que 0,4258, también por la línea de órdenes),
+  el umbral por vista, qué se hace con una vista que no es PA ni AP y qué
+  entradas se rechazan (y cuáles, en el borde, se aceptan).
 - El JSON versionado: las claves del contrato, ni un dato por paciente, ninguna
   ruta de una máquina, los subgrupos de la tabla 2 del workshop S4, las cifras
   del análisis previo y que está escrito como lo escribe el guion.
@@ -43,17 +45,18 @@ CLAVES_DE_UNA_FILA = {"n", "positivos", "auc", "recall", "recall_ic",
                       "especificidad", "especificidad_ic"}
 CLAVES_DE_UN_SUBGRUPO = CLAVES_DE_UNA_FILA | {"nombre"}
 CLAVES_DE_UNA_TASA = CLAVES_DE_UNA_FILA - {"auc"}       # el AUC no depende del umbral
-# La tabla 2 del workshop S4, en su orden: todas, sexo, tres tramos de edad, vista
-# y los cruces de la vista con el sexo y con los 60 o más.
-SUBGRUPOS = ["Todas", "Mujeres", "Hombres",
+# La tabla 2 del workshop S4, EXACTAMENTE: 13 filas, con estos nombres y en este orden.
+# Todas las placas, sexo, tres tramos de edad, vista (con su aclaración entre
+# paréntesis) y los cruces de la vista con el sexo y, en PA, con los 60 o más.
+SUBGRUPOS = ["Todas las placas", "Mujeres", "Hombres",
              "18 a 39 años", "40 a 59 años", "60 años o más",
-             "Placa PA", "Placa AP",
-             "PA, mujeres", "PA, hombres", "AP, mujeres", "AP, hombres",
-             "PA, 60 años o más", "AP, 60 años o más"]
+             "Placa PA (de pie)", "Placa AP (portátil)",
+             "PA, mujeres", "PA, hombres", "PA, 60 años o más",
+             "AP, mujeres", "AP, hombres"]
 # Las columnas del CSV congelado: ninguna puede ser una clave del JSON.
 COLUMNAS_POR_PACIENTE = {"patientId", "edad", "sexo", "vista", "filas", "columnas",
                          "archivo_png", "etiqueta", "edad_anios", "semilla", "cruda"}
-LISTA_MAS_LARGA = 50     # la lista más larga que se espera: la de subgrupos tiene 14
+LISTA_MAS_LARGA = 50     # la lista más larga que se espera: la de subgrupos tiene 13
 
 SIN_CRUDAS = (
     "SIN VERIFICAR que app/assets/metricas.json sale de las puntuaciones: faltan las "
@@ -252,7 +255,7 @@ def test_el_global_de_las_placas_de_juguete(guion):
 
 def test_los_subgrupos_de_las_placas_de_juguete(guion):
     s = _por_nombre(guion.calcular(_placas(), UMBRAL, POR_VISTA))
-    _comprobar(s["Todas"], n=10, positivos=5, auc=0.64, recall=0.6, especificidad=0.6)
+    _comprobar(s["Todas las placas"], n=10, positivos=5, auc=0.64, recall=0.6, especificidad=0.6)
     # Mujeres: filas 1, 3, 5, 7, 9 (positivas la 1 y la 5; la 5 se marca; la 3 y la 9, no)
     _comprobar(s["Mujeres"], n=5, positivos=2, auc=5 / 6, recall=0.5,
                recall_ic=_ic(guion, 1, 2), especificidad=2 / 3,
@@ -260,9 +263,11 @@ def test_los_subgrupos_de_las_placas_de_juguete(guion):
     # Hombres: filas 2, 4, 6, 8, 10 (la 2 no se marca, la 6 y la 10 sí; la 8 se marca y la 4, no)
     _comprobar(s["Hombres"], n=5, positivos=3, auc=4 / 6, recall=2 / 3, especificidad=0.5)
     # PA: filas 1 a 4: ninguna positiva se marca y las dos negativas, no
-    _comprobar(s["Placa PA"], n=4, positivos=2, auc=0.75, recall=0.0, especificidad=1.0)
+    _comprobar(s["Placa PA (de pie)"], n=4, positivos=2, auc=0.75, recall=0.0,
+               especificidad=1.0)
     # AP: filas 5 a 10: las tres positivas se marcan y de las tres negativas, solo la 9 no
-    _comprobar(s["Placa AP"], n=6, positivos=3, auc=6 / 9, recall=1.0, especificidad=1 / 3)
+    _comprobar(s["Placa AP (portátil)"], n=6, positivos=3, auc=6 / 9, recall=1.0,
+               especificidad=1 / 3)
     # 60 o más: filas 3, 4, 7 y 10; solo la 10 es positiva y se marca; la 7 se marca
     _comprobar(s["60 años o más"], n=4, positivos=1, auc=2 / 3, recall=1.0,
                especificidad=2 / 3)
@@ -273,6 +278,31 @@ def test_un_subgrupo_sin_positivas_da_nulos_y_no_nan(guion):
     fila = _por_nombre(guion.calcular(_placas(), UMBRAL, POR_VISTA))["PA, 60 años o más"]
     _comprobar(fila, n=2, positivos=0, auc=None, recall=None, recall_ic=None,
                especificidad=1.0, especificidad_ic=_ic(guion, 2, 2))
+
+
+def test_con_otro_umbral_global_cambian_las_marcadas_y_con_ellas_las_cuentas(guion):
+    r = guion.calcular(_placas(), 0.5, POR_VISTA)
+    assert r["umbral"] == 0.5
+    # Con 0,5 se marcan la 5 (0,90), la 6 (0,50: justo en el umbral) y la 7 (0,60), y ya no
+    # la 10 (0,4258). De las 5 positivas se marcan 2 (la 5 y la 6), y de las 5 negativas no
+    # se marcan 4 (todas menos la 7). El AUC no depende del umbral: sigue en 16/25.
+    _comprobar(r["global"], n=10, positivos=5, auc=0.64, recall=0.4,
+               recall_ic=_ic(guion, 2, 5), especificidad=0.8, especificidad_ic=_ic(guion, 4, 5))
+    s = _por_nombre(r)
+    # AP (filas 5 a 10): de las positivas 5, 6 y 10 se marcan 2; de las negativas 7, 8 y 9, no
+    # se marcan la 8 ni la 9
+    _comprobar(s["Placa AP (portátil)"], n=6, positivos=3, auc=6 / 9, recall=2 / 3,
+               especificidad=2 / 3)
+    # 60 o más (filas 3, 4, 7 y 10): la única positiva, la 10, ya no se marca; la 7 sí
+    _comprobar(s["60 años o más"], n=4, positivos=1, auc=2 / 3, recall=0.0, especificidad=2 / 3)
+    # el efecto «con un umbral» usa el mismo; el de «dos umbrales» no depende del global
+    # (aquí no hay ninguna placa de otra vista)
+    efecto = r["umbral_por_vista_en_prueba"]
+    _comprobar(efecto["un_umbral"]["PA"], recall=0.0, especificidad=1.0)
+    _comprobar(efecto["un_umbral"]["AP"], recall=2 / 3, especificidad=2 / 3)
+    _comprobar(efecto["un_umbral"]["global"], recall=0.4, especificidad=0.8)
+    con_el_de_siempre = guion.calcular(_placas(), UMBRAL, POR_VISTA)["umbral_por_vista_en_prueba"]
+    assert efecto["dos_umbrales"] == con_el_de_siempre["dos_umbrales"]
 
 
 def test_los_tramos_de_edad_incluyen_sus_extremos(guion):
@@ -338,13 +368,27 @@ def test_unos_umbrales_por_vista_mal_formados_dan_value_error(guion, por_vista):
     (lambda d: d.drop(columns=["edad"]), "edad"),
     (lambda d: d.assign(etiqueta=[0, 1, 0, 1, 0, 1, 0, 1, 0, 2]), "etiqueta"),
     (lambda d: d.assign(cruda=[0.3, 0.1, 0.2, 0.05, 0.9, 0.5, 0.6, 0.45, 0.2, 1.5]), "cruda"),
+    (lambda d: d.assign(cruda=[0.3, 0.1, 0.2, 0.05, 0.9, 0.5, 0.6, 0.45, 0.2, -0.1]), "cruda"),
     (lambda d: d.assign(cruda=[0.3, 0.1, 0.2, 0.05, 0.9, 0.5, 0.6, 0.45, 0.2, float("nan")]), "cruda"),
+    (lambda d: d.assign(edad=["30", "45", "62", "70", "veinticinco", "55", "61", "33", "41", "80"]),
+     "edad"),
     (lambda d: d.assign(sexo=[None] + ["F"] * 9), "sexo"),
     (lambda d: d.iloc[0:0], "vacío"),
 ])
 def test_unas_placas_mal_formadas_dan_value_error(guion, estropicio, dice):
     with pytest.raises(ValueError, match=dice):
         guion.calcular(estropicio(_placas()), UMBRAL, POR_VISTA)
+
+
+def test_las_crudas_exactamente_0_y_1_se_aceptan(guion):
+    # Una sigmoide saturada da 0,0 o 1,0 exactos, y son probabilidades: no se rechazan.
+    # La 1 pasa de 0,30 a 1,0 (ahora se marca) y la 4 de 0,05 a 0,0. De las 5 positivas se
+    # marcan 4 (todas menos la 2); de las 5 negativas no se marcan 3 (la 3, la 4 y la 9).
+    # Pares bien ordenados: 5 + 1 + 5 + 4 + 3 = 18 de 25.
+    placas = _placas().assign(
+        cruda=[1.0, 0.10, 0.20, 0.0, 0.90, 0.50, 0.60, 0.45, 0.20, 0.4258])
+    r = guion.calcular(placas, UMBRAL, POR_VISTA)
+    _comprobar(r["global"], n=10, positivos=5, auc=0.72, recall=0.8, especificidad=0.6)
 
 
 # --------------------------------------------------------------------------
@@ -465,6 +509,20 @@ def test_main_escribe_el_json_y_no_lleva_los_pacientes(guion, tmp_path):
     assert [f["nombre"] for f in escrito["subgrupos"]] == SUBGRUPOS
 
 
+def test_main_con_otro_umbral_global_lo_escribe_y_lo_usa(guion, tmp_path):
+    ruta = _fichero_de_crudas(tmp_path)
+    destino = tmp_path / "metricas.json"
+    codigo = guion.main(["--crudas", str(ruta), "--salida", str(destino),
+                         "--pesos", str(tmp_path / "no_hay.pt"), "--umbral", "0.5"])
+    assert codigo == 0
+    escrito = json.loads(destino.read_text(encoding="utf-8"))
+    assert escrito["umbral"] == 0.5
+    # y lo usa: con 0,5, de las diez placas de juguete se marcan 2 de las 5 positivas y no
+    # se marcan 4 de las 5 negativas (con 0,4258 serían 3 y 3)
+    assert (escrito["global"]["recall"], escrito["global"]["especificidad"]) == (0.4, 0.8)
+    assert escrito["umbrales_por_vista"] == guion.UMBRALES_POR_VISTA     # los de siempre
+
+
 def test_main_dice_que_falla_y_no_escribe(guion, tmp_path, capsys):
     ruta = _fichero_de_crudas(tmp_path)
     destino = tmp_path / "metricas.json"
@@ -538,21 +596,22 @@ def test_los_subgrupos_son_los_de_la_tabla_2_del_workshop(publicado):
 
 def test_cada_variable_reparte_las_placas_sin_dejar_ninguna_fuera(publicado):
     s = {f["nombre"]: f for f in publicado["subgrupos"]}
-    todas = s["Todas"]
+    todas = s["Todas las placas"]
     reparto = {
         "sexo": ("Mujeres", "Hombres"),
         "edad": ("18 a 39 años", "40 a 59 años", "60 años o más"),
-        "vista": ("Placa PA", "Placa AP"),
+        "vista": ("Placa PA (de pie)", "Placa AP (portátil)"),
     }
     for variable, partes in reparto.items():
         for clave in ("n", "positivos"):
             assert sum(s[p][clave] for p in partes) == todas[clave], (variable, clave)
-    for vista, partes in (("Placa PA", ("PA, mujeres", "PA, hombres")),
-                          ("Placa AP", ("AP, mujeres", "AP, hombres"))):
+    for vista, partes in (("Placa PA (de pie)", ("PA, mujeres", "PA, hombres")),
+                          ("Placa AP (portátil)", ("AP, mujeres", "AP, hombres"))):
         for clave in ("n", "positivos"):
             assert sum(s[p][clave] for p in partes) == s[vista][clave], (vista, clave)
-    assert s["PA, 60 años o más"]["n"] <= s["Placa PA"]["n"]
-    assert s["AP, 60 años o más"]["n"] + s["PA, 60 años o más"]["n"] == s["60 años o más"]["n"]
+    # el cruce de la PA con los 60 o más está dentro de la PA y dentro de los 60 o más
+    assert s["PA, 60 años o más"]["n"] <= s["Placa PA (de pie)"]["n"]
+    assert s["PA, 60 años o más"]["n"] <= s["60 años o más"]["n"]
     assert publicado["global"] == {k: v for k, v in todas.items() if k != "nombre"}
 
 
@@ -565,8 +624,8 @@ def test_las_cifras_del_json_son_las_del_analisis_previo(publicado):
     assert [round(v, 3) for v in g["recall_ic"]] == [0.858, 0.902]
     assert round(g["especificidad"], 3) == 0.702
     assert [round(v, 3) for v in g["especificidad_ic"]] == [0.686, 0.719]
-    assert round(s["Placa PA"]["recall"], 3) == 0.693
-    assert round(s["Placa AP"]["especificidad"], 3) == 0.393
+    assert round(s["Placa PA (de pie)"]["recall"], 3) == 0.693
+    assert round(s["Placa AP (portátil)"]["especificidad"], 3) == 0.393
     assert round(s["PA, 60 años o más"]["recall"], 3) == 0.636
     con_dos = publicado["umbral_por_vista_en_prueba"]["dos_umbrales"]
     assert round(con_dos["PA"]["recall"], 3) == 0.891
