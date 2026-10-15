@@ -146,7 +146,7 @@ TIPOS_DICOM_SIEMPRE_VACIOS = ("PN", "DA", "DT", "TM")
 # volver a ejecutar el notebook, hace fallar la prueba hasta que alguien la
 # mira y la declara aqui y en tests/anonimato/README.md.
 IMAGENES_DE_LOS_NOTEBOOKS = {
-    "notebooks/eda_rsna.ipynb": (
+    "notebooks/01_exploracion.ipynb": (
         "0bdabb57e4fffdfba64143c5d73626e246a18ba76cd246b84a3dde65adc64207",
         "0db7916271002c6fcdc19ca61bdea62e30f8c438a4d907318abdc290eee91e7f",
         "2cd353815a6b1463c846d336ed478db1d99b98838059458a961a4951c089fefa",
@@ -155,7 +155,7 @@ IMAGENES_DE_LOS_NOTEBOOKS = {
         "f1c10db558e768c38e7b4cab01ecc04b9d5a49ef6b125dbc8437ee8d727cd69e",
     ),
     "notebooks/entrenar_gpu.ipynb": (),
-    "notebooks/entrenar_kaggle.ipynb": (),
+    "notebooks/03_modelado.ipynb": (),
 }
 # Las claves de `metadata` que puede llevar un notebook que se publica, las de
 # su `colab` y las de cada celda. Un notebook guardado de nuevo desde Colab o
