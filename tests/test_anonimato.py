@@ -1957,6 +1957,232 @@ def test_la_cli_con_solo_centinela_no_escribe_donde_no_se_le_dice(
 
 
 # --------------------------------------------------------------------------
+# La excepcion de los nombres (spec de SP5-C2, D5): los del equipo y de la
+# tutora pueden ir en README.md, LICENSE y docs/planificacion.md, y en ningun
+# otro fichero. Los declara el README; el script no los guarda.
+# --------------------------------------------------------------------------
+# Nombres INVENTADOS: este fichero es de los de fuera, y en el no pueden ir los
+# de verdad. Sus tokens van en unas huellas de juguete.
+NOMBRES_DE_JUGUETE = ("Personaz Inventadaz", "Otraz Ficticiaz")
+TOKENS_DE_LOS_NOMBRES = ("personaz", "inventadaz", "otraz", "ficticiaz")
+DECLARACION_DE_JUGUETE = ("<!-- nombres-publicos: "
+                          + "; ".join(NOMBRES_DE_JUGUETE) + " -->")
+CON_LOS_NOMBRES = "Autores: " + " y ".join(NOMBRES_DE_JUGUETE) + ".\n"
+README_DE_VERDAD = RAIZ / "README.md"
+
+
+def _huellas_con_nombres(tmp_path):
+    """Huellas de juguete: las de los tokens de los nombres y la de OTRO, que
+    no es un nombre."""
+    destino = tmp_path / "huellas-con-nombres.txt"
+    va.regenerar([*TOKENS_DE_LOS_NOMBRES, OTRO], destino)
+    return va.huellas_de_la_lista(va.leer_huellas(destino)), destino
+
+
+def _arbol_con_nombres(raiz, declaracion=DECLARACION_DE_JUGUETE):
+    """El arbol de juguete con los nombres en los tres ficheros de D5 (el
+    README, con la declaracion en su linea 3) y en uno mas, `docs/otro.md`
+    (linea 3)."""
+    _arbol_limpio(raiz)
+    (raiz / "README.md").write_text(f"# Proyecto\n\n{declaracion}\n\n"
+                                    f"{CON_LOS_NOMBRES}", encoding="utf-8")
+    (raiz / "LICENSE").write_text(f"Copyright (c) 2026 {CON_LOS_NOMBRES}",
+                                  encoding="utf-8")
+    (raiz / "docs" / "planificacion.md").write_text(
+        f"# Plan\n\n{CON_LOS_NOMBRES}", encoding="utf-8")
+    (raiz / "docs" / "otro.md").write_text(f"# Otro\n\n{CON_LOS_NOMBRES}",
+                                           encoding="utf-8")
+    return raiz
+
+
+def _ficheros_con_hallazgos(raiz, huellas, commit=None):
+    return sorted({h["fichero"] for h in va.buscar_huellas(raiz, huellas,
+                                                           commit)})
+
+
+def test_los_nombres_declarados_solo_se_admiten_en_sus_tres_ficheros(tmp_path):
+    raiz = _arbol_con_nombres(tmp_path / "arbol")
+    huellas, _ruta = _huellas_con_nombres(tmp_path)
+    hallazgos = va.buscar_huellas(raiz, huellas)
+    assert sorted({(h["fichero"], h["linea"]) for h in hallazgos}) == [
+        ("docs/otro.md", 3)]
+    assert sorted(h["huella"] for h in hallazgos) == sorted(
+        va.huella(t) for t in TOKENS_DE_LOS_NOMBRES)
+    assert va.FICHEROS_CON_NOMBRES == ("README.md", "LICENSE",
+                                       "docs/planificacion.md")
+
+
+def test_en_sus_tres_ficheros_cualquier_otra_huella_sigue_siendo_hallazgo(
+        tmp_path):
+    # La excepcion es la de los nombres, no la de los ficheros.
+    raiz = _arbol_con_nombres(tmp_path / "arbol")
+    for nombre in va.FICHEROS_CON_NOMBRES:
+        with open(raiz / nombre, "a", encoding="utf-8") as fichero:
+            fichero.write(f"Y una cadena de la lista: {OTRO}.\n")
+    huellas, _ruta = _huellas_con_nombres(tmp_path)
+    hallazgos = va.buscar_huellas(raiz, huellas)
+    con_otro = sorted(h["fichero"] for h in hallazgos
+                      if h["huella"] == va.huella(OTRO))
+    assert con_otro == sorted(va.FICHEROS_CON_NOMBRES)
+    assert {h["fichero"] for h in hallazgos
+            if h["huella"] != va.huella(OTRO)} == {"docs/otro.md"}
+
+
+@pytest.mark.parametrize("declaracion", [
+    pytest.param("", id="sin_declaracion"),
+    pytest.param(f"Texto {DECLARACION_DE_JUGUETE} en medio de una linea",
+                 id="en_medio_de_una_linea"),
+    pytest.param(DECLARACION_DE_JUGUETE.replace("nombres-publicos",
+                                                "nombres publicos"),
+                 id="con_otra_marca"),
+    pytest.param("```\n" + DECLARACION_DE_JUGUETE.replace("<!--", "<!- -")
+                 + "\n```", id="mal_formada"),
+])
+def test_sin_una_declaracion_en_su_linea_no_hay_excepcion(tmp_path,
+                                                          declaracion):
+    raiz = _arbol_con_nombres(tmp_path / "arbol", declaracion)
+    huellas, _ruta = _huellas_con_nombres(tmp_path)
+    assert _ficheros_con_hallazgos(raiz, huellas) == [
+        "LICENSE", "README.md", "docs/otro.md", "docs/planificacion.md"]
+
+
+def test_la_declaracion_solo_cuenta_en_el_readme_de_la_raiz(tmp_path):
+    raiz = _arbol_con_nombres(tmp_path / "arbol", declaracion="")
+    (raiz / "docs" / "README.md").write_text(DECLARACION_DE_JUGUETE + "\n",
+                                             encoding="utf-8")
+    with open(raiz / "docs" / "planificacion.md", "a",
+              encoding="utf-8") as fichero:
+        fichero.write(DECLARACION_DE_JUGUETE + "\n")
+    huellas, _ruta = _huellas_con_nombres(tmp_path)
+    assert _ficheros_con_hallazgos(raiz, huellas) == [
+        "LICENSE", "README.md", "docs/README.md", "docs/otro.md",
+        "docs/planificacion.md"]
+
+
+@pytest.mark.parametrize("nombre", [
+    "docs/LICENSE", "otra/README.md", "docs/sub/planificacion.md",
+    "planificacion.md", "README.md.orig", "LICENSE.txt",
+    "docs/planificacion.md.bak",
+])
+def test_los_tres_ficheros_son_rutas_exactas(tmp_path, nombre):
+    raiz = _arbol_con_nombres(tmp_path / "arbol")
+    ruta = raiz / nombre
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    ruta.write_text(CON_LOS_NOMBRES, encoding="utf-8")
+    huellas, _ruta = _huellas_con_nombres(tmp_path)
+    assert _ficheros_con_hallazgos(raiz, huellas) == sorted(
+        ["docs/otro.md", nombre])
+
+
+def test_los_nombres_publicos_se_leen_de_la_linea_de_la_declaracion():
+    texto = (f"uno\n  {DECLARACION_DE_JUGUETE}  \n"
+             "<!-- nombres-publicos: ;  Tercera Inventadaz ; -->\n"
+             f"dos {DECLARACION_DE_JUGUETE}\n")
+    assert va.nombres_publicos(texto) == [*NOMBRES_DE_JUGUETE,
+                                          "Tercera Inventadaz"]
+    assert va.nombres_publicos("sin declaracion\n") == []
+
+
+@hay_git
+def test_un_nombre_anadido_en_otra_version_del_readme_no_amplia_la_excepcion(
+        tmp_path):
+    # El README de la copia de trabajo declara los dos nombres; el del indice
+    # y el del commit, solo el primero. Solo se admite lo que declaran todas
+    # las versiones que se publicarian.
+    raiz = _repositorio(tmp_path)
+    primero, segundo = NOMBRES_DE_JUGUETE
+    (raiz / "README.md").write_text(
+        f"# P\n\n<!-- nombres-publicos: {primero} -->\n\n{primero}\n",
+        encoding="utf-8")
+    (raiz / "LICENSE").write_text(f"Copyright (c) 2026 {CON_LOS_NOMBRES}",
+                                  encoding="utf-8")
+    _git(raiz, "add", "-A")
+    _git(raiz, "commit", "-q", "-m", "uno")
+    (raiz / "README.md").write_text(
+        f"# P\n\n{DECLARACION_DE_JUGUETE}\n\n{CON_LOS_NOMBRES}",
+        encoding="utf-8")
+    huellas, _ruta = _huellas_con_nombres(tmp_path)
+    del_primero = {va.huella(t) for t in va.tokens(primero)}
+    del_segundo = {va.huella(t) for t in va.tokens(segundo)}
+
+    def comprobar(commit=None):
+        hallazgos = va.buscar_huellas(raiz, huellas, commit)
+        assert not any(h["huella"] in del_primero for h in hallazgos)
+        con_el_segundo = {h["fichero"] for h in hallazgos
+                          if h["huella"] in del_segundo}
+        assert con_el_segundo == {"LICENSE", "README.md"}
+
+    comprobar()                          # la copia frente al indice
+    _git(raiz, "add", "README.md")
+    assert va.buscar_huellas(raiz, huellas) == []   # ya son la misma
+    comprobar("HEAD")                    # la copia frente al commit
+
+
+def test_la_cli_cuenta_los_nombres_admitidos_sin_ensenarlos(tmp_path):
+    raiz = _arbol_con_nombres(tmp_path / "arbol")
+    huellas, ruta = _huellas_con_nombres(tmp_path)
+    codigo, salida = _cli("--raiz", str(raiz), "--huellas", str(ruta))
+    assert codigo == 1
+    assert "docs/otro.md:3: huella " in salida
+    (raiz / "docs" / "otro.md").unlink()
+    codigo, salida = _cli("--raiz", str(raiz), "--huellas", str(ruta))
+    assert codigo == 0, salida
+    assert "huellas: 0 en 0 ficheros" in salida
+    # README: 4 tokens en la declaracion y 4 en el texto; LICENSE y el plan, 4.
+    assert ("nombres declarados en el README, admitidos (D5): 16 en "
+            "LICENSE, README.md, docs/planificacion.md") in salida
+    for token in TOKENS_DE_LOS_NOMBRES:
+        assert token not in salida.lower()
+    _sin_ninguna_huella(salida, huellas)
+
+
+def test_el_readme_declara_los_dos_integrantes_y_la_tutora():
+    """D5 en el README de verdad: tres nombres (los dos integrantes y la
+    tutora), con ocho tokens entre todos, y cada uno se ve en el README, no
+    solo en la declaracion. Un nombre de mas en la declaracion hace fallar
+    esta prueba: la excepcion no crece sin que alguien lo decida aqui. Los
+    nombres no se escriben en esta prueba, que es de los ficheros de fuera."""
+    texto = README_DE_VERDAD.read_text(encoding="utf-8")
+    nombres = va.nombres_publicos(texto)
+    tres_nombres = len(nombres) == 3
+    assert tres_nombres, f"el README declara {len(nombres)} nombres"
+    ocho_tokens = len({t for n in nombres for t in va.tokens(n)}) == 8
+    assert ocho_tokens, "los nombres declarados no dan los ocho tokens"
+    visible = "\n".join(linea for linea in texto.splitlines()
+                        if not linea.strip().startswith("<!--"))
+    se_ven = all(nombre in visible for nombre in nombres)
+    assert se_ven, "un nombre declarado no aparece fuera de la declaracion"
+
+
+@pytest.mark.skipif(solo_el_centinela(), reason=SIN_LA_LISTA["arbol"])
+def test_los_nombres_del_readme_fuera_de_sus_tres_ficheros_son_hallazgo(
+        tmp_path):
+    """Con las huellas de verdad: lo que declara el README esta en la lista
+    (si no, la excepcion sobraria), y escrito en cualquier otro fichero es
+    un hallazgo; en las copias de los tres ficheros, no. Las aserciones van
+    sobre booleanos y dicen fichero y linea: nunca una huella (C5)."""
+    raiz = tmp_path / "arbol"
+    (raiz / "docs").mkdir(parents=True)
+    for nombre in va.FICHEROS_CON_NOMBRES:
+        shutil.copyfile(RAIZ / nombre, raiz / nombre)
+    nombres = va.nombres_publicos(README_DE_VERDAD.read_text(encoding="utf-8"))
+    (raiz / "docs" / "otro.md").write_text("\n".join(nombres) + "\n",
+                                           encoding="utf-8")
+    huellas = va.huellas_de_la_lista(va.leer_huellas(HUELLAS))
+    hallazgos = va.buscar_huellas(raiz, huellas)
+    solo_en_otro = {h["fichero"] for h in hallazgos} == {"docs/otro.md"}
+    assert solo_en_otro, _donde(hallazgos)
+    cada_nombre = {h["linea"] for h in hallazgos} == set(
+        range(1, len(nombres) + 1))
+    assert cada_nombre, _donde(hallazgos)
+    admitidas = va.huellas_de_los_nombres(va._piezas(raiz), huellas)
+    todos_en_la_lista = len(admitidas) == len(
+        {t for n in nombres for t in va.tokens(n)})
+    assert todos_en_la_lista, (f"{len(admitidas)} de los tokens de los "
+                               "nombres declarados estan en la lista")
+
+
+# --------------------------------------------------------------------------
 # El arbol de verdad. Exige la anonimizacion hecha (tareas 1 a 6 del plan).
 # --------------------------------------------------------------------------
 def _por_fichero(hallazgos, que):

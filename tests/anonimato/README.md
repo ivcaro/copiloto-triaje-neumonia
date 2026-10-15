@@ -1,9 +1,10 @@
 # Anonimato del repositorio
 
 Este repositorio no lleva ninguna cadena que identifique a un cliente, a una
-empresa, a una máquina ni a personas, ni ningún secreto. Lo vigilan dos
-comprobaciones y una revisión a mano. Aquí se dice qué hace cada una y, al
-final, **qué no puede ver ninguna de las tres**.
+empresa, a una máquina ni a personas, ni ningún secreto; la única excepción
+son los nombres del equipo y de la tutora, en tres ficheros (más abajo, D5).
+Lo vigilan dos comprobaciones y una revisión a mano. Aquí se dice qué hace
+cada una y, al final, **qué no puede ver ninguna de las tres**.
 
 ## `tests/test_anonimato.py` (en la suite, en cada corrida)
 
@@ -30,7 +31,8 @@ misma: lo escribe en un fichero temporal y exige detectarlo. Es la única
 huella que no cuenta en el árbol: el centinela está escrito en claro en este
 documento y en la propia prueba.
 
-No hay lista blanca de huellas. Lo que se conserva —un huso horario,
+No hay lista blanca de huellas, salvo una excepción acotada, la de los
+nombres (más abajo). Lo demás que se conserva —un huso horario,
 identificadores opacos de los webhooks, números de chat inventados, una IP
 del rango de documentación— se conserva porque no está en la lista, no porque
 se exceptúe. El buscador de secretos sí deja pasar lo que es de ejemplo: unas
@@ -71,6 +73,36 @@ Sus hallazgos dicen fichero, línea y huella o clase: nunca el token ni el
 secreto, y el nombre de un fichero que lleve un token sale tapado. Sale con 1
 si hay hallazgos, si no ha recorrido ningún fichero de texto o si las huellas
 que recibe son solo la del centinela.
+
+## La excepción de los nombres (D5)
+
+El curso pide que el `README.md` diga quién hizo el proyecto, y los nombres
+de los integrantes y de la tutora están en la lista. La decisión D5 del spec
+de SP5-C2 los admite en tres ficheros y en ningún otro: `README.md`,
+`LICENSE` y `docs/planificacion.md`, por su ruta exacta desde la raíz.
+
+- **Qué nombres** lo declara el propio README, en una línea entera y sola,
+  como comentario de HTML (no se ve al leerlo en GitHub):
+  `<!-- nombres-publicos: Nombre Apellido; Otro Nombre -->`. Ni el script ni
+  las pruebas guardan los nombres ni sus huellas: los leen de lo que se
+  publica, que ya los enseña. Una declaración en medio de otra línea, en otro
+  README o en otro fichero no cuenta.
+- **Qué se admite**: solo las huellas de la lista que salen de los tokens de
+  esos nombres, y solo en el texto de esos tres ficheros. Cualquier otra
+  huella sigue siendo hallazgo también ahí; los nombres, en cualquier otro
+  fichero, en el nombre de un fichero, en el commit o en una rama. Si lo que
+  se publica tiene varias versiones del README (la copia de trabajo, el
+  índice, el commit), solo cuenta lo que declaran todas.
+- **Que se vea**: lo admitido no es hallazgo, pero el script lo cuenta en su
+  salida («nombres declarados en el README, admitidos (D5): …»), con los
+  ficheros y sin la huella ni el token.
+- **Que no crezca sola**: `test_el_readme_declara_los_dos_integrantes_y_la_tutora`
+  exige que el README declare tres nombres, con ocho tokens entre todos, y
+  que cada uno se vea fuera de la declaración; añadir un nombre obliga a
+  cambiar esa prueba. Y con la lista entera,
+  `test_los_nombres_del_readme_fuera_de_sus_tres_ficheros_son_hallazgo`
+  comprueba que esos nombres están en la lista y que, escritos en cualquier
+  otro fichero, se detectan.
 
 ## Cómo se regeneran las huellas
 
