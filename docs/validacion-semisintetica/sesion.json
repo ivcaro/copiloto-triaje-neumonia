@@ -1,0 +1,413 @@
+{
+ "rotulo": "simulación semisintética — sesión H7",
+ "n": 24,
+ "fechas": {
+  "lectura1": "2026-10-10",
+  "lectura2": "2026-10-15"
+ },
+ "prevalencia_sesion": 0.14660831509846828,
+ "origen_mensajes": {
+  "con_bots": false,
+  "imagen_tag": "h7-sesion",
+  "imagen_digest": "sha256:41c5162ea3399c6e9a5110c94196974a0b0dc40c4becd92f3d6350b296ca4bc1"
+ },
+ "huellas": {
+  "mensajes_json": "319e4181a04fa801de3cdd8b0e1489c08def852809150c3b89a0a798461da13a",
+  "clave_json": "3da010236c9924bc905e91500df1b03f297a33de11ef8d2e0269e256aacd9d2d"
+ },
+ "kappa": {
+  "ponderado_lineal": {
+   "kappa": 0.2524590163934425,
+   "ee": 0.09380181848044603,
+   "ic95": [
+    0.06860745217176828,
+    0.4363105806151167
+   ],
+   "po": 0.6041666666666666,
+   "pe": 0.47048611111111116,
+   "n": 24,
+   "ic95_bca": [
+    0.10714285714285714,
+    0.48537890102964937
+   ],
+   "tipo": "lineal",
+   "frente_a_umbrales": {
+    "puntual_ge_0_4": false,
+    "puntual_ge_0_6": false,
+    "li_analitico_lt_0_4": true,
+    "li_bca_lt_0_4": true
+   }
+  },
+  "cohen": {
+   "kappa": 0.10489510489510483,
+   "ee": 0.10056505307269852,
+   "ic95": [
+    -0.09221239912738426,
+    0.3020026089175939
+   ],
+   "po": 0.3333333333333333,
+   "pe": 0.25520833333333337,
+   "n": 24,
+   "ic95_bca": [
+    -0.052631578947368425,
+    0.3438656002589538
+   ],
+   "tipo": "ninguno",
+   "frente_a_umbrales": {
+    "puntual_ge_0_4": false,
+    "puntual_ge_0_6": false,
+    "li_analitico_lt_0_4": true,
+    "li_bca_lt_0_4": true
+   }
+  },
+  "binario_alta": {
+   "kappa": 0.2894736842105263,
+   "ee": 0.13175537632235965,
+   "ic95": [
+    0.031233146618701413,
+    0.5477142218023512
+   ],
+   "po": 0.625,
+   "pe": 0.4722222222222222,
+   "n": 24,
+   "ic95_bca": [
+    0.08695652173913031,
+    0.6546762589928057
+   ],
+   "tipo": "binario_alta",
+   "frente_a_umbrales": {
+    "puntual_ge_0_4": false,
+    "puntual_ge_0_6": false,
+    "li_analitico_lt_0_4": true,
+    "li_bca_lt_0_4": true
+   }
+  }
+ },
+ "sensibilidad_categoria": {
+  "independencia": 0.2524590163934425,
+  "conservador": 0.2524590163934425,
+  "cruza": 0.2524590163934425
+ },
+ "n_cruzan_un_limite": 0,
+ "acuerdo_continuo": {
+  "n": 24,
+  "spearman": 0.6174573869562063,
+  "diferencia_media_log_odds": 2.82039669034049,
+  "de": 2.4161949039730968,
+  "limites_95": [
+   -1.9153453214467802,
+   7.556138702127759
+  ],
+  "acotados_0_o_100": 0,
+  "sistema_fuera_de_la_cota": 4,
+  "dentro_de_la_horquilla": 0,
+  "fraccion_dentro_de_la_horquilla": 0.0,
+  "horquillas_de_anchura_cero": 13,
+  "horquillas_que_son_una_cota": 5
+ },
+ "desacuerdos": [
+  {
+   "id": "ecf3f5d3-0441-47ca-863a-78bbf5c1cad9",
+   "estrato": "negativa_clara",
+   "sistema": "baja",
+   "medico": "intermedia",
+   "porcentaje": 60,
+   "horquilla": [
+    0.0015,
+    0.0075
+   ],
+   "comentario": ""
+  },
+  {
+   "id": "037e120a-24fa-4f9c-8813-111136e3c288",
+   "estrato": "negativa_clara",
+   "sistema": "baja",
+   "medico": "intermedia",
+   "porcentaje": 60,
+   "horquilla": [
+    0.0122,
+    0.0122
+   ],
+   "comentario": ""
+  },
+  {
+   "id": "9dda6b23-67f7-43c2-90db-aafdcd057042",
+   "estrato": "banda_contradictoria",
+   "sistema": "intermedia",
+   "medico": "alta",
+   "porcentaje": 75,
+   "horquilla": [
+    0.1969,
+    0.1969
+   ],
+   "comentario": ""
+  },
+  {
+   "id": "10f3bffb-409e-4d8c-849a-f11144da7c3e",
+   "estrato": "banda_contradictoria",
+   "sistema": "baja",
+   "medico": "intermedia",
+   "porcentaje": 60,
+   "horquilla": [
+    0.0202,
+    0.0332
+   ],
+   "comentario": ""
+  },
+  {
+   "id": "43e51c0e-1a39-4476-bb12-c04d89783b8b",
+   "estrato": "positiva_clara",
+   "sistema": "intermedia",
+   "medico": "alta",
+   "porcentaje": 75,
+   "horquilla": [
+    0.6982,
+    0.6982
+   ],
+   "comentario": ""
+  },
+  {
+   "id": "a1867f93-5854-4539-b96d-ede4bea3d216",
+   "estrato": "asma_no_se",
+   "sistema": "baja",
+   "medico": "intermedia",
+   "porcentaje": 60,
+   "horquilla": [
+    0.0045,
+    0.0332
+   ],
+   "comentario": ""
+  },
+  {
+   "id": "d251b5bd-a852-44e1-99a2-37b7a2d0414a",
+   "estrato": "negativa_clara",
+   "sistema": "baja",
+   "medico": "alta",
+   "porcentaje": 75,
+   "horquilla": [
+    0.0062,
+    0.0062
+   ],
+   "comentario": ""
+  },
+  {
+   "id": "192e8e4a-4db4-4c04-9b74-297e15b87c8e",
+   "estrato": "asma_no_se",
+   "sistema": "intermedia",
+   "medico": "alta",
+   "porcentaje": 75,
+   "horquilla": [
+    0.3413,
+    0.5483
+   ],
+   "comentario": ""
+  },
+  {
+   "id": "fab7b94e-97fe-4e9d-b383-f9c2bb586c08",
+   "estrato": "negativa_clara",
+   "sistema": "baja",
+   "medico": "intermedia",
+   "porcentaje": 60,
+   "horquilla": [
+    0.0003,
+    0.0028
+   ],
+   "comentario": ""
+  },
+  {
+   "id": "9576b42f-84a6-41b2-8b0f-75f867fcbc38",
+   "estrato": "negativa_clara",
+   "sistema": "baja",
+   "medico": "intermedia",
+   "porcentaje": 60,
+   "horquilla": [
+    0.0015,
+    0.0073
+   ],
+   "comentario": ""
+  },
+  {
+   "id": "b9a50c1f-4b93-4a91-963f-a8d06fe077ee",
+   "estrato": "asma_no_se",
+   "sistema": "baja",
+   "medico": "alta",
+   "porcentaje": 85,
+   "horquilla": [
+    0.029,
+    0.1073
+   ],
+   "comentario": ""
+  },
+  {
+   "id": "5d44d6fa-b592-4cb8-acb6-bb19ea73e10e",
+   "estrato": "banda_contradictoria",
+   "sistema": "intermedia",
+   "medico": "alta",
+   "porcentaje": 85,
+   "horquilla": [
+    0.4253,
+    0.4253
+   ],
+   "comentario": ""
+  },
+  {
+   "id": "48d3ea7e-ae42-4679-81ee-3b228573907a",
+   "estrato": "asma_no_se",
+   "sistema": "baja",
+   "medico": "alta",
+   "porcentaje": 85,
+   "horquilla": [
+    0.0518,
+    0.1605
+   ],
+   "comentario": ""
+  },
+  {
+   "id": "d783664a-fef1-4959-8d09-79c25870dfe7",
+   "estrato": "positiva_clara",
+   "sistema": "intermedia",
+   "medico": "alta",
+   "porcentaje": 85,
+   "horquilla": [
+    0.4406,
+    0.4406
+   ],
+   "comentario": ""
+  },
+  {
+   "id": "ef7cd600-75c9-4b07-bb0e-f66e857fdafa",
+   "estrato": "positiva_clara",
+   "sistema": "intermedia",
+   "medico": "alta",
+   "porcentaje": 85,
+   "horquilla": [
+    0.4406,
+    0.4406
+   ],
+   "comentario": ""
+  },
+  {
+   "id": "df4ce5ba-76d3-49c0-95f4-4a9206e77432",
+   "estrato": "banda_contradictoria",
+   "sistema": "baja",
+   "medico": "intermedia",
+   "porcentaje": 65,
+   "horquilla": [
+    0.0947,
+    0.1073
+   ],
+   "comentario": ""
+  }
+ ],
+ "lectura2": {
+  "n_con_mensaje": 20,
+  "n_controles": 4,
+  "kappa_con_mensaje": {
+   "kappa": 0.8113207547169812,
+   "ee": 0.10218358127063268,
+   "ic95": [
+    0.6110409354265411,
+    1.0
+   ],
+   "po": 0.925,
+   "pe": 0.6025,
+   "n": 20,
+   "ic95_bca": [
+    0.5250937705306981,
+    1.0
+   ],
+   "tipo": "lineal",
+   "frente_a_umbrales": {
+    "puntual_ge_0_4": true,
+    "puntual_ge_0_6": true,
+    "li_analitico_lt_0_4": false,
+    "li_bca_lt_0_4": false
+   }
+  },
+  "cambios_de_banda": 12,
+  "utilidad": {
+   "correccion": {
+    "media": 4.65,
+    "distribucion": {
+     "1": 0,
+     "2": 2,
+     "3": 0,
+     "4": 1,
+     "5": 17
+    },
+    "n": 20
+   },
+   "utilidad": {
+    "media": 4.05,
+    "distribucion": {
+     "1": 0,
+     "2": 1,
+     "3": 4,
+     "4": 8,
+     "5": 7
+    },
+    "n": 20
+   },
+   "lenguaje": {
+    "media": 2.55,
+    "distribucion": {
+     "1": 0,
+     "2": 10,
+     "3": 9,
+     "4": 1,
+     "5": 0
+    },
+    "n": 20
+   }
+  },
+  "tiempo": {
+   "n": 20,
+   "razon_medias_geometricas": 1.997451064719199,
+   "ic95_bca": [
+    1.5722420673954023,
+    2.4879332538447314
+   ],
+   "reduccion_pct": -99.7451064719199,
+   "razones": [
+    4.378598504251614,
+    2.6405342987329132,
+    4.38580089109634,
+    4.754569190600522,
+    1.4638011082821627,
+    2.513723862398174,
+    3.038016866158868,
+    2.399974596722977,
+    3.7616698960718686,
+    2.3220318605350165,
+    1.582010171202298,
+    0.7285109025975466,
+    1.9414909126251336,
+    1.25680538894528,
+    0.8361173055076366,
+    1.2290290146509624,
+    1.7064576311988446,
+    0.9615198581179125,
+    1.4175141451869384,
+    2.6917293233082704
+   ],
+   "controles": {
+    "n": 4,
+    "razones": [
+     2.9892903225806453,
+     2.4676165803108807,
+     1.0036373290853577,
+     1.4070241737148341
+    ],
+    "media_geometrica": 1.7965157756716252
+   },
+   "razon_corregida_por_releer": 1.1118472165781312,
+   "ic95_razon_corregida": [
+    0.6907800782812524,
+    1.8103051164993251
+   ],
+   "medido": true
+  }
+ },
+ "plan_b": null,
+ "texto_fijado": "Con 24 casos y un solo evaluador, el intervalo del 95 % del kappa tiene una anchura de 0,5 a 0,6. El diseño no distingue una concordancia moderada (0,4) de una sustancial (0,6), ni generaliza a otros médicos ni a otro reparto de casos, que aquí es deliberado. El criterio ≥ 0,4 de la Semana 1 se evalúa sobre la estimación puntual y se publica siempre con su intervalo; si el límite inferior queda por debajo de 0,4, se dice."
+}
