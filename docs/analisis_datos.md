@@ -256,7 +256,7 @@ operación, la edad, se trata como rechazo: si la cabecera DICOM no trae una eda
 servidor no la da por adulta y se niega a evaluar (`edad_desconocida`; spec de SP2, §7).
 
 **Desbalance.** 22,15 % de positivos tras el filtro de edad. Un modelo que predijera siempre
-«negativo» tendría 77,5 % de exactitud y recall cero (spec de SP1, §6): por eso la exactitud
+«negativo» tendría cerca de un 78 % de exactitud y recall cero (spec de SP1, §6): por eso la exactitud
 no es la métrica principal. Tres medidas:
 
 1. **Partición estratificada** por etiqueta, para conservar la proporción en los tres

@@ -238,8 +238,8 @@ El control de versiones es Git, con una rama por sub-proyecto y fusiones fechada
 
 | Persona | Rol | Responsabilidades (Presentación del proyecto, §8.1 y §9.1; Workshop de la Semana 4, tabla 4) |
 | :--- | :--- | :--- |
-| [retirado] [retirado] [retirado] [retirado] | Product Owner y Scrum Master | Backlog, decisiones de diseño y de alcance, flujos de n8n y de los bots, logística de la validación médica, documentación y entregas |
-| [retirado] [retirado] [retirado] [retirado] | Lead AI Engineer | Datos RSNA, entrenamiento y evaluación de la CNN, servidor MCP en Docker, combinación bayesiana, métricas, calidad del modelo, la calibración y el sesgo |
+| Iván Camilo Romero Rodríguez | Product Owner y Scrum Master | Backlog, decisiones de diseño y de alcance, flujos de n8n y de los bots, logística de la validación médica, documentación y entregas |
+| Iván Mauricio Romero Mejía | Lead AI Engineer | Datos RSNA, entrenamiento y evaluación de la CNN, servidor MCP en Docker, combinación bayesiana, métricas, calidad del modelo, la calibración y el sesgo |
 | Médico general colaborador (externo, voluntario) | Experto del dominio | Sesión de concordancia: dos lecturas sobre 24 casos y valoración del pre-informe. Sin datos personales en ningún fichero del proyecto |
 | Tutora del Proyecto Integrador (UEES) | Tutora y sponsor académico | Revisión de los entregables y aprobación de los hitos académicos |
 
@@ -273,7 +273,7 @@ de LLM no se ejecutó.
 
 El mismo paquete se ejecuta en dos sitios: la máquina local, sin GPU, sirve para desarrollar,
 probar y entrenar de forma excepcional; Colab o Kaggle, con GPU, para el entrenamiento real
-(README, «Dónde corre cada cosa»). Los pesos son pequeños (16 MB) y las dependencias están
+([`desarrollo.md`](desarrollo.md), «Dónde corre cada cosa»). Los pesos son pequeños (16 MB) y las dependencias están
 fijadas por versión.
 
 ## 9. Cronograma: planificado frente a real

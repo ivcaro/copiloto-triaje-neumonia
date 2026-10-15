@@ -341,7 +341,7 @@ La imagen se construye con `torch` de las ruedas para **CPU**: un `pip install t
 | Contenedor de desarrollo, 2 CPU | MCP | 43 ms | 52 ms | 4 000 ms |
 | Servidor de producción (24-sep-2026) | MCP | 143 ms | 225 ms | 4 000 ms |
 
-*Fuente: `docs/sp2-despliegue.md` §7.* El servidor real es 3,3 veces más lento porque comparte CPU con contenedores ajenos; la cifra que describe el sistema desplegado es la de 143 ms. La imagen del modelo pesa unos 800 MB frente a los 2,5 GB de la de CUDA (SP2 §8). La aplicación de demostración usa menos de 500 MiB tras los cuatro ejemplos y el mapa de calor, y su imagen pesa 2,5 GB en disco (`README.md`, «Interfaz de usuario»). La latencia de extremo a extremo que ve el profesional (desde que sube la placa hasta que lee el informe) **no se mide aquí**: lo medido es el tramo del modelo.
+*Fuente: `docs/sp2-despliegue.md` §7.* El servidor real es 3,3 veces más lento porque comparte CPU con contenedores ajenos; la cifra que describe el sistema desplegado es la de 143 ms. La imagen del modelo pesa unos 800 MB frente a los 2,5 GB de la de CUDA (SP2 §8). La aplicación de demostración usa menos de 500 MiB tras los cuatro ejemplos y el mapa de calor, y su imagen pesa 2,5 GB en disco ([`desarrollo.md`](desarrollo.md), «La aplicación de demostración, en detalle»). La latencia de extremo a extremo que ve el profesional (desde que sube la placa hasta que lee el informe) **no se mide aquí**: lo medido es el tramo del modelo.
 
 ### 7.4. Vigilancia y vuelta atrás
 
@@ -443,7 +443,7 @@ Hiperparámetros del modelo desplegado. La búsqueda y el análisis de sensibili
 | Fase 1 («cabeza») | 4 épocas, `lr` = 1e-3, extractor **congelado** | Entrenar solo la cabeza evita destruir los pesos preentrenados al principio |
 | Fase 2 («ajuste») | Hasta 20 épocas, `lr` = 2e-4, **red completa** descongelada | Las características de ImageNet transfieren a rayos X, pero no del todo (un canal, otra estadística) |
 | Optimizador y calendario | Adam [6]; recocido coseno por fase [7] | Baja la tasa de forma suave para afinar al final |
-| Pérdida | `BCEWithLogitsLoss(pos_weight = negativos / positivos)`, que sobre el 22,15 % de positivos ronda 3,5 y se calcula en cada corrida con su partición | Un modelo que dijera siempre «negativo» tendría un 77,5 % de exactitud y recall cero |
+| Pérdida | `BCEWithLogitsLoss(pos_weight = negativos / positivos)`, que sobre el 22,15 % de positivos ronda 3,5 y se calcula en cada corrida con su partición | Un modelo que dijera siempre «negativo» tendría cerca de un 78 % de exactitud y recall cero |
 | Lote | 24 | 320 px pesa más en memoria |
 | Parada temprana | Paciencia 5 por fase; criterio: **recall en validación** medido en el umbral que `elegir_umbral` elegiría para esa época, con el AUC como desempate | En triaje el falso negativo es el error caro; medir el recall en 0,5 fijo no sirve (con `pos_weight` el modelo queda sentado justo en 0,5) |
 | Semilla | 42; cuDNN determinista | «Misma semilla, mismos resultados» es un criterio de aceptación |

@@ -195,8 +195,9 @@ def pesos_desplegados_o_salta():
             " comprobar la selección de casos, las dos pruebas del recorte de"
             " la razón de verosimilitud y las consultas conducidas del bot del"
             " profesional que suben una placa. Para verificarlo, copia los"
-            " pesos a esa ruta (salen del entrenamiento: README, «Reproducir"
-            " desde cero») y repite; la primera vez, sin caché, infiere sobre"
+            " pesos a esa ruta (se descargan: models/README.md; o salen del"
+            " entrenamiento: docs/desarrollo.md, «Reproducir desde cero»)"
+            " y repite; la primera vez, sin caché, infiere sobre"
             " las 3 811 imágenes de prueba y tarda minutos.")
     return puntuaciones.PESOS
 

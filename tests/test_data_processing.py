@@ -13,7 +13,7 @@ QUÉ VIGILA
   relativas a él), el cargador de guiones y el reparto de `sys.argv`.
 
 Esta prueba importa torch (el `Dataset` está en lo que se reexporta): corre en la imagen Linux
-de pruebas (README, «Pruebas»).
+de pruebas (docs/desarrollo.md, «Pruebas»).
 """
 import hashlib
 import inspect

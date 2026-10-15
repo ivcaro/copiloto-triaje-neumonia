@@ -15,7 +15,7 @@ QUÉ VIGILA
 Las pruebas que recalculan desde `crudas_prueba.csv` se SALTAN, diciéndolo, donde las
 puntuaciones no están (el repositorio público lleva el JSON y las figuras, no las puntuaciones por
 placa); las que comparan los JSON versionados corren siempre. Las que cargan los pesos se saltan
-sin ellos. Importa torch y scikit-learn: corre en la imagen Linux de pruebas (README, «Pruebas»).
+sin ellos. Importa torch y scikit-learn: corre en la imagen Linux de pruebas (docs/desarrollo.md, «Pruebas»).
 """
 import inspect
 import json

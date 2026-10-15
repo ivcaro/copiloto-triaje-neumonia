@@ -104,7 +104,7 @@ más (`docs/frontera-recall-especificidad.md`).
 | AUC-ROC | 0,85 | 0,88 |
 
 La exactitud (*accuracy*) no se usa como métrica principal: con 22,15 % de positivos, predecir
-siempre «negativo» daría 77,5 % de exactitud y recall cero.
+siempre «negativo» daría cerca de un 78 % de exactitud y recall cero.
 
 ### 2.2 El protocolo
 
