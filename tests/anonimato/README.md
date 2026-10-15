@@ -102,6 +102,10 @@ La prueba de huellas no puede leer imágenes. Se revisaron a mano, una a una:
 | los 3 PNG de `app/assets/originales/` | 5-oct-2026 | contenido (radiografías de tórax de adultos de Wikimedia Commons, CC0, de fuera de RSNA y del NIH, reducidas a 768 px y en gris; solo llevan las letras de lateralidad «Dx» y «Sin» —la «Sin» de dos de ellas, `neumonia_pa` y `neumonia_ap`, está boca abajo: volteada en vertical, con el orden de las letras conservado— y, en `neumonia_pa`, un pequeño marcador redondo en el borde del tórax; sin nombres, fechas, números ni marcas de agua) y metadatos (ninguno: el fichero solo tiene los trozos `IHDR`, `IDAT` e `IEND`, y su SHA-256 lo hace cumplir) |
 | los 4 DICOM de `app/assets/ejemplos/` | 5-oct-2026 | contenido (los píxeles de esos PNG; `rechazado_menor.dcm` repite los de `normal_pa.dcm`) y cabecera, elemento por elemento: `PatientName` vacío, `PatientID` `EJEMPLO-n`, edad, sexo y vista de ejemplo, UID de la raíz `2.25` sacados del nombre de cada ejemplo y lo mínimo de una imagen de 8 bits sin comprimir; ninguna fecha, hora, centro ni equipo; el preámbulo a ceros y nada detrás de los píxeles |
 | las 4 capturas de `docs/interfaz/` | 6-oct-2026 | contenido (la página de la app, solo la página, sin barra del navegador, sin ruta ni nada de la máquina: «Probar el modelo» con «Usar un ejemplo» y el ejemplo «Neumonía, PA», sus cinco hallazgos inventados, el resultado y el mapa de calor sobre la placa —la misma radiografía que `app/assets/originales/neumonia_pa.png`, con las mismas marcas que su fila de arriba y nada más—; el ejemplo «rechazado»; y dos recortes de «Acerca de», el modelo y las métricas con su tabla por subgrupo. Todo el texto es el de la propia app y la literatura que cita: ningún nombre de las personas del proyecto ni de su institución, ninguna dirección, ningún identificador) y metadatos (ninguno: el fichero solo tiene los trozos `IHDR`, `IDAT` e `IEND`, y su SHA-256 lo hace cumplir). Se hicieron con la imagen Docker construida y los pesos de verdad, con el navegador de Playwright, y se recortó el blanco sobrante y se volvieron a escribir solo con sus píxeles |
+| la captura anotada de `docs/interfaz/` (`probar-con-ejemplo-anotada.png`) | 15-oct-2026 | contenido (la misma pantalla que `probar-con-ejemplo.png` —«Probar el modelo» con el ejemplo «Neumonía, PA», sus cinco hallazgos inventados, el resultado y el mapa de calor sobre la radiografía de `app/assets/originales/neumonia_pa.png`— con once círculos rojos numerados y un corchete dibujados encima, los de la leyenda de `docs/manual_usuario.md`, §2.4; todo el texto es el de la propia app; ningún nombre de las personas del proyecto ni de su institución, ninguna dirección, ningún identificador) y metadatos (ninguno: solo los trozos `IHDR`, `IDAT` e `IEND`, y su SHA-256 lo hace cumplir) |
+| las 3 figuras de `results/figures/` (`roc_prueba.png`, `calibracion.png`, `subgrupos.png`) | 15-oct-2026 | contenido (gráficos de agregados del conjunto de prueba que dibuja `src/evaluate.py`: la curva ROC de todas las placas, las PA y las AP con el punto del umbral; la fiabilidad de la puntuación cruda y de la calibrada por deciles; y la sensibilidad y la especificidad de los 13 subgrupos con su intervalo de Wilson. Solo cifras agregadas y sus rótulos; sin nombres, rutas, marcas de agua, píxeles de RSNA ni filas por paciente) y metadatos (`Software`, la versión de matplotlib; `Title`, el título de la figura; y `dpi`). Su SHA-256 lo hace cumplir: si `src/evaluate.py` las vuelve a dibujar con otros bytes, se miran de nuevo |
+| las 14 imágenes incrustadas en `notebooks/02_preprocesamiento.ipynb` (2), `04_optimizacion.ipynb` (8) y `05_evaluacion.ipynb` (4) | 15-oct-2026 | contenido (gráficos de matplotlib: en el 02, la edad que filtra el preprocesamiento, el tamaño de cada partición y la prevalencia por vista, y una imagen SINTÉTICA —un círculo, una «L» y una rejilla, no una radiografía— con el efecto del aumento de datos; en el 04, el AUC y el coste de las ocho corridas, el AUC por arquitectura, las curvas de pérdida y de AUC por época, la fiabilidad cruda y calibrada, la frontera recall/especificidad y el umbral por vista; en el 05, el recall y la especificidad por subgrupo, la rejilla de la simulación semisintética, los kappa de la sesión con el médico con sus intervalos y la valoración del pre-informe. Solo agregados y nombres de corridas o arquitecturas; sin nombres de personas, rutas, marcas de agua, píxeles de RSNA ni filas por paciente) y metadatos (solo `Software` y `dpi`) |
+| los metadatos de los notebooks nuevos (`02_preprocesamiento.ipynb`, `04_optimizacion.ipynb`, `05_evaluacion.ipynb`) | 15-oct-2026 | del notebook, solo `kernelspec` y `language_info`; ninguna celda lleva `metadata` |
 
 Varias pruebas de `tests/test_anonimato.py` atan esa revisión:
 
@@ -116,17 +120,20 @@ Varias pruebas de `tests/test_anonimato.py` atan esa revisión:
   dejaría fuera sin avisar y esta prueba no los vería.
 - `HUELLAS_DE_LOS_BINARIOS` fija, por su SHA-256, los siete binarios de
   `app/assets/` (los tres PNG de `originales/` y los cuatro DICOM de
-  `ejemplos/`) y las cuatro capturas de `docs/interfaz/`, como
+  `ejemplos/`), las cinco capturas de `docs/interfaz/` y las tres figuras de
+  `results/figures/`, como
   `IMAGENES_DE_LOS_NOTEBOOKS` fija las imágenes de los notebooks. Declararlos
   solo por su nombre no vería que otra imagen ocupase su sitio, que un PNG
   ganase un trozo auxiliar (una fecha, un texto) ni que un DICOM se regenerase
   con otra cabecera; con la huella, un binario que cambia, o que falta, hace
   fallar la suite, que dice el fichero y no vuelca bytes. Otra prueba exige que
-  todo binario declarado bajo `app/assets/` o `docs/interfaz/` tenga su huella
+  todo binario declarado bajo `app/assets/`, `docs/interfaz/` o
+  `results/figures/` tenga su huella
   (y que no sobre ninguna), para que el próximo no se declare solo por su
   nombre. **Las huellas se rehacen a la vez que los binarios** (otra imagen, un
   cambio de `app/empaquetar_ejemplos.py`, otra versión de pydicom, otra captura
-  porque la pantalla cambió) **y solo después de volver a mirarlos**: la huella
+  porque la pantalla cambió, otra versión de matplotlib al volver a correr
+  `src/evaluate.py`) **y solo después de volver a mirarlos**: la huella
   dice «es el que se miró», no «está bien».
 - `IMAGENES_DE_LOS_NOTEBOOKS` fija, por su SHA-256, las imágenes incrustadas
   en cada notebook: una imagen nueva, o una que cambie al volver a ejecutar

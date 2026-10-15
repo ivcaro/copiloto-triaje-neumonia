@@ -72,6 +72,7 @@ BINARIOS_REVISADOS = (
     "docs/eda/06_cajas.png",
     "docs/interfaz/acerca-de-metricas.png",
     "docs/interfaz/acerca-de-modelo.png",
+    "docs/interfaz/probar-con-ejemplo-anotada.png",
     "docs/interfaz/probar-con-ejemplo.png",
     "docs/interfaz/rechazado.png",
     "docs/validacion-semisintetica/contencion_rejilla.png",
@@ -84,11 +85,15 @@ BINARIOS_REVISADOS = (
     "docs/validacion-semisintetica/fiabilidad_r1-060_r0-060.png",
     "docs/validacion-semisintetica/horquilla_por_celda.png",
     "docs/validacion-semisintetica/pendiente_rejilla.png",
+    "results/figures/calibracion.png",
+    "results/figures/roc_prueba.png",
+    "results/figures/subgrupos.png",
 )
 METADATOS_PERMITIDOS = {"Software", "dpi", "Title", "Description"}
 
-# Los binarios de `app/assets/` (los tres PNG y los cuatro DICOM de los ejemplos) y las
-# capturas de la interfaz de `docs/interfaz/` (las del README), fijados además por el
+# Los binarios de `app/assets/` (los tres PNG y los cuatro DICOM de los ejemplos), las
+# capturas de la interfaz de `docs/interfaz/` (las del README y la anotada del manual) y
+# las figuras de `results/figures/` (las que dibuja `src/evaluate.py`), fijados además por el
 # SHA-256 de sus bytes, como están fijadas las imágenes de los notebooks: declararlos
 # solo por su nombre no ve que otra imagen ocupe su sitio, que un PNG gane un trozo
 # auxiliar (una fecha, un texto) ni que un DICOM se regenere con otra cabecera. Un
@@ -115,11 +120,21 @@ HUELLAS_DE_LOS_BINARIOS = {
         "95f85e8d2b51a4e2c4b89366639adc0e214d12a2a7cae12f5b01bcef3d7dbf22",
     "docs/interfaz/acerca-de-modelo.png":
         "fd4f73b50d6eca3750e22ab5b4cec2d626547694ee53e4182cc66374636c1911",
+    "docs/interfaz/probar-con-ejemplo-anotada.png":
+        "c98d1cc24e7ad0f7225dc2720287641e5676a6e864628f84500b6eec3e744642",
     "docs/interfaz/probar-con-ejemplo.png":
         "b530dd3b4d293499c62dd6902a85e816ab9ef387997f97dc4ff67002a6ac6b44",
     "docs/interfaz/rechazado.png":
         "9f4dc3096edf2798de4be148d0808f8b9c7e256f6712a924db0286ee95adce1b",
+    "results/figures/calibracion.png":
+        "e99a11a358763a01d4fb91ef8e5aa7b4f592aa1fd53e665bd044446882beb3e7",
+    "results/figures/roc_prueba.png":
+        "b88d67f2fd0159b1ef2d81e2120de82ba009325e93b39d870c6be8a757028989",
+    "results/figures/subgrupos.png":
+        "f8609089c32cfc596fa11528ceb8be5e42451a49ee4c35c69ca72f3b8c702383",
 }
+# Las carpetas cuyos binarios se declaran SIEMPRE con su SHA-256 en HUELLAS_DE_LOS_BINARIOS.
+CARPETAS_CON_HUELLA = ("app/assets/", "docs/interfaz/", "results/figures/")
 
 # Las etiquetas que puede llevar la cabecera de un DICOM versionado (los ejemplos
 # de la app), la del `file_meta` y la del conjunto de datos, revisadas a mano. Una
@@ -154,8 +169,28 @@ IMAGENES_DE_LOS_NOTEBOOKS = {
         "7d4ab28d7b54c08132afb462516338434e924bf81ceaa115d693f554ea295bab",
         "f1c10db558e768c38e7b4cab01ecc04b9d5a49ef6b125dbc8437ee8d727cd69e",
     ),
-    "notebooks/entrenar_gpu.ipynb": (),
+    "notebooks/02_preprocesamiento.ipynb": (
+        "364f62dbfb10a2b07a1752957571570c4ea6f9fdd05b9ab732929802b6a2d517",
+        "58a42b7e2d58e8eb21bdb5431620a727e73f932527ec43de437597eb4e409dff",
+    ),
     "notebooks/03_modelado.ipynb": (),
+    "notebooks/04_optimizacion.ipynb": (
+        "63e1597857909841a7970753a27b09350e424c4c8caab0b231f126fe6c461159",
+        "64ae39c1c5db36bf0fe55c2be15cb6c2b752581e6d320c5d7f54c28de84a6465",
+        "6f10f2cb6ff0c60b12449443454cbb204cd195e9f6e73a8de4ff14e283dc6dbb",
+        "72d2665369ba2feeca1357ffcec8dff7851c03c13fd8628755014a262ea97b87",
+        "83fa914a3ef359cc46aebe7a48173d11fb9145461b258631819d2e9a855591ea",
+        "9a5679fead261be6b575eab26d0d5f78b7c533da8e73311a49ee9b45e4a2e7bf",
+        "dbdab841509915ff8c8571eb9713f30e95dde4b2cbb5a58c579e38c8bc4adb1f",
+        "f7784b8067bb008ae0b85706f55b93f2b84b76f81666d4cd76b698c41d903964",
+    ),
+    "notebooks/05_evaluacion.ipynb": (
+        "15481a870a5c6a74cf5aa959136055387a1e81e5d37b0389b25e9822175240fd",
+        "75262e13b11dd3cb5026f47580f3313961934c27597a92a34c973d01bbc257e2",
+        "e61d13081b1a84094ff7f660281d33d34ac8fe5591cab98ea1384daf89be5abb",
+        "eb065a5ab6ee98fa2f679861ae0efae42b3b74ac608ff09d63ef514d3ee266c5",
+    ),
+    "notebooks/entrenar_gpu.ipynb": (),
 }
 # Las claves de `metadata` que puede llevar un notebook que se publica, las de
 # su `colab` y las de cada celda. Un notebook guardado de nuevo desde Colab o
@@ -2088,15 +2123,15 @@ def _binarios_que_cambiaron(raiz, huellas):
 
 
 def test_todo_binario_declarado_de_app_tiene_su_huella():
-    """Un binario de `app/assets/` o de `docs/interfaz/` (las capturas de la interfaz)
-    no se declara solo por su nombre: lleva su SHA-256 en HUELLAS_DE_LOS_BINARIOS, y
-    esa lista no lleva huellas de binarios que no estén declarados."""
-    declarados = {n for n in BINARIOS_REVISADOS
-                  if n.startswith(("app/assets/", "docs/interfaz/"))}
+    """Un binario de `app/assets/`, de `docs/interfaz/` (las capturas de la interfaz) o de
+    `results/figures/` (las figuras de la evaluación) no se declara solo por su nombre:
+    lleva su SHA-256 en HUELLAS_DE_LOS_BINARIOS, y esa lista no lleva huellas de binarios
+    que no estén declarados."""
+    declarados = {n for n in BINARIOS_REVISADOS if n.startswith(CARPETAS_CON_HUELLA)}
     sin_huella = sorted(declarados - set(HUELLAS_DE_LOS_BINARIOS))
     sin_declarar = sorted(set(HUELLAS_DE_LOS_BINARIOS) - declarados)
     if sin_huella or sin_declarar:
-        pytest.fail("binarios de app/assets/ o de docs/interfaz/ declarados sin su "
+        pytest.fail(f"binarios de {', '.join(CARPETAS_CON_HUELLA)} declarados sin su "
                     f"SHA-256 en HUELLAS_DE_LOS_BINARIOS: {', '.join(sin_huella) or '-'}; "
                     "huellas de binarios que no están en BINARIOS_REVISADOS: "
                     f"{', '.join(sin_declarar) or '-'}", pytrace=False)
