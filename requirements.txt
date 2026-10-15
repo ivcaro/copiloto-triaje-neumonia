@@ -1,0 +1,50 @@
+# Dependencias de Python del proyecto, con su versión exacta: las mismas con las que pasan
+# las pruebas en la imagen Linux de pruebas. Es la unión de `pyproject.toml` (el paquete
+# `copiloto_triaje`: servidor, motor y entrenamiento) y de `app/requirements.txt` (la app de
+# demostración), más las herramientas de las pruebas.
+#
+#     python -m venv .venv
+#     pip install -r requirements.txt
+#     python -m pytest
+#
+# El código del curso (`python -m src.evaluate`, `python -m src.train`...) funciona así, sin
+# más. Para instalar además el paquete `copiloto_triaje` (lo que hacen las imágenes de Docker):
+#
+#     pip install --no-deps .
+#
+# La app de demostración y el servidor tienen su propia receta (`app/requirements.txt`,
+# `servidor/Dockerfile`), que no cambia.
+
+# torch y torchvision, de las ruedas para CPU, y lo demás de PyPI: las dos direcciones
+# que servidor/Dockerfile pone en PIP_INDEX_URL y PIP_EXTRA_INDEX_URL. Sin ellas,
+# `pip install torch` en Linux baja la compilación con CUDA (unos 2,5 GB) para un proyecto
+# que se ejecuta en CPU.
+--index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://pypi.org/simple
+
+# El núcleo: modelo, datos y métricas.
+torch==2.14.0
+torchvision==0.29.0
+pydicom==3.0.2
+pillow==12.3.0
+numpy==2.5.2
+pandas==3.0.5
+scikit-learn==1.9.1
+scipy==1.18.1
+
+# El servidor de inferencia (MCP y REST).
+mcp==2.2.0
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+python-multipart==0.0.32
+
+# La app de demostración y las figuras.
+streamlit==1.65.0
+altair==6.3.0
+matplotlib==3.11.2
+
+# Las pruebas (el extra `dev` de `pyproject.toml`, con la versión de la imagen de pruebas).
+pytest==9.1.1
+pytest-asyncio==1.4.0
+httpx==0.28.1
+psycopg[binary]==3.2.3

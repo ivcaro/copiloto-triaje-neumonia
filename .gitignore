@@ -1,5 +1,17 @@
-# Datos crudos y derivados: NUNCA se versionan (viven fuera del repo y de OneDrive)
-data/
+# Datos crudos y derivados: NUNCA se versionan (viven fuera del repo y de OneDrive).
+# En `data/` solo viajan el README y los `.gitkeep` que dejan vacías `raw/` y `processed/`:
+# lo que se descargue o se prepare ahí (los DICOM, los PNG, los manifiestos) queda fuera.
+# Las reglas de la competición prohíben redistribuir los datos (data/README.md).
+data/*
+!data/README.md
+!data/raw/
+data/raw/*
+!data/raw/.gitkeep
+!data/processed/
+data/processed/*
+!data/processed/.gitkeep
+# Una carpeta `data/` suelta en cualquier otro sitio, como siempre.
+/*/**/data/
 datasets/
 *.dcm
 *.zip
@@ -9,8 +21,10 @@ datasets/
 # `git add -A` los dejaría fuera sin avisar y la prueba de los binarios no los vería.
 !app/assets/ejemplos/*.dcm
 
-# Artefactos del modelo
-models/
+# Artefactos del modelo. Los pesos no viajan en git: se publican como descarga del release
+# (models/README.md). En `models/` solo viaja ese README.
+models/**/*.pt
+models/**/*.pkl
 checkpoints/
 *.pt
 *.pth
