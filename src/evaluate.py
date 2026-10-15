@@ -41,7 +41,6 @@ sistema, son los de la tabla 3 del workshop S4; se cambian con `--umbral`, `--um
 from __future__ import annotations
 
 import argparse
-import importlib
 import sys
 from pathlib import Path
 
@@ -183,11 +182,11 @@ def evaluar(ruta_crudas=PUNTUACIONES_DE_PRUEBA, ruta_calibrador=CALIBRADOR_DESPL
 # Las figuras
 #
 # matplotlib es el extra `figuras` del pyproject, no una dependencia del paquete
-# `copiloto_triaje` (las imágenes de Docker lo instalan sin él), y
-# `tests/test_informe.py::test_nada_del_paquete_importa_matplotlib` barre todo `src/` en
-# busca de un `import matplotlib`. Este módulo no se instala con el paquete ni lo importa el
-# servidor; aun así, se carga solo al dibujar y por `importlib`, para que `--sin-figuras`
-# funcione sin él y para no tocar esa guarda.
+# `copiloto_triaje`: las imágenes de Docker lo instalan sin él, y
+# `tests/test_informe.py::test_nada_del_paquete_importa_matplotlib` vigila que ningún módulo
+# de ese paquete lo importe. Este módulo es de la capa del curso, no del paquete (ni el
+# servidor ni la app lo instalan): importa matplotlib con un `import` normal, pero dentro de
+# `_matplotlib`, al dibujar, para que `--sin-figuras` funcione también donde no está.
 #
 # Los colores son los de las figuras de la validación semisintética (azul, naranja y
 # morado: comprobados contra el daltonismo), y la identidad de cada serie no depende del
@@ -214,16 +213,17 @@ ESTILO = {
 def _matplotlib():
     """(matplotlib, pyplot, ticker), con el motor «Agg» (sin ventana)."""
     try:
-        mpl = importlib.import_module("matplotlib")
+        import matplotlib
     except ModuleNotFoundError as error:
         if error.name != "matplotlib":
             raise
         raise ErrorDeEvaluacion(
             "para dibujar las figuras hace falta matplotlib (pip install -r requirements.txt); "
             "sin él, usa --sin-figuras y se escribe solo el JSON") from None
-    mpl.use("Agg")
-    return mpl, importlib.import_module("matplotlib.pyplot"), \
-        importlib.import_module("matplotlib.ticker")
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.ticker as ticker
+    return matplotlib, plt, ticker
 
 
 def _coma(valor, decimales: int) -> str:

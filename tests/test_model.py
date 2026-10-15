@@ -391,6 +391,25 @@ def test_evaluate_no_reescribe_las_cuentas_que_ya_hace_el_guion_de_la_app():
     guion = utils.cargar_guion("app/generar_metricas.py")
     assert evaluate._guion_de_metricas() is guion
     assert [s.nombre for s in guion.SUBGRUPOS] == [f["nombre"] for f in _json(JSON_DE_PRUEBA)["subgrupos"]]
-    # y el barrido de `test_informe.py` (ningún `import matplotlib` en `src/`) tampoco lo ve
-    fuente = Path(evaluate.__file__).read_text(encoding="utf-8")
-    assert not re.search(r"^\s*(import|from)\s+matplotlib\b", fuente, re.M)
+
+
+def test_evaluate_importa_matplotlib_solo_al_dibujar():
+    """matplotlib se importa con un `import` normal, pero dentro de `_matplotlib` y no al
+    cargar el módulo: `--sin-figuras` escribe el JSON también donde no está instalado (las
+    imágenes de Docker lo instalan sin él). La guarda de `test_informe.py` vigila el paquete
+    `copiloto_triaje`, no esta capa del curso."""
+    import ast
+    arbol = ast.parse(Path(evaluate.__file__).read_text(encoding="utf-8"))
+    del_modulo = set()                  # lo que se importa al cargar el módulo
+    for nodo in arbol.body:
+        if isinstance(nodo, ast.Import):
+            del_modulo |= {alias.name.split(".")[0] for alias in nodo.names}
+        elif isinstance(nodo, ast.ImportFrom) and nodo.module:
+            del_modulo.add(nodo.module.split(".")[0])
+    assert "matplotlib" not in del_modulo
+    funcion = next(n for n in arbol.body
+                   if isinstance(n, ast.FunctionDef) and n.name == "_matplotlib")
+    dentro = {alias.name for nodo in ast.walk(funcion) if isinstance(nodo, ast.Import)
+              for alias in nodo.names}
+    assert {"matplotlib", "matplotlib.pyplot", "matplotlib.ticker"} <= dentro
+    assert "importlib" not in del_modulo
