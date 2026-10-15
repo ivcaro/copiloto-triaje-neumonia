@@ -19,7 +19,9 @@ DÓNDE ESTÁ LA IMPLEMENTACIÓN. Las cuentas NO se reescriben aquí:
   S4. Es el guion que escribe `app/assets/metricas.json`, y este módulo lo llama: por eso los
   números de `metricas_prueba.json` son los de «Acerca de» de la app (una prueba lo comprueba).
 - `copiloto_triaje.validacion.metricas`  Brier, pendiente e intercepto de calibración, ECE con
-  su suelo de ruido y la curva de fiabilidad.
+  su suelo de ruido y la curva de fiabilidad. Los empates de la ECE se rompen por el rango del
+  identificador de la placa (`simulacion.rango_de_los_ids`), como en la simulación
+  semisintética, para que las dos publiquen la misma cifra.
 - `copiloto_triaje.servicio.calibracion`  el calibrador isotónico desplegado
   (`servidor/calibrador.json`), que convierte la puntuación cruda en probabilidad.
 
@@ -50,6 +52,7 @@ from sklearn.metrics import roc_curve
 
 from copiloto_triaje.servicio.calibracion import Calibrador
 from copiloto_triaje.validacion import metricas as metricas_de_validacion
+from copiloto_triaje.validacion import simulacion
 
 from .utils import (
     CALIBRADOR_DESPLEGADO, DIR_RESULTADOS, PESOS_DESPLEGADOS, PUNTUACIONES_DE_PRUEBA, RAIZ,
@@ -64,7 +67,7 @@ __all__ = [
 NOMBRE_JSON = "metricas_prueba.json"
 NOMBRES_DE_LAS_FIGURAS = ("roc_prueba.png", "calibracion.png", "subgrupos.png")
 GUION_DE_METRICAS = "app/generar_metricas.py"
-COLUMNAS_DE_LAS_FIGURAS = ("etiqueta", "cruda", "vista")
+COLUMNAS_QUE_SE_LEEN = ("patientId", "etiqueta", "cruda", "vista")
 
 
 class ErrorDeEvaluacion(Exception):
@@ -98,11 +101,14 @@ def _exigir_las_puntuaciones(ruta_crudas) -> Path:
 
 
 def leer_puntuaciones(ruta_crudas=PUNTUACIONES_DE_PRUEBA) -> pd.DataFrame:
-    """Las tres columnas que hacen falta para dibujar (etiqueta, puntuación cruda y vista),
-    sin identificadores ni nada que señale una placa."""
+    """Lo que hace falta para medir y dibujar: etiqueta, puntuación cruda y vista, y el
+    `orden` (el rango del identificador de la placa, que rompe los empates de la ECE).
+    El identificador se lee para calcular ese rango y no se conserva: el resultado no
+    lleva nada que señale una placa."""
     ruta = _exigir_las_puntuaciones(ruta_crudas)
-    placas = pd.read_csv(ruta, usecols=list(COLUMNAS_DE_LAS_FIGURAS))
+    placas = pd.read_csv(ruta, usecols=list(COLUMNAS_QUE_SE_LEEN))
     placas["vista"] = placas["vista"].astype(str).str.strip().str.upper()
+    placas["orden"] = simulacion.rango_de_los_ids(placas.pop("patientId"))
     return placas
 
 
@@ -125,8 +131,10 @@ def calcular_calibracion(placas: pd.DataFrame, ruta_calibrador=CALIBRADOR_DESPLE
 
     Brier, pendiente, intercepto, ECE (con su suelo de ruido: la ECE de un modelo perfectamente
     calibrado con estas mismas probabilidades) y la curva de fiabilidad en deciles de igual
-    masa: todo de `copiloto_triaje.validacion.metricas`. Los empates de probabilidad se
-    rompen por el orden de las filas del fichero congelado, que no cambia.
+    masa: todo de `copiloto_triaje.validacion.metricas`. Los empates de probabilidad (el
+    calibrador isotónico deja 674 valores distintos entre 3 811 placas) se rompen por el rango
+    del identificador de la placa, igual que en la simulación semisintética: la ECE depende de
+    cómo se rompen los empates, y así las dos publican la misma cifra.
 
     La puntuación cruda NO es una probabilidad (el modelo se entrenó con las positivas
     ponderadas): se mide para ver qué corrige el calibrador, no como producto."""
@@ -137,7 +145,7 @@ def calcular_calibracion(placas: pd.DataFrame, ruta_calibrador=CALIBRADOR_DESPLE
     cruda = placas["cruda"].to_numpy().astype(float)
     calibrador = Calibrador.desde_json(ruta)
     calibrada = np.array([calibrador.calibrar(c) for c in cruda])
-    orden = np.arange(len(y))
+    orden = placas["orden"].to_numpy().astype(int)
     m = metricas_de_validacion
 
     def bloque(p):

@@ -127,7 +127,7 @@ HUELLAS_DE_LOS_BINARIOS = {
     "docs/interfaz/rechazado.png":
         "9f4dc3096edf2798de4be148d0808f8b9c7e256f6712a924db0286ee95adce1b",
     "results/figures/calibracion.png":
-        "e99a11a358763a01d4fb91ef8e5aa7b4f592aa1fd53e665bd044446882beb3e7",
+        "d7cdb3af52d30e54873e05b376cdd602f362c3f78810b4ba33b965128c1d9a5a",
     "results/figures/roc_prueba.png":
         "b88d67f2fd0159b1ef2d81e2120de82ba009325e93b39d870c6be8a757028989",
     "results/figures/subgrupos.png":

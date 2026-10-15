@@ -234,7 +234,7 @@ mezcla de proyecciones.
 
 Una placa AP rara vez es normal (13,2 % frente a 49,3 %): la mayoría de las AP sin opacidad
 son placas con otros hallazgos (78,8 % de las AP negativas), mientras que entre las PA
-negativas lo son el 45,6 %. Eso hace que las negativas AP sean las difíciles.
+negativas lo son el 45,7 %. Eso hace que las negativas AP sean las difíciles.
 
 **Qué se vio después, al medir.** El análisis anunció el riesgo y dejó la medición
 pendiente; se hizo en la Semana 4 sobre el conjunto de prueba (`app/assets/metricas.json`):

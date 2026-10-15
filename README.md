@@ -60,7 +60,7 @@ completo, con el objetivo SMART, el alcance, el cronograma y los riesgos, está 
 | | |
 | :--- | :--- |
 | **Fuente** | [RSNA Pneumonia Detection Challenge](https://www.kaggle.com/competitions/rsna-pneumonia-detection-challenge) (Kaggle, 2018). Imágenes del NIH ChestX-ray14 (NIH Clinical Center); anotaciones de radiólogos de la RSNA y la STR |
-| **Tamaño** | 26 684 estudios DICOM de tórax, uno por paciente, de 1024 × 1024 píxeles y 8 bits (unos 3,9 GB) |
+| **Tamaño** | 26 684 estudios DICOM de tórax, uno por paciente, de 1024 × 1024 píxeles y 8 bits (3,66 GB el paquete completo) |
 | **Variables** | La imagen; de la cabecera DICOM, la edad, el sexo y la proyección (PA, de pie, o AP, portátil); y la etiqueta, con cajas sobre las opacidades. El modelo aprende la etiqueta binaria «opacidad / sin opacidad» |
 | **Clases** | 6 012 con opacidad (22,5 %), 11 821 anormales sin opacidad (44,3 %) y 8 851 normales (33,2 %) |
 | **Lo que se usa** | Los adultos de 18 a 100 años: 25 403 pacientes, 22,15 % con opacidad, partidos **por paciente** en 70 / 15 / 15 (17 782 / 3 810 / 3 811 placas) con la semilla 42 y la comprobación automática de que ningún paciente cae en dos particiones |
@@ -138,7 +138,7 @@ paréntesis, el intervalo de Wilson del 95 %):
 | Recall (sensibilidad) | **0,882** (0,858–0,902) | 0,80 / 0,85: cumple el objetivo |
 | Especificidad | **0,702** (0,686–0,719) | 0,70 / 0,75: cumple el mínimo, **no el objetivo** |
 | F1 | 0,602 | — |
-| Calibración (ECE · Brier) | cruda 0,171 · 0,152 → **calibrada 0,023 · 0,108** | — |
+| Calibración (ECE · Brier) | cruda 0,171 · 0,152 → **calibrada 0,016 · 0,108** | — |
 
 El F1 es el de la corrida 6 en [`docs/comparativa-corridas.md`](docs/comparativa-corridas.md).
 Recall ≥ 0,85 y especificidad ≥ 0,75 **no se alcanzan a la vez** con este modelo: se prioriza el

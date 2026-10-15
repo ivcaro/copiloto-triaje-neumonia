@@ -389,10 +389,10 @@
     },
     "calibrada": {
       "brier": 0.107902,
-      "ece": 0.023107,
+      "ece": 0.016292,
       "ece_suelo": {
-        "media": 0.011723,
-        "p95": 0.016625
+        "media": 0.011646,
+        "p95": 0.017445
       },
       "pendiente": 0.983281,
       "intercepto": 0.011799,
@@ -405,27 +405,27 @@
         {
           "n": 381,
           "p_media": 0.011676,
-          "observada": 0.015748
+          "observada": 0.010499
         },
         {
           "n": 381,
           "p_media": 0.022407,
-          "observada": 0.031496
+          "observada": 0.015748
         },
         {
           "n": 381,
           "p_media": 0.046896,
-          "observada": 0.028871
+          "observada": 0.049869
         },
         {
           "n": 381,
           "p_media": 0.083719,
-          "observada": 0.08399
+          "observada": 0.060367
         },
         {
           "n": 381,
           "p_media": 0.136066,
-          "observada": 0.16273
+          "observada": 0.183727
         },
         {
           "n": 381,
@@ -435,12 +435,12 @@
         {
           "n": 381,
           "p_media": 0.337395,
-          "observada": 0.409449
+          "observada": 0.364829
         },
         {
           "n": 381,
           "p_media": 0.530729,
-          "observada": 0.469816
+          "observada": 0.51706
         },
         {
           "n": 381,

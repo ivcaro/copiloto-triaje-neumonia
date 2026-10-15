@@ -140,6 +140,11 @@ entornos distintos.
 | 7 | `kaggle_mobilenet_v3_large_320px_c2` | MobileNetV3-L | 4+20 | 9 | 0,874 | 0,706 | 0,876 | 0,41 h |
 | 8 | `corrida2_densenet121_320px` | DenseNet121 | 4+4 | 7 | 0,880 | 0,699 | 0,888 | n/d |
 
+El coste de la corrida 6 (≈ 5,3 h, 19 026 s) es el de las **11 épocas** que corrió antes de que la
+parada temprana la detuviera, con su mejor época en la 5; las 24 épocas completas (4 + 20) de
+EfficientNet-B0 en CPU cuestan 10,8 h (`docs/desarrollo.md`, §4). Las dos cifras son ciertas y no
+se contradicen.
+
 Las siete primeras cumplen los tres mínimos (recall ≥ 0,80, especificidad ≥ 0,70 y AUC ≥
 0,85); la octava incumple la especificidad por una milésima (0,699). Ninguna alcanza a la vez
 el objetivo de especificidad (0,75). La regla de selección está escrita entera y en orden en la
@@ -428,6 +433,10 @@ validación 0,8827):
 | 0,80 | 0,8007 | 0,8033 | 0,5654 |
 | 0,85 | 0,8506 | 0,7358 | 0,6575 |
 
+(El cuaderno 04 recalcula esta tabla y imprime 0,5655 en el umbral de la fila de 0,80, una
+diezmilésima de diferencia en la última cifra por el redondeo; se deja el 0,5654 del documento de
+la frontera, que es la fuente.)
+
 Es una curva monótona sin sorpresas: cada punto de especificidad que se pide cuesta recall. En
 la zona de interés (0,70 a 0,80) cada 0,01 de especificidad cuesta entre 0,007 y 0,009 de
 recall, y entre 0,80 y 0,85 cuesta cerca de 0,014 (cálculo sobre la tabla).
@@ -519,6 +528,18 @@ La pendiente es 0,98 y el intercepto 0,012: la calibración queda muy cerca de l
 La ECE (0,016) **no supera el percentil 95 de su suelo de ruido** (0,017), calculado con
 juegos de etiquetas simuladas con las probabilidades del propio modelo: no se distingue del
 ruido de muestreo. La ECE se lee siempre al lado de su suelo y no frente a un umbral absoluto.
+
+**La ECE de una isotónica depende de cómo se rompen los empates.** El calibrador deja solo 674
+valores distintos de probabilidad entre las 3 811 placas, y la ECE por deciles de igual masa
+tiene que decidir en qué decil cae cada placa empatada. Medido con las mismas puntuaciones y el
+mismo calibrador: con el orden de las filas del fichero la ECE sale 0,0231 (su suelo, con ese
+desempate, tiene el percentil 95 en 0,0166, y entonces sí lo supera); con el rango de
+`patientId`, la regla declarada en la especificación de la validación semisintética, sale
+0,0163 (percentil 95 de su suelo, 0,0174). **La que se publica en todas partes es la segunda**
+(README, ficha del modelo, cuaderno 04, `results/` y la simulación): `src/evaluate.py` rompe los
+empates igual que la simulación. El Brier (0,108) y la pendiente (0,98) no cambian con el
+desempate; la lectura que sostienen los datos es «calibración cercana a la ideal», no «ECE
+indistinguible del ruido con cualquier desempate».
 
 **Límites.** Está calibrada en RSNA, donde la prevalencia es de 0,2215; la prevalencia de un
 centro real será otra, y por eso la razón de verosimilitud, que no depende de la población,
@@ -694,10 +715,12 @@ por lo que prometen frente a lo que cuestan (Semana 3, §6.3):
 | Las métricas finales y por vista | `app/generar_metricas.py` sobre las puntuaciones congeladas de prueba |
 | El análisis completo, con código | `notebooks/04_optimizacion.ipynb` |
 
-Los informes de cada corrida y las puntuaciones por placa no están en el repositorio (las
-puntuaciones por placa, por decisión del 5 de octubre de no publicar filas por paciente): los
-pesos se descargan del release, las métricas están en agregados (`app/assets/metricas.json`) y
-las cifras de las corridas, en los documentos que se citan arriba.
+Los informes de cada corrida y las puntuaciones por placa no estarán en el repositorio público
+(las puntuaciones por placa, `docs/validacion-semisintetica/crudas_prueba.csv`, son una tabla de
+trabajo del repositorio de desarrollo que no viaja a él, por decisión del 5 de octubre de no
+publicar filas por paciente): los pesos se descargarán del release del repositorio público, las
+métricas están en agregados (`app/assets/metricas.json`) y las cifras de las corridas, en los
+documentos que se citan arriba.
 
 ## Fuentes
 

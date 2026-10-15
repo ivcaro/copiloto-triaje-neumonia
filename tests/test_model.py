@@ -151,7 +151,8 @@ def test_el_readme_de_models_lleva_la_huella_y_las_cifras_de_las_metricas():
     assert publicadas["pesos_sha256"] in texto
     assert model.CORRIDA_DESPLEGADA in texto
     assert "servidor/calibrador.json" in texto
-    assert "v1.0" in texto and "se publican como descarga del release" in texto
+    # el release todavía no existe: el README dice que los pesos «se publicarán»
+    assert "se publicarán como descarga del release v1.0" in texto
     for cifra in (f"{model.UMBRAL}".replace(".", ","), f"{model.AUC_VALIDACION}".replace(".", ","),
                   f"{model.PREVALENCIA_LOCAL}".replace(".", ",")):
         assert cifra in texto, cifra
@@ -264,6 +265,19 @@ def test_la_calibracion_del_json_dice_lo_que_el_calibrador_corrige():
     assert cal["calibrada"]["brier"] < cal["cruda"]["brier"]
     assert abs(cal["calibrada"]["pendiente"] - 1) < 0.1
     assert abs(cal["calibrada"]["intercepto"]) < abs(cal["cruda"]["intercepto"])
+
+
+def test_la_ece_del_json_es_la_de_la_simulacion_semisintetica():
+    """La ECE depende de cómo se rompen los empates de la isotónica (674 valores distintos entre
+    3 811 placas): `evaluate.py` los rompe como la simulación (rango del identificador de la
+    placa), y las dos publican la misma cifra, con el mismo suelo de ruido."""
+    sola = _json(REPO / "docs" / "validacion-semisintetica" / "resultados_simulacion.json"
+                 )["imagen_sola"]
+    calibrada = _json(JSON_DE_PRUEBA)["calibracion"]["calibrada"]
+    assert calibrada["ece"] == pytest.approx(sola["ece"], abs=1e-6)
+    assert calibrada["ece_suelo"]["media"] == pytest.approx(sola["suelo"]["media"], abs=1e-6)
+    assert calibrada["ece_suelo"]["p95"] == pytest.approx(sola["suelo"]["p95"], abs=1e-6)
+    assert calibrada["ece"] < calibrada["ece_suelo"]["p95"]    # no se distingue del ruido
 
 
 def test_las_figuras_versionadas_son_tres_png_bien_hechos():

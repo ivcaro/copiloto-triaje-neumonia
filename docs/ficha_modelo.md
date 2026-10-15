@@ -191,6 +191,8 @@ La diferencia de recall entre vistas pasa de 0,25 a 0,003 y las opacidades sin m
 
 La ECE no supera el percentil 95 de su suelo: no se distingue del ruido de muestreo. *(`docs/validacion-semisintetica-sp5.md`, «La imagen sola».)* Una pendiente menor que 1 diría que el modelo exagera; aquí es 0,98.
 
+Dos aclaraciones sobre esas cifras. La ECE de una isotónica es sensible a cómo se rompen los empates entre placas con la misma probabilidad (con el orden de las filas del fichero saldría 0,0231 y superaría el percentil 95 de su suelo, 0,0166): se publica la que rompe los empates por el rango de `patientId`, que es la regla de la simulación (`docs/optimizacion.md`, §8). Y el AUC de la tabla (0,884, sobre las 3 811 placas) es el de la probabilidad **calibrada**: unas milésimas menor que el de la puntuación cruda (0,885, el de la sección 7.1; el 0,885 de la sección 7.6 es el de los 3 460 casos con el asma conocida) porque el calibrador agrupa puntuaciones distintas en una misma probabilidad y esos empates ya no ordenan.
+
 ### 7.5. La banda contradictoria
 
 Con la puntuación cruda entre 0,4258 y 0,5786 la etiqueta es positiva pero la razón de verosimilitud es **menor que 1**. Ocurre en **379 de las 3 811** placas de prueba (9,9 %), que son el 23,3 % de lo que el cribado etiqueta como positivo, y el 80,5 % de ellas no tenía opacidad. No es un caso raro: es el comportamiento habitual del punto de operación elegido (SP3 §3).

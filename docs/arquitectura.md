@@ -448,7 +448,7 @@ Hiperparámetros del modelo desplegado. La búsqueda y el análisis de sensibili
 | Parada temprana | Paciencia 5 por fase; criterio: **recall en validación** medido en el umbral que `elegir_umbral` elegiría para esa época, con el AUC como desempate | En triaje el falso negativo es el error caro; medir el recall en 0,5 fijo no sirve (con `pos_weight` el modelo queda sentado justo en 0,5) |
 | Semilla | 42; cuDNN determinista | «Misma semilla, mismos resultados» es un criterio de aceptación |
 | Mejor época de la corrida 6 | La 5 | `docs/comparativa-corridas.md` |
-| Coste | 19 026 s en CPU (corrida 6) | `docs/comparativa-corridas.md` |
+| Coste | 19 026 s en CPU (corrida 6: 11 épocas, porque la parada temprana la detuvo; las 24 completas cuestan 10,8 h) | `docs/comparativa-corridas.md` |
 
 *Fuentes: `src/copiloto_triaje/config.py`, `modelo/entrenamiento.py`, `docs/mejoras-2026-09-21.md`, Semana 3 (`hallazgos-medidos.md`).*
 
@@ -631,7 +631,7 @@ Todo rechazo lleva un **código legible por máquina**. Por REST va aislado en e
 | `payload_excesivo` | Más de 5 MB (5 242 880 bytes) ya descodificados | 413 | `isError` |
 | `base64_invalido` | El base64 no es válido | — | `isError` |
 
-Hay dos límites de tamaño distintos: el del **producto** (5 MB, comprobado sobre los bytes descodificados, igual en las dos puertas) y el del **transporte** (algo por encima de 5,3 MB: responde HTTP 413 sin SSE ni JSON-RPC). El flujo trata las tres ramas (SP3 §10.4). Los DICOM de RSNA tienen una mediana de 131 KB (máximo 185 KB), así que en la práctica nada de esto se activa.
+Hay dos límites de tamaño distintos: el del **producto** (5 MB, comprobado sobre los bytes descodificados, igual en las dos puertas) y el del **transporte** (algo por encima de 5,3 MB: responde HTTP 413 sin SSE ni JSON-RPC). El flujo trata las tres ramas (SP3 §10.4). Los DICOM de RSNA tienen una mediana de 132 KiB (135 532 bytes) y un máximo de 362 KiB (370 560 bytes) sobre los 26 684 (`docs/analisis_datos.md`, §3.1), así que en la práctica nada de esto se activa.
 
 **Qué dice el bot de cada fallo** está en el [manual de usuario](manual_usuario.md#5-qué-dicen-los-bots-y-la-aplicación-cuando-algo-falla). Dos reglas de diseño merecen constar aquí: ninguna rama de error emite una cifra de probabilidad (el rechazo por edad es una decisión clínica del sistema y llega como tal), y el bot clasifica cada código del servidor según **quién compuso su texto**: se relata lo que compuso nuestro código sobre datos validados, nunca lo que armó una librería de terceros sobre bytes ajenos (SP3 §9, §10.4 bis).
 

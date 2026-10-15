@@ -255,7 +255,7 @@ conserva un registro de horas reales, así que esa estimación no se contrasta a
 | Categoría | Previsto (Presentación del proyecto, §9) | Lo ocurrido |
 | :--- | :--- | :--- |
 | Datos | RSNA Pneumonia Detection Challenge (principal), PadChest (validación externa), NIH ChestX-ray14 (plan B) | Solo RSNA. PadChest no se gestionó; el plan B no hizo falta |
-| Cómputo de entrenamiento | Google Colab (GPU T4), nivel gratuito, con Colab Pro como contingencia | Ocho corridas comparadas a 320 px en tres entornos (Kaggle, Colab y CPU local), además de la primera corrida a 224 px y las tres de diagnóstico del 26-sep. En CPU, el entrenamiento de 4 + 20 épocas cuesta 10,8 h con EfficientNet-B0 y 24,9 h con DenseNet121 (README del repositorio) |
+| Cómputo de entrenamiento | Google Colab (GPU T4), nivel gratuito, con Colab Pro como contingencia | Ocho corridas comparadas a 320 px en tres entornos (Kaggle, Colab y CPU local), además de la primera corrida a 224 px y las tres de diagnóstico del 26-sep. En CPU, el entrenamiento de 4 + 20 épocas cuesta 10,8 h con EfficientNet-B0 y 24,9 h con DenseNet121 (README del repositorio; las 24 épocas completas: la corrida 6, la desplegada, paró a las 11 por la parada temprana y costó ≈ 5,3 h) |
 | Servidor | VPS de 16 GB de RAM y 8 vCPU con Docker, n8n y PostgreSQL; inferencia en CPU | Se cumplió; el servicio se acota a 2 núcleos y 2 GB de memoria |
 | Software | Python (PyTorch), n8n, Docker, PostgreSQL, Telegram Bot API, GitHub | Se cumplió, más Streamlit para la interfaz y scikit-learn para la calibración |
 | Servicios de IA | API de LLM (OpenAI o Gemini), 15 USD de consumo | No se usó: el LLM se descartó (sección 4.2) |

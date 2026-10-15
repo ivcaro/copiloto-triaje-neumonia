@@ -135,7 +135,8 @@ El mismo paquete se ejecuta en dos sitios, y la división no es negociable:
 El entrenamiento local **es posible y está soportado**, no es lo preferente.
 Medido en una CPU de 20 hilos lógicos (10 de cómputo), para 4 + 20 épocas:
 DenseNet121 a 320 px cuesta **24,9 h**, EfficientNet-B0 a 320 px **10,8 h** y
-MobileNetV3 a 224 px **3,1 h**; la carga de imágenes no es el cuello de botella
+MobileNetV3 a 224 px **3,1 h** (las 24 épocas completas: la corrida 6, la desplegada, paró a
+las 11 por la parada temprana y costó ≈ 5,3 h); la carga de imágenes no es el cuello de botella
 (268 img/s con 8 procesos). Con GPU son horas. Por eso la ruta preferente sigue
 siendo Colab o Kaggle, y `scripts/entrenar_local.py` existe para cuando la
 cuota de GPU se agota: es reanudable justamente porque son corridas de una
@@ -272,8 +273,16 @@ En el repositorio de desarrollo viajan dos tablas derivadas de ese dataset, sin 
 etiqueta de cada placa, con los que se hizo el análisis exploratorio) y
 `docs/validacion-semisintetica/crudas_prueba.csv` (la puntuación del modelo
 sobre las placas del conjunto de prueba). Las imágenes no viajan: se descargan
-de la competición, con sus reglas aceptadas. Del conjunto, lo que se publica son agregados;
-qué pasa con las tablas por placa al publicar, en [`data/README.md`](../data/README.md).
+de la competición, con sus reglas aceptadas. Del conjunto, lo que se publica son agregados.
+
+**Decisión del equipo (5-oct-2026): ninguna de las dos tablas va al repositorio público**, que se
+publica más tarde y es el que describen el `README.md` y los documentos del curso. Se quedan en el
+de desarrollo, que es privado. Sin ellas, lo que las necesita lo dice y se detiene en vez de
+inventarlas (`src/evaluate.py`, la validación semisintética), y lo ya calculado queda en
+agregados (`results/`, `app/assets/metricas.json`, las figuras y las salidas de los notebooks).
+`metadatos_eda.csv` se regenera con `scripts/extraer_metadatos.py` desde los DICOM que cada uno
+descarga; `crudas_prueba.csv`, con los pesos y las placas de prueba (`pruebas/puntuaciones.py`).
+Qué no está en el repositorio y por qué, en [`data/README.md`](../data/README.md).
 
 ## 8. El servidor (SP2)
 

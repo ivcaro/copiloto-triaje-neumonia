@@ -59,7 +59,7 @@ Institutes of Health Chest Radiograph Dataset with Expert Annotations of Possibl
 | :--- | :--- |
 | Los DICOM y los PNG de RSNA | Regla 7.B de Kaggle, arriba. |
 | Los manifiestos (`train.csv`, `val.csv`, `test.csv`) | Son listas por paciente de lo que se descarga; se regeneran de forma determinista con la semilla. |
-| Tablas con una fila por paciente derivadas de los datos | Decisión del equipo: del conjunto solo se publican agregados. Las puntuaciones congeladas del modelo sobre la prueba (`docs/validacion-semisintetica/crudas_prueba.csv`), que usan `src/evaluate.py` y la validación semisintética, son tabla de trabajo: pueden no viajar al repositorio público, y lo que las necesita lo dice y se detiene en vez de inventarlas. |
+| Las dos tablas con una fila por paciente del repositorio de desarrollo | Decisión del equipo (5-oct-2026): del conjunto solo se publican agregados, y **ninguna de las dos va al repositorio público**, que se publica más tarde. Son `docs/eda/metadatos_eda.csv` (26 684 filas: identificador público de RSNA, edad, sexo, proyección y etiqueta de cada placa, con las que se hizo el análisis exploratorio) y `docs/validacion-semisintetica/crudas_prueba.csv` (3 811 filas: la puntuación cruda del modelo sobre cada placa de prueba, que usan `src/evaluate.py` y la validación semisintética). Sin ellas el repositorio público conserva los agregados ya calculados (`results/`, `app/assets/metricas.json`, las figuras y las salidas de los notebooks); lo que las necesita lo dice y se detiene en vez de inventarlas (`src/evaluate.py` sale con un error sin tocar `results/`). La primera se regenera con `scripts/extraer_metadatos.py` desde los DICOM que cada uno descarga (unos 26 segundos); la segunda, con los pesos y las placas de prueba (`pruebas/puntuaciones.py`). |
 | Los pesos del modelo | Pesan unos 16 MB y no van en git: ver `models/README.md`. |
 
 Las cuatro radiografías de ejemplo de la app (`app/assets/ejemplos/`) **no son de RSNA ni del
@@ -75,7 +75,7 @@ repositorio (`.gitignore` la deja fuera).
 ```
 pip install -r requirements.txt kaggle
 
-# 1. Descarga en data/raw/ (el conjunto ocupa unos 3,9 GB)
+# 1. Descarga en data/raw/ (el paquete completo ocupa 3,66 GB)
 kaggle competitions download -c rsna-pneumonia-detection-challenge -p data/raw
 
 # 2. Prepara: descomprime, convierte los DICOM a PNG, cruza con las etiquetas, filtra a

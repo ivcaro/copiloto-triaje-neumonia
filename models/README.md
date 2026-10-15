@@ -1,9 +1,9 @@
 # Modelos
 
 Esta carpeta describe el modelo del proyecto y recibe sus pesos. **Los pesos no están en git**
-(pesan unos 16 MB y `.gitignore` los deja fuera): se publican como descarga del release v1.0
-del repositorio público. Aquí se dice cuál es el modelo, cómo comprobar que el fichero que
-bajaste es el bueno y dónde vive el calibrador, que sí está versionado.
+(pesan unos 16 MB y `.gitignore` los deja fuera): se publicarán como descarga del release v1.0
+del repositorio público, que todavía no existe. Aquí se dice cuál es el modelo, cómo comprobar
+que el fichero que bajaste es el bueno y dónde vive el calibrador, que sí está versionado.
 
 ## El modelo desplegado
 
@@ -31,8 +31,8 @@ por qué esta red y no otra, en [`docs/comparativa-corridas.md`](../docs/compara
 
 ## Descargar los pesos y comprobarlos
 
-1. Baja `pesos_modelo_cpu.pt` del release v1.0 del repositorio público y déjalo en esta
-   carpeta: `models/pesos_modelo_cpu.pt`.
+1. Cuando exista el release v1.0 del repositorio público, baja de él `pesos_modelo_cpu.pt` y
+   déjalo en esta carpeta: `models/pesos_modelo_cpu.pt`.
 2. Comprueba su huella; tiene que ser la de la tabla de arriba:
 
    ```

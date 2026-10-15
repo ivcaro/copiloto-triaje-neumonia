@@ -205,10 +205,12 @@ proyección y por subgrupo, como hace este proyecto.
 
 ## 6. Distribución
 
-**¿Se distribuye el dataset desde este repositorio?** **No.** El repositorio no incluye
-imágenes, ni etiquetas, ni tablas con una fila por paciente; solo referencias, cifras
+**¿Se distribuye el dataset desde este repositorio?** **No.** El repositorio público no
+incluirá imágenes, ni etiquetas, ni tablas con una fila por paciente; solo referencias, cifras
 agregadas (`app/assets/metricas.json`) y los guiones que regeneran todo desde el conjunto que
-cada persona descarga. Los ejemplos de la interfaz son de otra fuente (tres radiografías de
+cada persona descarga. Las dos tablas de trabajo del repositorio de desarrollo
+(`docs/eda/metadatos_eda.csv` y `docs/validacion-semisintetica/crudas_prueba.csv`) no viajan a
+él, por decisión del equipo del 5 de octubre (`data/README.md`). Los ejemplos de la interfaz son de otra fuente (tres radiografías de
 Wikimedia Commons con licencia CC0).
 
 **Por qué.** Las reglas de la competición de Kaggle conservan una cláusula general (7.B) que
