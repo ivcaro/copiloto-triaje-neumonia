@@ -23,6 +23,7 @@ hecho, la [arquitectura](arquitectura.md).
 9. [La aplicación de demostración, en detalle](#9-la-aplicación-de-demostración-en-detalle)
 10. [Documentos de diseño](#10-documentos-de-diseño)
 11. [Publicar](#11-publicar)
+12. [Publicar la app](#12-publicar-la-app)
 
 ## 1. Los sub-proyectos
 
@@ -713,3 +714,140 @@ del repositorio:
 
 Mientras el repositorio sea privado, el release solo lo ven sus colaboradores. Se hace público
 cuando el equipo lo diga: Settings → General → Danger Zone → **Change repository visibility**.
+## 12. Publicar la app
+
+La demostración (`app/`) se publica como un **Space de Hugging Face** de tipo Docker; el bot se
+queda donde está. Lo que se sube al Space no es el repositorio sino una carpeta armada para ello
+con [`despliegue/huggingface/preparar_space.py`](../despliegue/huggingface/preparar_space.py):
+el README del Space (con su cabecera YAML), el
+[`Dockerfile`](../despliegue/huggingface/Dockerfile) del Space, `app/` (solo lo que la página lee,
+la misma lista blanca de `app/Dockerfile.dockerignore`), los `.py` de `src/copiloto_triaje/`,
+`pyproject.toml`, `servidor/calibrador.json` y los pesos, con su SHA-256 comprobado contra el
+`pesos_sha256` de `app/assets/metricas.json`. Nada más: ni docs, ni pruebas, ni notebooks, ni
+datos, ni `.git`. El [README del Space](../despliegue/huggingface/README.md) dice que es una
+demostración académica y que no se suban radiografías de pacientes reales (la página corre en
+los servidores de Hugging Face).
+
+**Antes de empezar**
+
+- **La cuenta.** Es la de quien publica; el **token** también es suyo, se crea en
+  `huggingface.co/settings/tokens` (con permiso de escritura) y se escribe solo en el terminal
+  de esa persona, cuando `hf auth login` lo pide. No se pega en un chat, ni en un fichero del
+  repositorio, ni en una orden.
+- **Un Space Docker puede pedir una cuenta de pago.** Según la documentación de Hugging Face
+  («Spaces Overview», consultada el 15 de octubre de 2026), crear un Space Docker o Gradio
+  «requires a paid plan» (PRO para una cuenta personal; en su página de precios, 9 USD al mes),
+  aunque la máquina por defecto, CPU Basic (2 vCPU y 16 GB), no tenga coste por hora. Se
+  comprueba en la pantalla de «Create new Space» antes de seguir. Si la cuenta no puede crearlo,
+  la misma carpeta se construye y se ejecuta con Docker en cualquier máquina (el paso 4).
+- **Los pesos** tienen que estar en `servidor/pesos_modelo_cpu.pt` o en otra ruta que se da con
+  `--pesos` (por ejemplo, la descarga del release v1.0). Si su SHA-256 no es el de
+  `metricas.json`, el guion se detiene y no deja nada escrito: las métricas de «Acerca de» serían
+  de otros pesos.
+- **Un Space público publica también los pesos**, que están en su repositorio. Mientras el
+  Space sea privado, solo los ve su dueño. Hacerlo público se decide a la vez que se publican los
+  pesos en el release.
+
+**Los pasos**, desde la raíz del repositorio y con el nombre de usuario (o de la organización) y
+del Space que se elijan en lugar de `<usuario>` y `<space>`:
+
+1. **Instalar la herramienta**, en un entorno aparte (FUERA del repositorio: `.gitignore` no
+   conoce ese nombre) y con la versión fijada. Su orden es `hf`: la antigua `huggingface-cli` ya
+   no existe en esta versión.
+
+   ```
+   python -m venv ../venv-hf
+   source ../venv-hf/bin/activate          # en Windows: ..\venv-hf\Scripts\activate
+   pip install huggingface_hub==2.1.1
+   ```
+
+2. **Iniciar sesión** (pide el token; es de quien escribe y se queda guardado en su máquina):
+
+   ```
+   hf auth login
+   ```
+
+3. **Crear el Space**, de tipo Docker y **privado** (la web, con «New Space», «Docker», «Blank» y
+   «Private», es lo mismo):
+
+   ```
+   hf repos create <usuario>/<space> --repo-type space --sdk docker --private
+   ```
+
+4. **Armar la carpeta**, FUERA del repositorio (el guion lo exige: lleva los pesos, que no se
+   versionan) y vacía o inexistente:
+
+   ```
+   python despliegue/huggingface/preparar_space.py ../space-copiloto
+   ```
+
+   Conviene probarla en local antes de subirla; y, si no hay cuenta que permita crear el Space,
+   es lo que se puede hacer. Como con la imagen de `app/`: el puerto siempre detrás de
+   `127.0.0.1:` y con el límite de memoria.
+
+   ```
+   docker build -t copiloto-space ../space-copiloto
+   docker run --rm -p 127.0.0.1:8501:8501 --memory=2g --memory-swap=2g copiloto-space
+   ```
+
+   y se abre `http://127.0.0.1:8501` (`/_stcore/health` responde `ok`).
+
+5. **Subirla** (con `.` como destino, para que quede en la raíz del Space; los 16 MB de los pesos
+   los guarda el Hub aparte, sin que haya que configurar nada):
+
+   ```
+   hf upload <usuario>/<space> ../space-copiloto . --repo-type space --commit-message "Primera versión de la demostración"
+   ```
+
+6. **Ver la construcción.** Cada commit en el Space lo reconstruye; la primera vez tarda varios
+   minutos (torch). En la web, la pestaña del Space muestra el estado («Building», «Running»,
+   «Build error») y sus registros; por línea de órdenes:
+
+   ```
+   hf spaces logs <usuario>/<space> --build -f      # la construcción de la imagen
+   hf spaces logs <usuario>/<space>                 # lo que escribe la página una vez en marcha
+   ```
+
+   Un «Build error» se lee en el registro de la construcción: lo habitual es un fichero que falta
+   en la carpeta armada (se repite el paso 4) o un cambio en la base de la imagen.
+
+7. **Comprobar** que funciona, con la sesión de Hugging Face abierta en el navegador (el Space es
+   privado): «Prueba con ejemplo» con los cuatro ejemplos, y **una subida de un DICOM** (la
+   subida es lo que falla si el iframe no está bien; ver la nota de abajo). La pestaña «Acerca de»
+   tiene que decir que las métricas son de estos mismos pesos.
+
+**Una máquina gratuita se duerme.** En CPU Basic, Hugging Face duerme el Space tras un tiempo
+sin visitas; la primera persona que entra después espera a que arranque y a que la página cargue
+el modelo, así que esa visita tarda más que las demás. Conviene abrirlo antes de una
+demostración. La documentación de Hugging Face no da el plazo exacto de la inactividad.
+
+**Cuando el repositorio sea público**
+
+1. Sustituir en `despliegue/huggingface/README.md` el marcador `PENDIENTE` por el enlace al
+   repositorio, y volver a armar (paso 4) y subir (paso 5). Es lo único que cambia.
+2. Hacer público el Space (con los pesos dentro, ver arriba): en la web, `Settings`, «Change
+   visibility»; o por línea de órdenes:
+
+   ```
+   hf repos settings <usuario>/<space> --repo-type space --public
+   ```
+
+3. Poner la dirección del Space en la sección «Interfaz de usuario» del README, en «Dónde está
+   desplegada».
+
+**Por qué el Dockerfile del Space apaga XSRF y CORS.** Hugging Face muestra el Space en un
+iframe de otro sitio, y con la configuración por defecto de Streamlit **subir un DICOM falla con
+un 403** (el testigo XSRF viaja en una cookie `SameSite=Lax` que el navegador no manda desde un
+iframe de otro sitio). Se comprobó así (15 de octubre de 2026): la imagen de `app/` en
+`127.0.0.1:8501` y, en `localhost:9000`, una página con
+`<iframe src="http://127.0.0.1:8501/"></iframe>` (son sitios distintos, como `huggingface.co` y
+`hf.space`), servida con `python -m http.server 9000 --bind 127.0.0.1`. Con lo de por defecto, la
+subida da `PUT 403` («AxiosError: Request failed with status code 403»); con
+`--server.enableXsrfProtection=false` (y también con `--server.xsrfCookieSameSite=none`, pero esa
+depende de las cookies de terceros, que algunos navegadores bloquean, como Safari), `PUT 204` y el
+cálculo sale. La imagen del Space se probó igual, con los cuatro ejemplos y una subida, corriendo
+con el UID 1000 que usa Hugging Face. Si se cambia la versión de Streamlit, la prueba se repite
+así. El detalle de cada opción está en los comentarios del
+[Dockerfile](../despliegue/huggingface/Dockerfile). Las pruebas que fijan todo esto (la lista de
+lo que viaja, la comprobación de los pesos y que el Dockerfile del Space es el de `app/` más
+esas dos opciones) están en `tests/test_preparar_space.py`.

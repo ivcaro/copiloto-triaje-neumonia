@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """El Space de Hugging Face (SP5-C3, P8): `despliegue/huggingface/`.
 
-DOS CLASES DE PRUEBAS, y ninguna usa la red, Docker ni el modelo.
+TRES CLASES DE PRUEBAS, y ninguna usa la red, Docker ni el modelo.
 
 Las del GUION (`preparar_space.py`) arman la carpeta en un repositorio de JUGUETE, con
 señuelos de todo lo que no puede viajar (docs, pruebas, notebooks, datos, `.git`, `.env`, un
@@ -16,6 +16,10 @@ selecciona es lo que el Dockerfile del Space copia, que ese Dockerfile es el de 
 las dos que necesita el iframe de Hugging Face, y que el README del Space tiene una cabecera
 YAML válida y coherente con el Dockerfile. La armada completa con los pesos de verdad se SALTA
 si el clon no los tiene (`-rs` lo muestra).
+
+Las de la DOCUMENTACIÓN: que `docs/desarrollo.md` tiene la sección «Publicar la app» y que lo
+que dice coincide con lo que hay (la versión fijada de huggingface_hub, los nombres de los
+guiones y la orden de subida).
 
 Lo que NO se comprueba aquí, porque necesita Docker, un navegador y la red: que la imagen
 construye, que la página corre dentro de un iframe de otro sitio y sube un DICOM (se probó a
@@ -471,3 +475,38 @@ def test_la_armada_completa_con_los_pesos_de_verdad(tmp_path):
                   ".git", "despliegue"):
         assert not (destino / fuera).exists(), fuera
     assert not any(r.endswith((".csv", ".ipynb", ".env", ".pem", ".pyc")) for r in escritas)
+
+
+# --------------------------------------------------------------------------
+# La documentación
+# --------------------------------------------------------------------------
+def _seccion_publicar_la_app() -> str:
+    texto = DESARROLLO.read_text(encoding="utf-8")
+    encontrada = re.search(r"^## (?:\d+\. )?Publicar la app\s*$", texto, re.MULTILINE)
+    assert encontrada, "docs/desarrollo.md no tiene la sección «Publicar la app»"
+    resto = texto[encontrada.end():]
+    siguiente = re.search(r"^## ", resto, re.MULTILINE)
+    return resto[:siguiente.start()] if siguiente else resto
+
+
+def test_desarrollo_explica_como_publicar_la_app_con_ordenes_que_existen():
+    seccion = _seccion_publicar_la_app()
+    # La versión de huggingface_hub, fijada con ==, y la CLI de ESA versión (`hf`): la
+    # antigua `huggingface-cli` ya no existe en las versiones actuales.
+    fijada = re.findall(r"huggingface_hub==(\d+\.\d+\.\d+)", seccion)
+    assert fijada, "la sección tiene que fijar la versión de huggingface_hub con =="
+    assert len(set(fijada)) == 1
+    assert "hf auth login" in seccion
+    assert "hf repos create" in seccion and "--private" in seccion and "--sdk docker" in seccion
+    assert "python despliegue/huggingface/preparar_space.py" in seccion
+    assert "hf upload" in seccion and "--repo-type space" in seccion
+    assert "hf spaces logs" in seccion and "--build" in seccion
+    assert "hf repos settings" in seccion and "--public" in seccion
+    # Lo que hay que saber antes de empezar.
+    minusculas = " ".join(seccion.lower().split())
+    assert "se duerme" in minusculas
+    assert "token" in minusculas
+    # Los guiones y ficheros que nombra existen.
+    for ruta in ("despliegue/huggingface/preparar_space.py", "despliegue/huggingface/Dockerfile",
+                 "despliegue/huggingface/README.md"):
+        assert ruta in seccion and (REPO / ruta).is_file(), ruta
