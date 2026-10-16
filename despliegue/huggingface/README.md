@@ -6,6 +6,7 @@ colorTo: indigo
 sdk: docker
 app_port: 8501
 short_description: Demostración académica; no es un producto sanitario
+license: cc-by-nc-4.0
 pinned: false
 ---
 
@@ -46,3 +47,23 @@ esta misma página en local están en el repositorio del proyecto:
 Los ficheros de este Space los arma el guion `despliegue/huggingface/preparar_space.py` del
 repositorio: la aplicación (`app/`), el paquete `copiloto_triaje` (`src/`), el calibrador y los
 pesos. Nada más.
+
+## Licencia y atribución
+
+- **Licencia.** El código de la aplicación es MIT. Los **pesos del modelo**
+  (`pesos_modelo_cpu.pt`, que van dentro de este Space) se publican con
+  [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/): se pueden usar, compartir y
+  adaptar citando la procedencia y **sin fines comerciales**. La cabecera de este fichero
+  declara `cc-by-nc-4.0`, la más restrictiva de las dos, porque el Space lleva ambas cosas.
+- **Datos.** El modelo se entrenó con el RSNA Pneumonia Detection Challenge (Kaggle, 2018), que
+  deriva del conjunto NIH ChestX-ray14; el **NIH Clinical Center es el proveedor de los datos**.
+  Este Space **no contiene ni redistribuye ninguna imagen ni ninguna etiqueta** de esos datos
+  (los ejemplos son radiografías de Wikimedia Commons, CC0), y no se intentó identificar ni contactar a
+  ninguno de los sujetos de los datos.
+- **Uso: solo investigación y educación.** Es un prototipo académico y no es un producto
+  sanitario.
+- **Referencias.**
+  - Imágenes: NIH ChestX-ray14, [sitio de descarga del NIH](https://nihcc.app.box.com/v/ChestXray-NIHCC).
+    X. Wang, Y. Peng, L. Lu, Z. Lu, M. Bagheri y R. M. Summers, «ChestX-ray8: hospital-scale chest X-ray database and benchmarks on weakly-supervised classification and localization of common thorax diseases», en *Proc. IEEE Conf. Comput. Vis. Pattern Recognit. (CVPR)*, 2017, pp. 3462–3471, doi: 10.1109/CVPR.2017.369.
+  - Anotaciones: RSNA Pneumonia Detection Challenge, [sitio de la RSNA](https://www.rsna.org/education/ai-resources-and-training/ai-image-challenge/RSNA-Pneumonia-Detection-Challenge-2018).
+    G. Shih *et al.*, «Augmenting the National Institutes of Health chest radiograph dataset with expert annotations of possible pneumonia», *Radiol. Artif. Intell.*, vol. 1, n.º 1, art. e180041, ene. 2019, doi: 10.1148/ryai.2019180041.

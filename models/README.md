@@ -15,6 +15,7 @@ que el fichero que bajaste es el bueno y dónde vive el calibrador, que sí est�
 | Corrida | 6: `efficientnet_b0_320px_lote24_4+20ep` (lote 24; 4 épocas con la cabeza sola y 20 de ajuste fino; parada por recall; entrenada en CPU) |
 | Entrenamiento | RSNA Pneumonia Detection Challenge, solo adultos, partición por paciente (`data/README.md`) |
 | Fichero | `pesos_modelo_cpu.pt` |
+| Licencia de los pesos | **CC BY-NC 4.0** (código del repositorio: MIT); detalle y atribución, en la sección «Licencia y atribución» |
 | SHA-256 | `bb985e1f792e1cfee150ec57bdc6d706f7484499fa999da3406a5798260e8d47` |
 | Umbral de cribado | 0,4258, sobre la puntuación cruda (elegido en validación) |
 | AUC en validación | 0,8827 |
@@ -28,6 +29,27 @@ Rinde distinto según la proyección (en `results/figures/subgrupos.png`), y se 
 no en pacientes de ninguna consulta. El modelo no diagnostica: el profesional decide siempre.
 La ficha completa, con sus límites, está en [`docs/ficha_modelo.md`](../docs/ficha_modelo.md);
 por qué esta red y no otra, en [`docs/comparativa-corridas.md`](../docs/comparativa-corridas.md).
+
+## Licencia y atribución
+
+- **Licencia de los pesos.** `pesos_modelo_cpu.pt` se publica con la licencia
+  [Creative Commons Atribución-NoComercial 4.0 (CC BY-NC 4.0)](https://creativecommons.org/licenses/by-nc/4.0/):
+  se puede usar, compartir y adaptar citando la procedencia y **sin fines comerciales**. El
+  código del repositorio es aparte, con licencia MIT ([`LICENSE`](../LICENSE)).
+- **De qué datos salen.** Se entrenaron con el RSNA Pneumonia Detection Challenge (Kaggle,
+  2018), que deriva del conjunto NIH ChestX-ray14; el **NIH Clinical Center es el proveedor de
+  los datos**. **No se redistribuye ninguna imagen ni ninguna etiqueta de esos datos**: lo que
+  se publica es el modelo entrenado. No se intentó identificar ni contactar a ninguno de los
+  sujetos de los datos, como piden las condiciones de la RSNA.
+- **Uso: solo investigación y educación.** Es un prototipo académico y **no es un producto
+  sanitario**: no debe usarse para decidir sobre un paciente real. Los usos previstos y los
+  que quedan fuera de alcance, en la [ficha del modelo](../docs/ficha_modelo.md).
+- **Atribución.** Se pide a quien reutilice los pesos que cite, además del proyecto, las
+  fuentes de los datos con que se entrenaron:
+  - Imágenes: NIH ChestX-ray14, [sitio de descarga del NIH](https://nihcc.app.box.com/v/ChestXray-NIHCC).
+    X. Wang, Y. Peng, L. Lu, Z. Lu, M. Bagheri y R. M. Summers, «ChestX-ray8: hospital-scale chest X-ray database and benchmarks on weakly-supervised classification and localization of common thorax diseases», en *Proc. IEEE Conf. Comput. Vis. Pattern Recognit. (CVPR)*, 2017, pp. 3462–3471, doi: 10.1109/CVPR.2017.369.
+  - Anotaciones: RSNA Pneumonia Detection Challenge, [sitio de la RSNA](https://www.rsna.org/education/ai-resources-and-training/ai-image-challenge/RSNA-Pneumonia-Detection-Challenge-2018).
+    G. Shih *et al.*, «Augmenting the National Institutes of Health chest radiograph dataset with expert annotations of possible pneumonia», *Radiol. Artif. Intell.*, vol. 1, n.º 1, art. e180041, ene. 2019, doi: 10.1148/ryai.2019180041.
 
 ## Descargar los pesos y comprobarlos
 

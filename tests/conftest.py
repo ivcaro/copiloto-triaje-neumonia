@@ -20,6 +20,7 @@ trafico a ese n8n cada vez que alguien corra la suite alli.
 """
 import json
 import os
+import pathlib
 import urllib.error
 import urllib.request
 
@@ -212,6 +213,86 @@ def rsna_raiz():
 def pesos_desplegados():
     """Los pesos desplegados. Sin el fichero, la prueba se salta."""
     return pesos_desplegados_o_salta()
+
+
+# --------------------------------------------------------------------------
+# Las tablas con una fila por paciente, que el repositorio publico no lleva
+# --------------------------------------------------------------------------
+# Decision del equipo (5-oct-2026, data/README.md): del conjunto de RSNA solo se
+# publican agregados. Estos tres ficheros viven en el repositorio de desarrollo y
+# `scripts/preparar_publicacion.py` los deja fuera de lo que se publica. Muchas
+# pruebas las leen; en el repositorio publicado (o en una copia sin ellas) esas
+# pruebas se SALTAN diciendo que se quedan sin comprobar, y no fallan.
+_REPO = pathlib.Path(__file__).resolve().parents[1]
+TABLAS_POR_PACIENTE = {
+    "docs/eda/metadatos_eda.csv": (
+        "la tabla de metadatos por placa del análisis exploratorio (26 684 filas)",
+        "se regenera con scripts/extraer_metadatos.py desde los DICOM que cada uno descarga"),
+    "docs/validacion-semisintetica/crudas_prueba.csv": (
+        "la tabla de puntuaciones crudas congeladas de las 3 811 placas de prueba",
+        "se regenera con los pesos y las placas de prueba (pruebas/puntuaciones.py)"),
+    "docs/validacion-semisintetica/crudas_prueba.sha256": (
+        "la huella que acompaña a las puntuaciones crudas congeladas",
+        "sale de la misma regeneración de las puntuaciones (pruebas/puntuaciones.py)"),
+}
+
+
+def _motivo_de_la_tabla_ausente(ruta_relativa: str) -> str:
+    que_es, como = TABLAS_POR_PACIENTE[ruta_relativa]
+    return (
+        f"PRUEBA SIN VERIFICAR: falta {ruta_relativa}, {que_es}, que el repositorio"
+        " público no lleva (son tablas con una fila por paciente: decisión del equipo,"
+        " 5-oct-2026, ver data/README.md). Lo que esta prueba comprueba se queda sin"
+        " comprobar aquí; en el repositorio de desarrollo, que sí tiene la tabla, se"
+        f" corre. Para tenerla: {como}.")
+
+
+def tabla_por_paciente_o_salta(ruta_relativa: str):
+    """La ruta de una tabla por paciente (relativa a la raiz del repo), o un skip
+    que dice cual falta y que queda sin verificar."""
+    ruta = _REPO / ruta_relativa
+    if not ruta.is_file():
+        pytest.skip(_motivo_de_la_tabla_ausente(ruta_relativa))
+    return ruta
+
+
+def _tabla_ausente_en(excepcion):
+    """La tabla por paciente que falta y que causo `excepcion` (o alguna de sus
+    causas), o None. Solo cuenta un `FileNotFoundError` cuyo fichero es EXACTAMENTE
+    una de las tres tablas Y que de verdad no esta: un fallo cualquiera, o una
+    tabla que esta pero que se lee mal, sigue siendo un fallo."""
+    vistas = set()
+    while excepcion is not None and id(excepcion) not in vistas:
+        vistas.add(id(excepcion))
+        if isinstance(excepcion, FileNotFoundError) and excepcion.filename:
+            nombre = os.path.normcase(os.path.abspath(os.fsdecode(excepcion.filename)))
+            for relativa in TABLAS_POR_PACIENTE:
+                ruta = _REPO / relativa
+                if os.path.normcase(os.path.abspath(ruta)) == nombre and not ruta.exists():
+                    return relativa
+        excepcion = excepcion.__cause__ or excepcion.__context__
+    return None
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Una prueba (o un fijador) que revienta por leer una tabla por paciente que
+    el repositorio publico no lleva se informa como SALTADA, con el motivo, y no
+    como fallo ni error. No salta nada mas: cualquier otra excepcion, y cualquier
+    otro fichero que falte, sigue siendo lo que es."""
+    resultado = yield
+    informe = resultado.get_result()
+    if informe.passed or call.excinfo is None:
+        return
+    if isinstance(call.excinfo.value, pytest.skip.Exception):
+        return
+    relativa = _tabla_ausente_en(call.excinfo.value)
+    if relativa is None:
+        return
+    archivo, linea, _ = item.location
+    informe.outcome = "skipped"
+    informe.longrepr = (str(archivo), (linea or 0) + 1,
+                        "Skipped: " + _motivo_de_la_tabla_ausente(relativa))
 
 
 # --------------------------------------------------------------------------
