@@ -383,13 +383,17 @@ scp servidor/pesos_modelo_cpu.pt usuario@vps:/opt/copiloto/servidor/
 
 Y salta al **paso 5**, la comprobación del hash, que no sobra en ningún camino.
 
-> **Lo que el clon deja en el disco del cliente.** El árbol completo son 5,3 MB,
-> de los cuales 4 MB son `docs/eda/metadatos_eda.csv`: 26 685 filas de
-> metadatos por paciente del concurso RSNA. No entra en la imagen —el
-> `Dockerfile.dockerignore` es una lista blanca de lo que la imagen copia, y
-> `docs/` no está en ella— pero sí queda en `/opt/copiloto`.
-> Si no quieres eso en la máquina del cliente, el camino B no lo lleva, o se
-> saca el CSV del repositorio.
+> **Lo que el clon deja en el disco del cliente.** Del repositorio de
+> desarrollo, el árbol completo son 5,3 MB, de los cuales 4 MB son
+> `docs/eda/metadatos_eda.csv`: 26 685 filas de metadatos por paciente del
+> concurso RSNA. Es una tabla **local** del repositorio de desarrollo, como
+> `docs/validacion-semisintetica/crudas_prueba.csv`: el repositorio que se
+> publica no lleva ninguna de las dos ([`data/README.md`](../data/README.md)).
+> No entra en la imagen —el `Dockerfile.dockerignore` es una lista blanca de lo
+> que la imagen copia, y `docs/` no está en ella— pero, desde el repositorio de
+> desarrollo, sí queda en `/opt/copiloto` (por los dos caminos: `git archive`
+> también la lleva). Si no quieres eso en la máquina del cliente, despliega
+> desde el repositorio publicado, que no la lleva.
 
 #### Camino B: empaquetar y copiar
 

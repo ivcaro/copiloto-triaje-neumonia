@@ -22,6 +22,7 @@ hecho, la [arquitectura](arquitectura.md).
 8. [El servidor (SP2)](#8-el-servidor-sp2)
 9. [La aplicación de demostración, en detalle](#9-la-aplicación-de-demostración-en-detalle)
 10. [Documentos de diseño](#10-documentos-de-diseño)
+11. [Publicar](#11-publicar)
 
 ## 1. Los sub-proyectos
 
@@ -550,3 +551,165 @@ Y además:
 - Comparativa de arquitecturas: [`comparativa-corridas.md`](comparativa-corridas.md)
 - Frontera recall/especificidad: [`frontera-recall-especificidad.md`](frontera-recall-especificidad.md)
 - Mejoras tras la primera corrida: [`mejoras-2026-09-21.md`](mejoras-2026-09-21.md)
+
+## 11. Publicar
+
+El repositorio que se publica es **nuevo**: el remoto de desarrollo guarda el historial de antes
+de la anonimización (SP5-B2), y cada commit de `main` lleva el `huellas.txt` con la lista entera
+de huellas, que se adivinan ([`tests/anonimato/README.md`](../tests/anonimato/README.md)). Lleva
+la **historia real** de `main` —sus commits, sus merges y una etiqueta por subproyecto—,
+limpia, y nace **privado**: se hace público solo cuando el equipo lo diga. Lo prepara
+`scripts/preparar_publicacion.py` sobre un clon nuevo que hace él mismo, y lo corre quien
+mantiene la lista de anonimato en claro: nadie más la abre.
+
+### Qué hace el guion
+
+1. Quita de todos los commits las dos tablas con una fila por paciente
+   (`docs/eda/metadatos_eda.csv`, `docs/validacion-semisintetica/crudas_prueba.csv`) y la
+   huella de la segunda ([sección 7](#7-las-tablas-derivadas-del-dataset)). La lista de rutas
+   está en el propio guion (`RUTAS_QUE_NO_SE_PUBLICAN`).
+2. Pone en todos los commits el `tests/anonimato/huellas.txt` del repositorio que se publica,
+   con solo la huella del centinela.
+3. Reescribe el autor y quien confirma de todos los commits con una sola identidad.
+4. Sustituye por `[retirado]` cada cadena de la lista en el texto de todos los ficheros, en los
+   mensajes y en los nombres de las rutas, tal como la ve el verificador (sin mayúsculas ni
+   tildes, también detrás de un escape), y las huellas de la lista y sus prefijos. La lista se
+   lee en memoria y no se escribe ni se imprime nunca. Los nombres que declara el README (D5) se
+   conservan solo en `README.md`, `LICENSE` y `docs/planificacion.md`, y solo en los commits
+   cuyo README los declara (en los de antes, esos ficheros llevan `[retirado]`): es lo que el
+   verificador admite en cada commit. Lo binario no se toca.
+5. Etiqueta el merge de cada subproyecto (`v0.1-sp1`, `v0.2-sp2`, `v0.3-sp3`, `v0.4-sp4`,
+   `v0.5-sp5a` … `v0.5-sp5c2`, y los que vengan con «Merge: SP5-…») y la punta (`v1.0`), y deja
+   una sola rama, `main`, sin remoto.
+6. Pasa `scripts/verificar_anonimato.py --commit` por **cada** commit, con el `huellas.txt`
+   completo del repositorio de desarrollo, y comprueba además la copia de trabajo, los nombres
+   de la rama y de las etiquetas, que ningún commit lleve las tablas ni otro `huellas.txt`, la
+   identidad única, que ningún fichero ni mensaje lleve una huella, y que la historia vieja ya
+   no esté en la carpeta. Sale con 0 solo si todo está limpio.
+
+Sus salidas son recuentos, rutas del repositorio, nombres de etiquetas y hashes de commit:
+nunca una cadena de la lista ni una huella. Sus pruebas, sobre repositorios de juguete, están en
+`tests/test_preparar_publicacion.py`.
+
+### Antes de correrlo
+
+- `main` tiene todo fusionado y confirmado: lo que no está en un commit de `main` no se publica.
+  La suite y `scripts/verificar_anonimato.py` salen en verde en el repositorio de desarrollo.
+- git-filter-repo, de la versión que fija el guion, en un entorno aparte (el guion solo usa la
+  biblioteca estándar y el verificador, sin torch):
+
+  ```
+  python -m venv C:\venv-publicar
+  C:\venv-publicar\Scripts\python.exe -m pip install git-filter-repo==2.47.0
+  ```
+
+- La identidad: un nombre que no sea el de una persona y el correo «noreply» de la cuenta de
+  GitHub (Settings → Emails, «Keep my email addresses private»:
+  `<id>+<usuario>@users.noreply.github.com`). Ninguno de los dos puede llevar una cadena de la
+  lista: el verificador la vería en todos los commits, y el guion se niega antes de empezar. Si
+  se niega porque el usuario de GitHub está en la lista, la salida la decide el equipo: un
+  correo que no lo lleve (los commits no se enlazarán con la cuenta), o sacar ese usuario de la
+  lista, que la dirección del repositorio ya enseña, y regenerar las huellas.
+
+### Correrlo
+
+Desde la raíz del repositorio de desarrollo, con la ruta de la lista en claro (fuera del
+repositorio) y una carpeta nueva, que no exista o esté vacía, fuera de cualquier repositorio:
+
+```
+C:\venv-publicar\Scripts\python.exe scripts\preparar_publicacion.py --origen . --destino <carpeta nueva> --lista <ruta de la lista> --identidad "<Nombre> <correo noreply>"
+echo $LASTEXITCODE
+```
+
+(en bash, `python scripts/preparar_publicacion.py …` y `echo $?`; la lista puede ir también en
+`ANONIMATO_LISTA`, sin `--lista`). Clona `main` del origen en el destino, que es lo único que
+toca, y tarda unos minutos, casi todo en la verificación commit a commit (`--hilos` dice
+cuántas a la vez). Tiene que acabar en `LISTO para publicar` y con el código **0**. Con
+cualquier otro código, o con `NO publicar`, no se sube nada. `--ensayo` es solo para probarlo
+con una lista de juguete: nunca sale con 0.
+
+Con `--por-huellas` en lugar de `--lista`, el guion sustituye los tokens de la historia cuya
+huella está en el `huellas.txt` completo: son los de la lista que aparecen, sin abrirla, y la
+historia que sale es la misma. Pero solo si las huellas se regeneraron con la lista de hoy: con
+`--lista`, el guion comprueba que casan y se niega si no; con `--por-huellas`, una entrada nueva
+sin su huella no la vería nadie. Por eso la orden de arriba, con la lista, es la buena.
+
+En el ensayo del 16-oct-2026, sobre un clon de `main` (362 commits, sin abrir la lista): con
+una lista de juguete, el verificador encontró cadenas de la lista en 299 de los 362 commits,
+que es lo que la lista buena tiene que quitar; con `--por-huellas`, 0 de 362, todas las
+comprobaciones bien, en unos tres minutos, y la punta igual que la de `main` salvo las dos
+tablas, la huella de la segunda y `huellas.txt`.
+
+### Si encuentra algo
+
+La salida dice cuántos commits tienen hallazgos y cuáles (su hash corto), con cuántos de cada
+clase, o qué comprobación de la historia falló. Para ver el fichero y la línea, sin huellas ni
+cadenas, se repite con `--detalle`. Después:
+
+- Una **huella** con la lista buena no debería salir (el guion comprueba lo que sustituye con
+  los mismos ojos que el verificador): si sale, no se publica y se mira por qué.
+- Un **secreto** (`asignacion_de_secreto`, `clave_de_api_…`, `fichero_prohibido`…) en un
+  commit viejo: el guion no quita secretos, solo cadenas de la lista. La credencial se da por
+  expuesta y se revoca, y el equipo decide cómo sacarla de la historia (su ruta a
+  `RUTAS_QUE_NO_SE_PUBLICAN`, o una sustitución nueva en el guion, con su prueba).
+- Una comprobación de la historia en `MAL`: es un fallo del guion; no se publica.
+
+En todos los casos, el destino se **borra** y se vuelve a correr desde cero: nunca se arregla a
+mano. La salida del verificador con hallazgos, que enseña el principio de cada huella, no se
+pega en ningún sitio que se publique (ni en un commit).
+
+### Revisión a mano
+
+El verificador compara con una lista cerrada: lo que nadie puso en ella no lo ve
+([`tests/anonimato/README.md`](../tests/anonimato/README.md), «Lo que esto no protege»). Antes
+de subir, una persona recorre el destino: el README, los asuntos de los commits
+(`git log --all --format=%s`) y la historia (`git log --all -p`), buscando correos, dominios,
+direcciones, rutas con un usuario e identificadores de una instancia. El guion dice cuántos
+binarios de commits anteriores no están en la punta (versiones viejas de figuras y capturas):
+no los lee nadie, y se miran a mano (`git log --all --stat -- "*.png" "*.dcm"` dice en qué
+commits cambiaron).
+
+### Crear el repositorio privado y subirlo
+
+En GitHub, con la cuenta en la que se publica:
+
+1. «+» (arriba a la derecha) → **New repository**.
+2. Owner, la cuenta; Repository name, el acordado; **Private**.
+3. Sin README, sin `.gitignore` y sin licencia: el repositorio tiene que nacer **vacío**, o el
+   primer `push` choca con un commit que no es de esta historia.
+4. **Create repository**, y copiar su dirección HTTPS.
+
+Si ya se creó, se comprueba en su página que sigue privado y vacío. Luego, **desde el destino**
+y nunca desde el repositorio de desarrollo (cuya historia no se publica):
+
+```
+cd <carpeta del destino>
+git remote add origin https://github.com/<usuario>/<repositorio>.git
+git push -u origin main --tags
+```
+
+En GitHub se comprueba: privado, una rama (`main`), las etiquetas `v0.1-sp1` … `v1.0` y los
+commits con la identidad dada. El remoto del repositorio de desarrollo no cambia.
+
+### El release v1.0, con los pesos
+
+Los pesos no van en git ([`models/README.md`](../models/README.md)): van como descarga del
+release. Antes, se comprueba que el fichero es el que se midió:
+
+```
+Get-FileHash -Algorithm SHA256 servidor\pesos_modelo_cpu.pt
+```
+
+Tiene que dar `bb985e1f792e1cfee150ec57bdc6d706f7484499fa999da3406a5798260e8d47`. En la página
+del repositorio:
+
+1. **Releases** → **Draft a new release**.
+2. **Choose a tag** → `v1.0` (la que subió el `push`).
+3. Título `v1.0`; en la descripción, qué es (el modelo desplegado, EfficientNet-B0 a 320 px),
+   el SHA-256 de arriba, la licencia de los pesos y la atribución de los datos con los que se
+   entrenó (RSNA y NIH ChestX-ray14).
+4. Adjuntar `pesos_modelo_cpu.pt` («Attach binaries») y **Publish release**.
+5. Bajarlo del release y comprobar otra vez su SHA-256 (los pasos de `models/README.md`).
+
+Mientras el repositorio sea privado, el release solo lo ven sus colaboradores. Se hace público
+cuando el equipo lo diga: Settings → General → Danger Zone → **Change repository visibility**.

@@ -120,7 +120,7 @@ Una consecuencia de la composición: la proporción de opacidad es muy distinta 
 | **Aumento de datos** | Solo en entrenamiento: rotación de ±7°, traslación de hasta el 5 % y brillo y contraste de ±15 %; **nunca volteo horizontal** (la lateralidad cardiaca es información clínica) |
 | **Desbalance** | Pérdida ponderada (`pos_weight` = negativos/positivos ≈ 3,5), partición estratificada y umbral elegido sobre la ROC, no fijo en 0,5 |
 
-**Composición de los 25 403 adultos** (agregados de `docs/eda/metadatos_eda.csv`; sin filas por paciente):
+**Composición de los 25 403 adultos** (agregados de `docs/eda/metadatos_eda.csv`, una tabla local del repositorio de desarrollo que no se publica —[`data/README.md`](../data/README.md)—; aquí, sin filas por paciente):
 
 | Característica | Valor |
 | :--- | :--- |
