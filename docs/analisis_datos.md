@@ -332,13 +332,14 @@ Lo que este análisis **no** puede decir y se declara:
 
 ## 11. Referencias
 
-- G. Shih et al., «Augmenting the National Institutes of Health chest radiograph dataset with
-  expert annotations of possible pneumonia», *Radiology: Artificial Intelligence*, vol. 1,
-  n.º 1, e180041, 2019. doi: 10.1148/ryai.2019180041.
+- G. Shih *et al.*, «Augmenting the National Institutes of Health chest radiograph dataset with
+  expert annotations of possible pneumonia», *Radiol. Artif. Intell.*, vol. 1, n.º 1, art.
+  e180041, ene. 2019, doi: 10.1148/ryai.2019180041.
 - X. Wang, Y. Peng, L. Lu, Z. Lu, M. Bagheri y R. M. Summers, «ChestX-ray8: hospital-scale
   chest X-ray database and benchmarks on weakly-supervised classification and localization of
-  common thorax diseases», en *Proc. IEEE CVPR*, 2017, pp. 3462-3471.
-  doi: 10.1109/CVPR.2017.369.
-- Radiological Society of North America, «RSNA Pneumonia Detection Challenge (2018)».
+  common thorax diseases», en *Proc. IEEE Conf. Comput. Vis. Pattern Recognit. (CVPR)*, 2017,
+  pp. 3462–3471, doi: 10.1109/CVPR.2017.369.
+- Radiological Society of North America, «RSNA Pneumonia Detection Challenge (2018)». [En
+  línea]. Disponible: https://www.rsna.org/education/ai-resources-and-training/ai-image-challenge/RSNA-Pneumonia-Detection-Challenge-2018
 - Documentos del repositorio: `docs/superpowers/specs/2026-09-16-sp1-nucleo-imagen-design.md`,
   `docs/mejoras-2026-09-21.md`, `app/assets/metricas.json`.

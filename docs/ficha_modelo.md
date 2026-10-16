@@ -35,7 +35,7 @@ Todas las cifras de rendimiento salen de `app/assets/metricas.json` (agregados c
 | **Salidas** | `probabilidad_cruda` (sigmoide del logit; **no** es una probabilidad), `probabilidad_calibrada`, `razon_de_verosimilitud` acotada a **[0,0163; 77,32]**, `clasificacion` (`opacidad_probable` o `sin_opacidad_probable`) con el umbral **0,4258**, y, si se dan los cinco hallazgos, el bloque `combinacion` |
 | **Entrenamiento** | En dos fases: 4 épocas de cabeza con el extractor congelado (`lr` 1e-3) y hasta 20 de ajuste fino de la red completa (`lr` 2e-4); Adam [4] con recocido coseno [5]; pérdida `BCEWithLogitsLoss` ponderada (`pos_weight` ≈ 3,5); lote de 24; parada temprana por recall en validación; semilla 42. La mejor época fue la 5 (`docs/comparativa-corridas.md`) |
 | **Combinación con la clínica** | Regla de Heckerling [6] (cinco hallazgos), con las razones de verosimilitud de la cohorte de derivación tal como las reproduce una revisión sistemática [7], y probabilidad de partida de 0,1466 |
-| **Licencia** | El código se publica con licencia MIT. Los pesos se publican como descarga del repositorio; **ni las condiciones de RSNA ni las reglas de Kaggle mencionan los pesos**, y si cuentan como «datos» u obra derivada es una cuestión interpretable que no se verificó [8], [9]. La licencia del código **no restringe el uso**: los límites de uso de esta ficha son documentales |
+| **Licencia** | **Código: MIT. Pesos: [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)**: se pueden usar, compartir y adaptar citando la procedencia y sin fines comerciales. Los pesos se entrenaron con el RSNA Pneumonia Detection Challenge, que deriva del NIH ChestX-ray14 [12], [13]; el NIH Clinical Center es el proveedor de los datos. **No se redistribuye ninguna imagen ni etiqueta de esos datos** y no se intentó identificar ni contactar a ningún sujeto [8]. Las condiciones de la RSNA [8] y la cláusula 7.B de Kaggle [9] se refieren a los datos, no a un modelo entrenado con ellos: es la lectura del equipo, no asesoría legal. **Uso: solo investigación y educación**; no es un producto sanitario |
 | **Más información** | [`arquitectura.md`](arquitectura.md), [`docs/comparativa-corridas.md`](comparativa-corridas.md), [`docs/frontera-recall-especificidad.md`](frontera-recall-especificidad.md), [`docs/validacion-semisintetica-sp5.md`](validacion-semisintetica-sp5.md), `docs/validacion-semisintetica/acta-h7.md` |
 
 **Por qué esta corrida y no la que gana la comparativa.** La comparativa de ocho corridas corona otra (`kaggle_efficientnet_b0_320px_c2`, AUC 0,889 en prueba). Las ocho caben entre 0,874 y 0,889 de AUC, un margen del orden de lo que mueve una semilla distinta (las dos ejecuciones de la **misma** configuración de MobileNetV3 difieren en 0,010). Empatadas, decide lo verificable: la corrida 6 es la que tiene el calibrador ajustado sobre sus propias imágenes de validación y los pesos comprobados por SHA-256 (`docs/sp2-despliegue.md` §1).
@@ -73,6 +73,7 @@ La especificidad bajó a propósito: el punto de operación prioriza el recall.
 | …con placas que no sean de 8 bits sin signo, en escala de grises normal, de un solo cuadro y de hasta 5 000 píxeles de lado | El modelo las vería mal (una neumonía en 16 bits baja de 0,91 a 0,48). Se rechazan (`dicom_invalido`) |
 | …con radiografías laterales, de otras modalidades o de equipos distintos de los del entrenamiento | No está medido. Solo hay barrera técnica para la vista PA/AP si se enciende el umbral por vista; el resto queda en manos del usuario |
 | …para cribado poblacional sin lectura humana, o para fines ajenos a la atención (seguros, empleo, trámites) | No se diseñó ni se validó para ello; la Constitución prohíbe discriminar por estado de salud [10] |
+| …con fines comerciales, o como producto sanitario | Los pesos se publican con CC BY-NC 4.0 (§1), y el prototipo no tiene registro sanitario |
 | …con otra población o prevalencia sin revalidar | Datos de Estados Unidos; la probabilidad de partida es la de una cohorte de 1990 |
 
 ## 3. Factores
@@ -120,7 +121,7 @@ Una consecuencia de la composición: la proporción de opacidad es muy distinta 
 | **Aumento de datos** | Solo en entrenamiento: rotación de ±7°, traslación de hasta el 5 % y brillo y contraste de ±15 %; **nunca volteo horizontal** (la lateralidad cardiaca es información clínica) |
 | **Desbalance** | Pérdida ponderada (`pos_weight` = negativos/positivos ≈ 3,5), partición estratificada y umbral elegido sobre la ROC, no fijo en 0,5 |
 
-**Composición de los 25 403 adultos** (agregados de `docs/eda/metadatos_eda.csv`; sin filas por paciente):
+**Composición de los 25 403 adultos** (agregados de `docs/eda/metadatos_eda.csv`, una tabla local del repositorio de desarrollo que no se publica —[`data/README.md`](../data/README.md)—; aquí, sin filas por paciente):
 
 | Característica | Valor |
 | :--- | :--- |
@@ -132,6 +133,8 @@ Una consecuencia de la composición: la proporción de opacidad es muy distinta 
 | Equipo | Todas de modalidad CR, 1024 × 1024, 8 bits, `MONOCHROME2` |
 
 **Los datos de ChestX-ray14** tienen etiquetas originales extraídas de informes por procesamiento de lenguaje (etiquetas «débiles») [13]; las de RSNA son anotaciones de «opacidad pulmonar que puede representar neumonía» [12]. El conjunto no trae raza, etnia ni nivel socioeconómico. La datasheet completa está en [`ficha_datos.md`](ficha_datos.md) [14].
+
+**Procedencia y atribución.** Las imágenes son del NIH ChestX-ray14 [13], y el **NIH Clinical Center es el proveedor de los datos** ([sitio de descarga del NIH](https://nihcc.app.box.com/v/ChestXray-NIHCC)); las anotaciones las hicieron radiólogos de la RSNA y de la Society of Thoracic Radiology [12] ([sitio de la RSNA](https://www.rsna.org/education/ai-resources-and-training/ai-image-challenge/RSNA-Pneumonia-Detection-Challenge-2018)). **No se intentó identificar ni contactar a ningún sujeto de los datos** [8]. Ni las imágenes ni las etiquetas viajan en el repositorio: lo que se publica es el modelo entrenado.
 
 ## 7. Análisis cuantitativos
 

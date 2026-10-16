@@ -1,7 +1,8 @@
 # Copiloto de triaje para neumonía en adultos
 
 [![Python 3.12 | 3.13](https://img.shields.io/badge/python-3.12%20%7C%203.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-2ea44f)](LICENSE)
+[![Licencia del código: MIT](https://img.shields.io/badge/c%C3%B3digo-MIT-2ea44f)](LICENSE)
+[![Licencia de los pesos: CC BY-NC 4.0](https://img.shields.io/badge/pesos-CC%20BY--NC%204.0-lightgrey)](https://creativecommons.org/licenses/by-nc/4.0/)
 [![Pruebas: pytest y node](https://img.shields.io/badge/pruebas-pytest%20%2B%20node-0A9EDC?logo=pytest&logoColor=white)](docs/desarrollo.md#6-pruebas)
 [![Interfaz: Streamlit](https://img.shields.io/badge/interfaz-Streamlit-FF4B4B?logo=streamlit&logoColor=white)](app/app.py)
 [![Estado: prototipo académico](https://img.shields.io/badge/estado-prototipo%20acad%C3%A9mico-orange)](docs/consideraciones_eticas.md#17-lo-que-falta-antes-de-cualquier-uso-clínico)
@@ -67,9 +68,17 @@ completo, con el objetivo SMART, el alcance, el cronograma y los riesgos, está 
 | **Licencia y reglas** | Las [condiciones de uso de la RSNA](https://www.rsna.org/-/media/files/rsna/education/ai-resources-and-training/ai-image-challenge/pneumonia-detection-challenge-terms-of-use-and-attribution.pdf) permiten el uso con fines de investigación y educación, sin intentar identificar a nadie y citando a sus autores; las [reglas de la competición](https://www.kaggle.com/competitions/rsna-pneumonia-detection-challenge/rules) (cláusula 7.B) prohíben redistribuir los datos |
 
 **El repositorio no redistribuye los datos**: ni una radiografía, ni los DICOM, ni los PNG, ni
-los manifiestos. Del conjunto solo se publican agregados (`results/`, `app/assets/metricas.json`).
-Quien quiera reproducir el trabajo los descarga de la fuente, aceptando las reglas con su propia
-cuenta, y los prepara con los guiones del repositorio: [`data/README.md`](data/README.md).
+los manifiestos, ni una sola etiqueta por paciente. Del conjunto solo se publican agregados
+(`results/`, `app/assets/metricas.json`). Quien quiera reproducir el trabajo los descarga de la
+fuente, aceptando las reglas con su propia cuenta, y los prepara con los guiones del
+repositorio: [`data/README.md`](data/README.md).
+
+**Procedencia y atribución.** Las imágenes son del conjunto NIH ChestX-ray14 [1]; el **NIH
+Clinical Center es el proveedor de los datos** ([sitio de descarga del NIH](https://nihcc.app.box.com/v/ChestXray-NIHCC)).
+Las anotaciones las hicieron radiólogos de la RSNA y de la Society of Thoracic Radiology [2], y
+la RSNA organizó el desafío con Kaggle ([sitio de la RSNA](https://www.rsna.org/education/ai-resources-and-training/ai-image-challenge/RSNA-Pneumonia-Detection-Challenge-2018)).
+**No se intentó identificar ni contactar a ninguno de los sujetos de los datos**, como piden las
+condiciones de la RSNA. Las referencias 1 y 2 están al final de este documento.
 
 **Un sesgo que se sabe desde el principio:** la proyección predice la etiqueta. La placa AP se
 toma con un equipo portátil, en la cama, a quien no puede levantarse; entre los adultos, el
@@ -203,7 +212,7 @@ clínica y la imagen dependen entre sí, así que la cifra combinada es **orient
 **Instalación, paso a paso.**
 
 ```
-git clone <dirección del repositorio>
+git clone <dirección del repositorio>   # PENDIENTE: se escribe al hacer público el repositorio
 cd copiloto-triaje
 python -m venv .venv
 source .venv/bin/activate            # PowerShell: .venv\Scripts\Activate.ps1
@@ -309,8 +318,19 @@ La guía completa, con cada zona de la pantalla, cómo leer el resultado, los pr
 las preguntas frecuentes, está en el [manual de usuario](docs/manual_usuario.md); los detalles de
 despliegue, en [`docs/desarrollo.md`](docs/desarrollo.md#9-la-aplicación-de-demostración-en-detalle).
 
-**Dónde está desplegada.** Todavía no hay una dirección pública: la aplicación se ejecuta en
-local con las órdenes de arriba. El enlace se añadirá aquí cuando se publique.
+**Dónde está desplegada.** La demostración pública corre en un servidor del propio equipo: la
+misma imagen de `app/`, en Docker y detrás del proxy inverso del equipo. No está en Hugging
+Face porque allí un Space de tipo Docker exige un plan de pago (PRO). **Su dirección no está en
+este repositorio**: se da en la entrega del curso y en el código QR del vídeo de presentación.
+Quien no tenga ese enlace puede levantarla en local con las órdenes de arriba, y quien quiera
+montarla en su propio servidor encuentra los pasos genéricos en
+[`docs/desarrollo.md`](docs/desarrollo.md#12-desplegar-la-app-en-un-servidor-propio).
+
+- **Repositorio público:** **PENDIENTE** <!-- PENDIENTE: dirección del repositorio, cuando se haga público -->
+
+La alternativa de un Space de Hugging Face (requiere un plan PRO) también está preparada:
+[`despliegue/huggingface/`](despliegue/huggingface/README.md) arma los ficheros, y los pasos para
+subirlos están en [`docs/desarrollo.md`](docs/desarrollo.md#13-publicar-la-app).
 
 ## Estructura del proyecto
 
@@ -329,6 +349,7 @@ copiloto-triaje/
 ├── servidor/    el servidor de inferencia: Docker, MCP y REST, y el calibrador
 ├── n8n/         los tres workflows: bot del paciente, bot del profesional y mantenimiento
 ├── bd/          el esquema y la limpieza de PostgreSQL
+├── despliegue/  la alternativa de Hugging Face Spaces (requiere plan PRO): README del Space, Dockerfile y el guion que lo arma
 ├── scripts/     guiones: preparar datos, entrenar en CPU, calibrar, comparar corridas, validar, anonimato
 └── pruebas/     arneses de la validación y de los bots: selección de casos, formulario de la sesión, SQL
 ```
@@ -345,6 +366,7 @@ copiloto-triaje/
 | `tests/` | Las del curso (`test_data_processing.py`, `test_model.py`, `test_app.py`, `test_estructura_curso.py`) y las del sistema: partición sin fuga, motor, servidor, contrato MCP, SQL de los nodos, anonimato… |
 | `results/` | Las métricas en JSON, las figuras y los informes de la validación: [`results/README.md`](results/README.md) |
 | `servidor/`, `n8n/`, `bd/` | El sistema desplegado: el servidor de inferencia, los workflows de n8n (con marcadores en vez de direcciones y credenciales) y la base de datos |
+| `despliegue/` | La alternativa de un Space de Hugging Face (requiere un plan PRO) para la aplicación de demostración: `huggingface/README.md` (el del Space, con su cabecera YAML), su `Dockerfile` y `preparar_space.py`, el guion que arma la carpeta que se sube (la app, el paquete, el calibrador y los pesos, y nada más). Cómo se sube: [`docs/desarrollo.md`](docs/desarrollo.md#13-publicar-la-app) |
 | `scripts/`, `pruebas/` | Los guiones del proyecto y los arneses con que se validó |
 
 ## Consideraciones éticas
@@ -409,27 +431,45 @@ revisiones y la validación con el médico son del equipo.
 
 ## Licencia
 
-El código se publica con la [licencia MIT](LICENSE). Los datos de RSNA **no** se incluyen y
-siguen sus [condiciones de uso](https://www.rsna.org/-/media/files/rsna/education/ai-resources-and-training/ai-image-challenge/pneumonia-detection-challenge-terms-of-use-and-attribution.pdf)
-y las reglas de la competición. Las radiografías de ejemplo de la aplicación son de Wikimedia
-Commons con licencia CC0 ([`app/assets/LICENCIAS.md`](app/assets/LICENCIAS.md)). Los pesos del
-modelo se entrenaron con los datos de la competición: se publican como descarga aparte, después
-de comprobar esas reglas ([`models/README.md`](models/README.md)), y la licencia del código no
-restringe su uso: los límites de uso están en la [ficha del modelo](docs/ficha_modelo.md).
+Cada parte del proyecto tiene la suya:
+
+| Qué | Licencia |
+| :--- | :--- |
+| **El código** (Python, workflows de n8n, SQL, guiones y la aplicación) | [MIT](LICENSE) |
+| **Los pesos del modelo** (`pesos_modelo_cpu.pt`, que se descarga aparte del release v1.0) | [Creative Commons Atribución-NoComercial 4.0 (CC BY-NC 4.0)](https://creativecommons.org/licenses/by-nc/4.0/): se pueden usar, compartir y adaptar citando la procedencia y **sin fines comerciales** |
+| **Las radiografías de ejemplo de la aplicación** | CC0, de Wikimedia Commons ([`app/assets/LICENCIAS.md`](app/assets/LICENCIAS.md)) |
+
+**De dónde vienen los pesos.** Se entrenaron con el RSNA Pneumonia Detection Challenge (Kaggle,
+2018), que deriva del conjunto NIH ChestX-ray14. **No se redistribuye ninguna imagen ni ninguna
+etiqueta de esos datos**: lo que se publica es el modelo entrenado, no el conjunto. Se
+respetan las [condiciones de uso de la RSNA](https://www.rsna.org/-/media/files/rsna/education/ai-resources-and-training/ai-image-challenge/pneumonia-detection-challenge-terms-of-use-and-attribution.pdf)
+y las [reglas de la competición](https://www.kaggle.com/competitions/rsna-pneumonia-detection-challenge/rules):
+no se intentó identificar ni contactar a ningún sujeto de los datos, y se atribuye el conjunto
+a sus autores (referencias 1 y 2 de abajo; el NIH Clinical Center es el proveedor de los
+datos). Se pide a quien reutilice los pesos que mantenga esa atribución, y a quien descargue
+los datos, que respete las mismas reglas.
+
+**Uso: solo investigación y educación.** Es un prototipo académico, **no un producto sanitario**:
+no tiene registro sanitario ni validación local, y no debe usarse para decidir sobre un
+paciente real. Los usos previstos y los que quedan fuera de alcance, en la
+[ficha del modelo](docs/ficha_modelo.md); de dónde bajar los pesos y cómo comprobarlos, en
+[`models/README.md`](models/README.md).
 
 ## Agradecimientos y referencias
 
 **Agradecimientos.** A la tutora del Proyecto Integrador, **PhD (c) Gladys Villegas**, por la
 guía y la revisión de cada entrega. Al médico general que leyó los casos de la sesión de
-concordancia, de forma voluntaria. A la RSNA, la STR y el NIH Clinical Center, por publicar los
-datos y sus anotaciones, y a los autores de las radiografías de ejemplo de Wikimedia Commons. Y a
-quienes mantienen el software libre sobre el que se construye: PyTorch y torchvision, pydicom,
-scikit-learn, NumPy, pandas, Streamlit, FastAPI, el SDK de MCP, n8n y PostgreSQL.
+concordancia, de forma voluntaria. Al **NIH Clinical Center**, proveedor de las radiografías del
+conjunto ChestX-ray14 [1]; a la **RSNA** y la **Society of Thoracic Radiology**, y a los
+radiólogos que anotaron los datos del desafío [2]; y a **Kaggle**, que alojó la competición. A
+los autores de las radiografías de ejemplo de Wikimedia Commons. Y a quienes mantienen el
+software libre sobre el que se construye: PyTorch y torchvision, pydicom, scikit-learn, NumPy,
+pandas, Streamlit, FastAPI, el SDK de MCP, n8n y PostgreSQL.
 
 **Referencias principales** (las completas, en cada documento de `docs/`):
 
-1. X. Wang, Y. Peng, L. Lu, Z. Lu, M. Bagheri y R. M. Summers, «ChestX-ray8: hospital-scale chest X-ray database and benchmarks on weakly-supervised classification and localization of common thorax diseases», en *Proc. IEEE CVPR*, 2017, pp. 3462–3471, doi: 10.1109/CVPR.2017.369.
-2. G. Shih *et al.*, «Augmenting the National Institutes of Health chest radiograph dataset with expert annotations of possible pneumonia», *Radiol. Artif. Intell.*, vol. 1, n.º 1, art. e180041, 2019, doi: 10.1148/ryai.2019180041.
+1. X. Wang, Y. Peng, L. Lu, Z. Lu, M. Bagheri y R. M. Summers, «ChestX-ray8: hospital-scale chest X-ray database and benchmarks on weakly-supervised classification and localization of common thorax diseases», en *Proc. IEEE Conf. Comput. Vis. Pattern Recognit. (CVPR)*, 2017, pp. 3462–3471, doi: 10.1109/CVPR.2017.369.
+2. G. Shih *et al.*, «Augmenting the National Institutes of Health chest radiograph dataset with expert annotations of possible pneumonia», *Radiol. Artif. Intell.*, vol. 1, n.º 1, art. e180041, ene. 2019, doi: 10.1148/ryai.2019180041.
 3. M. Tan y Q. V. Le, «EfficientNet: rethinking model scaling for convolutional neural networks», en *Proc. ICML*, 2019, arXiv:1905.11946.
 4. P. S. Heckerling *et al.*, «Clinical prediction rule for pulmonary infiltrates», *Ann. Intern. Med.*, vol. 113, n.º 9, pp. 664–670, 1990, doi: 10.7326/0003-4819-113-9-664.
 5. B. Zadrozny y C. Elkan, «Transforming classifier scores into accurate multiclass probability estimates», en *Proc. 8th ACM SIGKDD*, 2002, pp. 694–699, doi: 10.1145/775047.775151.

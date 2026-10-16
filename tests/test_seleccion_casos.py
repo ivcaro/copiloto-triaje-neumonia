@@ -65,11 +65,14 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 def con_puntuaciones_de_mentira(monkeypatch):
     """Tres filas en lugar de la cache: asi `seleccionar` no infiere ni lee
     los pesos. Los metadatos (`docs/eda/metadatos_eda.csv`) si son los reales,
-    que estan versionados: de ahi salen los tres adultos de las filas, y los
-    menores y las edades imposibles que `seleccionar` busca por su cuenta."""
+    en el repositorio de desarrollo: de ahi salen los tres adultos de las filas,
+    y los menores y las edades imposibles que `seleccionar` busca por su cuenta.
+    El repositorio publico no lleva esa tabla (una fila por paciente): sin ella
+    estas pruebas se SALTAN diciendo que se quedan sin comprobar."""
     import pandas as pd
+    from conftest import tabla_por_paciente_o_salta
     from pruebas import seleccionar_casos
-    meta = pd.read_csv(REPO / "docs" / "eda" / "metadatos_eda.csv")
+    meta = pd.read_csv(tabla_por_paciente_o_salta("docs/eda/metadatos_eda.csv"))
     adultos = sorted(meta[(meta.edad_num >= 18) & (meta.edad_num <= 100)]
                      .patientId)[:3]
     df = pd.DataFrame({"patientId": adultos, "etiqueta": [1, 0, 1],

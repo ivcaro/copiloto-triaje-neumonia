@@ -226,7 +226,7 @@ prudente: no redistribuir. Es una lectura del equipo, no asesoría legal.
   rsna-pneumonia-detection-challenge` (requiere credenciales de la API de Kaggle).
 - En el sitio de la RSNA, que ofrece cuatro descargas (imágenes del NIH, anotaciones iniciales,
   imágenes y anotaciones de la competición, y la tabla de correspondencia RSNA-NIH):
-  <https://www.rsna.org/rsnai/ai-image-challenge/rsna-pneumonia-detection-challenge-2018>.
+  <https://www.rsna.org/education/ai-resources-and-training/ai-image-challenge/RSNA-Pneumonia-Detection-Challenge-2018>.
 
 **Condiciones de uso** (documento «Pneumonia Detection Challenge Terms of Use and
 Attribution» de la RSNA):
@@ -237,13 +237,16 @@ Attribution» de la RSNA):
    Center como proveedor; y enlazar el sitio de descarga de la RSNA y citar el artículo de Shih
    et al. (2019).
 
-La página de datos de Kaggle declara la licencia como «Subject to Competition Rules». La
-licencia MIT del código del repositorio **no cubre los datos**.
+La página de datos de Kaggle declara la licencia como «Subject to Competition Rules». Ni la
+licencia MIT del código del repositorio ni la CC BY-NC 4.0 de los pesos **cubren los datos**.
 
-**Los pesos entrenados con estos datos.** El modelo se publicará como una descarga del release
-del repositorio. Ni las condiciones de la RSNA ni las reglas de Kaggle mencionan los pesos, y
-que sean «datos» u obra derivada es una cuestión sin verificar que el equipo comprueba antes de
-publicarlos (`models/README.md`).
+**Los pesos entrenados con estos datos.** El modelo se publica como una descarga del release
+del repositorio, con licencia CC BY-NC 4.0 (el código es MIT; `models/README.md`). El equipo
+leyó las condiciones de la RSNA y las reglas de la competición: la cláusula 7.B de Kaggle
+prohíbe redistribuir los **datos**, no un modelo entrenado con ellos, y las condiciones de la
+RSNA piden atribuir el conjunto (citar a Wang et al. y a Shih et al., en las referencias) y no
+intentar identificar a ningún sujeto. Se publican, pues, los pesos con esa atribución y **sin
+ninguna imagen ni etiqueta**. Es la lectura del equipo, no asesoría legal.
 
 ## 7. Mantenimiento
 
@@ -278,20 +281,24 @@ el efecto sobre el modelo están en `docs/analisis_datos.md`, `docs/optimizacion
 
 ## 9. Referencias
 
-- T. Gebru et al., «Datasheets for datasets», *Communications of the ACM*, vol. 64, n.º 12, pp.
-  86-92, 2021. doi: 10.1145/3458723.
-- G. Shih et al., «Augmenting the National Institutes of Health chest radiograph dataset with
-  expert annotations of possible pneumonia», *Radiology: Artificial Intelligence*, vol. 1, n.º 1,
-  e180041, 2019. doi: 10.1148/ryai.2019180041.
+- T. Gebru *et al.*, «Datasheets for datasets», *Commun. ACM*, vol. 64, n.º 12, pp. 86–92, dic.
+  2021, doi: 10.1145/3458723.
+- G. Shih *et al.*, «Augmenting the National Institutes of Health chest radiograph dataset with
+  expert annotations of possible pneumonia», *Radiol. Artif. Intell.*, vol. 1, n.º 1, art.
+  e180041, ene. 2019, doi: 10.1148/ryai.2019180041.
 - X. Wang, Y. Peng, L. Lu, Z. Lu, M. Bagheri y R. M. Summers, «ChestX-ray8: hospital-scale
   chest X-ray database and benchmarks on weakly-supervised classification and localization of
-  common thorax diseases», en *Proc. IEEE CVPR*, 2017, pp. 3462-3471. doi: 10.1109/CVPR.2017.369.
-- J. R. Zech et al., «Variable generalization performance of a deep learning model to detect
-  pneumonia in chest radiographs: a cross-sectional study», *PLOS Medicine*, vol. 15, n.º 11,
-  e1002683, 2018. doi: 10.1371/journal.pmed.1002683.
+  common thorax diseases», en *Proc. IEEE Conf. Comput. Vis. Pattern Recognit. (CVPR)*, 2017,
+  pp. 3462–3471, doi: 10.1109/CVPR.2017.369.
+- J. R. Zech, M. A. Badgeley, M. Liu, A. B. Costa, J. J. Titano y E. K. Oermann, «Variable
+  generalization performance of a deep learning model to detect pneumonia in chest
+  radiographs: a cross-sectional study», *PLOS Med.*, vol. 15, n.º 11, art. e1002683, nov.
+  2018, doi: 10.1371/journal.pmed.1002683.
 - A. J. DeGrave, J. D. Janizek y S.-I. Lee, «AI for radiographic COVID-19 detection selects
-  shortcuts over signal», *Nature Machine Intelligence*, vol. 3, n.º 7, pp. 610-619, 2021.
-  doi: 10.1038/s42256-021-00338-7.
+  shortcuts over signal», *Nat. Mach. Intell.*, vol. 3, n.º 7, pp. 610–619, 2021, doi:
+  10.1038/s42256-021-00338-7.
 - Radiological Society of North America, «Pneumonia Detection Challenge Terms of Use and
-  Attribution» y «RSNA Pneumonia Detection Challenge (2018)».
-- RSNA y Kaggle, «RSNA Pneumonia Detection Challenge: Rules».
+  Attribution». Consultado: 5 oct. 2026. [En línea]. Disponible:
+  https://www.rsna.org/-/media/files/rsna/education/ai-resources-and-training/ai-image-challenge/pneumonia-detection-challenge-terms-of-use-and-attribution.pdf
+- Radiological Society of North America y Kaggle, «RSNA Pneumonia Detection Challenge: Rules»,
+  2018. Consultado: 5 oct. 2026. [En línea]. Disponible: https://www.kaggle.com/competitions/rsna-pneumonia-detection-challenge/rules

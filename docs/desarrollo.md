@@ -22,6 +22,9 @@ hecho, la [arquitectura](arquitectura.md).
 8. [El servidor (SP2)](#8-el-servidor-sp2)
 9. [La aplicación de demostración, en detalle](#9-la-aplicación-de-demostración-en-detalle)
 10. [Documentos de diseño](#10-documentos-de-diseño)
+11. [Publicar](#11-publicar)
+12. [Desplegar la app en un servidor propio](#12-desplegar-la-app-en-un-servidor-propio)
+13. [Publicar la app](#13-publicar-la-app) (la alternativa de Hugging Face)
 
 ## 1. Los sub-proyectos
 
@@ -431,7 +434,9 @@ y se abre `http://127.0.0.1:8501`.
   arrancar con `-e`. `AUC_VALIDACION` y `PREVALENCIA_LOCAL` no tienen valor por
   defecto en el código, como en el servidor: sin ellas, la página no calcula y dice
   qué declarar.
-- El despliegue público no forma parte de esto: se decide después.
+- El despliegue público no es de esta sección: la demostración de la entrega corre en un
+  servidor del equipo ([sección 12](#12-desplegar-la-app-en-un-servidor-propio)), y la
+  alternativa de Hugging Face está en la [sección 13](#13-publicar-la-app).
 
 ### Sin Docker
 
@@ -550,3 +555,398 @@ Y además:
 - Comparativa de arquitecturas: [`comparativa-corridas.md`](comparativa-corridas.md)
 - Frontera recall/especificidad: [`frontera-recall-especificidad.md`](frontera-recall-especificidad.md)
 - Mejoras tras la primera corrida: [`mejoras-2026-09-21.md`](mejoras-2026-09-21.md)
+
+## 11. Publicar
+
+El repositorio que se publica es **nuevo**: el remoto de desarrollo guarda el historial de antes
+de la anonimización (SP5-B2), y cada commit de `main` lleva el `huellas.txt` con la lista entera
+de huellas, que se adivinan ([`tests/anonimato/README.md`](../tests/anonimato/README.md)). Lleva
+la **historia real** de `main` —sus commits, sus merges y una etiqueta por subproyecto—,
+limpia, y nace **privado**: se hace público solo cuando el equipo lo diga. Lo prepara
+`scripts/preparar_publicacion.py` sobre un clon nuevo que hace él mismo, y lo corre quien
+mantiene la lista de anonimato en claro: nadie más la abre.
+
+### Qué hace el guion
+
+1. Quita de todos los commits las dos tablas con una fila por paciente
+   (`docs/eda/metadatos_eda.csv`, `docs/validacion-semisintetica/crudas_prueba.csv`) y la
+   huella de la segunda ([sección 7](#7-las-tablas-derivadas-del-dataset)). La lista de rutas
+   está en el propio guion (`RUTAS_QUE_NO_SE_PUBLICAN`).
+2. Pone en todos los commits el `tests/anonimato/huellas.txt` del repositorio que se publica,
+   con solo la huella del centinela.
+3. Reescribe el autor y quien confirma de todos los commits con una sola identidad.
+4. Sustituye por `[retirado]` cada cadena de la lista en el texto de todos los ficheros, en los
+   mensajes y en los nombres de las rutas, tal como la ve el verificador (sin mayúsculas ni
+   tildes, también detrás de un escape), y las huellas de la lista y sus prefijos. La lista se
+   lee en memoria y no se escribe ni se imprime nunca. Los nombres que declara el README (D5) se
+   conservan solo en `README.md`, `LICENSE` y `docs/planificacion.md`, y solo en los commits
+   cuyo README los declara (en los de antes, esos ficheros llevan `[retirado]`): es lo que el
+   verificador admite en cada commit. Lo binario no se toca.
+5. Etiqueta el merge de cada subproyecto (`v0.1-sp1`, `v0.2-sp2`, `v0.3-sp3`, `v0.4-sp4`,
+   `v0.5-sp5a` … `v0.5-sp5c2`, y los que vengan con «Merge: SP5-…») y la punta (`v1.0`), y deja
+   una sola rama, `main`, sin remoto.
+6. Pasa `scripts/verificar_anonimato.py --commit` por **cada** commit, con el `huellas.txt`
+   completo del repositorio de desarrollo, y comprueba además la copia de trabajo, los nombres
+   de la rama y de las etiquetas, que ningún commit lleve las tablas ni otro `huellas.txt`, la
+   identidad única, que ningún fichero ni mensaje lleve una huella, y que la historia vieja ya
+   no esté en la carpeta. Sale con 0 solo si todo está limpio.
+
+Sus salidas son recuentos, rutas del repositorio, nombres de etiquetas y hashes de commit:
+nunca una cadena de la lista ni una huella. Sus pruebas, sobre repositorios de juguete, están en
+`tests/test_preparar_publicacion.py`.
+
+### Antes de correrlo
+
+- `main` tiene todo fusionado y confirmado: lo que no está en un commit de `main` no se publica.
+  La suite y `scripts/verificar_anonimato.py` salen en verde en el repositorio de desarrollo.
+- git-filter-repo, de la versión que fija el guion, en un entorno aparte (el guion solo usa la
+  biblioteca estándar y el verificador, sin torch):
+
+  ```
+  python -m venv C:\venv-publicar
+  C:\venv-publicar\Scripts\python.exe -m pip install git-filter-repo==2.47.0
+  ```
+
+- La identidad: un nombre que no sea el de una persona y el correo «noreply» de la cuenta de
+  GitHub (Settings → Emails, «Keep my email addresses private»:
+  `<id>+<usuario>@users.noreply.github.com`). Ninguno de los dos puede llevar una cadena de la
+  lista: el verificador la vería en todos los commits, y el guion se niega antes de empezar. Si
+  se niega porque el usuario de GitHub está en la lista, la salida la decide el equipo: un
+  correo que no lo lleve (los commits no se enlazarán con la cuenta), o sacar ese usuario de la
+  lista, que la dirección del repositorio ya enseña, y regenerar las huellas.
+
+### Correrlo
+
+Desde la raíz del repositorio de desarrollo, con la ruta de la lista en claro (fuera del
+repositorio) y una carpeta nueva, que no exista o esté vacía, fuera de cualquier repositorio:
+
+```
+C:\venv-publicar\Scripts\python.exe scripts\preparar_publicacion.py --origen . --destino <carpeta nueva> --lista <ruta de la lista> --identidad "<Nombre> <correo noreply>"
+echo $LASTEXITCODE
+```
+
+(en bash, `python scripts/preparar_publicacion.py …` y `echo $?`; la lista puede ir también en
+`ANONIMATO_LISTA`, sin `--lista`). Clona `main` del origen en el destino, que es lo único que
+toca, y tarda unos minutos, casi todo en la verificación commit a commit (`--hilos` dice
+cuántas a la vez). Tiene que acabar en `LISTO para publicar` y con el código **0**. Con
+cualquier otro código, o con `NO publicar`, no se sube nada. `--ensayo` es solo para probarlo
+con una lista de juguete: nunca sale con 0.
+
+Con `--por-huellas` en lugar de `--lista`, el guion sustituye los tokens de la historia cuya
+huella está en el `huellas.txt` completo: son los de la lista que aparecen, sin abrirla, y la
+historia que sale es la misma. Pero solo si las huellas se regeneraron con la lista de hoy: con
+`--lista`, el guion comprueba que casan y se niega si no; con `--por-huellas`, una entrada nueva
+sin su huella no la vería nadie. Por eso la orden de arriba, con la lista, es la buena.
+
+En el ensayo del 16-oct-2026, sobre un clon de `main` (362 commits, sin abrir la lista): con
+una lista de juguete, el verificador encontró cadenas de la lista en 299 de los 362 commits,
+que es lo que la lista buena tiene que quitar; con `--por-huellas`, 0 de 362, todas las
+comprobaciones bien, en unos tres minutos, y la punta igual que la de `main` salvo las dos
+tablas, la huella de la segunda y `huellas.txt`.
+
+### Si encuentra algo
+
+La salida dice cuántos commits tienen hallazgos y cuáles (su hash corto), con cuántos de cada
+clase, o qué comprobación de la historia falló. Para ver el fichero y la línea, sin huellas ni
+cadenas, se repite con `--detalle`. Después:
+
+- Una **huella** con la lista buena no debería salir (el guion comprueba lo que sustituye con
+  los mismos ojos que el verificador): si sale, no se publica y se mira por qué.
+- Un **secreto** (`asignacion_de_secreto`, `clave_de_api_…`, `fichero_prohibido`…) en un
+  commit viejo: el guion no quita secretos, solo cadenas de la lista. La credencial se da por
+  expuesta y se revoca, y el equipo decide cómo sacarla de la historia (su ruta a
+  `RUTAS_QUE_NO_SE_PUBLICAN`, o una sustitución nueva en el guion, con su prueba).
+- Una comprobación de la historia en `MAL`: es un fallo del guion; no se publica.
+
+En todos los casos, el destino se **borra** y se vuelve a correr desde cero: nunca se arregla a
+mano. La salida del verificador con hallazgos, que enseña el principio de cada huella, no se
+pega en ningún sitio que se publique (ni en un commit).
+
+### Revisión a mano
+
+El verificador compara con una lista cerrada: lo que nadie puso en ella no lo ve
+([`tests/anonimato/README.md`](../tests/anonimato/README.md), «Lo que esto no protege»). Antes
+de subir, una persona recorre el destino: el README, los asuntos de los commits
+(`git log --all --format=%s`) y la historia (`git log --all -p`), buscando correos, dominios,
+direcciones, rutas con un usuario e identificadores de una instancia. El guion dice cuántos
+binarios de commits anteriores no están en la punta (versiones viejas de figuras y capturas):
+no los lee nadie, y se miran a mano (`git log --all --stat -- "*.png" "*.dcm"` dice en qué
+commits cambiaron).
+
+### Crear el repositorio privado y subirlo
+
+En GitHub, con la cuenta en la que se publica:
+
+1. «+» (arriba a la derecha) → **New repository**.
+2. Owner, la cuenta; Repository name, el acordado; **Private**.
+3. Sin README, sin `.gitignore` y sin licencia: el repositorio tiene que nacer **vacío**, o el
+   primer `push` choca con un commit que no es de esta historia.
+4. **Create repository**, y copiar su dirección HTTPS.
+
+Si ya se creó, se comprueba en su página que sigue privado y vacío. Luego, **desde el destino**
+y nunca desde el repositorio de desarrollo (cuya historia no se publica):
+
+```
+cd <carpeta del destino>
+git remote add origin https://github.com/<usuario>/<repositorio>.git
+git push -u origin main --tags
+```
+
+En GitHub se comprueba: privado, una rama (`main`), las etiquetas `v0.1-sp1` … `v1.0` y los
+commits con la identidad dada. El remoto del repositorio de desarrollo no cambia.
+
+### El release v1.0, con los pesos
+
+Los pesos no van en git ([`models/README.md`](../models/README.md)): van como descarga del
+release. Antes, se comprueba que el fichero es el que se midió:
+
+```
+Get-FileHash -Algorithm SHA256 servidor\pesos_modelo_cpu.pt
+```
+
+Tiene que dar `bb985e1f792e1cfee150ec57bdc6d706f7484499fa999da3406a5798260e8d47`. En la página
+del repositorio:
+
+1. **Releases** → **Draft a new release**.
+2. **Choose a tag** → `v1.0` (la que subió el `push`).
+3. Título `v1.0`; en la descripción, qué es (el modelo desplegado, EfficientNet-B0 a 320 px),
+   el SHA-256 de arriba, la licencia de los pesos y la atribución de los datos con los que se
+   entrenó (RSNA y NIH ChestX-ray14).
+4. Adjuntar `pesos_modelo_cpu.pt` («Attach binaries») y **Publish release**.
+5. Bajarlo del release y comprobar otra vez su SHA-256 (los pasos de `models/README.md`).
+
+Mientras el repositorio sea privado, el release solo lo ven sus colaboradores. Se hace público
+cuando el equipo lo diga: Settings → General → Danger Zone → **Change repository visibility**.
+## 12. Desplegar la app en un servidor propio
+
+Así corre la demostración pública de la entrega: la imagen de `app/`, en Docker, en un
+servidor del equipo y detrás de su proxy inverso. Hugging Face pide un plan de pago (PRO) para
+crear un Space de tipo Docker, y por eso esa vía es la alternativa de la
+[sección 13](#13-publicar-la-app). **La dirección pública no se escribe en este repositorio**: se
+da en la entrega del curso y en el código QR del vídeo de presentación. Lo que sigue son los
+pasos genéricos; lo que va entre `<ángulos>` lo elige quien despliega.
+
+**Antes de empezar.** Un servidor con Docker y BuildKit (por defecto desde Docker 23), unos
+2,5 GB de disco para la imagen y 2 GB de memoria para el contenedor, y un proxy inverso que ya
+sirva la página por HTTPS (el dominio y el certificado son del proxy, no de la app). El
+repositorio clonado y los pesos en `servidor/pesos_modelo_cpu.pt`, con su SHA-256 comprobado
+([`models/README.md`](../models/README.md)).
+
+1. **Construir la imagen**, desde la raíz del repositorio (es su contexto). BuildKit hace falta:
+   el `app/Dockerfile.dockerignore` solo lo lee él, y sin él viaja el repositorio entero al
+   demonio (sección 9).
+
+   ```
+   DOCKER_BUILDKIT=1 docker build -t copiloto-app -f app/Dockerfile .
+   ```
+
+2. **Una red de Docker solo para la app**, para que el proxy sea lo único que la alcance:
+
+   ```
+   docker network create <red>
+   ```
+
+3. **Lanzar el contenedor**, sin `-p`: no se publica ningún puerto del servidor, y la app solo se
+   ve por esa red. El límite de memoria, como siempre (sección 9); `--restart` para que vuelva
+   tras un reinicio del servidor.
+
+   ```
+   docker run -d --name copiloto-app --restart unless-stopped --memory=2g --memory-swap=2g --network <red> copiloto-app
+   ```
+
+4. **Conectar el contenedor del proxy a esa red**, con lo que el proxy ve la app como
+   `copiloto-app`, en el puerto **8501**:
+
+   ```
+   docker network connect <red> <contenedor-del-proxy>
+   ```
+
+   Si el contenedor del proxy se vuelve a crear, hay que volver a conectarlo.
+
+5. **El proxy.** Una `location` que pase a `http://copiloto-app:8501` con cuatro cosas, sin las
+   cuales la página falla de maneras poco evidentes:
+
+   - **Las cabeceras de WebSocket** (`Upgrade` y `Connection`): Streamlit habla con el
+     navegador por un WebSocket, y sin ellas la página carga y se queda esperando.
+   - **`Host` reenviado**, para que la app vea el sitio por el que entra el navegador.
+   - **`client_max_body_size 6m`**: la subida admite hasta 5 MB, y con el 1 MB por defecto de
+     nginx la subida de un DICOM da un 413.
+   - **Un tiempo de lectura largo**: el WebSocket está callado entre una acción y otra, y con los
+     60 s por defecto el proxy lo corta.
+
+   ```
+   location / {
+       proxy_pass http://copiloto-app:8501;
+       proxy_http_version 1.1;
+       proxy_set_header Host $host;
+       proxy_set_header Upgrade $http_upgrade;
+       proxy_set_header Connection "upgrade";
+       proxy_read_timeout 3600s;
+       client_max_body_size 6m;
+   }
+   ```
+
+   nginx resuelve el nombre `copiloto-app` al cargar la configuración: la red tiene que estar
+   conectada antes (paso 4), y si se vuelve a crear el contenedor de la app, se recarga el proxy.
+
+6. **Comprobar.** El chequeo de salud de Streamlit es `/_stcore/health`: responde `ok`, también
+   a través del proxy (`curl -fsS https://<dirección>/_stcore/health`), y sirve de chequeo para
+   cualquier monitor. Después, en el navegador: «Prueba con ejemplo» con los cuatro ejemplos,
+   **una subida de un DICOM** (si da 413, es `client_max_body_size`) y la pestaña «Acerca de»,
+   que tiene que decir que las métricas son de estos mismos pesos.
+
+**Actualizar.** `git pull`, la misma construcción (paso 1), `docker rm -f copiloto-app`, la
+misma orden de `docker run` (paso 3) y una recarga del proxy. **Retirar.** `docker rm -f
+copiloto-app`, `docker network disconnect <red> <contenedor-del-proxy>` y `docker network rm
+<red>`, y quitar la `location` del proxy.
+
+**Lo que hay que saber.** La página no pide contraseña: quien tenga el enlace la usa, y por eso
+lleva su aviso de demostración académica y no se debe subir en ella ninguna radiografía de un
+paciente real. La app no guarda la imagen ni la manda a ningún sitio (sección 9). El resto del
+servidor, el de los bots (sección 8), no tiene nada que ver con esto: la demostración no lo
+llama.
+
+## 13. Publicar la app
+
+> **Es la alternativa, y requiere un plan de pago.** La demostración de la entrega no corre en
+> Hugging Face sino en un servidor del equipo ([sección 12](#12-desplegar-la-app-en-un-servidor-propio)),
+> porque Hugging Face pide un plan PRO para crear un Space Docker (ver «Antes de empezar»). Esta
+> sección se conserva por si se dispone de una cuenta que lo permita; la carpeta que arma está
+> probada en local.
+
+La demostración (`app/`) se puede publicar como un **Space de Hugging Face** de tipo Docker; el
+bot se queda donde está. Lo que se sube al Space no es el repositorio sino una carpeta armada para ello
+con [`despliegue/huggingface/preparar_space.py`](../despliegue/huggingface/preparar_space.py):
+el README del Space (con su cabecera YAML), el
+[`Dockerfile`](../despliegue/huggingface/Dockerfile) del Space, `app/` (solo lo que la página lee,
+la misma lista blanca de `app/Dockerfile.dockerignore`), los `.py` de `src/copiloto_triaje/`,
+`pyproject.toml`, `servidor/calibrador.json` y los pesos, con su SHA-256 comprobado contra el
+`pesos_sha256` de `app/assets/metricas.json`. Nada más: ni docs, ni pruebas, ni notebooks, ni
+datos, ni `.git`. El [README del Space](../despliegue/huggingface/README.md) dice que es una
+demostración académica y que no se suban radiografías de pacientes reales (la página corre en
+los servidores de Hugging Face).
+
+**Antes de empezar**
+
+- **La cuenta.** Es la de quien publica; el **token** también es suyo, se crea en
+  `huggingface.co/settings/tokens` (con permiso de escritura) y se escribe solo en el terminal
+  de esa persona, cuando `hf auth login` lo pide. No se pega en un chat, ni en un fichero del
+  repositorio, ni en una orden.
+- **Un Space Docker puede pedir una cuenta de pago.** Según la documentación de Hugging Face
+  («Spaces Overview», consultada el 15 de octubre de 2026), crear un Space Docker o Gradio
+  «requires a paid plan» (PRO para una cuenta personal; en su página de precios, 9 USD al mes),
+  aunque la máquina por defecto, CPU Basic (2 vCPU y 16 GB), no tenga coste por hora. Se
+  comprueba en la pantalla de «Create new Space» antes de seguir. Si la cuenta no puede crearlo,
+  la misma carpeta se construye y se ejecuta con Docker en cualquier máquina (el paso 4), o se
+  despliega la imagen de `app/` en un servidor propio (sección 12).
+- **Los pesos** tienen que estar en `servidor/pesos_modelo_cpu.pt` o en otra ruta que se da con
+  `--pesos` (por ejemplo, la descarga del release v1.0). Si su SHA-256 no es el de
+  `metricas.json`, el guion se detiene y no deja nada escrito: las métricas de «Acerca de» serían
+  de otros pesos.
+- **Un Space público publica también los pesos**, que están en su repositorio. Mientras el
+  Space sea privado, solo los ve su dueño. Hacerlo público se decide a la vez que se publican los
+  pesos en el release.
+
+**Los pasos**, desde la raíz del repositorio y con el nombre de usuario (o de la organización) y
+del Space que se elijan en lugar de `<usuario>` y `<space>`:
+
+1. **Instalar la herramienta**, en un entorno aparte (FUERA del repositorio: `.gitignore` no
+   conoce ese nombre) y con la versión fijada. Su orden es `hf`: la antigua `huggingface-cli` ya
+   no existe en esta versión.
+
+   ```
+   python -m venv ../venv-hf
+   source ../venv-hf/bin/activate          # en Windows: ..\venv-hf\Scripts\activate
+   pip install huggingface_hub==2.1.1
+   ```
+
+2. **Iniciar sesión** (pide el token; es de quien escribe y se queda guardado en su máquina):
+
+   ```
+   hf auth login
+   ```
+
+3. **Crear el Space**, de tipo Docker y **privado** (la web, con «New Space», «Docker», «Blank» y
+   «Private», es lo mismo):
+
+   ```
+   hf repos create <usuario>/<space> --repo-type space --sdk docker --private
+   ```
+
+4. **Armar la carpeta**, FUERA del repositorio (el guion lo exige: lleva los pesos, que no se
+   versionan) y vacía o inexistente:
+
+   ```
+   python despliegue/huggingface/preparar_space.py ../space-copiloto
+   ```
+
+   Conviene probarla en local antes de subirla; y, si no hay cuenta que permita crear el Space,
+   es lo que se puede hacer. Como con la imagen de `app/`: el puerto siempre detrás de
+   `127.0.0.1:` y con el límite de memoria.
+
+   ```
+   docker build -t copiloto-space ../space-copiloto
+   docker run --rm -p 127.0.0.1:8501:8501 --memory=2g --memory-swap=2g copiloto-space
+   ```
+
+   y se abre `http://127.0.0.1:8501` (`/_stcore/health` responde `ok`).
+
+5. **Subirla** (con `.` como destino, para que quede en la raíz del Space; los 16 MB de los pesos
+   los guarda el Hub aparte, sin que haya que configurar nada):
+
+   ```
+   hf upload <usuario>/<space> ../space-copiloto . --repo-type space --commit-message "Primera versión de la demostración"
+   ```
+
+6. **Ver la construcción.** Cada commit en el Space lo reconstruye; la primera vez tarda varios
+   minutos (torch). En la web, la pestaña del Space muestra el estado («Building», «Running»,
+   «Build error») y sus registros; por línea de órdenes:
+
+   ```
+   hf spaces logs <usuario>/<space> --build -f      # la construcción de la imagen
+   hf spaces logs <usuario>/<space>                 # lo que escribe la página una vez en marcha
+   ```
+
+   Un «Build error» se lee en el registro de la construcción: lo habitual es un fichero que falta
+   en la carpeta armada (se repite el paso 4) o un cambio en la base de la imagen.
+
+7. **Comprobar** que funciona, con la sesión de Hugging Face abierta en el navegador (el Space es
+   privado): «Prueba con ejemplo» con los cuatro ejemplos, y **una subida de un DICOM** (la
+   subida es lo que falla si el iframe no está bien; ver la nota de abajo). La pestaña «Acerca de»
+   tiene que decir que las métricas son de estos mismos pesos.
+
+**Una máquina gratuita se duerme.** En CPU Basic, Hugging Face duerme el Space tras un tiempo
+sin visitas; la primera persona que entra después espera a que arranque y a que la página cargue
+el modelo, así que esa visita tarda más que las demás. Conviene abrirlo antes de una
+demostración. La documentación de Hugging Face no da el plazo exacto de la inactividad.
+
+**Cuando el repositorio sea público**
+
+1. Sustituir en `despliegue/huggingface/README.md` el marcador `PENDIENTE` por el enlace al
+   repositorio, y volver a armar (paso 4) y subir (paso 5). Es lo único que cambia.
+2. Hacer público el Space (con los pesos dentro, ver arriba): en la web, `Settings`, «Change
+   visibility»; o por línea de órdenes:
+
+   ```
+   hf repos settings <usuario>/<space> --repo-type space --public
+   ```
+
+3. Si esta es la vía elegida, poner la dirección del Space en la sección «Interfaz de usuario»
+   del README, en «Dónde está desplegada».
+
+**Por qué el Dockerfile del Space apaga XSRF y CORS.** Hugging Face muestra el Space en un
+iframe de otro sitio, y con la configuración por defecto de Streamlit **subir un DICOM falla con
+un 403** (el testigo XSRF viaja en una cookie `SameSite=Lax` que el navegador no manda desde un
+iframe de otro sitio). Se comprobó así (15 de octubre de 2026): la imagen de `app/` en
+`127.0.0.1:8501` y, en `localhost:9000`, una página con
+`<iframe src="http://127.0.0.1:8501/"></iframe>` (son sitios distintos, como `huggingface.co` y
+`hf.space`), servida con `python -m http.server 9000 --bind 127.0.0.1`. Con lo de por defecto, la
+subida da `PUT 403` («AxiosError: Request failed with status code 403»); con
+`--server.enableXsrfProtection=false` (y también con `--server.xsrfCookieSameSite=none`, pero esa
+depende de las cookies de terceros, que algunos navegadores bloquean, como Safari), `PUT 204` y el
+cálculo sale. La imagen del Space se probó igual, con los cuatro ejemplos y una subida, corriendo
+con el UID 1000 que usa Hugging Face. Si se cambia la versión de Streamlit, la prueba se repite
+así. El detalle de cada opción está en los comentarios del
+[Dockerfile](../despliegue/huggingface/Dockerfile). Las pruebas que fijan todo esto (la lista de
+lo que viaja, la comprobación de los pesos y que el Dockerfile del Space es el de `app/` más
+esas dos opciones) están en `tests/test_preparar_space.py`.
