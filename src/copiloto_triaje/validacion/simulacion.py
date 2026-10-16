@@ -49,14 +49,21 @@ class Conjunto:
     prevalencia: float
 
 
+def rango_de_los_ids(ids) -> np.ndarray:
+    """El rango de cada identificador de placa (0 para el menor, en orden de texto): con
+    él se rompen los empates de la ECE, en la simulación y en `src/evaluate.py`, de modo que
+    las dos publican la misma cifra."""
+    ids = np.asarray(ids).astype(str)
+    return np.argsort(np.argsort(ids, kind="stable"), kind="stable")
+
+
 def cargar_conjunto(ruta=datos.CRUDAS_CONGELADAS, calibrador=None) -> Conjunto:
     df = datos.cargar_crudas(ruta)
     cal = calibrador if calibrador is not None else datos.calibrador_desplegado()
     p, q, rv = datos.evidencia_imagen(df["cruda"].values, cal)
     ids = df["patientId"].values.astype(str)
     return Conjunto(ids, df["etiqueta"].values.astype(int), p, q, rv,
-                    np.argsort(np.argsort(ids, kind="stable"), kind="stable"),
-                    float(cal.prevalencia))
+                    rango_de_los_ids(ids), float(cal.prevalencia))
 
 
 def nombre_de_celda(rho1: float, rho0: float) -> str:

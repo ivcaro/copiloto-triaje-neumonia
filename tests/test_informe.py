@@ -601,12 +601,16 @@ def test_los_nombres_de_las_figuras_son_los_del_guion(validar):
 
 
 def test_nada_del_paquete_importa_matplotlib():
-    """El Dockerfile instala el paquete entero, sin el extra `figuras`: un
-    `import matplotlib` en `src/` pasaría aquí, que lo tiene instalado, e
-    incumpliría la restricción; en un módulo de los que el servidor importa,
-    además, rompería el contenedor."""
-    raiz = pathlib.Path(informe.__file__).resolve().parents[2]
-    assert raiz.name == "src"
+    """Los Dockerfiles del servidor y de la app instalan el paquete
+    `copiloto_triaje` entero, sin el extra `figuras`: un `import matplotlib`
+    en él pasaría aquí, que lo tiene instalado, e incumpliría la restricción;
+    en un módulo de los que el servidor importa, además, rompería el
+    contenedor. Se barre el paquete, que es lo que se instala, y no `src/`
+    entero: la capa del curso (`src/*.py`) no se instala, y `src/evaluate.py`
+    dibuja con matplotlib (`tests/test_model.py` vigila que lo importe solo al
+    dibujar)."""
+    raiz = pathlib.Path(informe.__file__).resolve().parents[1]
+    assert raiz.name == "copiloto_triaje" and raiz.parent.name == "src"
     fuentes = sorted(raiz.rglob("*.py"))
     assert len(fuentes) > 20
     culpables = [f"{f.relative_to(raiz).as_posix()}:{n}"

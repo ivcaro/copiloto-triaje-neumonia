@@ -43,6 +43,12 @@ Busca:
    etiqueta. Su `huellas.txt` tiene que llevar solo la del centinela, con
    su propia cabecera: lo escribe --regenerar --solo-centinela.
 
+UNA EXCEPCION, la de los nombres (spec de SP5-C2, D5). Los nombres del equipo
+y de la tutora pueden aparecer en el texto de `README.md`, `LICENSE` y
+`docs/planificacion.md`, y en ningun otro sitio. Cuales son lo declara el
+propio README en una linea `<!-- nombres-publicos: A; B -->`; el script no los
+guarda. Lo admitido no es hallazgo, pero se cuenta en la salida.
+
 Ninguna salida lleva el token ni el secreto en claro: fichero, linea y huella
 o clase. En los nombres (de fichero, de rama, de etiqueta, la revision) el
 token sale tapado por el principio de su huella, el secreto por
@@ -566,12 +572,78 @@ def _piezas(raiz, commit=None, huellas=()):
     return piezas
 
 
-def _huellas_en(piezas, huellas):
+# --------------------------------------------------------------------------
+# La excepcion de los nombres (spec de SP5-C2, D5)
+# --------------------------------------------------------------------------
+# Los nombres de los integrantes del equipo y de la tutora estan en la lista
+# (son de personas), pero el curso pide que el README diga quien hizo el
+# proyecto. D5: pueden aparecer en estos tres ficheros -rutas exactas,
+# relativas a la raiz- y en ningun otro.
+FICHEROS_CON_NOMBRES = ("README.md", "LICENSE", "docs/planificacion.md")
+# Cuales son lo declara el propio README de la raiz, en una linea entera y
+# sola (un comentario de HTML, que no se ve al leerlo):
+#
+#     <!-- nombres-publicos: Nombre Apellido; Otro Nombre -->
+#
+# El script no guarda los nombres ni sus huellas: los lee de lo que se
+# publica, que ya los ensena. Solo se admiten las huellas de la lista que
+# salen de esos nombres, solo en el texto de esos tres ficheros (no en su
+# nombre, ni en el commit, ni en las ramas). Cualquier otra huella sigue
+# siendo hallazgo tambien ahi, y los nombres, en cualquier otro fichero.
+README_DE_LOS_NOMBRES = "README.md"
+DECLARACION_DE_NOMBRES = re.compile(
+    r"<!--\s*nombres-publicos:(?P<nombres>[^<>]*)-->")
+
+
+def nombres_publicos(texto):
+    """Los nombres que declara un README (D5): los de cada linea que es,
+    entera, `<!-- nombres-publicos: A; B -->`, partidos por `;`. Una
+    declaracion en medio de otra linea no cuenta."""
+    nombres = []
+    for linea in texto.splitlines():
+        m = DECLARACION_DE_NOMBRES.fullmatch(linea.strip())
+        if m is not None:
+            nombres += [n.strip() for n in m.group("nombres").split(";")
+                        if n.strip()]
+    return nombres
+
+
+def huellas_de_los_nombres(piezas, huellas):
+    """Las huellas de la lista que salen de los nombres que declara el
+    README de la raiz de lo que se publica (D5), y solo esas.
+
+    Si hay varias versiones del README (la copia de trabajo, el indice, el
+    commit), solo las de los nombres que declaran todas: anadir un nombre en
+    una no amplia la excepcion de las otras. Sin README, o con uno que no se
+    ha podido leer como texto, ninguna.
+    """
+    declaradas = None
+    for pieza in piezas:
+        if pieza.nombre != README_DE_LOS_NOMBRES:
+            continue
+        suyas = (set() if pieza.texto is None else
+                 {huella(t) for nombre in nombres_publicos(pieza.texto)
+                  for t in tokens(nombre)})
+        declaradas = suyas if declaradas is None else declaradas & suyas
+    return (declaradas or set()) & set(huellas)
+
+
+def _huellas_en(piezas, huellas, admitidos=None):
+    """Los hallazgos de huella de `piezas`. Las de los nombres declarados
+    (D5) en el texto de FICHEROS_CON_NOMBRES no son hallazgo: si se pasa la
+    lista `admitidos`, se apuntan ahi (fichero, linea y origen; ni la huella
+    ni el token), para que se vea cuantas son."""
     huellas = set(huellas)
+    de_los_nombres = huellas_de_los_nombres(piezas, huellas)
     hallazgos = []
 
-    def mirar(texto, fichero, linea, origen):
+    def mirar(texto, fichero, linea, origen, admitidas=frozenset()):
         for una in sorted({huella(t) for t in tokens(texto)} & huellas):
+            if una in admitidas:
+                if admitidos is not None:
+                    admitidos.append({"fichero": fichero, "linea": linea,
+                                      "origen": origen})
+                continue
             hallazgos.append({"fichero": fichero, "linea": linea,
                               "huella": una, "origen": origen})
 
@@ -581,8 +653,10 @@ def _huellas_en(piezas, huellas):
             mirar(pieza.nombre, fichero, 0, pieza.origen)
         if pieza.texto is None:
             continue
+        admitidas = (de_los_nombres if pieza.nombre in FICHEROS_CON_NOMBRES
+                     else frozenset())
         for n, linea in enumerate(pieza.texto.splitlines(), 1):
-            mirar(linea, fichero, n, pieza.origen)
+            mirar(linea, fichero, n, pieza.origen, admitidas)
     return hallazgos
 
 
@@ -590,7 +664,8 @@ def buscar_huellas(raiz, huellas, commit=None):
     """Las apariciones de alguna huella: fichero, linea, huella y origen.
 
     La linea 0 es el nombre del fichero. El token en claro no sale nunca.
-    Con `commit`, tambien el arbol de ese commit.
+    Con `commit`, tambien el arbol de ese commit. Los nombres que declara el
+    README no son hallazgo en el texto de FICHEROS_CON_NOMBRES (D5).
     """
     return _huellas_en(_piezas(raiz, commit, huellas), huellas)
 
@@ -1221,7 +1296,8 @@ def main(argv=None):
     revision = (None if args.commit is None
                 else _publicable(args.commit, huellas))
     piezas = _piezas(args.raiz, args.commit, huellas)
-    de_huella = _huellas_en(piezas, huellas)
+    admitidos = []                      # los nombres de D5, contados aparte
+    de_huella = _huellas_en(piezas, huellas, admitidos)
     de_secreto = _secretos_en(piezas, huellas)
     # En el arbol que se publica, ninguna huella de la lista (D9).
     publicadas = (_huellas_publicadas_en(piezas, huellas)
@@ -1270,6 +1346,11 @@ def main(argv=None):
               + ("" if p.origen == COPIA else f" ({p.origen})"))
     ficheros = len({h["fichero"] for h in de_huella})
     print(f"huellas: {len(de_huella)} en {ficheros} ficheros")
+    if admitidos:
+        # No son hallazgos, pero no se callan: una excepcion se ve (D5).
+        donde = sorted({h["fichero"] for h in admitidos})
+        print(f"nombres declarados en el README, admitidos (D5): "
+              f"{len(admitidos)} en {', '.join(donde)}")
     por_clase = {}
     for h in de_secreto:
         por_clase[h["clase"]] = por_clase.get(h["clase"], 0) + 1

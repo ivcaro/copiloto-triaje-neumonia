@@ -72,6 +72,7 @@ BINARIOS_REVISADOS = (
     "docs/eda/06_cajas.png",
     "docs/interfaz/acerca-de-metricas.png",
     "docs/interfaz/acerca-de-modelo.png",
+    "docs/interfaz/probar-con-ejemplo-anotada.png",
     "docs/interfaz/probar-con-ejemplo.png",
     "docs/interfaz/rechazado.png",
     "docs/validacion-semisintetica/contencion_rejilla.png",
@@ -84,11 +85,15 @@ BINARIOS_REVISADOS = (
     "docs/validacion-semisintetica/fiabilidad_r1-060_r0-060.png",
     "docs/validacion-semisintetica/horquilla_por_celda.png",
     "docs/validacion-semisintetica/pendiente_rejilla.png",
+    "results/figures/calibracion.png",
+    "results/figures/roc_prueba.png",
+    "results/figures/subgrupos.png",
 )
 METADATOS_PERMITIDOS = {"Software", "dpi", "Title", "Description"}
 
-# Los binarios de `app/assets/` (los tres PNG y los cuatro DICOM de los ejemplos) y las
-# capturas de la interfaz de `docs/interfaz/` (las del README), fijados además por el
+# Los binarios de `app/assets/` (los tres PNG y los cuatro DICOM de los ejemplos), las
+# capturas de la interfaz de `docs/interfaz/` (las del README y la anotada del manual) y
+# las figuras de `results/figures/` (las que dibuja `src/evaluate.py`), fijados además por el
 # SHA-256 de sus bytes, como están fijadas las imágenes de los notebooks: declararlos
 # solo por su nombre no ve que otra imagen ocupe su sitio, que un PNG gane un trozo
 # auxiliar (una fecha, un texto) ni que un DICOM se regenere con otra cabecera. Un
@@ -115,11 +120,21 @@ HUELLAS_DE_LOS_BINARIOS = {
         "95f85e8d2b51a4e2c4b89366639adc0e214d12a2a7cae12f5b01bcef3d7dbf22",
     "docs/interfaz/acerca-de-modelo.png":
         "fd4f73b50d6eca3750e22ab5b4cec2d626547694ee53e4182cc66374636c1911",
+    "docs/interfaz/probar-con-ejemplo-anotada.png":
+        "c98d1cc24e7ad0f7225dc2720287641e5676a6e864628f84500b6eec3e744642",
     "docs/interfaz/probar-con-ejemplo.png":
         "b530dd3b4d293499c62dd6902a85e816ab9ef387997f97dc4ff67002a6ac6b44",
     "docs/interfaz/rechazado.png":
         "9f4dc3096edf2798de4be148d0808f8b9c7e256f6712a924db0286ee95adce1b",
+    "results/figures/calibracion.png":
+        "d7cdb3af52d30e54873e05b376cdd602f362c3f78810b4ba33b965128c1d9a5a",
+    "results/figures/roc_prueba.png":
+        "b88d67f2fd0159b1ef2d81e2120de82ba009325e93b39d870c6be8a757028989",
+    "results/figures/subgrupos.png":
+        "f8609089c32cfc596fa11528ceb8be5e42451a49ee4c35c69ca72f3b8c702383",
 }
+# Las carpetas cuyos binarios se declaran SIEMPRE con su SHA-256 en HUELLAS_DE_LOS_BINARIOS.
+CARPETAS_CON_HUELLA = ("app/assets/", "docs/interfaz/", "results/figures/")
 
 # Las etiquetas que puede llevar la cabecera de un DICOM versionado (los ejemplos
 # de la app), la del `file_meta` y la del conjunto de datos, revisadas a mano. Una
@@ -146,7 +161,7 @@ TIPOS_DICOM_SIEMPRE_VACIOS = ("PN", "DA", "DT", "TM")
 # volver a ejecutar el notebook, hace fallar la prueba hasta que alguien la
 # mira y la declara aqui y en tests/anonimato/README.md.
 IMAGENES_DE_LOS_NOTEBOOKS = {
-    "notebooks/eda_rsna.ipynb": (
+    "notebooks/01_exploracion.ipynb": (
         "0bdabb57e4fffdfba64143c5d73626e246a18ba76cd246b84a3dde65adc64207",
         "0db7916271002c6fcdc19ca61bdea62e30f8c438a4d907318abdc290eee91e7f",
         "2cd353815a6b1463c846d336ed478db1d99b98838059458a961a4951c089fefa",
@@ -154,8 +169,28 @@ IMAGENES_DE_LOS_NOTEBOOKS = {
         "7d4ab28d7b54c08132afb462516338434e924bf81ceaa115d693f554ea295bab",
         "f1c10db558e768c38e7b4cab01ecc04b9d5a49ef6b125dbc8437ee8d727cd69e",
     ),
+    "notebooks/02_preprocesamiento.ipynb": (
+        "364f62dbfb10a2b07a1752957571570c4ea6f9fdd05b9ab732929802b6a2d517",
+        "58a42b7e2d58e8eb21bdb5431620a727e73f932527ec43de437597eb4e409dff",
+    ),
+    "notebooks/03_modelado.ipynb": (),
+    "notebooks/04_optimizacion.ipynb": (
+        "63e1597857909841a7970753a27b09350e424c4c8caab0b231f126fe6c461159",
+        "64ae39c1c5db36bf0fe55c2be15cb6c2b752581e6d320c5d7f54c28de84a6465",
+        "6f10f2cb6ff0c60b12449443454cbb204cd195e9f6e73a8de4ff14e283dc6dbb",
+        "72d2665369ba2feeca1357ffcec8dff7851c03c13fd8628755014a262ea97b87",
+        "83fa914a3ef359cc46aebe7a48173d11fb9145461b258631819d2e9a855591ea",
+        "9a5679fead261be6b575eab26d0d5f78b7c533da8e73311a49ee9b45e4a2e7bf",
+        "dbdab841509915ff8c8571eb9713f30e95dde4b2cbb5a58c579e38c8bc4adb1f",
+        "f7784b8067bb008ae0b85706f55b93f2b84b76f81666d4cd76b698c41d903964",
+    ),
+    "notebooks/05_evaluacion.ipynb": (
+        "15481a870a5c6a74cf5aa959136055387a1e81e5d37b0389b25e9822175240fd",
+        "75262e13b11dd3cb5026f47580f3313961934c27597a92a34c973d01bbc257e2",
+        "e61d13081b1a84094ff7f660281d33d34ac8fe5591cab98ea1384daf89be5abb",
+        "eb065a5ab6ee98fa2f679861ae0efae42b3b74ac608ff09d63ef514d3ee266c5",
+    ),
     "notebooks/entrenar_gpu.ipynb": (),
-    "notebooks/entrenar_kaggle.ipynb": (),
 }
 # Las claves de `metadata` que puede llevar un notebook que se publica, las de
 # su `colab` y las de cada celda. Un notebook guardado de nuevo desde Colab o
@@ -1922,6 +1957,232 @@ def test_la_cli_con_solo_centinela_no_escribe_donde_no_se_le_dice(
 
 
 # --------------------------------------------------------------------------
+# La excepcion de los nombres (spec de SP5-C2, D5): los del equipo y de la
+# tutora pueden ir en README.md, LICENSE y docs/planificacion.md, y en ningun
+# otro fichero. Los declara el README; el script no los guarda.
+# --------------------------------------------------------------------------
+# Nombres INVENTADOS: este fichero es de los de fuera, y en el no pueden ir los
+# de verdad. Sus tokens van en unas huellas de juguete.
+NOMBRES_DE_JUGUETE = ("Personaz Inventadaz", "Otraz Ficticiaz")
+TOKENS_DE_LOS_NOMBRES = ("personaz", "inventadaz", "otraz", "ficticiaz")
+DECLARACION_DE_JUGUETE = ("<!-- nombres-publicos: "
+                          + "; ".join(NOMBRES_DE_JUGUETE) + " -->")
+CON_LOS_NOMBRES = "Autores: " + " y ".join(NOMBRES_DE_JUGUETE) + ".\n"
+README_DE_VERDAD = RAIZ / "README.md"
+
+
+def _huellas_con_nombres(tmp_path):
+    """Huellas de juguete: las de los tokens de los nombres y la de OTRO, que
+    no es un nombre."""
+    destino = tmp_path / "huellas-con-nombres.txt"
+    va.regenerar([*TOKENS_DE_LOS_NOMBRES, OTRO], destino)
+    return va.huellas_de_la_lista(va.leer_huellas(destino)), destino
+
+
+def _arbol_con_nombres(raiz, declaracion=DECLARACION_DE_JUGUETE):
+    """El arbol de juguete con los nombres en los tres ficheros de D5 (el
+    README, con la declaracion en su linea 3) y en uno mas, `docs/otro.md`
+    (linea 3)."""
+    _arbol_limpio(raiz)
+    (raiz / "README.md").write_text(f"# Proyecto\n\n{declaracion}\n\n"
+                                    f"{CON_LOS_NOMBRES}", encoding="utf-8")
+    (raiz / "LICENSE").write_text(f"Copyright (c) 2026 {CON_LOS_NOMBRES}",
+                                  encoding="utf-8")
+    (raiz / "docs" / "planificacion.md").write_text(
+        f"# Plan\n\n{CON_LOS_NOMBRES}", encoding="utf-8")
+    (raiz / "docs" / "otro.md").write_text(f"# Otro\n\n{CON_LOS_NOMBRES}",
+                                           encoding="utf-8")
+    return raiz
+
+
+def _ficheros_con_hallazgos(raiz, huellas, commit=None):
+    return sorted({h["fichero"] for h in va.buscar_huellas(raiz, huellas,
+                                                           commit)})
+
+
+def test_los_nombres_declarados_solo_se_admiten_en_sus_tres_ficheros(tmp_path):
+    raiz = _arbol_con_nombres(tmp_path / "arbol")
+    huellas, _ruta = _huellas_con_nombres(tmp_path)
+    hallazgos = va.buscar_huellas(raiz, huellas)
+    assert sorted({(h["fichero"], h["linea"]) for h in hallazgos}) == [
+        ("docs/otro.md", 3)]
+    assert sorted(h["huella"] for h in hallazgos) == sorted(
+        va.huella(t) for t in TOKENS_DE_LOS_NOMBRES)
+    assert va.FICHEROS_CON_NOMBRES == ("README.md", "LICENSE",
+                                       "docs/planificacion.md")
+
+
+def test_en_sus_tres_ficheros_cualquier_otra_huella_sigue_siendo_hallazgo(
+        tmp_path):
+    # La excepcion es la de los nombres, no la de los ficheros.
+    raiz = _arbol_con_nombres(tmp_path / "arbol")
+    for nombre in va.FICHEROS_CON_NOMBRES:
+        with open(raiz / nombre, "a", encoding="utf-8") as fichero:
+            fichero.write(f"Y una cadena de la lista: {OTRO}.\n")
+    huellas, _ruta = _huellas_con_nombres(tmp_path)
+    hallazgos = va.buscar_huellas(raiz, huellas)
+    con_otro = sorted(h["fichero"] for h in hallazgos
+                      if h["huella"] == va.huella(OTRO))
+    assert con_otro == sorted(va.FICHEROS_CON_NOMBRES)
+    assert {h["fichero"] for h in hallazgos
+            if h["huella"] != va.huella(OTRO)} == {"docs/otro.md"}
+
+
+@pytest.mark.parametrize("declaracion", [
+    pytest.param("", id="sin_declaracion"),
+    pytest.param(f"Texto {DECLARACION_DE_JUGUETE} en medio de una linea",
+                 id="en_medio_de_una_linea"),
+    pytest.param(DECLARACION_DE_JUGUETE.replace("nombres-publicos",
+                                                "nombres publicos"),
+                 id="con_otra_marca"),
+    pytest.param("```\n" + DECLARACION_DE_JUGUETE.replace("<!--", "<!- -")
+                 + "\n```", id="mal_formada"),
+])
+def test_sin_una_declaracion_en_su_linea_no_hay_excepcion(tmp_path,
+                                                          declaracion):
+    raiz = _arbol_con_nombres(tmp_path / "arbol", declaracion)
+    huellas, _ruta = _huellas_con_nombres(tmp_path)
+    assert _ficheros_con_hallazgos(raiz, huellas) == [
+        "LICENSE", "README.md", "docs/otro.md", "docs/planificacion.md"]
+
+
+def test_la_declaracion_solo_cuenta_en_el_readme_de_la_raiz(tmp_path):
+    raiz = _arbol_con_nombres(tmp_path / "arbol", declaracion="")
+    (raiz / "docs" / "README.md").write_text(DECLARACION_DE_JUGUETE + "\n",
+                                             encoding="utf-8")
+    with open(raiz / "docs" / "planificacion.md", "a",
+              encoding="utf-8") as fichero:
+        fichero.write(DECLARACION_DE_JUGUETE + "\n")
+    huellas, _ruta = _huellas_con_nombres(tmp_path)
+    assert _ficheros_con_hallazgos(raiz, huellas) == [
+        "LICENSE", "README.md", "docs/README.md", "docs/otro.md",
+        "docs/planificacion.md"]
+
+
+@pytest.mark.parametrize("nombre", [
+    "docs/LICENSE", "otra/README.md", "docs/sub/planificacion.md",
+    "planificacion.md", "README.md.orig", "LICENSE.txt",
+    "docs/planificacion.md.bak",
+])
+def test_los_tres_ficheros_son_rutas_exactas(tmp_path, nombre):
+    raiz = _arbol_con_nombres(tmp_path / "arbol")
+    ruta = raiz / nombre
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    ruta.write_text(CON_LOS_NOMBRES, encoding="utf-8")
+    huellas, _ruta = _huellas_con_nombres(tmp_path)
+    assert _ficheros_con_hallazgos(raiz, huellas) == sorted(
+        ["docs/otro.md", nombre])
+
+
+def test_los_nombres_publicos_se_leen_de_la_linea_de_la_declaracion():
+    texto = (f"uno\n  {DECLARACION_DE_JUGUETE}  \n"
+             "<!-- nombres-publicos: ;  Tercera Inventadaz ; -->\n"
+             f"dos {DECLARACION_DE_JUGUETE}\n")
+    assert va.nombres_publicos(texto) == [*NOMBRES_DE_JUGUETE,
+                                          "Tercera Inventadaz"]
+    assert va.nombres_publicos("sin declaracion\n") == []
+
+
+@hay_git
+def test_un_nombre_anadido_en_otra_version_del_readme_no_amplia_la_excepcion(
+        tmp_path):
+    # El README de la copia de trabajo declara los dos nombres; el del indice
+    # y el del commit, solo el primero. Solo se admite lo que declaran todas
+    # las versiones que se publicarian.
+    raiz = _repositorio(tmp_path)
+    primero, segundo = NOMBRES_DE_JUGUETE
+    (raiz / "README.md").write_text(
+        f"# P\n\n<!-- nombres-publicos: {primero} -->\n\n{primero}\n",
+        encoding="utf-8")
+    (raiz / "LICENSE").write_text(f"Copyright (c) 2026 {CON_LOS_NOMBRES}",
+                                  encoding="utf-8")
+    _git(raiz, "add", "-A")
+    _git(raiz, "commit", "-q", "-m", "uno")
+    (raiz / "README.md").write_text(
+        f"# P\n\n{DECLARACION_DE_JUGUETE}\n\n{CON_LOS_NOMBRES}",
+        encoding="utf-8")
+    huellas, _ruta = _huellas_con_nombres(tmp_path)
+    del_primero = {va.huella(t) for t in va.tokens(primero)}
+    del_segundo = {va.huella(t) for t in va.tokens(segundo)}
+
+    def comprobar(commit=None):
+        hallazgos = va.buscar_huellas(raiz, huellas, commit)
+        assert not any(h["huella"] in del_primero for h in hallazgos)
+        con_el_segundo = {h["fichero"] for h in hallazgos
+                          if h["huella"] in del_segundo}
+        assert con_el_segundo == {"LICENSE", "README.md"}
+
+    comprobar()                          # la copia frente al indice
+    _git(raiz, "add", "README.md")
+    assert va.buscar_huellas(raiz, huellas) == []   # ya son la misma
+    comprobar("HEAD")                    # la copia frente al commit
+
+
+def test_la_cli_cuenta_los_nombres_admitidos_sin_ensenarlos(tmp_path):
+    raiz = _arbol_con_nombres(tmp_path / "arbol")
+    huellas, ruta = _huellas_con_nombres(tmp_path)
+    codigo, salida = _cli("--raiz", str(raiz), "--huellas", str(ruta))
+    assert codigo == 1
+    assert "docs/otro.md:3: huella " in salida
+    (raiz / "docs" / "otro.md").unlink()
+    codigo, salida = _cli("--raiz", str(raiz), "--huellas", str(ruta))
+    assert codigo == 0, salida
+    assert "huellas: 0 en 0 ficheros" in salida
+    # README: 4 tokens en la declaracion y 4 en el texto; LICENSE y el plan, 4.
+    assert ("nombres declarados en el README, admitidos (D5): 16 en "
+            "LICENSE, README.md, docs/planificacion.md") in salida
+    for token in TOKENS_DE_LOS_NOMBRES:
+        assert token not in salida.lower()
+    _sin_ninguna_huella(salida, huellas)
+
+
+def test_el_readme_declara_los_dos_integrantes_y_la_tutora():
+    """D5 en el README de verdad: tres nombres (los dos integrantes y la
+    tutora), con ocho tokens entre todos, y cada uno se ve en el README, no
+    solo en la declaracion. Un nombre de mas en la declaracion hace fallar
+    esta prueba: la excepcion no crece sin que alguien lo decida aqui. Los
+    nombres no se escriben en esta prueba, que es de los ficheros de fuera."""
+    texto = README_DE_VERDAD.read_text(encoding="utf-8")
+    nombres = va.nombres_publicos(texto)
+    tres_nombres = len(nombres) == 3
+    assert tres_nombres, f"el README declara {len(nombres)} nombres"
+    ocho_tokens = len({t for n in nombres for t in va.tokens(n)}) == 8
+    assert ocho_tokens, "los nombres declarados no dan los ocho tokens"
+    visible = "\n".join(linea for linea in texto.splitlines()
+                        if not linea.strip().startswith("<!--"))
+    se_ven = all(nombre in visible for nombre in nombres)
+    assert se_ven, "un nombre declarado no aparece fuera de la declaracion"
+
+
+@pytest.mark.skipif(solo_el_centinela(), reason=SIN_LA_LISTA["arbol"])
+def test_los_nombres_del_readme_fuera_de_sus_tres_ficheros_son_hallazgo(
+        tmp_path):
+    """Con las huellas de verdad: lo que declara el README esta en la lista
+    (si no, la excepcion sobraria), y escrito en cualquier otro fichero es
+    un hallazgo; en las copias de los tres ficheros, no. Las aserciones van
+    sobre booleanos y dicen fichero y linea: nunca una huella (C5)."""
+    raiz = tmp_path / "arbol"
+    (raiz / "docs").mkdir(parents=True)
+    for nombre in va.FICHEROS_CON_NOMBRES:
+        shutil.copyfile(RAIZ / nombre, raiz / nombre)
+    nombres = va.nombres_publicos(README_DE_VERDAD.read_text(encoding="utf-8"))
+    (raiz / "docs" / "otro.md").write_text("\n".join(nombres) + "\n",
+                                           encoding="utf-8")
+    huellas = va.huellas_de_la_lista(va.leer_huellas(HUELLAS))
+    hallazgos = va.buscar_huellas(raiz, huellas)
+    solo_en_otro = {h["fichero"] for h in hallazgos} == {"docs/otro.md"}
+    assert solo_en_otro, _donde(hallazgos)
+    cada_nombre = {h["linea"] for h in hallazgos} == set(
+        range(1, len(nombres) + 1))
+    assert cada_nombre, _donde(hallazgos)
+    admitidas = va.huellas_de_los_nombres(va._piezas(raiz), huellas)
+    todos_en_la_lista = len(admitidas) == len(
+        {t for n in nombres for t in va.tokens(n)})
+    assert todos_en_la_lista, (f"{len(admitidas)} de los tokens de los "
+                               "nombres declarados estan en la lista")
+
+
+# --------------------------------------------------------------------------
 # El arbol de verdad. Exige la anonimizacion hecha (tareas 1 a 6 del plan).
 # --------------------------------------------------------------------------
 def _por_fichero(hallazgos, que):
@@ -2088,15 +2349,15 @@ def _binarios_que_cambiaron(raiz, huellas):
 
 
 def test_todo_binario_declarado_de_app_tiene_su_huella():
-    """Un binario de `app/assets/` o de `docs/interfaz/` (las capturas de la interfaz)
-    no se declara solo por su nombre: lleva su SHA-256 en HUELLAS_DE_LOS_BINARIOS, y
-    esa lista no lleva huellas de binarios que no estén declarados."""
-    declarados = {n for n in BINARIOS_REVISADOS
-                  if n.startswith(("app/assets/", "docs/interfaz/"))}
+    """Un binario de `app/assets/`, de `docs/interfaz/` (las capturas de la interfaz) o de
+    `results/figures/` (las figuras de la evaluación) no se declara solo por su nombre:
+    lleva su SHA-256 en HUELLAS_DE_LOS_BINARIOS, y esa lista no lleva huellas de binarios
+    que no estén declarados."""
+    declarados = {n for n in BINARIOS_REVISADOS if n.startswith(CARPETAS_CON_HUELLA)}
     sin_huella = sorted(declarados - set(HUELLAS_DE_LOS_BINARIOS))
     sin_declarar = sorted(set(HUELLAS_DE_LOS_BINARIOS) - declarados)
     if sin_huella or sin_declarar:
-        pytest.fail("binarios de app/assets/ o de docs/interfaz/ declarados sin su "
+        pytest.fail(f"binarios de {', '.join(CARPETAS_CON_HUELLA)} declarados sin su "
                     f"SHA-256 en HUELLAS_DE_LOS_BINARIOS: {', '.join(sin_huella) or '-'}; "
                     "huellas de binarios que no están en BINARIOS_REVISADOS: "
                     f"{', '.join(sin_declarar) or '-'}", pytrace=False)

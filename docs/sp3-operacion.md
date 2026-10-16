@@ -777,8 +777,8 @@ de las fechas de la sesión con el médico (`docs/sp5-sesion.md`).
    `chat_equipo` (§5, paso 1).
 
 5. **Para correr la suite completa y el arnés**, `RSNA_RAIZ` (y `N8N_URL`,
-   con los secretos del arnés —los de la tabla «Variables de entorno» del
-   `README.md`—, para las pruebas conducidas y para el arnés con bots). Un
+   con los secretos del arnés —los de la tabla «Variables de entorno» de
+   `docs/desarrollo.md`—, para las pruebas conducidas y para el arnés con bots). Un
    salto se ve verde: conviene correr con `-rs` y leer qué se saltó.
 
        setx RSNA_RAIZ "<RSNA_RAIZ>"
