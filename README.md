@@ -318,15 +318,19 @@ La guía completa, con cada zona de la pantalla, cómo leer el resultado, los pr
 las preguntas frecuentes, está en el [manual de usuario](docs/manual_usuario.md); los detalles de
 despliegue, en [`docs/desarrollo.md`](docs/desarrollo.md#9-la-aplicación-de-demostración-en-detalle).
 
-**Dónde está desplegada.** Todavía no hay una dirección pública: la aplicación se ejecuta en
-local con las órdenes de arriba. Los dos enlaces que siguen se rellenan al publicar, y hasta
-entonces están marcados como pendientes:
+**Dónde está desplegada.** La demostración pública corre en un servidor del propio equipo: la
+misma imagen de `app/`, en Docker y detrás del proxy inverso del equipo. No está en Hugging
+Face porque allí un Space de tipo Docker exige un plan de pago (PRO). **Su dirección no está en
+este repositorio**: se da en la entrega del curso y en el código QR del vídeo de presentación.
+Quien no tenga ese enlace puede levantarla en local con las órdenes de arriba, y quien quiera
+montarla en su propio servidor encuentra los pasos genéricos en
+[`docs/desarrollo.md`](docs/desarrollo.md#12-desplegar-la-app-en-un-servidor-propio).
 
-- **Aplicación en línea (Space de Hugging Face):** **PENDIENTE** <!-- PENDIENTE: enlace al Space, cuando se haga público (docs/desarrollo.md, «Publicar la app») -->
 - **Repositorio público:** **PENDIENTE** <!-- PENDIENTE: dirección del repositorio, cuando se haga público -->
 
-Los ficheros del Space los arma [`despliegue/huggingface/`](despliegue/huggingface/README.md),
-y los pasos para subirlos están en [`docs/desarrollo.md`](docs/desarrollo.md#12-publicar-la-app).
+La alternativa de un Space de Hugging Face (requiere un plan PRO) también está preparada:
+[`despliegue/huggingface/`](despliegue/huggingface/README.md) arma los ficheros, y los pasos para
+subirlos están en [`docs/desarrollo.md`](docs/desarrollo.md#13-publicar-la-app).
 
 ## Estructura del proyecto
 
@@ -345,7 +349,7 @@ copiloto-triaje/
 ├── servidor/    el servidor de inferencia: Docker, MCP y REST, y el calibrador
 ├── n8n/         los tres workflows: bot del paciente, bot del profesional y mantenimiento
 ├── bd/          el esquema y la limpieza de PostgreSQL
-├── despliegue/  lo que se sube a Hugging Face Spaces: README del Space, Dockerfile y el guion que lo arma
+├── despliegue/  la alternativa de Hugging Face Spaces (requiere plan PRO): README del Space, Dockerfile y el guion que lo arma
 ├── scripts/     guiones: preparar datos, entrenar en CPU, calibrar, comparar corridas, validar, anonimato
 └── pruebas/     arneses de la validación y de los bots: selección de casos, formulario de la sesión, SQL
 ```
@@ -362,7 +366,7 @@ copiloto-triaje/
 | `tests/` | Las del curso (`test_data_processing.py`, `test_model.py`, `test_app.py`, `test_estructura_curso.py`) y las del sistema: partición sin fuga, motor, servidor, contrato MCP, SQL de los nodos, anonimato… |
 | `results/` | Las métricas en JSON, las figuras y los informes de la validación: [`results/README.md`](results/README.md) |
 | `servidor/`, `n8n/`, `bd/` | El sistema desplegado: el servidor de inferencia, los workflows de n8n (con marcadores en vez de direcciones y credenciales) y la base de datos |
-| `despliegue/` | Los ficheros del Space de Hugging Face con la aplicación de demostración: `huggingface/README.md` (el del Space, con su cabecera YAML), su `Dockerfile` y `preparar_space.py`, el guion que arma la carpeta que se sube (la app, el paquete, el calibrador y los pesos, y nada más). Cómo se sube: [`docs/desarrollo.md`](docs/desarrollo.md#12-publicar-la-app) |
+| `despliegue/` | La alternativa de un Space de Hugging Face (requiere un plan PRO) para la aplicación de demostración: `huggingface/README.md` (el del Space, con su cabecera YAML), su `Dockerfile` y `preparar_space.py`, el guion que arma la carpeta que se sube (la app, el paquete, el calibrador y los pesos, y nada más). Cómo se sube: [`docs/desarrollo.md`](docs/desarrollo.md#13-publicar-la-app) |
 | `scripts/`, `pruebas/` | Los guiones del proyecto y los arneses con que se validó |
 
 ## Consideraciones éticas

@@ -23,7 +23,8 @@ hecho, la [arquitectura](arquitectura.md).
 9. [La aplicación de demostración, en detalle](#9-la-aplicación-de-demostración-en-detalle)
 10. [Documentos de diseño](#10-documentos-de-diseño)
 11. [Publicar](#11-publicar)
-12. [Publicar la app](#12-publicar-la-app)
+12. [Desplegar la app en un servidor propio](#12-desplegar-la-app-en-un-servidor-propio)
+13. [Publicar la app](#13-publicar-la-app) (la alternativa de Hugging Face)
 
 ## 1. Los sub-proyectos
 
@@ -433,7 +434,9 @@ y se abre `http://127.0.0.1:8501`.
   arrancar con `-e`. `AUC_VALIDACION` y `PREVALENCIA_LOCAL` no tienen valor por
   defecto en el código, como en el servidor: sin ellas, la página no calcula y dice
   qué declarar.
-- El despliegue público no forma parte de esto: se decide después.
+- El despliegue público no es de esta sección: la demostración de la entrega corre en un
+  servidor del equipo ([sección 12](#12-desplegar-la-app-en-un-servidor-propio)), y la
+  alternativa de Hugging Face está en la [sección 13](#13-publicar-la-app).
 
 ### Sin Docker
 
@@ -714,10 +717,105 @@ del repositorio:
 
 Mientras el repositorio sea privado, el release solo lo ven sus colaboradores. Se hace público
 cuando el equipo lo diga: Settings → General → Danger Zone → **Change repository visibility**.
-## 12. Publicar la app
+## 12. Desplegar la app en un servidor propio
 
-La demostración (`app/`) se publica como un **Space de Hugging Face** de tipo Docker; el bot se
-queda donde está. Lo que se sube al Space no es el repositorio sino una carpeta armada para ello
+Así corre la demostración pública de la entrega: la imagen de `app/`, en Docker, en un
+servidor del equipo y detrás de su proxy inverso. Hugging Face pide un plan de pago (PRO) para
+crear un Space de tipo Docker, y por eso esa vía es la alternativa de la
+[sección 13](#13-publicar-la-app). **La dirección pública no se escribe en este repositorio**: se
+da en la entrega del curso y en el código QR del vídeo de presentación. Lo que sigue son los
+pasos genéricos; lo que va entre `<ángulos>` lo elige quien despliega.
+
+**Antes de empezar.** Un servidor con Docker y BuildKit (por defecto desde Docker 23), unos
+2,5 GB de disco para la imagen y 2 GB de memoria para el contenedor, y un proxy inverso que ya
+sirva la página por HTTPS (el dominio y el certificado son del proxy, no de la app). El
+repositorio clonado y los pesos en `servidor/pesos_modelo_cpu.pt`, con su SHA-256 comprobado
+([`models/README.md`](../models/README.md)).
+
+1. **Construir la imagen**, desde la raíz del repositorio (es su contexto). BuildKit hace falta:
+   el `app/Dockerfile.dockerignore` solo lo lee él, y sin él viaja el repositorio entero al
+   demonio (sección 9).
+
+   ```
+   DOCKER_BUILDKIT=1 docker build -t copiloto-app -f app/Dockerfile .
+   ```
+
+2. **Una red de Docker solo para la app**, para que el proxy sea lo único que la alcance:
+
+   ```
+   docker network create <red>
+   ```
+
+3. **Lanzar el contenedor**, sin `-p`: no se publica ningún puerto del servidor, y la app solo se
+   ve por esa red. El límite de memoria, como siempre (sección 9); `--restart` para que vuelva
+   tras un reinicio del servidor.
+
+   ```
+   docker run -d --name copiloto-app --restart unless-stopped --memory=2g --memory-swap=2g --network <red> copiloto-app
+   ```
+
+4. **Conectar el contenedor del proxy a esa red**, con lo que el proxy ve la app como
+   `copiloto-app`, en el puerto **8501**:
+
+   ```
+   docker network connect <red> <contenedor-del-proxy>
+   ```
+
+   Si el contenedor del proxy se vuelve a crear, hay que volver a conectarlo.
+
+5. **El proxy.** Una `location` que pase a `http://copiloto-app:8501` con cuatro cosas, sin las
+   cuales la página falla de maneras poco evidentes:
+
+   - **Las cabeceras de WebSocket** (`Upgrade` y `Connection`): Streamlit habla con el
+     navegador por un WebSocket, y sin ellas la página carga y se queda esperando.
+   - **`Host` reenviado**, para que la app vea el sitio por el que entra el navegador.
+   - **`client_max_body_size 6m`**: la subida admite hasta 5 MB, y con el 1 MB por defecto de
+     nginx la subida de un DICOM da un 413.
+   - **Un tiempo de lectura largo**: el WebSocket está callado entre una acción y otra, y con los
+     60 s por defecto el proxy lo corta.
+
+   ```
+   location / {
+       proxy_pass http://copiloto-app:8501;
+       proxy_http_version 1.1;
+       proxy_set_header Host $host;
+       proxy_set_header Upgrade $http_upgrade;
+       proxy_set_header Connection "upgrade";
+       proxy_read_timeout 3600s;
+       client_max_body_size 6m;
+   }
+   ```
+
+   nginx resuelve el nombre `copiloto-app` al cargar la configuración: la red tiene que estar
+   conectada antes (paso 4), y si se vuelve a crear el contenedor de la app, se recarga el proxy.
+
+6. **Comprobar.** El chequeo de salud de Streamlit es `/_stcore/health`: responde `ok`, también
+   a través del proxy (`curl -fsS https://<dirección>/_stcore/health`), y sirve de chequeo para
+   cualquier monitor. Después, en el navegador: «Prueba con ejemplo» con los cuatro ejemplos,
+   **una subida de un DICOM** (si da 413, es `client_max_body_size`) y la pestaña «Acerca de»,
+   que tiene que decir que las métricas son de estos mismos pesos.
+
+**Actualizar.** `git pull`, la misma construcción (paso 1), `docker rm -f copiloto-app`, la
+misma orden de `docker run` (paso 3) y una recarga del proxy. **Retirar.** `docker rm -f
+copiloto-app`, `docker network disconnect <red> <contenedor-del-proxy>` y `docker network rm
+<red>`, y quitar la `location` del proxy.
+
+**Lo que hay que saber.** La página no pide contraseña: quien tenga el enlace la usa, y por eso
+lleva su aviso de demostración académica y no se debe subir en ella ninguna radiografía de un
+paciente real. La app no guarda la imagen ni la manda a ningún sitio (sección 9). El resto del
+servidor, el de los bots (sección 8), no tiene nada que ver con esto: la demostración no lo
+llama.
+
+## 13. Publicar la app
+
+> **Es la alternativa, y requiere un plan de pago.** La demostración de la entrega no corre en
+> Hugging Face sino en un servidor del equipo ([sección 12](#12-desplegar-la-app-en-un-servidor-propio)),
+> porque Hugging Face pide un plan PRO para crear un Space Docker (ver «Antes de empezar»). Esta
+> sección se conserva por si se dispone de una cuenta que lo permita; la carpeta que arma está
+> probada en local.
+
+La demostración (`app/`) se puede publicar como un **Space de Hugging Face** de tipo Docker; el
+bot se queda donde está. Lo que se sube al Space no es el repositorio sino una carpeta armada para ello
 con [`despliegue/huggingface/preparar_space.py`](../despliegue/huggingface/preparar_space.py):
 el README del Space (con su cabecera YAML), el
 [`Dockerfile`](../despliegue/huggingface/Dockerfile) del Space, `app/` (solo lo que la página lee,
@@ -739,7 +837,8 @@ los servidores de Hugging Face).
   «requires a paid plan» (PRO para una cuenta personal; en su página de precios, 9 USD al mes),
   aunque la máquina por defecto, CPU Basic (2 vCPU y 16 GB), no tenga coste por hora. Se
   comprueba en la pantalla de «Create new Space» antes de seguir. Si la cuenta no puede crearlo,
-  la misma carpeta se construye y se ejecuta con Docker en cualquier máquina (el paso 4).
+  la misma carpeta se construye y se ejecuta con Docker en cualquier máquina (el paso 4), o se
+  despliega la imagen de `app/` en un servidor propio (sección 12).
 - **Los pesos** tienen que estar en `servidor/pesos_modelo_cpu.pt` o en otra ruta que se da con
   `--pesos` (por ejemplo, la descarga del release v1.0). Si su SHA-256 no es el de
   `metricas.json`, el guion se detiene y no deja nada escrito: las métricas de «Acerca de» serían
@@ -832,8 +931,8 @@ demostración. La documentación de Hugging Face no da el plazo exacto de la ina
    hf repos settings <usuario>/<space> --repo-type space --public
    ```
 
-3. Poner la dirección del Space en la sección «Interfaz de usuario» del README, en «Dónde está
-   desplegada».
+3. Si esta es la vía elegida, poner la dirección del Space en la sección «Interfaz de usuario»
+   del README, en «Dónde está desplegada».
 
 **Por qué el Dockerfile del Space apaga XSRF y CORS.** Hugging Face muestra el Space en un
 iframe de otro sitio, y con la configuración por defecto de Streamlit **subir un DICOM falla con

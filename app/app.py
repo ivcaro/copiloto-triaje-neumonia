@@ -1245,10 +1245,10 @@ def pantalla_acerca_de(motores: Motores, metricas: dict, config: Configuracion):
         "- [RSNA Pneumonia Detection Challenge]"
         "(https://www.kaggle.com/competitions/rsna-pneumonia-detection-challenge), en "
         "Kaggle.\n"
-        "- Shih G, et al. «Augmenting the National Institutes of Health Chest "
-        "Radiograph Dataset with Expert Annotations of Possible Pneumonia». "
-        "*Radiology: Artificial Intelligence* 2019;1(1):e180041. "
-        "[doi:10.1148/ryai.2019180041](https://doi.org/10.1148/ryai.2019180041)")
+        "- G. Shih *et al.*, «Augmenting the National Institutes of Health chest "
+        "radiograph dataset with expert annotations of possible pneumonia», "
+        "*Radiol. Artif. Intell.*, vol. 1, n.º 1, art. e180041, ene. 2019, doi: "
+        "[10.1148/ryai.2019180041](https://doi.org/10.1148/ryai.2019180041).")
 
     st.markdown("### Las métricas")
     st.markdown(

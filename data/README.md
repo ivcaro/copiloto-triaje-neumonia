@@ -26,7 +26,7 @@ prepararlos con los guiones del repositorio.
 
 | | Enlace |
 | :--- | :--- |
-| Página del desafío en la RSNA (descargas y condiciones) | https://www.rsna.org/rsnai/ai-image-challenge/rsna-pneumonia-detection-challenge-2018 |
+| Página del desafío en la RSNA (descargas y condiciones) | https://www.rsna.org/education/ai-resources-and-training/ai-image-challenge/RSNA-Pneumonia-Detection-Challenge-2018 |
 | Condiciones de uso y atribución de la RSNA (PDF) | https://www.rsna.org/-/media/files/rsna/education/ai-resources-and-training/ai-image-challenge/pneumonia-detection-challenge-terms-of-use-and-attribution.pdf |
 | Reglas de la competición en Kaggle | https://www.kaggle.com/competitions/rsna-pneumonia-detection-challenge/rules |
 | Datos en Kaggle (hay que iniciar sesión y aceptar las reglas) | https://www.kaggle.com/competitions/rsna-pneumonia-detection-challenge/data |
@@ -46,12 +46,15 @@ Lo que dicen, en resumen (lectura del equipo, no asesoría legal):
   código, los agregados (`results/`, `app/assets/metricas.json`) y los guiones que los
   regeneran desde el conjunto que cada uno descargue.
 
-**Atribución.** Imágenes: NIH Clinical Center, que las proporciona; X. Wang, Y. Peng, L. Lu,
-Z. Lu, M. Bagheri y R. M. Summers, «ChestX-ray8: Hospital-Scale Chest X-Ray Database and
-Benchmarks on Weakly-Supervised Classification and Localization of Common Thorax Diseases»,
-CVPR 2017, DOI 10.1109/CVPR.2017.369. Anotaciones: G. Shih et al., «Augmenting the National
-Institutes of Health Chest Radiograph Dataset with Expert Annotations of Possible Pneumonia»,
-*Radiology: Artificial Intelligence*, 2019, DOI 10.1148/ryai.2019180041.
+**Atribución.** Imágenes: NIH Clinical Center, que las proporciona ([sitio de descarga del
+NIH](https://nihcc.app.box.com/v/ChestXray-NIHCC)); X. Wang, Y. Peng, L. Lu, Z. Lu, M. Bagheri
+y R. M. Summers, «ChestX-ray8: hospital-scale chest X-ray database and benchmarks on
+weakly-supervised classification and localization of common thorax diseases», en *Proc. IEEE
+Conf. Comput. Vis. Pattern Recognit. (CVPR)*, 2017, pp. 3462–3471, doi: 10.1109/CVPR.2017.369.
+Anotaciones ([sitio de la RSNA](https://www.rsna.org/education/ai-resources-and-training/ai-image-challenge/RSNA-Pneumonia-Detection-Challenge-2018)): G. Shih *et al.*,
+«Augmenting the National Institutes of Health chest radiograph dataset with expert annotations
+of possible pneumonia», *Radiol. Artif. Intell.*, vol. 1, n.º 1, art. e180041, ene. 2019, doi:
+10.1148/ryai.2019180041.
 
 ## Qué NO está en el repositorio, y por qué
 
