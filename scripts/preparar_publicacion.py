@@ -36,7 +36,8 @@ solo se lee:
    README los declara: es exactamente lo que el verificador admite en cada
    commit. Lo binario no se toca (el verificador no lo lee: se revisa a mano).
 5. Etiqueta el merge de cada subproyecto (v0.1-sp1 ... v0.5-sp5c2, ver
-   `etiquetas_de_los_subproyectos`) y la punta (v1.0), y deja una sola rama,
+   `etiquetas_de_los_subproyectos`), las versiones ya publicadas en su sitio
+   (v1.0 en el merge de SP5-C3) y la punta (v1.1), y deja una sola rama,
    `main`, sin remoto.
 6. Comprueba CADA commit de la historia con el verificador
    (`verificar_anonimato.py --commit <rev> --huellas <huellas.txt completo
@@ -110,12 +111,18 @@ MARCA_EN_RUTAS = "retirado"     # en los nombres de las rutas
 # Las etiquetas de version: el merge de cada subproyecto en la historia de
 # primer padre de main. Casi todos se llaman «Merge: SPn...» (o «merge:»); el
 # de SP2 no, y se busca por su mensaje. SP5-C3 en adelante, si su merge esta,
-# se etiqueta igual (v0.5-sp5c3). La punta lleva ademas v1.0.
+# se etiqueta igual (v0.5-sp5c3, v0.5-sp5d...). La punta lleva ademas la
+# version que se publica ahora.
 MERGE_DE_SUBPROYECTO = re.compile(r"(?i)^merge: (sp(\d+)(?:-([a-z]\d*))?)\b")
 MERGE_DE_SP2 = re.compile(r"(?i)^feat\(sp2\): servidor mcp\b")
 SUBPROYECTOS_OBLIGATORIOS = ("sp1", "sp2", "sp3", "sp4", "sp5-a", "sp5-b1",
                              "sp5-b2", "sp5-b3", "sp5-b4", "sp5-c1", "sp5-c2")
-ETIQUETA_DE_LA_PUNTA = "v1.0"
+ETIQUETA_DE_LA_PUNTA = "v1.1"
+# Las versiones YA PUBLICADAS no se mueven: v1.0 salio el 16-oct en el merge de
+# SP5-C3, con el release de los pesos, y sigue ahi aunque la punta avance. Si
+# se moviera, el push necesitaria forzar la etiqueta y quien la hubiera bajado
+# tendria otra cosa con el mismo nombre.
+VERSIONES_FIJAS = (("v1.0", "sp5-c3"),)
 
 # Un token de 8 a 64 cifras hexadecimales: una huella o su principio.
 HEXADECIMAL = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{8,64}(?![0-9A-Fa-f])")
@@ -884,8 +891,10 @@ def dejar_una_rama(destino, rama):
 
 def etiquetas_de_los_subproyectos(destino):
     """[(etiqueta, commit)]: el merge de cada subproyecto en la historia de
-    primer padre de main, y la punta (v1.0). SystemExit si falta uno de
-    SUBPROYECTOS_OBLIGATORIOS o si uno sale dos veces."""
+    primer padre de main, cada version ya publicada en el merge que la fija
+    (VERSIONES_FIJAS, si ese merge esta) y la punta (ETIQUETA_DE_LA_PUNTA).
+    SystemExit si falta uno de SUBPROYECTOS_OBLIGATORIOS o si uno sale dos
+    veces."""
     encontrados = {}
     salida = _texto_git(destino, "log", "--first-parent", "--merges",
                         "--format=%H%x00%s", RAMA_PUBLICADA)
@@ -915,6 +924,9 @@ def etiquetas_de_los_subproyectos(destino):
         numero = re.match(r"sp(\d+)", clave).group(1)
         etiquetas.append((f"v0.{numero}-{clave.replace('-', '')}",
                           encontrados[clave]))
+    for etiqueta, clave in VERSIONES_FIJAS:
+        if clave in encontrados:
+            etiquetas.append((etiqueta, encontrados[clave]))
     punta = _texto_git(destino, "rev-parse", RAMA_PUBLICADA).strip()
     etiquetas.append((ETIQUETA_DE_LA_PUNTA, punta))
     return etiquetas
