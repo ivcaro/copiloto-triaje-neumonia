@@ -495,6 +495,8 @@ Es una lectura del equipo, **no asesoría legal**: un uso real la necesitaría. 
 4. **El lenguaje importa.** Un informe correcto (4,7) y útil (4,0) que se entiende mal (2,5) es un riesgo de transparencia. SP5-D respondió añadiendo un pre-informe redactado por un LLM; no se validó con el médico, así que no sabemos si el lenguaje mejoró.
 5. **Lo que la sesión no es.** Un solo evaluador, 24 casos elegidos por estratos a propósito (positivas claras, negativas claras, banda contradictoria, asma «no sé»), una clínica generada y no real, y videollamada con un tiempo que incluye el tecleo de quien marcaba. No generaliza.
 
+Lo que el equipo cambiaría a la vista de estos resultados —no imprimir cifras extremas, un diseño que separe el arrastre del sistema del efecto de releer, medir el tiempo con el pre-informe y preguntar antes cómo llega la placa al médico— está en la [lectura crítica de H7](validacion-semisintetica/lectura-critica-h7.md).
+
 **La simulación semisintética** (3 811 placas reales de prueba y una clínica sorteada con la distribución publicada de la regla; `docs/validacion-semisintetica-sp5.md`) refuerza esto. Comprueba que el sistema **calcula lo que dice calcular** (con dependencia nula, el sistema reproduce caso a caso la posterior del generador). Pero con dependencia entre clínica e imagen, la independencia **exagera** (pendiente menor que 1 en las seis celdas destacadas) y la hipótesis declarada de antemano —que la verdad cae dentro de la horquilla en al menos el 90 % de los casos concordantes— **no se sostiene en ninguna de las seis**. Nada de eso mide exactitud clínica. La conclusión práctica es la que el sistema ya dice en cada informe: la cifra combinada es **orientativa**.
 
 ## 16. Reflexión y compromiso del equipo

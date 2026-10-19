@@ -78,6 +78,13 @@ No es un resultado: es la **plantilla** del acta de la sesión con el médico
 `sesion.json`; hasta que la sesión se haga, ni `sesion.json` ni `acta-h7.md`
 están en esta carpeta. El procedimiento está en `docs/sp5-sesion.md`.
 
+## `lectura-critica-h7.md`
+
+No es un resultado ni son palabras del médico: es el **análisis del equipo** sobre la sesión H7,
+escrito a mano. Toma las cifras del acta y de `sesion.json` y dice lo que el equipo cambiaría
+antes de otra validación (las cifras extremas, el arrastre del sistema, el tiempo y la entrada del
+DICOM). Lo que propone es trabajo futuro, no un cambio hecho.
+
 ## `crudas_prueba.csv` y `crudas_prueba.sha256`
 
 No son simulación: son las **puntuaciones crudas del modelo desplegado**
