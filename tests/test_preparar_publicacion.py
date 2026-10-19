@@ -221,7 +221,7 @@ SUBPROYECTOS = (
 )
 ETIQUETAS = {"v0.1-sp1", "v0.2-sp2", "v0.3-sp3", "v0.4-sp4", "v0.5-sp5a",
              "v0.5-sp5b1", "v0.5-sp5b2", "v0.5-sp5b3", "v0.5-sp5c1",
-             "v0.5-sp5b4", "v0.5-sp5c2", "v1.0"}
+             "v0.5-sp5b4", "v0.5-sp5c2", "v1.1"}
 DECLARACION = "<!-- nombres-publicos: Ada Tortuga -->\n"
 
 
@@ -427,17 +427,32 @@ def test_paso_5_etiquetas_una_rama_y_ningun_remoto(publicado):
     assert publicado.git("branch", "--format=%(refname:short)").split() == \
         ["main"]
     assert not publicado.git("remote").strip()
-    assert publicado.git("rev-parse", "v1.0") == publicado.git(
+    assert publicado.git("rev-parse", "v1.1") == publicado.git(
         "rev-parse", "main")
+    # La historia de juguete no tiene el merge de SP5-C3, así que v1.0, que es
+    # una versión fija en ese merge, no sale.
+    assert "v1.0" not in publicado.git("tag").split()
     asuntos = {f"v0.{re.match(r'sp(\d)', rama).group(1)}-{rama}": asunto
                for rama, asunto, _ficheros in SUBPROYECTOS}
     asuntos["v0.5-sp5c2"] = "Merge: SP5-C2, la estructura"
-    assert set(asuntos) == ETIQUETAS - {"v1.0"}
+    assert set(asuntos) == ETIQUETAS - {"v1.1"}
     for etiqueta, asunto in asuntos.items():
         padres = publicado.git("log", "-1", "--format=%P", etiqueta).split()
         assert len(padres) == 2, etiqueta
         assert publicado.git("log", "-1", "--format=%s",
                              etiqueta).strip() == asunto, etiqueta
+
+
+@con_filter_repo
+def test_paso_5_una_version_ya_publicada_se_queda_en_su_merge(publicado, monkeypatch):
+    """v1.0 se publicó en el merge de SP5-C3: cuando la punta avanza, v1.0 no se
+    mueve con ella (moverla obligaría a forzar la etiqueta en el push). En la
+    historia de juguete se fija en el merge de SP5-B4, que sí está."""
+    monkeypatch.setattr(pp, "VERSIONES_FIJAS", (("v1.0", "sp5-b4"),))
+    etiquetas = dict(pp.etiquetas_de_los_subproyectos(publicado.destino))
+    assert etiquetas["v1.0"] == publicado.git("rev-parse", "v0.5-sp5b4").strip()
+    assert etiquetas["v1.1"] == publicado.git("rev-parse", "main").strip()
+    assert etiquetas["v1.0"] != etiquetas["v1.1"]
 
 
 @con_filter_repo

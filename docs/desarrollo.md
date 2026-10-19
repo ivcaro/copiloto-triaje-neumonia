@@ -596,8 +596,10 @@ mantiene la lista de anonimato en claro: nadie más la abre.
    cuyo README los declara (en los de antes, esos ficheros llevan `[retirado]`): es lo que el
    verificador admite en cada commit. Lo binario no se toca.
 5. Etiqueta el merge de cada subproyecto (`v0.1-sp1`, `v0.2-sp2`, `v0.3-sp3`, `v0.4-sp4`,
-   `v0.5-sp5a` … `v0.5-sp5c2`, y los que vengan con «Merge: SP5-…») y la punta (`v1.0`), y deja
-   una sola rama, `main`, sin remoto.
+   `v0.5-sp5a` … `v0.5-sp5c2`, y los que vengan con «Merge: SP5-…»), deja las versiones ya
+   publicadas donde estaban (`v1.0`, en el merge de SP5-C3) y etiqueta la punta (`v1.1`), y deja
+   una sola rama, `main`, sin remoto. Una versión publicada no se mueve: moverla obligaría a
+   forzar la etiqueta en el `push`.
 6. Pasa `scripts/verificar_anonimato.py --commit` por **cada** commit, con el `huellas.txt`
    completo del repositorio de desarrollo, y comprueba además la copia de trabajo, los nombres
    de la rama y de las etiquetas, que ningún commit lleve las tablas ni otro `huellas.txt`, la
@@ -705,8 +707,13 @@ git remote add origin https://github.com/<usuario>/<repositorio>.git
 git push -u origin main --tags
 ```
 
-En GitHub se comprueba: privado, una rama (`main`), las etiquetas `v0.1-sp1` … `v1.0` y los
-commits con la identidad dada. El remoto del repositorio de desarrollo no cambia.
+En GitHub se comprueba: privado, una rama (`main`), las etiquetas `v0.1-sp1` … `v1.0` y `v1.1`
+y los commits con la identidad dada. El remoto del repositorio de desarrollo no cambia.
+
+**Volver a publicar** cuando `main` avanza: se repite el guion en una carpeta nueva y se comprueba
+que los commits que ya estaban publicados salen idénticos (la reescritura es determinista con la
+misma lista y la misma identidad); entonces el `push` es un avance rápido, sin forzar nada. Si no
+salieran idénticos, se para y se decide antes de forzar.
 
 ### El release v1.0, con los pesos
 
