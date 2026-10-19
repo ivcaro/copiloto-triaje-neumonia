@@ -2525,10 +2525,10 @@ const revisarCon = async (fuenteNodo, respuesta, fuente) =>
                { "Preparar pre-informe": { fuente, cuerpo: "{}" } });
 const revisar = async (respuesta, fuente) =>
   await revisarCon(codigo("Revisar pre-informe"), respuesta, fuente);
-// La forma de una respuesta de chat de OpenAI.
-const deOpenAI = (content) => ({
+// La forma de una respuesta de chat de OpenAI. `stop` es la que termino bien.
+const deOpenAI = (content, finish_reason = "stop") => ({
   id: "chatcmpl-prueba", object: "chat.completion", model: "gpt-4o-mini",
-  choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+  choices: [{ index: 0, message: { role: "assistant", content }, finish_reason }],
 });
 
 // --- 1. Desenlace: la fuente, solo en la rama con resultado ----------------
@@ -2723,23 +2723,99 @@ for (const frase of [
   ok(`se rechaza: «${frase.replace(NL, "\\n")}»`,
      (await textoRevisado(BIEN_NEG + " " + frase)) === null);
 }
-// `descart` detras de «no », «no la » o «no lo » SI pasa: es lo que dice el
-// aviso del negativo, y decirlo es correcto. Fuera de esas tres formas, no.
+
+// F2 (enmienda del 19-oct): los huecos que encontro la revision final. Las
+// frases son las suyas, sondeadas contra este mismo informe negativo: todas
+// pasaban. La neumonia afirmada con otras palabras, las recomendaciones y la
+// disposicion en el espanol de Ecuador.
+for (const frase of [
+  "Los hallazgos son compatibles con neumonía.", "El cuadro sugiere una neumonía.",
+  "Probable neumonía.", "El paciente tiene una neumonía.", "El paciente cursa con neumonía.",
+  "Paciente diagnosticado de neumonía.", "Patrón sugestivo de consolidación neumónica.",
+  "Se recomienda realizar TAC de tórax.", "Conviene solicitar hemograma y PCR.",
+  "Iniciar terapia antimicrobiana empírica.", "Requiere oxígeno suplementario.",
+  "Requiere internación.", "Remitir a neumología.", "Interconsulta con neumología.",
+  "Manejo ambulatorio y alta a domicilio.", "Requiere valoración hospitalaria.",
+]) {
+  ok(`F2, se rechaza: «${frase}»`, (await textoRevisado(BIEN_NEG + " " + frase)) === null);
+}
+// La del positivo, con una cifra que SI esta en su informe: lo que la tumba es
+// llamar neumonia a lo que el informe llama opacidad.
+ok("F2, se rechaza: «Probabilidad de neumonía del 84 %.» (el informe dice opacidad)",
+   (await textoRevisado(BIEN_POS + " Probabilidad de neumonía del 84 %.", FUENTE_POS)) === null);
+// Y los controles: lo correcto que se parece a lo de arriba sigue pasando.
+for (const [etiqueta, bien] of [
+  ["«mide opacidad y no neumonía»", BIEN_NEG + " El modelo mide opacidad y no neumonía."],
+  ["«no excluye neumonía»", BIEN_NEG + " Un resultado negativo no excluye neumonía."],
+  ["«sin asma»", BIEN_NEG + " El paciente refiere no tener asma, sin asma conocida."],
+  ["«Se trata de un paciente…»",
+   "Se trata de un paciente con fiebre, tos con flema de 3 a 7 días y dolor torácico al respirar. " + BIEN_NEG],
+  ["«médico tratante»", BIEN_NEG + " La decisión es del médico tratante."],
+]) {
+  ok(`F2, sigue pasando: ${etiqueta}`, (await textoRevisado(bien)) !== null);
+}
+
+// `descart` SOLO negado (F4): detras de «no », «no la », «no lo », «no se », «no
+// puede », «no permite », «tampoco » o «sin ». El aviso del negativo dice «no la
+// descarta», y sus parafrasis son correctas; lo que lo afirma, no.
 ok("«no la descarta» pasa (es la frase de la redaccion correcta)",
    BIEN_NEG.includes("no la descarta") && (await textoRevisado(BIEN_NEG)) !== null);
-ok("«no lo descarta» pasa",
-   (await textoRevisado(BIEN_NEG.replace("no la descarta", "no lo descarta"))) !== null);
-ok("«No descarta», con mayuscula, pasa",
-   (await textoRevisado(BIEN_NEG + " No descarta una opacidad.")) !== null);
+for (const [etiqueta, bien] of [
+  ["«no lo descarta»", BIEN_NEG.replace("no la descarta", "no lo descarta")],
+  ["«No descarta», con mayuscula", BIEN_NEG + " No descarta una opacidad."],
+  ["«no se descarta»", BIEN_NEG.replace("no la descarta", "no se descarta")],
+  ["«no puede descartarse»", BIEN_NEG + " No puede descartarse una neumonía."],
+  ["«no permite descartar»", BIEN_NEG + " Un resultado negativo no permite descartar neumonía."],
+  ["«tampoco descarta»", BIEN_NEG + " El resultado tampoco descarta neumonía."],
+  ["«sin descartar»", BIEN_NEG + " Sin descartar neumonía."],
+]) {
+  ok(`F4, pasa: ${etiqueta}`, (await textoRevisado(bien)) !== null);
+}
 for (const [etiqueta, malo] of [
-  ["«la descarta», sin el no", BIEN_NEG.replace("no la descarta", "la descarta")],
-  ["«no se descarta»: la excepcion es literal", BIEN_NEG.replace("no la descarta", "no se descarta")],
-  ["«sino descarta»: el no tiene que ser una palabra", BIEN_NEG + " Nada sino descarta."],
+  ["«la descarta», sin negacion", BIEN_NEG.replace("no la descarta", "la descarta")],
+  ["«se descarta», sin el no", BIEN_NEG.replace("no la descarta", "se descarta")],
+  ["«descartada»", BIEN_NEG + " Descartada."],
+  ["«neumonía descartada»", BIEN_NEG + " Neumonía descartada."],
+  ["«sino descarta»: la negacion tiene que ser una palabra", BIEN_NEG + " Nada sino descarta."],
   ["un «no la descarta» no salva otro «descarta» del mismo texto",
    BIEN_NEG + " Se descarta la neumonía."],
 ]) {
-  ok(`se rechaza: ${etiqueta}`, (await textoRevisado(malo)) === null);
+  ok(`F4, se rechaza: ${etiqueta}`, (await textoRevisado(malo)) === null);
 }
+
+// EL SENTIDO DE LA IMAGEN (F3). El informe dice «reduce a ...×» o «multiplica
+// por ...», y el verbo contrario es una inversion aunque la cifra sea la suya.
+ok("el informe negativo dice «reduce a» y el positivo «multiplica por» (las anclas existen)",
+   FUENTE_NEG.includes("EVIDENCIA DE LA IMAGEN — reduce a") &&
+   FUENTE_POS.includes("EVIDENCIA DE LA IMAGEN — multiplica por"));
+for (const [etiqueta, malo, fuente] of [
+  ["negativa: «multiplica por 0,02»",
+   BIEN_NEG.replace("reduce a 0,02× las probabilidades", "multiplica por 0,02 las probabilidades"), FUENTE_NEG],
+  ["negativa: «aumenta»", BIEN_NEG + " La imagen aumenta las probabilidades.", FUENTE_NEG],
+  ["positiva: «reduce a 30,3×»",
+   BIEN_POS.replace("multiplica por 30,3 las probabilidades", "reduce a 30,3× las probabilidades"), FUENTE_POS],
+  ["positiva: «disminuye»", BIEN_POS + " La imagen disminuye las probabilidades.", FUENTE_POS],
+]) {
+  ok(`F3, se rechaza: ${etiqueta}`, (await textoRevisado(malo, fuente)) === null);
+}
+// Las redacciones correctas siguen pasando, y la de la banda (etiqueta
+// positiva, imagen que resta), que es la que mas facil se invierte, tambien.
+const FUENTE_BANDA = (await conResultado(R_BANDA)).preinforme_fuente;
+const BIEN_BANDA =
+  "El cribado marca la placa como opacidad probable (puntuación 0,5649 frente al " +
+  "umbral 0,4258), pero la imagen reduce a 0,87× las probabilidades a favor de una " +
+  "opacidad compatible (probabilidad calibrada 0,20), y el informe advierte de que el " +
+  "cribado está orientado a detectar y la imagen en sí no apoya el diagnóstico. El " +
+  "paciente refiere fiebre, tos con flema de 3 a 7 días y dolor torácico, y presenta " +
+  "38,2 °C, 104 lpm y crepitantes. La decisión es de la clínica.";
+for (const [etiqueta, bien, fuente] of [["negativa", BIEN_NEG, FUENTE_NEG],
+                                        ["positiva", BIEN_POS, FUENTE_POS],
+                                        ["banda", BIEN_BANDA, FUENTE_BANDA]]) {
+  ok(`F3, ${etiqueta}: la redaccion correcta sigue pasando`,
+     (await textoRevisado(bien, fuente)) !== null);
+}
+ok("F3, banda: «multiplica» sobre una imagen que resta se rechaza",
+   (await textoRevisado(BIEN_BANDA.replace("reduce a 0,87×", "multiplica por 0,87"), FUENTE_BANDA)) === null);
 
 // La longitud: de 80 a 1 200 caracteres, contados tras recortar y por puntos de
 // codigo. El relleno no lleva cifras ni ninguna forma prohibida.
@@ -2774,29 +2850,51 @@ for (const [etiqueta, respuesta] of [
   ["una respuesta vacia", {}],
   ["choices vacio", { choices: [] }],
   ["choices que no es una lista", { choices: BIEN_NEG }],
-  ["una eleccion sin mensaje", { choices: [{ index: 0, finish_reason: "length" }] }],
-  ["un mensaje sin contenido", { choices: [{ message: { role: "assistant" } }] }],
+  ["una eleccion sin mensaje", { choices: [{ index: 0, finish_reason: "stop" }] }],
+  ["un mensaje sin contenido", { choices: [{ message: { role: "assistant" }, finish_reason: "stop" }] }],
   ["contenido nulo (una negativa a contestar)", deOpenAI(null)],
   ["contenido que es un numero", deOpenAI(42)],
   ["contenido que es una lista de partes", deOpenAI([{ type: "text", text: BIEN_NEG }])],
+  // F1: la respuesta tiene que haber TERMINADO. Con el mismo texto correcto que
+  // pasa con `stop`: lo que la tumba es el `finish_reason` y nada mas.
+  ["F1, cortada por max_tokens (length), con el texto correcto", deOpenAI(BIEN_NEG, "length")],
+  ["F1, cortada por el filtro (content_filter), con el texto correcto", deOpenAI(BIEN_NEG, "content_filter")],
+  ["F1, sin finish_reason, con el texto correcto",
+   { choices: [{ index: 0, message: { role: "assistant", content: BIEN_NEG } }] }],
+  ["F1, la sonda de la revision: cortada en «un resultado negativo no»",
+   deOpenAI("La imagen reduce a 0,02× las probabilidades a favor de una opacidad " +
+            "compatible y el informe advierte de que un resultado negativo no", "length")],
 ]) {
   const r = await revisar(respuesta, FUENTE_NEG);
   ok(`${etiqueta}: se rechaza`, Array.isArray(r) && r.length === 0, JSON.stringify(r));
 }
+ok("F1: y el mismo texto con `stop` pasa",
+   (await revisar(deOpenAI(BIEN_NEG, "stop"), FUENTE_NEG)).length === 1);
 
-// Las dos defensas que mas importan, QUITANDOLAS (como en L9): sin la regla de
-// las cifras, la de la inyeccion pasaria; sin la excepcion leida al reves,
-// «se descarta» pasaria.
-const SIN_CIFRAS = "if (cifras.some((c) => !delInforme.has(valor(c)))) { return []; }";
-ok("sin la regla de las cifras, un «99 %» que el informe no dice pasaria",
-   (await revisarCon(mutar("Revisar pre-informe", SIN_CIFRAS, ""),
-     deOpenAI(BIEN_NEG + " La probabilidad es del 99 %."), FUENTE_NEG)).length === 1,
-   "la mutacion tiene que dejarlo pasar");
-const SIN_DESCARTE = "if (!/(?:^|[^a-z0-9])no (?:la |lo )?$/.test(plano.slice(0, m.index))) { return []; }";
-ok("sin la regla del descarte, «se descarta» pasaria",
-   (await revisarCon(mutar("Revisar pre-informe", SIN_DESCARTE, ""),
-     deOpenAI(BIEN_NEG + " Se descarta la neumonía."), FUENTE_NEG)).length === 1,
-   "la mutacion tiene que dejarlo pasar");
+// Las defensas que mas importan, QUITANDOLAS (como en L9): sin cada una, lo que
+// ella para pasaria. Si alguien borra la linea del nodo, `mutar` revienta.
+const QUITAR = [
+  ["la regla de las cifras", "un «99 %» que el informe no dice",
+   "if (cifras.some((c) => !delInforme.has(valor(c)))) { return []; }",
+   deOpenAI(BIEN_NEG + " La probabilidad es del 99 %."), FUENTE_NEG],
+  ["la regla del descarte", "«se descarta»",
+   "if (!/(?:^|[^a-z0-9])(?:no (?:la |lo |se |puede |permite )?|tampoco |sin )$/.test(plano.slice(0, m.index))) { return []; }",
+   deOpenAI(BIEN_NEG + " Se descarta la neumonía."), FUENTE_NEG],
+  ["la de finish_reason (F1)", "una respuesta cortada",
+   "if (!eleccion || eleccion.finish_reason !== 'stop') { return []; }",
+   deOpenAI(BIEN_NEG, "length"), FUENTE_NEG],
+  ["la de la neumonia afirmada (F2)", "«compatibles con neumonía»",
+   "if (NEUMONIA_AFIRMADA.test(plano)) { return []; }",
+   deOpenAI(BIEN_NEG + " Los hallazgos son compatibles con neumonía."), FUENTE_NEG],
+  ["la del sentido de la imagen (F3)", "«multiplica por 0,02» en una negativa",
+   "if (/EVIDENCIA DE LA IMAGEN — reduce a/.test(fuente) && /multiplica|aumenta/.test(plano)) { return []; }",
+   deOpenAI(BIEN_NEG.replace("reduce a 0,02×", "multiplica por 0,02")), FUENTE_NEG],
+];
+for (const [defensa, que, linea, respuesta, fuente] of QUITAR) {
+  ok(`sin ${defensa}, ${que} pasaria`,
+     (await revisarCon(mutar("Revisar pre-informe", linea, ""), respuesta, fuente)).length === 1,
+     "la mutacion tiene que dejarlo pasar");
+}
 
 // Y lo que se manda es SOLO lo que este nodo devuelve: el envio no anade nada.
 ok("`Enviar pre-informe` manda solo `texto`, que es lo que `Revisar` devuelve",

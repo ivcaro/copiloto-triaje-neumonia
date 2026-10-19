@@ -333,6 +333,15 @@ def test_el_consentimiento_nombra_a_openai():
         "nombre, su cuenta ni lo que usted escriba."), lineas[i + 1]
     assert texto.count("OpenAI") == 1
     assert len(texto) <= 4096
+    # Y las dos copias de la documentacion dicen lo mismo (revision final, M6):
+    # las consideraciones eticas citan la vineta literal, y el paso «Lea el
+    # consentimiento» del manual nombra a OpenAI.
+    docs = pathlib.Path(__file__).resolve().parents[1] / "docs"
+    eticas = (docs / "consideraciones_eticas.md").read_text(encoding="utf-8")
+    assert lineas[i + 1] in eticas, "la vineta no esta literal en las eticas"
+    manual = (docs / "manual_usuario.md").read_text(encoding="utf-8")
+    (paso,) = [l for l in manual.splitlines() if "**Lea el consentimiento.**" in l]
+    assert "OpenAI" in paso, paso
 
 
 def test_cada_pregunta_declara_la_clave_del_spec():

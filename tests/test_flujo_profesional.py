@@ -1078,6 +1078,9 @@ def test_la_llamada_a_openai_es_la_del_spec():
     n = _nodo(_flujo(), "Pedir pre-informe")
     p = n["parameters"]
     assert n["type"] == "n8n-nodes-base.httpRequest"
+    # La version del nodo con la que se probo el camino de `jsonBody` (cadena JSON
+    # -> objeto), el mismo de `Llamar al copiloto`.
+    assert n["typeVersion"] == 4.2, n["typeVersion"]
     assert p["method"] == "POST"
     assert p["url"] == "https://api.openai.com/v1/chat/completions"
     # La clave la pone n8n desde la credencial: ni una cabecera escrita a mano.
@@ -1087,8 +1090,12 @@ def test_la_llamada_a_openai_es_la_del_spec():
     assert n["credentials"] == {"openAiApi": {"id": "CRED_OPENAI",
                                               "name": "openai-copiloto"}}
     assert p["sendBody"] is True and p["specifyBody"] == "json"
+    assert p["contentType"] == "json"
     assert p["jsonBody"] == "={{ $json.cuerpo }}"
-    assert 0 < p["options"]["timeout"] <= 15000, p["options"]
+    # Ni mas de los 15 s del spec ni tan poco que corte una respuesta normal: con
+    # 500 ms se silenciarian todos los pre-informes sin poner nada en rojo
+    # (revision final, M6).
+    assert 5000 <= p["options"]["timeout"] <= 15000, p["options"]
     assert n["onError"] == "continueRegularOutput"
     assert n.get("retryOnFail") is not True, "sin reintentos (D5)"
     assert "maxTries" not in n
