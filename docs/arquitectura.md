@@ -35,13 +35,14 @@ Y las [referencias](#referencias).
 
 ## 1. Resumen
 
-El sistema ayuda a un profesional de triaje a priorizar a un adulto con sospecha de neumonía. Combina dos fuentes de evidencia que por separado son modestas: la regla clínica de Heckerling [1] (cinco hallazgos de anamnesis y exploración) y una red convolucional que puntúa la opacidad pulmonar de una radiografía de tórax. La combinación es **aritmética auditable** (razones de verosimilitud multiplicadas sobre una probabilidad de partida) y se entrega como **horquilla**, no como un número con falsa precisión.
+El sistema ayuda a un profesional de triaje a priorizar a un adulto con sospecha de neumonía. Combina dos fuentes de evidencia que por separado son modestas: la regla clínica de Heckerling [1] (cinco hallazgos de anamnesis y exploración) y una red convolucional que puntúa la opacidad pulmonar de una radiografía de tórax. La combinación es **aritmética auditable** (razones de verosimilitud multiplicadas sobre una probabilidad de partida) y se entrega como **horquilla**, no como un número con falsa precisión. Un modelo de lenguaje no interviene en ese cálculo: solo redacta, detrás del informe, un segundo mensaje (§4.5).
 
 | Pieza | Qué es | Dónde vive |
 | :--- | :--- | :--- |
 | Bot del paciente | Telegram + n8n: consentimiento, 7 preguntas con botones y un código seudónimo | `n8n/copiloto-paciente.json` |
-| Bot del profesional | Telegram + n8n: código, 4 signos de exploración, radiografía DICOM e informe | `n8n/copiloto-profesional.json` |
+| Bot del profesional | Telegram + n8n: código, 4 signos de exploración, radiografía DICOM, informe y, detrás, el pre-informe | `n8n/copiloto-profesional.json` |
 | Mantenimiento | n8n: limpieza diaria de datos caducados y vigilancia con avisos | `n8n/copiloto-mantenimiento.json` |
+| Pre-informe | Un LLM (OpenAI `gpt-4o-mini`) redacta un párrafo a partir del informe; un código lo revisa y, si no pasa, no se manda (SP5-D) | Cuatro nodos de `n8n/copiloto-profesional.json` (§4.5) |
 | Servidor de inferencia | Contenedor `copiloto-mcp`: una herramienta MCP y un `POST /inferir` REST sobre el mismo núcleo | `servidor/`, `src/copiloto_triaje/servicio/` |
 | Base de datos | Contenedor `copiloto-bd`: PostgreSQL 16 propia | `bd/esquema.sql`, `servidor/docker-compose.yml` |
 | Aplicación de demostración | Streamlit, con el mismo motor, en su propio proceso | `app/` |
@@ -60,11 +61,11 @@ El diseño no salió de una plantilla: cada principio responde a un fallo que se
 | **Razón de verosimilitud, no probabilidad cruda** | La salida de la red se calibra y se entrega como razón de verosimilitud acotada | La red se entrenó con una pérdida ponderada: su salida cruda «0,74» no es un 74 % de probabilidad (SP2 §6.1) |
 | **Acotar en vez de inventar** | La dependencia entre clínica e imagen se acota con dos supuestos límite calculables, sin un factor de corrección inventado | «Este proyecto no inventa constantes» (SP4 §7) |
 | **Lo que falta no se rellena** | `asma: no sé` genera dos puntuaciones y un rango; una edad ausente rechaza la placa | Convertir `no_se` en un booleano sería fabricar el dato (SP4 §6; SP2 §7) |
-| **Sin modelo de lenguaje** | Ninguna pieza llama a un LLM; el cuestionario es de botones | Un extractor probabilístico en la entrada de un cálculo clínico produce un previo equivocado que nadie ve (SP3 §4.5; SP4 §12) |
+| **Ningún modelo de lenguaje en la entrada ni en el cálculo** | Ninguna pieza que lee lo que escribe el paciente o que calcula llama a un LLM; el cuestionario es de botones. Un LLM solo **redacta**, a la salida, un segundo mensaje a partir del informe ya enviado (SP5-D) | Un extractor probabilístico en la entrada de un cálculo clínico produce un previo equivocado que nadie ve (SP3 §4.5; SP4 §12). A la salida, lo que escribe se puede comprobar contra el informe que ya llegó (SP5-D) |
 | **Fallar de forma segura** | Códigos de rechazo, razón de verosimilitud acotada, vigilancia diaria, vuelta atrás documentada | Los fallos peligrosos son los silenciosos (SP3 §9, §16) |
-| **Nada del texto del paciente en el informe** | El informe se compone solo de números validados, enumeraciones cerradas y literales del sistema; el texto libre viaja en un mensaje aparte | Un filtro de caracteres va siempre un punto de código por detrás; la pregunta es «¿de dónde puede venir cada byte?» (SP3 §8) |
+| **Nada del texto del paciente en el informe** | El informe se compone solo de números validados, enumeraciones cerradas y literales del sistema; el texto libre viaja en un mensaje aparte. El LLM solo lee ese informe, así que tampoco lo recibe | Un filtro de caracteres va siempre un punto de código por detrás; la pregunta es «¿de dónde puede venir cada byte?» (SP3 §8; SP5-D D3) |
 
-> **Un cambio respecto a los documentos iniciales.** La ficha de decisión técnica de la Semana 2 y la presentación de la Semana 1 incluían un LLM que normalizaba el lenguaje del paciente y redactaba el pre-informe. Se descartó en SP3 (decisión D4, §4.5) y en SP4 (§12): el código y este documento describen el sistema **sin** LLM, y es la versión vigente.
+> **Dos cambios respecto a los documentos iniciales.** La ficha de decisión técnica de la Semana 2 y la presentación de la Semana 1 incluían un LLM que normalizaba el lenguaje del paciente y redactaba el pre-informe. Se descartó en SP3 (decisión D4, §4.5) y en SP4 (§12): como **extractor** a la entrada y como pieza entre los números y el clínico. **En SP5-D (18-oct-2026) volvió, y solo como redactor a la salida**: motivado por la nota más baja de la sesión con el médico (el lenguaje del mensaje, 2,5 sobre 5), un LLM redacta un segundo mensaje *detrás* del informe determinista, que llega primero, entero y sin cambios. Las razones del descarte siguen vigentes y siguen escritas: ningún LLM lee lo que escribe el paciente ni interviene en el cálculo, y lo que el LLM escribe se comprueba por código y va rotulado (§4.5). El pre-informe **no se ha validado con el médico**.
 
 ## 3. Diagrama de flujo del sistema completo
 
@@ -76,6 +77,7 @@ flowchart LR
         PAC["Paciente<br/>cliente de Telegram"]
         PRO["Profesional<br/>cliente de Telegram"]
         TG["Servidores de Telegram<br/>(tercero)"]
+        OAI["API de OpenAI<br/>(tercero)"]
     end
 
     subgraph VPS["Servidor privado: contenedores Docker en una red interna, sin puertos publicados"]
@@ -97,13 +99,15 @@ flowchart LR
     TG -- "webhook con secret_token" --> N8N
     N8N -- "sesiones, cuestionarios, consultas" --> BD
     N8N -- "tools/call clasificar_radiografia" --> PUERTAS
-    N8N -- "informe de texto plano" --> TG
+    N8N -- "informe de texto plano y, detrás, el pre-informe" --> TG
+    N8N -- "informe determinista, sin datos del paciente" --> OAI
+    OAI -- "párrafo redactado" --> N8N
     TG --> PRO
     TG -- "código seudónimo" --> PAC
     USR["Evaluador<br/>navegador local"] --> ST
 ```
 
-El tramo **cliente de Telegram → servidores de Telegram → n8n** sale de nuestra infraestructura; el tramo **n8n → `copiloto-mcp`** no. Esa frontera se explica y se declara en el [§6.3](#63-el-tramo-que-no-es-nuestro-telegram).
+El tramo **cliente de Telegram → servidores de Telegram → n8n** sale de nuestra infraestructura, y también el tramo **n8n → API de OpenAI**; el tramo **n8n → `copiloto-mcp`** no. Esas fronteras se explican y se declaran en el [§6.3](#63-el-tramo-que-no-es-nuestro-telegram) y el [§6.4](#64-el-otro-tramo-que-no-es-nuestro-openai).
 
 ### 3.2. Una consulta, paso a paso
 
@@ -116,6 +120,7 @@ sequenceDiagram
     participant N8N as n8n
     participant BD as copiloto-bd
     participant MCP as copiloto-mcp
+    participant OAI as API de OpenAI (tercero)
 
     PAC->>TG: cualquier mensaje
     TG->>N8N: update (secret_token)
@@ -136,6 +141,11 @@ sequenceDiagram
     N8N->>BD: fila en consultas (síntomas copiados, signos, resultado)
     N8N->>TG: informe en bloques rotulados
     TG->>PRO: CRIBADO, EVIDENCIA, REFERIDO, EXPLORADO, COMBINADO
+    N8N->>OAI: el informe determinista, sin el texto del paciente
+    OAI-->>N8N: un párrafo redactado
+    N8N->>N8N: revisión por código (cifras, palabras vedadas, longitud)
+    N8N->>TG: PRE-INFORME, solo si pasa la revisión
+    TG->>PRO: pre-informe (puede no llegar)
 ```
 
 ### 3.3. Dentro del servidor de inferencia
@@ -170,7 +180,7 @@ Los tres son workflows nuevos, con el prefijo «🩺 Copiloto Triaje:», que viv
 | Workflow | Disparador | Qué hace |
 | :--- | :--- | :--- |
 | **Paciente** | Webhook de Telegram | Pide consentimiento; si acepta, hace 7 preguntas con botones; genera el código seudónimo en la base de datos; aplica un límite de 5 cuestionarios por cuenta y día |
-| **Profesional** | Webhook de Telegram | Comprueba el `secret_token` y la lista blanca en **cada** mensaje; pide código, 4 signos y la placa; llama a `copiloto-mcp`; redacta el informe en un solo nodo (`Desenlace`); registra la consulta |
+| **Profesional** | Webhook de Telegram | Comprueba el `secret_token` y la lista blanca en **cada** mensaje; pide código, 4 signos y la placa; llama a `copiloto-mcp`; redacta el informe en un solo nodo (`Desenlace`); registra la consulta; manda aparte el texto del paciente, si lo hay, y, detrás, el pre-informe que redacta un LLM (§4.5) |
 | **Mantenimiento** | Programado, diario | Borra lo caducado y avisa por Telegram al equipo si algo falla (§7.4) |
 
 Los flujos usan un nodo **Webhook** con autenticación por cabecera y **no** el nodo *Telegram Trigger*: este no expone el `secret_token` ni las cabeceras de la petición, y su URL (un UUID) quedaría versionada dentro del JSON exportado. El coste es que el registro del webhook en Telegram se hace a mano una vez, y por eso hay una comprobación diaria de que sigue apuntando donde debe (SP3 §16).
@@ -219,6 +229,36 @@ El código seudónimo son 6 caracteres de un alfabeto de 31 (`ABCDEFGHJKMNPQRSTU
 
 Una página de Streamlit con tres pestañas («Probar el modelo», «Historial de la sesión» y «Acerca de») que carga **el mismo `Motor`** con los mismos pesos, la misma calibración y la misma combinación, y calcula en su propio proceso: no llama al servidor, a n8n ni a Telegram, y la placa no sale de ese proceso (SP5-C1, D2). Existe porque el bot no permite probar el sistema sin una cuenta de Telegram, sin estar en la lista blanca y sin pasar por el cuestionario. Añade lo que el bot no tiene: ejemplos precargados, el mapa de calor y la sección «Acerca de». Se describe para el usuario en el [manual](manual_usuario.md).
 
+### 4.5. El pre-informe, un LLM a la salida
+
+Detrás del informe, el bot del profesional manda, cuando hay resultado, un segundo texto: el **pre-informe**, un párrafo de 3 a 5 frases en registro clínico que redacta un LLM. Existe por la nota más baja de la sesión con el médico (H7): el **lenguaje** del mensaje, 2,5 sobre 5, frente a 4,7 de corrección y 4,0 de utilidad. No cambia ni una cifra del informe: el cálculo sigue siendo Python, y el LLM solo pone en prosa lo que el informe ya dijo. Es la decisión SP5-D del 18-oct-2026 (`docs/superpowers/specs/2026-10-18-sp5d-preinforme-llm-design.md`); el orden en el chat es informe, texto del paciente (si lo hay) y pre-informe, y el informe **no espera** al LLM: el objetivo de latencia (< 8 s) se sigue midiendo sobre el informe (D4).
+
+| Pieza (en `n8n/copiloto-profesional.json`) | Qué hace |
+| :--- | :--- |
+| `Desenlace` | Además del informe, deja en `preinforme_fuente` ese mismo texto sin el aviso del comentario del paciente. En las ramas sin resultado (rechazos y errores) queda vacío y no hay pre-informe |
+| `Preparar pre-informe` (código) | Arma la petición: modelo `gpt-4o-mini`, temperatura 0,2, hasta 350 *tokens* de salida, un mensaje de sistema y el informe como mensaje de usuario. Sin fuente, la rama se para |
+| `Pedir pre-informe` (HTTP Request) | `POST /v1/chat/completions` de la API de OpenAI con la credencial `openai-copiloto`: la clave del equipo, nunca la de un cliente (D1). Tiempo máximo de 15 s, sin reintentos y con `onError: continueRegularOutput`: si OpenAI falla, la ejecución no se pone en rojo ni se para |
+| `Revisar pre-informe` (código) | La revisión de abajo. Si pasa, antepone la cabecera; si no, no devuelve nada |
+| `Enviar pre-informe` (Telegram) | Manda el texto en texto plano (sin `parse_mode`) y sin atribución |
+
+**Qué lee el LLM, y qué no (D2, D3).** Solo el informe determinista: los síntomas de los botones, los signos explorados, las cifras del modelo y sus avisos. Ese texto no contiene **ni un carácter escrito por el paciente** (su texto libre va en otra burbuja, SP3 §4.4), así que el paciente no puede inyectarle instrucciones; tampoco lleva el nombre, la cuenta de Telegram, el código del caso, la edad ni la imagen. La aplicación de demostración y el bot del paciente no llaman al LLM, y el pre-informe no se guarda: la base de datos no cambia.
+
+**El mensaje de sistema** le pide un párrafo en español clínico que use solo lo que dice el informe (cada número, exactamente igual: sin calcular, redondear ni añadir ninguno), que llame «opacidad compatible» a lo que mide la imagen, que no dé un diagnóstico ni recomiende pruebas, tratamientos, ingreso ni derivación, que diga lo que advierten los avisos (⚠️) y que termine recordando que la decisión es del médico. El texto literal está en el spec.
+
+**La revisión (D5).** Sobre la respuesta, recortada de blancos, se rechaza —y entonces no se manda nada, sin reintento ni texto de reserva— si no hay texto; si mide menos de 80 o más de 1 200 caracteres; si **alguna cifra no está en el informe** (se comparan por valor, con la coma decimal convertida en punto); o si contiene, sin distinguir mayúsculas ni tildes, una forma de tratamiento, diagnóstico o derivación (`antibiot`, `tratamient`, `prescrib`, `dosis`, `hospitaliz`, `ingres…`, `deriv…`, `confirm`, `padece`, `tiene neumonia`, `diagnostico de`, y `descart` salvo en «no descarta», «no la descarta» o «no lo descarta», que es lo que dice el aviso del negativo; la lista completa, en el spec). Es estricta a propósito: rechazar de más cuesta un pre-informe que no llega, y dejar pasar de menos, una frase que nadie revisó. Las reglas se prueban con ejemplos en los dos sentidos (§18).
+
+**La cabecera (D6).** Va en la posición 0 del mensaje, seguida de una línea en blanco, para que quien vea la burbuja sola (un reenvío, una notificación) sepa qué es y qué manda:
+
+```
+PRE-INFORME — redactado por IA (OpenAI) a partir del informe de arriba. Si algo no coincide, vale el informe de arriba. No es un diagnóstico.
+```
+
+**Si falla.** OpenAI caído, lento (más de 15 s), sin crédito, con una respuesta vacía o con una que no pasa la revisión: el profesional recibe el informe, sin pre-informe, y n8n no marca ningún error. Es por diseño: el informe ya llegó, y un silencio es mejor que un texto dudoso. Cómo se lo cuenta el [manual](manual_usuario.md#b4-el-informe-del-bot-bloque-a-bloque) al profesional.
+
+**Lo que la revisión no puede.** Comprueba cifras, palabras y longitud; no sabe si una frase hecha solo con cifras y palabras permitidas es clínicamente cierta. Por eso existe la cabecera, y por eso el pre-informe **no está validado con el médico** (D8): H7 midió el informe sin pre-informe y el acta no se toca.
+
+**Coste.** Con `gpt-4o-mini` son unos cientos de *tokens* por consulta: del orden de una décima de centavo de dólar por consulta. Es una **estimación** del equipo, no una medición, y el precio lo fija el proveedor.
+
 ## 5. Pipeline de datos: del cuestionario del paciente al informe del profesional
 
 Los números siguen la secuencia de §3.2.
@@ -226,7 +266,7 @@ Los números siguen la secuencia de §3.2.
 | # | Paso | Qué viaja o se calcula | Dónde |
 | :-: | :--- | :--- | :--- |
 | 1 | El paciente escribe al bot | Cualquier mensaje abre el consentimiento (antes solo lo abría `/start`, y quien repetía consulta se quedaba sin respuesta) | Bot del paciente |
-| 2 | Consentimiento | Qué se guarda, cuánto, quién lo ve, que pasa por Telegram, que lo analiza una IA y que no es un diagnóstico. «No acepto» no guarda **ninguna** fila | Bot del paciente |
+| 2 | Consentimiento | Qué se guarda, cuánto, quién lo ve, que pasa por Telegram, que lo analiza una IA, que otra IA de OpenAI resume el informe para su médico (sin su nombre, su cuenta ni lo que escriba) y que no es un diagnóstico. «No acepto» no guarda **ninguna** fila | Bot del paciente |
 | 3 | Siete preguntas con botones | Fiebre, tos, días de evolución, falta de aire, dolor torácico, asma y un texto libre opcional (500 caracteres como máximo) | Bot del paciente → `sesiones_paciente` |
 | 4 | Código seudónimo | Se crea la fila de `cuestionarios`, se borra la sesión y se entrega el código, que caduca a los 7 días | `copiloto-bd` |
 | 5 | El profesional presenta el código | `chat_id` en la lista blanca, comprobado en cada mensaje; código vigente | Bot del profesional |
@@ -237,6 +277,7 @@ Los números siguen la secuencia de §3.2.
 | 10 | Redacción | Un solo nodo, `Desenlace`, compone el informe y la tabla de errores; ningún byte lo escribe el paciente | n8n |
 | 11 | Registro | Una fila en `consultas`, escrita **una sola vez** con el desenlace final, también cuando hubo rechazo | `copiloto-bd` |
 | 12 | Entrega | Informe en texto plano (sin `parse_mode`) y, aparte, el texto libre del paciente si lo hay | Telegram → profesional |
+| 13 | Pre-informe | Si hay resultado, el informe determinista (sin el aviso del comentario del paciente) va a la API de OpenAI; la respuesta se revisa por código y, solo si pasa, se manda con su cabecera. No se guarda | n8n → OpenAI → Telegram → profesional |
 
 El informe tiene cinco bloques rotulados en mayúsculas, y la etiqueta del cribado y la razón de verosimilitud **nunca** van en el mismo renglón, porque miden cosas distintas y pueden contradecirse (SP3 §8):
 
@@ -292,6 +333,7 @@ La copia en `consultas` existe porque sin ella no hay nada que validar: `cuestio
 
 - **La radiografía.** Ni el DICOM, ni su base64, ni un PNG: el servidor responde y olvida. El `resultado` que se guarda es el JSON del §14, sin imagen.
 - **Las ejecuciones de n8n.** Los dos bots llevan «guardar ejecuciones» en `none`, para éxitos y errores, porque sus ejecuciones arrastrarían el DICOM y las respuestas a la base de datos de n8n. El workflow de mantenimiento guarda sus errores —es el único rastro cuando falla el aviso— y por él no pasa ningún dato de paciente: sus consultas devuelven recuentos y códigos (SP3 §5.4, §16).
+- **El pre-informe.** Se escribe, se manda y se olvida: ni `consultas` ni ninguna otra tabla lo guardan (SP5-D, D2).
 - **El nombre ni el teléfono del paciente**, que el bot no recibe: solo ve el `chat_id` de su cuenta, y lo borra de las tablas con el cuestionario (SP3 §4.2).
 - **En la aplicación de demostración:** nada en disco. El historial vive en la sesión del navegador y su CSV no lleva imagen, nombre de fichero ni cabecera DICOM (`app/app.py`).
 
@@ -305,6 +347,16 @@ Los dos tramos de una consulta no son iguales, y confundirlos fue un error propi
 | n8n → `copiloto-mcp` | **No** | Nadie: el contenedor no publica puertos y solo se alcanza por nombre de servicio dentro de la red de Docker |
 
 El cifrado en tránsito protege del cable, no de Telegram, y los chats con un bot **no** tienen cifrado de extremo a extremo [4]. Se aceptó porque Telegram era la vía de entrega elegida —el profesional ya lo tiene instalado— y un canal propio habría exigido instalarlo y mantenerlo dentro de la red del centro; hoy lo acota que solo circulan placas de RSNA y síntomas inventados. **La afirmación «la radiografía no sale de la red del centro» no se escribe en ningún documento**, porque no es cierta del recorrido completo. Las vías para eliminar el riesgo (carga web propia sobre `POST /inferir`, una aplicación instalada, o un servidor de ficheros dentro de la red del centro) están en SP3 §5.5.
+
+### 6.4. El otro tramo que no es nuestro: OpenAI
+
+Desde SP5-D hay un segundo tercero, y se declara igual que el primero:
+
+| Tramo | ¿Sale de nuestra infraestructura? | Qué ve el tercero |
+| :--- | :--- | :--- |
+| n8n → **API de OpenAI** (solo cuando hay resultado) | **Sí** | El informe determinista —los síntomas de los botones, los signos explorados, las cifras del modelo y sus avisos—, el mensaje de sistema y la respuesta. **No** ve la imagen, el nombre, la cuenta de Telegram, el código del caso, la edad ni el texto libre del paciente |
+
+Lo que viaja es el contenido clínico del informe sin los identificadores directos, pero sigue siendo información de salud: por eso el consentimiento del paciente nombra a OpenAI y las consideraciones éticas ([§6.4](consideraciones_eticas.md#64-lo-que-tampoco-es-nuestro-openai)) dicen qué se envía, qué política declara el proveedor y qué riesgos quedan.
 
 ## 7. Despliegue en Docker sobre un servidor privado
 
@@ -341,7 +393,7 @@ La imagen se construye con `torch` de las ruedas para **CPU**: un `pip install t
 | Contenedor de desarrollo, 2 CPU | MCP | 43 ms | 52 ms | 4 000 ms |
 | Servidor de producción (24-sep-2026) | MCP | 143 ms | 225 ms | 4 000 ms |
 
-*Fuente: `docs/sp2-despliegue.md` §7.* El servidor real es 3,3 veces más lento porque comparte CPU con contenedores ajenos; la cifra que describe el sistema desplegado es la de 143 ms. La imagen del modelo pesa unos 800 MB frente a los 2,5 GB de la de CUDA (SP2 §8). La aplicación de demostración usa menos de 500 MiB tras los cuatro ejemplos y el mapa de calor, y su imagen pesa 2,5 GB en disco ([`desarrollo.md`](desarrollo.md), «La aplicación de demostración, en detalle»). La latencia de extremo a extremo que ve el profesional (desde que sube la placa hasta que lee el informe) **no se mide aquí**: lo medido es el tramo del modelo.
+*Fuente: `docs/sp2-despliegue.md` §7.* El servidor real es 3,3 veces más lento porque comparte CPU con contenedores ajenos; la cifra que describe el sistema desplegado es la de 143 ms. La imagen del modelo pesa unos 800 MB frente a los 2,5 GB de la de CUDA (SP2 §8). La aplicación de demostración usa menos de 500 MiB tras los cuatro ejemplos y el mapa de calor, y su imagen pesa 2,5 GB en disco ([`desarrollo.md`](desarrollo.md), «La aplicación de demostración, en detalle»). La latencia de extremo a extremo que ve el profesional (desde que sube la placa hasta que lee el informe) **no se mide aquí**: lo medido es el tramo del modelo. El pre-informe no cuenta para ese objetivo: sale después del informe (§4.5).
 
 ### 7.4. Vigilancia y vuelta atrás
 
@@ -651,6 +703,7 @@ Hay dos límites de tamaño distintos: el del **producto** (5 MB, comprobado sob
 | Base de datos | PostgreSQL (con `pgcrypto`) | 16 (`postgres:16-alpine`, por *digest*) | `servidor/docker-compose.yml` |
 | Contenedores | Docker / Compose | 29.6.1 / v5.2.0 (medido el 23-sep) | `docs/sp2-despliegue.md` |
 | Canal | API de bots de Telegram | — | SP3 |
+| Redacción del pre-informe | API de OpenAI (`gpt-4o-mini`, temperatura 0,2, hasta 350 *tokens*), desde un nodo HTTP Request de n8n con la credencial `openai-copiloto` | — | SP5-D, `n8n/copiloto-profesional.json` |
 | Pruebas | pytest; Node.js (pruebas de los nodos de n8n) | `pytest>=8` | `pyproject.toml`, `README.md` |
 
 Las simulaciones de validación se calcularon con Python 3.13.14, NumPy 2.5.2, SciPy 1.18.1, pandas 3.0.5 y scikit-learn 1.9.1 (`docs/validacion-semisintetica-sp5.md`). `python-multipart` se fija con versión exacta en la imagen porque es quien interpreta el `multipart/form-data` de `/inferir`.
@@ -662,6 +715,11 @@ Las simulaciones de validación se calcularon con Python 3.13.14, NumPy 2.5.2, S
 | Dos bots de Telegram separados | Un bot con dos roles | La separación de roles no depende de que un `if` esté bien escrito | SP3 D1 |
 | PostgreSQL propia | Las bases de datos del servidor | Las demás son de un tercero y no se tocan; los datos clínicos se guardan en infraestructura controlada | SP3 D2 |
 | Cuestionario por botones | Texto libre con extracción por LLM | Un extractor probabilístico en la entrada de un cálculo clínico produce un previo equivocado que nadie ve | SP3 D4, §4.5 |
+| Un LLM redacta un segundo mensaje, detrás del informe | Que el LLM sustituya al informe o vaya entre los números y el clínico | El informe determinista llega primero, entero y sin esperarlo; el pre-informe es una burbuja más, rotulada, y no cambia ninguna cifra | SP5-D D4, D6 |
+| El LLM solo recibe el informe determinista | Darle también el texto del paciente, o el caso entero | El informe no contiene un solo carácter del paciente: no hay por dónde inyectarle instrucciones, y no sale ningún identificador | SP5-D D3 |
+| Si el pre-informe no pasa la revisión, no se manda nada | Reintentar, o mandar un texto de reserva | El informe ya llegó, y un silencio es mejor que un texto dudoso | SP5-D D5 |
+| Credencial de OpenAI propia del proyecto (`openai-copiloto`) | Usar una credencial ya existente en la instancia | No se toca ninguna credencial ni flujo ajeno (SP3 §14); el gasto y los datos son del proyecto | SP5-D D1 |
+| El pre-informe no se guarda | Guardarlo en `consultas` | Fuera de alcance de SP5-D: la base de datos no cambia | SP5-D D2 |
 | DICOM como documento de Telegram | Foto | Telegram recomprime las fotos: se pierde el DICOM y la edad de su cabecera | SP3 D5 |
 | Lista blanca de `chat_id` en cada mensaje | Comprobar solo en `/start` | Un bot es descubrible; comprobar solo al inicio deja entrar a quien lo salte | SP3 D6 |
 | Webhook + autenticación por cabecera | *Telegram Trigger* | No expone el `secret_token` y versiona su URL | SP3 §16 |
@@ -687,9 +745,12 @@ El análisis ético completo está en [`consideraciones_eticas.md`](consideracio
 | Un DICOM malicioso agota memoria | Rechazo por cabecera antes de descodificar; límite de 5 MB; límite de 2 GB del contenedor como red de seguridad | `datos/dicom.py`; SP2 |
 | Una cifra «certera» que los datos no sostienen | RV acotada, posterior nunca 0 % ni 100 %, rechazo de lo que no se puede evaluar | §11, §12 |
 | Secretos en el repositorio | Los workflows llevan marcadores; las credenciales y contraseñas viven en n8n o en un `.env` fuera del control de versiones | SP3 §12; `docs/sp3-operacion.md` §7 |
-| Fuga hacia terceros desde la aplicación | Sin telemetría; no llama a nadie al arrancar; puerto solo en `127.0.0.1` | `README.md` |
+| Fuga hacia terceros desde la aplicación | Sin telemetría; no llama a nadie al arrancar; puerto solo en `127.0.0.1`; la aplicación no llama al LLM | `README.md`; SP5-D D2 |
+| El paciente inyecta instrucciones al LLM con su texto libre | El LLM solo lee el informe determinista, que no contiene ni un carácter escrito por el paciente; su texto va en otra burbuja | SP5-D D3 |
+| El LLM escribe algo que el informe no dice (una cifra, un tratamiento, un diagnóstico) | Revisión por código antes de enviar; si no pasa, silencio. La cabecera lo rotula y manda el informe de arriba | SP5-D D5, D6 |
+| Datos de salud hacia OpenAI | Solo el informe determinista, sin identificadores directos ni imagen; credencial propia del proyecto; el consentimiento lo nombra | SP5-D D1, D3, D7; [§6.4](#64-el-otro-tramo-que-no-es-nuestro-openai) |
 
-Lo que la arquitectura **no** resuelve: el DICOM puede traer en su cabecera nombre, número de historia y fecha si se exporta de un sistema hospitalario real, y el bot no la mira: la reenvía tal cual. Eso depende del origen de la placa, no de nosotros (SP3 §5.5).
+Lo que la arquitectura **no** resuelve: el DICOM puede traer en su cabecera nombre, número de historia y fecha si se exporta de un sistema hospitalario real, y el bot no la mira: la reenvía tal cual. Eso depende del origen de la placa, no de nosotros (SP3 §5.5). Tampoco resuelve que una frase verosímil pero errónea, hecha solo con cifras y palabras permitidas, pase la revisión del pre-informe: eso lo acota la cabecera, no el código.
 
 ## 18. Cómo se verifica
 
@@ -701,6 +762,7 @@ Lo que la arquitectura **no** resuelve: el DICOM puede traer en su cabecera nomb
 | La combinación | La cadena reproduce la columna de VPP del artículo con la prevalencia de su cohorte (`tests/test_heckerling.py`); 0A, caso a caso (`tests/test_validacion_0a.py`) |
 | Las cotas de la RV | Una prueba falla si se reajusta el calibrador y no se actualiza la tabla |
 | Los nodos de n8n | `node tests/profesional.mjs`, `decidir.mjs`, `mantenimiento.mjs` ejecutan el `jsCode` real; las consultas SQL, contra una PostgreSQL desechable |
+| El pre-informe | `tests/profesional.mjs` ejecuta el `jsCode` real de `Desenlace`, `Preparar pre-informe` y `Revisar pre-informe`: la fuente solo existe con resultado y nunca lleva el texto del paciente, aunque traiga una instrucción; la revisión rechaza una cifra de más, un tratamiento, un «se descarta», un texto vacío, corto o largo, y deja pasar «no la descarta». `tests/test_flujo_profesional.py` vigila las conexiones y la configuración de los nodos de red (tiempo máximo, `onError`, credencial) |
 | Lo visual del bot | Guion manual, porque ninguna aserción lo cubre |
 | La aplicación | `streamlit.testing.v1.AppTest` y una prueba de la imagen Docker (`tests/test_app*.py`) |
 | Anonimato del repositorio | `scripts/verificar_anonimato.py` |
@@ -716,6 +778,9 @@ Lo que no se puede ejecutar siempre (el dataset, n8n, el contenedor, la imagen D
 | **Sesgo por vista y por edad** (§13.2; ficha del modelo) | Medido; umbral por vista disponible y apagado |
 | **La combinación solo se validó en simulación semisintética**; ningún conjunto público trae la auscultación junto a la placa | Abierto; vía futura con MIMIC |
 | **Telegram** ve la placa y las respuestas (§6.3) | Aceptado y declarado; canal propio como alternativa |
+| **OpenAI** recibe el informe determinista cuando hay resultado (§6.4) | Aceptado y declarado; el consentimiento lo nombra |
+| **El pre-informe no está validado con el médico**: H7 midió el informe sin pre-informe | Abierto; fuera de alcance de SP5-D (D8). La cabecera avisa |
+| **La revisión por código no detecta una frase verosímil pero falsa** que use solo cifras y palabras permitidas | Residual; lo acota la cabecera («vale el informe de arriba») |
 | **Trazabilidad:** cada fila de `consultas` guarda el modelo, el umbral y el AUC, pero no la huella de los pesos ni el *commit* | Pendiente |
 | **Prevalencia de partida sin dato local** (0,1466, de una cohorte de 1990) | Parámetro, cambiable sin tocar código |
 | **Latencia de extremo a extremo** no medida aquí | Solo se mide el tramo del modelo |

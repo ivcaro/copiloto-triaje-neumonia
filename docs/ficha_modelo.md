@@ -68,6 +68,7 @@ La especificidad bajó a propósito: el punto de operación prioriza el recall.
 | …para decidir sobre un paciente real, hoy | Prototipo sin validación local, sin registro sanitario y sin evaluación de impacto |
 | …como diagnóstico, o para descartar una neumonía | Mide **opacidad** en la placa, no neumonía; un negativo no la descarta (pierde una de cada ocho opacidades en prueba y una de cada tres en placas PA) |
 | …sin un profesional que decida | Todo el diseño supone una persona; sin ella, el sesgo de automatización no tiene contrapeso |
+| …tomando el pre-informe del bot por una segunda opinión o por parte del modelo | Lo redacta un LLM (OpenAI) a partir del informe, no añade información, no está validado con el médico y puede no llegar; si algo no coincide con el informe, vale el informe |
 | …en menores de 18 años o mayores de 100 | No se entrenó ni se validó con ellos. El servidor y la aplicación **lo rechazan** (`fuera_de_alcance`) |
 | …sin edad legible en la cabecera | No se asume adulto. Se rechaza (`edad_desconocida`) |
 | …con placas que no sean de 8 bits sin signo, en escala de grises normal, de un solo cuadro y de hasta 5 000 píxeles de lado | El modelo las vería mal (una neumonía en 16 bits baja de 0,91 a 0,48). Se rechazan (`dicom_invalido`) |
@@ -222,7 +223,7 @@ Un médico general colaborador, 24 viñetas semisintéticas, dos lecturas (`docs
 | **Kappa ponderado lineal** (primario, sin el sistema delante) | **0,25** (IC 95 % analítico 0,07–0,44; BCa 0,11–0,49): **no alcanza el mínimo de 0,4** de la Semana 1 |
 | Porcentaje del médico dentro de la horquilla del sistema | 0 de 24 |
 | Con el mensaje delante | kappa 0,81; cambió de banda en **12 de 20** casos |
-| Utilidad (1–5) | Corrección 4,7; utilidad 4,0; **lenguaje 2,5** |
+| Utilidad (1–5) | Corrección 4,7; utilidad 4,0; **lenguaje 2,5** (del informe: el pre-informe redactado por un LLM, de SP5-D, no se midió) |
 | Tiempo de triaje | Razón con/sin 2,00; corregida por releer, 1,11 (0,69–1,81) |
 
 Un solo evaluador, 24 casos elegidos por estratos y una clínica generada: **no generaliza** ni mide exactitud.
@@ -235,8 +236,8 @@ Resumen de la ficha; el análisis completo está en [`consideraciones_eticas.md`
 | :--- | :--- |
 | **Datos** | Placas desidentificadas de un conjunto público de Estados Unidos, con etiqueta de opacidad. No contienen raza, etnia ni nivel socioeconómico; no se puede auditar por esas dimensiones. Sin datos de pacientes reales del proyecto |
 | **Vidas humanas** | El modelo informa la prioridad de un paciente; un falso negativo puede retrasar un tratamiento. Por eso el recall es la métrica primaria, un negativo lleva un aviso explícito y el profesional decide siempre |
-| **Mitigaciones** | Umbral por vista (evaluado, apagado por defecto); razón de verosimilitud acotada; rechazo de lo que no se puede evaluar; horquilla en vez de un número; mapa de calor con su advertencia; informe sin texto del paciente; esta ficha |
-| **Riesgos y daños** | R1 sesgo por vista y edad; R2 datos de salud que pasan por Telegram; R3 sesgo de automatización (el médico cambió de banda en 12 de 20 casos con el mensaje delante); R4 fallo silencioso ante un cambio de dominio; R5 caja negra; R6 uso fuera de alcance |
+| **Mitigaciones** | Umbral por vista (evaluado, apagado por defecto); razón de verosimilitud acotada; rechazo de lo que no se puede evaluar; horquilla en vez de un número; mapa de calor con su advertencia; informe sin texto del paciente; pre-informe del LLM revisado por código y rotulado; esta ficha |
+| **Riesgos y daños** | R1 sesgo por vista y edad; R2 datos de salud que pasan por Telegram y, desde SP5-D, el informe por OpenAI; R3 sesgo de automatización (el médico cambió de banda en 12 de 20 casos con el mensaje delante); R4 fallo silencioso ante un cambio de dominio; R5 caja negra; R6 uso fuera de alcance |
 | **Casos de uso** | Apoyo a la decisión de un profesional; docencia. **No**: diagnóstico, cribado sin lectura humana, decisiones sobre seguros o empleo |
 
 ## 9. Salvedades y recomendaciones
@@ -253,6 +254,7 @@ Cada una de estas es una limitación **conocida** y medida o declarada, no una n
 8. **Una sola semilla por configuración**: las diferencias de 0,01 entre corridas no se atribuyen a la arquitectura.
 9. **Las cotas de la razón de verosimilitud y la banda contradictoria dependen del calibrador**: si se reentrena, cambian y hay que reescribir esta ficha.
 10. **Sin robustez adversaria medida**, sin evaluación por raza, etnia ni nivel socioeconómico, sin calibración por vista.
+11. **El pre-informe no es parte del modelo y no está validado.** En el sistema completo, el bot del profesional manda detrás del informe un texto que redacta un LLM (OpenAI `gpt-4o-mini`) a partir de él. No cambia ninguna cifra de esta ficha, se revisa por código antes de enviarse y va rotulado como redactado por IA, pero H7 midió el informe sin él y no se validó con el médico. La revisión comprueba cifras, palabras y longitud; no detecta una frase falsa hecha solo con cifras y palabras permitidas.
 
 **Recomendaciones.** Reentrenar al menos una vez al año o ante un cambio de equipo, midiendo de nuevo por subgrupo, reajustando el calibrador y reelegiendo el umbral. Antes de cualquier uso clínico: validación local con datos emparejados, evaluación de impacto de protección de datos y la evaluación del comité de bioética de la institución.
 

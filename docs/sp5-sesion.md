@@ -218,7 +218,7 @@ Telegram solo enseña horas y minutos. Hace falta:
   consultas: el código no es de un solo uso (spec de SP3 §5.2) y vale 7 días
   (§5.4), y cada uso queda en `consultas`. Un cuestionario nuevo cuenta
   contra el límite de 5 por chat y día (spec de SP3 §4.2);
-- cinco placas del conjunto de prueba, en DICOM, de las que dan pre-informe.
+- cinco placas del conjunto de prueba, en DICOM, de las que dan informe.
   Valen cinco de las que usó el arnés en consultas que no son un rechazo
   previsto: en `latencias.json`, las filas con `rechazo_previsto` en `false`
   llevan el `patientId`, y el fichero de cada una es
@@ -232,7 +232,8 @@ como código. Después van el código, los cuatro
 signos (temperatura, frecuencia cardiaca, crepitantes y murmullo) y la placa,
 enviada como **documento** (como foto, Telegram la recomprime a JPEG y deja
 de ser un DICOM). El cronómetro se pone en marcha al enviar la placa y se para cuando
-aparece el pre-informe: es el tiempo **total**, subida incluida, no el tramo
+aparece el informe (no el pre-informe que redacta un LLM desde SP5-D, que sale
+después y no cuenta): es el tiempo **total**, subida incluida, no el tramo
 que falta, y no se suma al p50. Son los cinco valores de `--manual`. Esas
 consultas quedan registradas con el chat de quien mide: son consultas de
 prueba del equipo, y el informe lo dice.
