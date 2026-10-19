@@ -735,8 +735,12 @@ la línea.
 
 Desde SP5-D (18-oct-2026), el bot del profesional manda, detrás del informe, un
 pre-informe que redacta un modelo de lenguaje de OpenAI (`gpt-4o-mini`). Para
-que funcione hace falta una credencial; sin ella, el bot sigue dando el informe
-y no manda el pre-informe. Se despliega así:
+que funcione hace falta una credencial. Con la credencial creada pero con la
+clave inválida o sin crédito, el bot sigue dando el informe y el pre-informe
+calla; pero la credencial tiene que **existir**, y su `id` real estar en
+`n8n/valores.local.json`, **antes** de convertir y publicar: con un `id` que no
+existe en la instancia, n8n puede hacer fallar la ejecución entera, y el bot
+del profesional dejaría de contestar. Se despliega así:
 
 1. **Crear la credencial en n8n**, de tipo **OpenAI**, con el nombre
    `openai-copiloto` y la **clave de API propia del equipo** (de la cuenta de
@@ -749,14 +753,17 @@ y no manda el pre-informe. Se despliega así:
 3. **Convertir con `scripts/marcadores_n8n.py`**, como se explica arriba, e
    importar el workflow del profesional desde la salida.
 4. **Probar** (§2): con un caso con resultado, el pre-informe llega detrás del
-   informe y empieza por «PRE-INFORME — redactado por IA (OpenAI)…».
+   informe y empieza por «PRE-INFORME — redactado por IA (OpenAI)…». Y en el
+   panel de uso de la cuenta de OpenAI, la petición tiene que constar: un cuerpo
+   mal formado también acabaría en silencio.
 
 **Si OpenAI falla, no pasa nada, a propósito.** La petición (nodo `Pedir
 pre-informe`) tiene un tiempo máximo de 15 s, no reintenta y está configurada
 con `onError: continueRegularOutput`. Con OpenAI caído, sin crédito o con la
 clave mal puesta, o si la respuesta no pasa la revisión (`Revisar pre-informe`),
 no se manda pre-informe: el informe ya llegó, el flujo no se detiene y no se
-marca ningún error. **Eso también significa que nada avisa**: el mantenimiento
+marca ningún error. (Un fallo de **Telegram** al mandar el pre-informe sí pone
+la ejecución en rojo, y es inocuo: es el último nodo y no se guarda nada.) **Eso también significa que nada avisa**: el mantenimiento
 diario (§5) no vigila a OpenAI, y un pre-informe que dejó de llegar se nota
 porque no llega. Conviene probar un caso con resultado cada vez que se toque la
 credencial o la clave.

@@ -106,6 +106,32 @@ Sobre `choices[0].message.content` de la respuesta, recortado de blancos. Se rec
 Rechazar de más cuesta un pre-informe que no llega; dejar pasar de menos, una frase que nadie
 revisó. Por eso las reglas son estrictas y se prueban con ejemplos en los dos sentidos.
 
+**Enmienda (19-oct, revisión final).** La revisión final de la rama encontró huecos en las
+reglas de arriba, y quedan así (las decisiones D1–D8 no cambian):
+
+- **F1 (regla 1).** También se rechaza si la respuesta no terminó: `choices[0].finish_reason`
+  distinto de `stop` (`length`, cortada por los 350 *tokens*, que puede acabar en «un
+  resultado negativo no»; `content_filter`; o ausente). Se mira antes de leer el contenido.
+- **F2 (regla 4).** La lista suma `recomiend`, `recomend`, `solicitar`, `terapia`,
+  `antimicrob`, `internaci`, `internar`, `remitir`, `remisi`, `interconsult`, `hospitalar` y
+  `oxigeno` (las recomendaciones y la disposición en el español de Ecuador, que es el uso
+  previsto), y `neumonic`, `ambulatori` y `domicilio`, para que también caigan dos frases de la
+  revisión que las anteriores no cubren («sugestivo de consolidación neumónica», «manejo
+  ambulatorio y alta a domicilio»). Y una segunda expresión, sobre el mismo texto normalizado,
+  para la neumonía afirmada:
+  `/(?:probable|posible|sugiere|sugestiv\w* de|compatibles? con|cursa con|presenta|tiene (?:una|la)|diagnosticad[oa] de|hallazgos de|cuadro de|probabilidad de) (?:una |la )?neumonia/`.
+  No se añaden nombres de fármacos: la lista sería interminable.
+- **F3 (regla nueva, 5).** El sentido de la imagen. Si la fuente dice «EVIDENCIA DE LA IMAGEN
+  — reduce a» y el texto `multiplica|aumenta`, o si dice «EVIDENCIA DE LA IMAGEN — multiplica
+  por» y el texto `reduce|disminuye`, se rechaza: la cifra es la del informe y el sentido, el
+  contrario. La inversión de la etiqueta del cribado («marca opacidad probable» en una
+  negativa) no tiene un arreglo limpio con palabras y queda como riesgo residual, declarado
+  junto a una cifra del informe usada en otro papel y una cifra escrita con letras.
+- **F4 (regla 4).** La excepción de `descart` se amplía: vale precedido de «no », «no la »,
+  «no lo », «no se », «no puede », «no permite », «tampoco » o «sin », con la negación como
+  palabra entera («sino descarta» no cuenta). «Se descarta», «la descarta» y «descartada»
+  siguen rechazándose. `diagnostico de` y `confirm` no cambian.
+
 ### En el bot del paciente (`n8n/copiloto-paciente.json`, nodo `Pedir consentimiento`)
 
 Una viñeta nueva, detrás de la de la inteligencia artificial:
@@ -126,11 +152,19 @@ necesita marcador (como `copiloto-bd`).
   `Revisar pre-informe`: la fuente solo en la rama con resultado; la fuente nunca contiene el
   texto libre del paciente, aunque traiga una instrucción; un redactado correcto pasa con la
   cabecera en la posición 0; una cifra de más, un tratamiento, «se descarta», un texto vacío,
-  corto o largo y una respuesta de error se rechazan; «no la descarta» pasa.
+  corto o largo y una respuesta de error se rechazan; «no la descarta» pasa. Con la enmienda
+  del 19-oct, además: una respuesta que no terminó por `stop`, una neumonía afirmada, una
+  recomendación, una disposición y una imagen con el sentido invertido se rechazan; las
+  paráfrasis negadas de «no la descarta» y los controles correctos («mide opacidad y no
+  neumonía», «no excluye neumonía», «médico tratante») pasan; y cada regla nueva tiene su
+  prueba de mutación.
 - `tests/test_flujo_profesional.py`: las conexiones, la configuración de los dos nodos nuevos
   de red (URL, tipo y marcador de credencial, tiempo máximo ≤ 15 s, `onError`) y que el texto
-  del envío sea solo la expresión.
-- `tests/test_flujo_paciente.py`: el consentimiento nombra a OpenAI y cabe en un mensaje.
+  del envío sea solo la expresión. Desde la enmienda: el tiempo máximo entre 5 y 15 s, la
+  `typeVersion` 4.2 y el cuerpo JSON.
+- `tests/test_flujo_paciente.py`: el consentimiento nombra a OpenAI y cabe en un mensaje; y
+  desde la enmienda, la viñeta está literal en `docs/consideraciones_eticas.md` y el paso «Lea
+  el consentimiento» del manual nombra a OpenAI.
 - `tests/test_marcadores_n8n.py` con el marcador nuevo; `scripts/verificar_anonimato.py` en 0.
 - Suite completa en Linux; prueba real en producción después de publicar (el equipo, por el bot,
   grabando la pantalla para el vídeo).

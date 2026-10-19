@@ -34,7 +34,7 @@ título: «Presentación del proyecto» (Semana 1, versión viva con su Registro
 **Qué se planificó.** Un copiloto de triaje para neumonía en adultos: dos bots de Telegram
 (paciente y profesional) orquestados con n8n que consultan un servidor de inferencia propio
 (una CNN servida por MCP en Docker), combinan la imagen con una regla clínica publicada
-mediante una fórmula bayesiana explícita y entregan al profesional un pre-informe. En la
+mediante una fórmula bayesiana explícita y entregan al profesional un pre-informe (hoy, el informe). En la
 versión de la Semana 1 el sistema llevaba además un LLM que normalizaba el español coloquial
 del paciente y redactaba el pre-informe, y un plazo de seis semanas (12 de septiembre al 24
 de octubre de 2026) en cuatro sprints y ocho hitos (H1 a H8).

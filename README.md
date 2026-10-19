@@ -225,9 +225,13 @@ clínica y la imagen dependen entre sí, así que la cifra combinada es **orient
   ([`models/README.md`](models/README.md)).
 - En algunas máquinas Windows, torch o scikit-learn no cargan (Smart App Control): ahí, Docker.
 - Solo para el pre-informe del bot del profesional (la aplicación y el resto del sistema no lo
-  necesitan): una clave de API de OpenAI **propia**, guardada en una credencial de n8n. Sin ella,
-  el bot sigue dando el informe y no manda el pre-informe
-  ([`docs/sp3-operacion.md`](docs/sp3-operacion.md), §7).
+  necesitan): una clave de API de OpenAI **propia**, guardada en una credencial de n8n. Con la
+  credencial creada pero con la clave inválida o sin crédito, el bot sigue dando el informe y
+  el pre-informe calla. La credencial tiene que existir, y su `id` real estar en
+  `n8n/valores.local.json`, **antes** de convertir y publicar el workflow: con un `id` que no
+  existe en la instancia, n8n puede hacer fallar la ejecución entera. Después de publicar, se
+  prueba un caso con resultado y se comprueba en el panel de uso de OpenAI que la petición
+  llegó ([`docs/sp3-operacion.md`](docs/sp3-operacion.md), §7).
 
 **Instalación, paso a paso.**
 
