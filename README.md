@@ -207,7 +207,9 @@ del mínimo de 0,4 comprometido en la Semana 1; el médico valoró el **lenguaje
 sesión no midió; con el mensaje del sistema delante cambió de banda
 en 12 de 20 casos, y el tiempo de triaje no se redujo (razón 2,00; 1,11 corregida por el efecto
 de releer, con un intervalo que incluye el 1). Acta:
-[`docs/validacion-semisintetica/acta-h7.md`](docs/validacion-semisintetica/acta-h7.md). La
+[`docs/validacion-semisintetica/acta-h7.md`](docs/validacion-semisintetica/acta-h7.md); lo que el
+equipo lee en ella y lo que cambiaría antes de otra validación, en
+[`docs/validacion-semisintetica/lectura-critica-h7.md`](docs/validacion-semisintetica/lectura-critica-h7.md). La
 simulación semisintética muestra que la combinación por independencia exagera cuando la
 clínica y la imagen dependen entre sí, así que la cifra combinada es **orientativa**:
 [`docs/validacion-semisintetica-sp5.md`](docs/validacion-semisintetica-sp5.md). Todo esto, en
