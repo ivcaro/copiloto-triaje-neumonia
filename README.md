@@ -12,8 +12,10 @@ neumonía: una red convolucional calibrada lee la radiografía de tórax, una re
 publicada (la de Heckerling) puntúa la exploración, y una combinación bayesiana explícita
 devuelve la probabilidad de una opacidad compatible con neumonía, con sus avisos. Funciona como
 dos bots de Telegram orquestados con n8n sobre un servidor de inferencia propio, y como una
-aplicación web de demostración (Streamlit) con el mismo motor. Es un prototipo académico, no un
-producto sanitario: **el profesional decide siempre**.
+aplicación web de demostración (Streamlit) con el mismo motor. Detrás de su informe, el bot del
+profesional manda un segundo mensaje, un **pre-informe** en prosa que redacta un modelo de
+lenguaje (OpenAI) a partir del informe y nada más, comprobado por código y rotulado como tal.
+Es un prototipo académico, no un producto sanitario: **el profesional decide siempre**.
 
 Proyecto Integrador de la Maestría en Inteligencia Artificial de la UEES, 2026.
 
@@ -39,7 +41,7 @@ radiografía de tórax que alguien tiene que leer a tiempo. En urgencias saturad
 radiólogo de turno, el médico general decide el triaje de la placa sin apoyo especializado, y
 eso retrasa la priorización de los casos sospechosos. Ninguna de las dos fuentes basta sola:
 las reglas clínicas discriminan de forma moderada y la placa depende de quién la lea y de
-cuándo. El copiloto junta las dos en un pre-informe para el profesional: qué dice la imagen,
+cuándo. El copiloto junta las dos en un informe para el profesional: qué dice la imagen,
 qué dice la clínica y qué dicen juntas.
 
 **Por qué importa.** La neumonía es una de las principales causas de muerte por infección y
@@ -134,6 +136,19 @@ la calibración (ECE y Brier). La exactitud no sirve aquí: decir siempre «sin 
 en cerca del 78 % de las placas con un recall de cero. La combinación con la clínica se validó
 con una simulación semisintética y con una sesión con un médico (kappa ponderado).
 
+**El pre-informe, un LLM a la salida** (SP5-D, 18-oct). Un modelo de lenguaje se descartó en SP3
+como *extractor* de lo que escribe el paciente: delante de un cálculo clínico, cuando se
+equivoca produce una probabilidad previa equivocada que nadie ve, y esas razones siguen
+vigentes. Volvió solo como *redactor*, a la salida, motivado por la nota más baja de la sesión
+con el médico (el lenguaje del mensaje, 2,5 sobre 5). Tras el informe determinista, que llega
+primero y no cambia, `gpt-4o-mini` de OpenAI escribe un párrafo clínico a partir de ese informe
+y de nada más (ni la placa, ni el nombre, ni la cuenta, ni el texto del paciente). Un código lo
+revisa antes de enviarlo —cada cifra tiene que estar en el informe, sin palabras de diagnóstico
+ni de tratamiento— y, si no pasa o OpenAI falla, no se envía nada. Lleva una cabecera que lo
+rotula como redactado por IA y manda el informe de arriba. **No se ha validado con el médico.**
+Detalle en [`docs/arquitectura.md`](docs/arquitectura.md#45-el-pre-informe-un-llm-a-la-salida)
+y en las [consideraciones éticas](docs/consideraciones_eticas.md#64-lo-que-tampoco-es-nuestro-openai).
+
 ## Resultados
 
 **El modelo en el conjunto de prueba** (3 811 placas de adultos, 844 con opacidad), con el
@@ -187,8 +202,9 @@ de esa subida del recall es elegir otro punto de la misma curva, no un modelo me
 **Validación con un médico y simulación** (lo que no salió como se esperaba, contado tal cual).
 En una sesión con un médico general colaborador sobre 24 casos semisintéticos (placa real de
 RSNA, clínica generada), el **kappa ponderado fue 0,25** (IC del 95 %: 0,07 a 0,44), por debajo
-del mínimo de 0,4 comprometido en la Semana 1; el médico valoró el **lenguaje del pre-informe con
-2,5 sobre 5** (corrección 4,7, utilidad 4,0); con el mensaje del sistema delante cambió de banda
+del mínimo de 0,4 comprometido en la Semana 1; el médico valoró el **lenguaje del informe con
+2,5 sobre 5** (corrección 4,7, utilidad 4,0), lo que motivó el pre-informe de SP5-D, que esa
+sesión no midió; con el mensaje del sistema delante cambió de banda
 en 12 de 20 casos, y el tiempo de triaje no se redujo (razón 2,00; 1,11 corregida por el efecto
 de releer, con un intervalo que incluye el 1). Acta:
 [`docs/validacion-semisintetica/acta-h7.md`](docs/validacion-semisintetica/acta-h7.md). La
@@ -208,6 +224,14 @@ clínica y la imagen dependen entre sí, así que la cifra combinada es **orient
 - Los pesos del modelo (16 MB), que no van en git: se descargan y se comprueban con su SHA-256
   ([`models/README.md`](models/README.md)).
 - En algunas máquinas Windows, torch o scikit-learn no cargan (Smart App Control): ahí, Docker.
+- Solo para el pre-informe del bot del profesional (la aplicación y el resto del sistema no lo
+  necesitan): una clave de API de OpenAI **propia**, guardada en una credencial de n8n. Con la
+  credencial creada pero con la clave inválida o sin crédito, el bot sigue dando el informe y
+  el pre-informe calla. La credencial tiene que existir, y su `id` real estar en
+  `n8n/valores.local.json`, **antes** de convertir y publicar el workflow: con un `id` que no
+  existe en la instancia, n8n puede hacer fallar la ejecución entera. Después de publicar, se
+  prueba un caso con resultado y se comprueba en el panel de uso de OpenAI que la petición
+  llegó ([`docs/sp3-operacion.md`](docs/sp3-operacion.md), §7).
 
 **Instalación, paso a paso.**
 
@@ -365,7 +389,7 @@ copiloto-triaje/
 | `app/` | La interfaz: `app.py`, `requirements.txt`, el `Dockerfile` y `assets/` (los ejemplos, sus licencias y las métricas que enseña) |
 | `tests/` | Las del curso (`test_data_processing.py`, `test_model.py`, `test_app.py`, `test_estructura_curso.py`) y las del sistema: partición sin fuga, motor, servidor, contrato MCP, SQL de los nodos, anonimato… |
 | `results/` | Las métricas en JSON, las figuras y los informes de la validación: [`results/README.md`](results/README.md) |
-| `servidor/`, `n8n/`, `bd/` | El sistema desplegado: el servidor de inferencia, los workflows de n8n (con marcadores en vez de direcciones y credenciales) y la base de datos |
+| `servidor/`, `n8n/`, `bd/` | El sistema desplegado: el servidor de inferencia, los workflows de n8n (con marcadores en vez de direcciones y credenciales; el del profesional llama además a la API de OpenAI para el pre-informe) y la base de datos |
 | `despliegue/` | La alternativa de un Space de Hugging Face (requiere un plan PRO) para la aplicación de demostración: `huggingface/README.md` (el del Space, con su cabecera YAML), su `Dockerfile` y `preparar_space.py`, el guion que arma la carpeta que se sube (la app, el paquete, el calibrador y los pesos, y nada más). Cómo se sube: [`docs/desarrollo.md`](docs/desarrollo.md#13-publicar-la-app) |
 | `scripts/`, `pruebas/` | Los guiones del proyecto y los arneses con que se validó |
 
@@ -383,9 +407,13 @@ En resumen:
   encenderla es una decisión de la institución.
 - **Privacidad, parcial.** No se guarda ninguna imagen y se usan seudónimos, pero la placa y las
   respuestas **pasan por Telegram**, un tercero fuera de nuestro control; el consentimiento lo
-  dice. Falta la evaluación de impacto que exigiría un uso real.
+  dice. A OpenAI solo viaja el informe determinista (cifras y enumeraciones cerradas; ni la
+  placa, ni el nombre, ni la cuenta, ni el texto del paciente), y el consentimiento también lo
+  nombra. Falta la evaluación de impacto que exigiría un uso real.
 - **Transparencia.** La parte clínica se explica con razones de verosimilitud; la imagen es una
   caja negra con un mapa de calor de apoyo, que señala dónde mira el modelo y no por qué acierta.
+  El pre-informe lo escribe un LLM: va rotulado, detrás del informe, comprobado por código y sin
+  validar con el médico; si algo no coincide, vale el informe.
 - **Responsabilidad.** Decide el profesional; la institución que lo adopte responde de su uso; el
   equipo, de lo técnico. El sistema no toma ninguna decisión.
 
@@ -396,8 +424,9 @@ y no en pacientes de ninguna consulta: no hay validación local, ni con otras pr
 equipos. Mide opacidad, no neumonía. Pierde una de cada ocho opacidades en prueba (una de cada
 tres en PA). El 9,9 % de las placas de prueba cae en una banda en que el cribado las marca y la
 imagen resta probabilidad. La combinación con la clínica solo se validó en simulación y con un
-médico, con un acuerdo bajo (kappa 0,25). No se evaluó la robustez frente a imágenes
-adversarias.
+médico, con un acuerdo bajo (kappa 0,25). El pre-informe del LLM no se validó con el médico, y
+la revisión por código no detecta una frase verosímil pero equivocada que use solo cifras y
+palabras permitidas. No se evaluó la robustez frente a imágenes adversarias.
 
 **Advertencias sobre el uso inadecuado.** No debe usarse para decidir sobre un paciente real, ni
 como único criterio, ni para descartar una neumonía (un negativo no la descarta), ni sin un

@@ -469,6 +469,25 @@ def _nodo(flujo, nombre):
     raise AssertionError(f"el workflow no tiene un nodo '{nombre}'")
 
 
+def _destinos(flujo, nombre):
+    """[[destinos de la salida 0], [de la 1], ...] de un nodo."""
+    salidas = flujo["connections"].get(nombre, {}).get("main", [])
+    return [[c["node"] for c in s] for s in salidas]
+
+
+def _alcanzables(flujo, conexiones):
+    """Los nombres de los nodos a los que se llega desde estas conexiones."""
+    vistos, pendientes = set(), [c["node"] for c in conexiones]
+    while pendientes:
+        nombre = pendientes.pop()
+        if nombre in vistos:
+            continue
+        vistos.add(nombre)
+        for salida in _destinos(flujo, nombre):
+            pendientes.extend(salida)
+    return vistos
+
+
 def test_el_webhook_rechaza_por_cabecera_antes_de_ejecutar_nada():
     """§4.2, y aqui importa mas que en el flujo del paciente: el `chat_id` ES la
     lista blanca (D6), y lo aporta quien llama. Sin esta puerta, forjar un update
@@ -535,10 +554,12 @@ def test_el_workflow_no_guarda_los_datos_de_ejecucion():
 def test_el_tiempo_de_ejecucion_cabe_la_llamada_al_copiloto_con_su_reintento():
     """30 s de timeout y un reintento (§10.1), mas la descarga del DICOM. Con los
     60 s del flujo del paciente, un copiloto lento mataria el workflow por
-    timeout en vez de contestar `copiloto_no_responde`."""
+    timeout en vez de contestar `copiloto_no_responde`. Desde SP5-D, ademas, la
+    peticion del pre-informe, que va detras en la misma ejecucion."""
     flujo = _flujo()
     http = _nodo(flujo, "Llamar al copiloto")
     espera = http["parameters"]["options"]["timeout"] * http["maxTries"]
+    espera += _nodo(flujo, "Pedir pre-informe")["parameters"]["options"]["timeout"]
     assert flujo["settings"]["executionTimeout"] * 1000 > espera, \
         (flujo["settings"]["executionTimeout"], espera)
 
@@ -815,7 +836,15 @@ def test_el_segundo_mensaje_no_lleva_ni_un_caracter_del_sistema():
         == ["Hay texto del paciente?"]
     salidas = flujo["connections"]["Hay texto del paciente?"]["main"]
     assert [c["node"] for c in salidas[0]] == ["Enviar texto del paciente"]
-    assert len(salidas) == 1, "la rama falsa no manda nada"
+    # La rama falsa no manda NADA del paciente. Desde SP5-D tiene salida, el
+    # pre-informe, y por ella no se llega a ningun nodo que toque su texto.
+    assert len(salidas) == 2, salidas
+    assert [c["node"] for c in salidas[1]] == ["Preparar pre-informe"], salidas[1]
+    por_la_falsa = _alcanzables(flujo, salidas[1])
+    assert "Enviar texto del paciente" not in por_la_falsa, por_la_falsa
+    for nombre in por_la_falsa:
+        assert "texto_paciente" not in json.dumps(_nodo(flujo, nombre)["parameters"]), \
+            nombre
     cond = _nodo(flujo, "Hay texto del paciente?")["parameters"]["conditions"]
     c = cond["conditions"][0]
     assert c["leftValue"] == "={{ $('Desenlace').first().json.texto_paciente }}", c
@@ -861,7 +890,7 @@ def test_el_segundo_mensaje_no_lleva_ni_un_caracter_del_sistema():
     # El aviso vive en el PRIMER mensaje, que es el canal que el paciente no toca.
     assert "bloques.push(AVISA_DEL_SEGUNDO)" in fuente
     # Y este mensaje tampoco lleva parse_mode: lo cubre
-    # `test_ningun_mensaje_lleva_parse_mode`, que recorre los nueve nodos.
+    # `test_ningun_mensaje_lleva_parse_mode`, que recorre los diez nodos.
 
 
 def test_ningun_mensaje_puede_pasarse_del_limite_de_telegram():
@@ -984,16 +1013,32 @@ def test_los_tres_bloques_del_spec_estan_rotulados_y_separados():
     assert "⚠️" in fuente, "el aviso de la banda contradictoria"
 
 
-def test_el_flujo_solo_habla_con_el_copiloto_en_la_rama_de_la_radiografia():
-    """Nada de llamadas de red fuera de la rama que clasifica: ni telemetria, ni
-    un LLM (§4.5: ningun dato de paciente sale hacia un tercero)."""
+def test_el_flujo_solo_habla_con_el_copiloto_y_con_el_llm_del_pre_informe():
+    """Nada de llamadas de red fuera de la rama que clasifica, ni telemetria, y
+    un LLM solo a la SALIDA (SP5-D). El §4.5 saco el LLM de la entrada porque
+    ningun dato del paciente debia salir hacia un tercero, y eso sigue siendo
+    cierto: a OpenAI solo va el cuerpo que arma `Preparar pre-informe`, y ese
+    nodo solo lee `preinforme_fuente`, el informe determinista. Que el informe
+    no lleve ni un caracter del paciente lo comprueba `tests/profesional.mjs`."""
     flujo = _flujo()
     externos = [n for n in flujo["nodes"]
                 if n["type"] in ("n8n-nodes-base.httpRequest",
                                  "n8n-nodes-base.webhook")
                 or "langchain" in n["type"]]
     assert [n["name"] for n in externos] == ["Webhook Telegram (profesional)",
-                                             "Llamar al copiloto"], externos
+                                             "Llamar al copiloto",
+                                             "Pedir pre-informe"], externos
+    # A `Pedir pre-informe` solo se llega desde `Preparar pre-informe`...
+    origenes = [o for o in flujo["connections"]
+                if any("Pedir pre-informe" in s for s in _destinos(flujo, o))]
+    assert origenes == ["Preparar pre-informe"], origenes
+    assert _nodo(flujo, "Pedir pre-informe")["parameters"]["jsonBody"] \
+        == "={{ $json.cuerpo }}"
+    # ...y ese nodo lee UN campo de UN nodo, por su nombre, y nada de su entrada.
+    preparar = _nodo(flujo, "Preparar pre-informe")["parameters"]["jsCode"]
+    assert re.findall(r"\$\('([^']+)'\)", preparar) == ["Desenlace"], preparar
+    assert re.findall(r"\.json\.(\w+)", preparar) == ["preinforme_fuente"], preparar
+    assert "$input" not in preparar and "$json" not in preparar
     for nodo in flujo["nodes"]:
         if nodo["type"] != "n8n-nodes-base.code":
             continue
@@ -1001,6 +1046,81 @@ def test_el_flujo_solo_habla_con_el_copiloto_en_la_rama_de_la_radiografia():
                           "child_process"):
             assert primitiva not in nodo["parameters"]["jsCode"], \
                 (nodo["name"], primitiva)
+
+
+def test_el_preinforme_va_detras_del_informe_y_del_texto_del_paciente():
+    """SP5-D, D4: el informe sale primero y no espera al LLM. El pre-informe es
+    la ultima burbuja: informe -> (texto del paciente, si lo hay) -> pre-informe.
+    Llega a `Preparar pre-informe` por las dos ramas del IF, y de ahi en fila
+    hasta el envio, que es el final de la rama."""
+    flujo = _flujo()
+    assert _destinos(flujo, "Registrar") == [["Responder"]]
+    assert _destinos(flujo, "Responder") == [["Hay texto del paciente?"]]
+    assert _destinos(flujo, "Hay texto del paciente?") == [
+        ["Enviar texto del paciente"], ["Preparar pre-informe"]]
+    assert _destinos(flujo, "Enviar texto del paciente") == [["Preparar pre-informe"]]
+    assert _destinos(flujo, "Preparar pre-informe") == [["Pedir pre-informe"]]
+    # UNA salida en el nodo HTTP: con `continueRegularOutput` el fallo va por la
+    # normal, y no hay una de error que conectar.
+    assert _destinos(flujo, "Pedir pre-informe") == [["Revisar pre-informe"]]
+    assert _destinos(flujo, "Revisar pre-informe") == [["Enviar pre-informe"]]
+    assert _destinos(flujo, "Enviar pre-informe") == []
+    # Y nada de la rama del pre-informe vuelve atras: el informe no la espera.
+    assert not {"Responder", "Registrar", "Desenlace"} & _alcanzables(
+        flujo, [{"node": "Preparar pre-informe"}])
+
+
+def test_la_llamada_a_openai_es_la_del_spec():
+    """SP5-D, D1 y D5: OpenAI por su API, con la credencial PROPIA del proyecto
+    (el marcador `CRED_OPENAI`, nunca una del cliente), 15 s como mucho, sin
+    reintentos y con `continueRegularOutput`: un fallo de OpenAI no pone la
+    ejecucion en rojo ni para nada, porque el informe ya llego."""
+    n = _nodo(_flujo(), "Pedir pre-informe")
+    p = n["parameters"]
+    assert n["type"] == "n8n-nodes-base.httpRequest"
+    # La version del nodo con la que se probo el camino de `jsonBody` (cadena JSON
+    # -> objeto), el mismo de `Llamar al copiloto`.
+    assert n["typeVersion"] == 4.2, n["typeVersion"]
+    assert p["method"] == "POST"
+    assert p["url"] == "https://api.openai.com/v1/chat/completions"
+    # La clave la pone n8n desde la credencial: ni una cabecera escrita a mano.
+    assert p["authentication"] == "predefinedCredentialType"
+    assert p["nodeCredentialType"] == "openAiApi"
+    assert "headerParameters" not in p and not p.get("sendHeaders"), p
+    assert n["credentials"] == {"openAiApi": {"id": "CRED_OPENAI",
+                                              "name": "openai-copiloto"}}
+    assert p["sendBody"] is True and p["specifyBody"] == "json"
+    assert p["contentType"] == "json"
+    assert p["jsonBody"] == "={{ $json.cuerpo }}"
+    # Ni mas de los 15 s del spec ni tan poco que corte una respuesta normal: con
+    # 500 ms se silenciarian todos los pre-informes sin poner nada en rojo
+    # (revision final, M6).
+    assert 5000 <= p["options"]["timeout"] <= 15000, p["options"]
+    assert n["onError"] == "continueRegularOutput"
+    assert n.get("retryOnFail") is not True, "sin reintentos (D5)"
+    assert "maxTries" not in n
+
+
+def test_el_envio_del_preinforme_es_solo_la_expresion():
+    """SP5-D, D6: la cabecera la pone `Revisar pre-informe`, que es donde la
+    prueba el arnes. Cualquier literal en el nodo de Telegram quedaria fuera de
+    esa prueba. Sin parse_mode (lo ata `test_ningun_mensaje_lleva_parse_mode`),
+    sin teclado, sin atribucion y por el bot del profesional."""
+    flujo = _flujo()
+    n = _nodo(flujo, "Enviar pre-informe")
+    p = n["parameters"]
+    assert n["type"] == "n8n-nodes-base.telegram"
+    assert p["operation"] == "sendMessage"
+    assert p["text"] == "={{ $json.texto }}"
+    assert p["chatId"] == _nodo(flujo, "Responder")["parameters"]["chatId"]
+    assert p["additionalFields"] == {"appendAttribution": False}
+    assert "inlineKeyboard" not in p and "replyMarkup" not in p
+    assert n["credentials"] == _nodo(flujo, "Responder")["credentials"]
+    # No reintenta: nada promete este mensaje, y el informe ya esta en el chat.
+    assert n.get("retryOnFail") is not True
+    # Y lo que devuelve la revision es `texto` y nada mas.
+    revisar = _nodo(flujo, "Revisar pre-informe")["parameters"]["jsCode"]
+    assert "return [{ json: {texto: CABECERA + '\\n\\n' + redactado} }];" in revisar
 
 
 def test_un_solo_nodo_escribe_en_consultas():

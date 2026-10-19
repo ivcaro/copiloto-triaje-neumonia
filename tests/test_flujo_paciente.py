@@ -317,6 +317,33 @@ def test_el_consentimiento_dice_lo_que_pasa_con_los_datos():
     assert "{{" not in texto       # un literal, no una expresión de n8n
 
 
+def test_el_consentimiento_nombra_a_openai():
+    """SP5-D, D7: el bot del profesional manda el informe a OpenAI para que lo
+    resuma, y el paciente tiene que saberlo antes de aceptar. La viñeta va justo
+    detrás de la de la inteligencia artificial que lee la radiografía, nombra a
+    la empresa y dice qué NO lleva el resumen. El mensaje sigue cabiendo en uno
+    de Telegram."""
+    texto = _nodo(_flujo(), "Pedir consentimiento")["parameters"]["text"]
+    lineas = texto.split("\n")
+    (i,) = [i for i, l in enumerate(lineas) if l.startswith(
+        "• Un programa de inteligencia artificial analiza la radiografía")]
+    assert lineas[i + 1] == (
+        "• Para su médico, otro programa de inteligencia artificial de OpenAI, una "
+        "empresa extranjera, resume el informe del sistema. Ese resumen no lleva su "
+        "nombre, su cuenta ni lo que usted escriba."), lineas[i + 1]
+    assert texto.count("OpenAI") == 1
+    assert len(texto) <= 4096
+    # Y las dos copias de la documentacion dicen lo mismo (revision final, M6):
+    # las consideraciones eticas citan la vineta literal, y el paso «Lea el
+    # consentimiento» del manual nombra a OpenAI.
+    docs = pathlib.Path(__file__).resolve().parents[1] / "docs"
+    eticas = (docs / "consideraciones_eticas.md").read_text(encoding="utf-8")
+    assert lineas[i + 1] in eticas, "la vineta no esta literal en las eticas"
+    manual = (docs / "manual_usuario.md").read_text(encoding="utf-8")
+    (paso,) = [l for l in manual.splitlines() if "**Lea el consentimiento.**" in l]
+    assert "OpenAI" in paso, paso
+
+
 def test_cada_pregunta_declara_la_clave_del_spec():
     """La tabla del nodo `Decidir` es la UNICA fuente de la que sale la clave
     con la que se guarda cada respuesta. Se compara literal contra el §4.4."""

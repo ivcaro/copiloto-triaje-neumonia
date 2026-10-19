@@ -6,6 +6,7 @@
   "CRED_POSTGRES_COPILOTO": "id-de-ejemplo-postgres",
   "CRED_SECRETO_PACIENTE": "id-de-ejemplo-secreto-paciente",
   "CRED_SECRETO_PROFESIONAL": "id-de-ejemplo-secreto-profesional",
+  "CRED_OPENAI": "id-de-ejemplo-openai",
   "bot-paciente": "BotDeEjemploPaciente",
   "bot-profesional": "BotDeEjemploProfesional",
   "bot-avisos": "BotDeEjemploAvisos"

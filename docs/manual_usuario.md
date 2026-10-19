@@ -208,7 +208,7 @@ Son dos bots distintos **a propósito**: el del paciente no tiene ningún camino
 **Para quién:** un adulto al que su profesional de salud le ha pedido contestar unas preguntas antes de la consulta. Son siete preguntas, y no necesita dar su nombre ni su teléfono.
 
 1. **Escriba cualquier mensaje** al bot. Le responde con una explicación y dos botones, **Acepto** y **No acepto**.
-2. **Lea el consentimiento.** Dice, en pocas palabras, que sus respuestas **pasan por Telegram** (una empresa extranjera que las guarda en sus servidores); que el bot **no guarda su nombre ni su teléfono**; que se **borran a los 7 días**, salvo que su médico use el código, en cuyo caso **una copia sin su cuenta se guarda hasta que termine el proyecto académico** (como muy tarde, el 31 de diciembre de 2026); quién las ve (su médico y el equipo del proyecto); que **un programa de inteligencia artificial** analiza la radiografía y calcula una probabilidad, que es una **ayuda para su médico y no un diagnóstico**, y que usted puede pedirle que le explique el resultado; y que si quiere que se borren antes, se lo diga a su médico. **Si le cuesta respirar, le duele mucho el pecho o se siente muy mal, acuda a urgencias ahora.**
+2. **Lea el consentimiento.** Dice, en pocas palabras, que sus respuestas **pasan por Telegram** (una empresa extranjera que las guarda en sus servidores); que el bot **no guarda su nombre ni su teléfono**; que se **borran a los 7 días**, salvo que su médico use el código, en cuyo caso **una copia sin su cuenta se guarda hasta que termine el proyecto académico** (como muy tarde, el 31 de diciembre de 2026); quién las ve (su médico y el equipo del proyecto); que **un programa de inteligencia artificial** analiza la radiografía y calcula una probabilidad, que es una **ayuda para su médico y no un diagnóstico**, y que usted puede pedirle que le explique el resultado; que **otro programa de inteligencia artificial, de OpenAI** (una empresa extranjera), resume el informe del sistema para su médico, y que ese resumen no lleva su nombre, su cuenta ni lo que usted escriba; y que si quiere que se borren antes, se lo diga a su médico. **Si le cuesta respirar, le duele mucho el pecho o se siente muy mal, acuda a urgencias ahora.**
 3. **Pulse «No acepto»** y el bot se despide diciendo «No he guardado nada». No queda **ninguna** fila de datos. O pulse **«Acepto»** para seguir.
 4. **Conteste las 7 preguntas**, una por mensaje y con botones:
 
@@ -250,7 +250,7 @@ Son dos bots distintos **a propósito**: el del paciente no tiene ningún camino
 
 **Si se equivoca de dato**, el bot lo dice y **vuelve a preguntar** (por ejemplo, una temperatura fuera de 30,0–45,0). `/reiniciar` borra la conversación y vuelve al código; `/start` a mitad de conversación **no** borra lo ya recogido.
 
-**Después de la placa**, el bot tarda unos segundos y responde con **el informe** (B.4). Si el paciente escribió un comentario libre, llega en un **mensaje aparte** que lo avisa, para que nunca se confunda con lo que dice el sistema.
+**Después de la placa**, el bot tarda unos segundos y responde con **el informe** (B.4). Si el paciente escribió un comentario libre, llega en un **mensaje aparte** que lo avisa, para que nunca se confunda con lo que dice el sistema. Y, detrás de todo, si hay resultado, puede llegar el **pre-informe** (B.5). En total, hasta **tres mensajes**, siempre en este orden: el informe, el comentario del paciente (si lo hay) y el pre-informe (si llega; que no llegue es normal).
 
 ### B.4. El informe del bot, bloque a bloque
 
@@ -283,7 +283,26 @@ Esto no es un diagnóstico.
 
 Las probabilidades se dan en porcentaje entero: más decimales serían una precisión que el sistema no tiene. Los tres factores (prevalencia, clínica, imagen) se imprimen para que usted pueda **rehacer la multiplicación** y, si no está de acuerdo con la prevalencia, ver cuál cambiar.
 
-### B.5. Guía de bolsillo para el profesional
+### B.5. El pre-informe: el tercer mensaje
+
+Detrás del informe (y del comentario del paciente, si lo hay), el bot puede mandarle un **tercer mensaje**: el **pre-informe**, un párrafo de 3 a 5 frases en lenguaje clínico que **redacta un programa de inteligencia artificial** (de OpenAI) a partir del informe de arriba, para que lo lea en prosa y no en bloques. Empieza siempre con esta cabecera, literal:
+
+```
+PRE-INFORME — redactado por IA (OpenAI) a partir del informe de arriba. Si algo no coincide, vale el informe de arriba. No es un diagnóstico.
+```
+
+| Qué conviene saber | Por qué |
+| :--- | :--- |
+| **No añade nada al informe.** Si una frase no coincide con él, **vale el informe** | Lo redacta una IA que solo ha leído el informe: no ve la imagen ni el comentario del paciente, no calcula y no cambia ninguna cifra |
+| **No diagnostica ni recomienda** pruebas, tratamientos, ingreso ni derivación, y termina recordando que la decisión es suya | Es lo que se le pide, y un código lo comprueba antes de mandarlo |
+| **Puede no llegar, y es por diseño** | Un código lo revisa antes (que cada cifra esté en el informe, que no hable de tratamiento ni de diagnóstico, que su longitud sea razonable). Si no pasa la revisión, o si el servicio de redacción falla o tarda, **no llega nada y el bot no avisa**: el informe ya está en su pantalla y es completo |
+| **Solo llega si hay resultado** | Con un rechazo («NO PROCEDE», una placa que no se puede leer) no hay pre-informe |
+| **No está validado con el médico** | La sesión de validación midió el informe, no el pre-informe. Trátelo como una ayuda de lectura, no como una segunda opinión |
+| **No se guarda** | Se escribe, se manda y se olvida; el informe sí queda registrado como siempre |
+
+El texto que sale hacia OpenAI es el informe, sin imagen y sin nada que identifique directamente al paciente (ni nombre, ni cuenta de Telegram, ni código, ni edad, ni su comentario). Qué se envía y qué política declara el proveedor, en [`consideraciones_eticas.md`](consideraciones_eticas.md#64-lo-que-tampoco-es-nuestro-openai).
+
+### B.6. Guía de bolsillo para el profesional
 
 Lo que hay que tener presente cada vez que lee un informe:
 
@@ -295,6 +314,7 @@ Lo que hay que tener presente cada vez que lee un informe:
 6. **Anote el código de cada consulta en la historia clínica.** Es la forma de que la institución localice las consultas de un periodo si hubiera que revisarlas.
 7. **Una placa fuera de alcance no da resultado**: menores de 18, sin edad, de 16 bits, invertidas, en color… El bot lo dice y no da ninguna cifra.
 8. **La placa que usted envía pasa por los servidores de Telegram**, con su cabecera DICOM. Si sale de un sistema hospitalario real, puede traer nombre y número de historia: **expórtela sin identificadores**.
+9. **El pre-informe es una redacción, no una segunda opinión.** Si no coincide con el informe, vale el informe; si no llega, no pasa nada.
 
 ## 4. Cómo leer un resultado: glosario
 
@@ -312,6 +332,8 @@ Lo que hay que tener presente cada vez que lee un informe:
 | **Sensibilidad (recall)** | De las placas con opacidad, cuántas marca el modelo |
 | **Especificidad** | De las placas sin opacidad, cuántas deja sin marcar |
 | **Mapa de calor (Grad-CAM)** | Dónde mira el modelo. No explica por qué |
+| **Informe** | El mensaje del bot del profesional con los bloques CRIBADO, EVIDENCIA, REFERIDO, EXPLORADO y COMBINADO. Lo compone el código del sistema con números validados y textos fijos |
+| **Pre-informe** | El tercer mensaje del bot: un párrafo que redacta una IA a partir del informe, revisado por código y rotulado como tal. No es un diagnóstico ni una segunda opinión, y puede no llegar. Si no coincide con el informe, vale el informe |
 
 ## 5. Qué dicen los bots y la aplicación cuando algo falla
 
@@ -344,6 +366,7 @@ El sistema **nunca da una cifra de probabilidad cuando algo falla**, y le dice q
 | Archivo > 20 MB | «Telegram no me deja descargar archivos de más de 20 MB.» | Una placa de tórax no debería pesar eso |
 | Fallo al descargar | «No pude descargar el archivo de Telegram. Puede ser el archivo o el servicio. Si vuelve a pasar con otra placa, avise al responsable.» | Reintente; si persiste con otra placa, avise |
 | El servicio no responde | «El servicio de imagen no está disponible. Inténtelo en unos minutos.» | Espere y reenvíe la placa |
+| **No llega el pre-informe** | Nada: el bot no avisa | Es por diseño (B.5). El informe ya está completo; no reenvíe la placa por eso |
 | Error no reconocido | «El servicio devolvió un error que no sé interpretar. Se ha registrado.» | La consulta termina; avise al responsable |
 
 **Cuando el bot sigue esperando**, lo dice al final del mensaje («Sigo esperando el archivo.» o «Sigo esperando el código del paciente.»): no hay que empezar de cero.
@@ -378,6 +401,7 @@ El sistema **nunca da una cifra de probabilidad cuando algo falla**, y le dice q
 | El bot se queda «esperando el archivo» | La placa llegó como foto, ilegible o demasiado grande | Envíela como archivo, completa, de hasta 5 MB |
 | El código no sirve | Caducó (7 días) o se escribió mal (no usa `0`, `O`, `1`, `I`, `L`) | Que el paciente repita el cuestionario |
 | El informe sale sin bloque COMBINADO | Faltan signos, o el sistema no pudo combinar | Lea el motivo en «SIN COMBINAR» |
+| Llega el informe pero no el pre-informe | No pasó la revisión, el servicio de redacción falló o tardó, o no había resultado | Nada: es por diseño (B.5) y el informe es completo |
 
 ## 7. Preguntas frecuentes
 
@@ -399,9 +423,9 @@ El sistema **nunca da una cifra de probabilidad cuando algo falla**, y le dice q
 
 **9. ¿Se guardan mis datos en la aplicación?** No se guarda nada en disco. El historial vive en su navegador, sin imagen, y se pierde al recargar.
 
-**10. ¿Y en los bots?** Se guardan las respuestas del cuestionario con un código seudónimo, no la radiografía. Los detalles —qué se guarda, cuánto y quién lo ve— están en el consentimiento y en [`arquitectura.md`](arquitectura.md#6-qué-se-guarda-y-qué-no). Los datos **pasan por Telegram**.
+**10. ¿Y en los bots?** Se guardan las respuestas del cuestionario con un código seudónimo, no la radiografía. Los detalles —qué se guarda, cuánto y quién lo ve— están en el consentimiento y en [`arquitectura.md`](arquitectura.md#6-qué-se-guarda-y-qué-no). Los datos **pasan por Telegram**, y el informe (sin imagen ni identificadores directos) pasa además por OpenAI para redactar el pre-informe, que no se guarda.
 
-**11. ¿Cuánto tarda?** El modelo, décimas de segundo (una mediana de 143 ms en el servidor, con todo incluido). El tiempo total que usted espera en el bot depende además de Telegram, que no se midió. La primera vez que se abre la aplicación, además, carga el modelo.
+**11. ¿Cuánto tarda?** El modelo, décimas de segundo (una mediana de 143 ms en el servidor, con todo incluido). El tiempo total que usted espera en el bot depende además de Telegram, que no se midió. El pre-informe sale **después** del informe y no lo retrasa. La primera vez que se abre la aplicación, además, carga el modelo.
 
 **12. ¿Puede el paciente ver el resultado?** No: el bot del paciente no tiene ningún camino que lo devuelva.
 
@@ -413,11 +437,14 @@ El sistema **nunca da una cifra de probabilidad cuando algo falla**, y le dice q
 
 **16. ¿Por qué el bot pide el archivo y no una foto?** Porque Telegram recomprime las fotos y destruye el DICOM, con la edad de su cabecera.
 
+**17. ¿Quién escribe el pre-informe, y por qué a veces no llega?** Lo redacta un modelo de lenguaje de OpenAI a partir del informe, y un código lo revisa antes de mandarlo. Si no pasa la revisión o el servicio falla, no se manda nada, a propósito: el informe ya llegó y un silencio es mejor que un texto dudoso. No está validado con el médico, y si algo no coincide con el informe, vale el informe.
+
 ## 8. Qué no hace el sistema
 
 - **No diagnostica**, no localiza lesiones y no sustituye la lectura de la placa por un radiólogo.
 - **No evalúa** menores de 18 años, radiografías laterales, ni placas que no sean de 8 bits en grises normal.
 - **No da resultado al paciente** ni le aconseja.
+- **No garantiza el pre-informe**: lo redacta una IA, puede no llegar y no está validado con un médico. No es una segunda opinión.
 - **No sabe nada de su centro**: no está validado con equipos ni poblaciones distintos de los de su entrenamiento (conjunto público de Estados Unidos).
 - **No sustituye el consentimiento ni la evaluación de impacto** que exigiría un uso real.
 - **No es un producto sanitario.**

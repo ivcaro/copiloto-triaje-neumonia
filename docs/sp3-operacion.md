@@ -2,7 +2,9 @@
 
 Todo lo que hay que saber para poner en marcha los dos bots, dar de alta a un
 clínico, probar el circuito entero y retirarlo. Escrito el 25-sep-2026, con los
-dos bots ya funcionando.
+dos bots ya funcionando. Desde el 18-oct-2026 (SP5-D), el bot del profesional
+llama además a la API de OpenAI para redactar el pre-informe: la credencial y lo
+que pasa si falla están en el §7.
 
 **Tres sitios distintos, y confundirlos es el 80 % de los problemas:**
 
@@ -102,6 +104,9 @@ crear.
 3. Por último la radiografía, **como archivo, no como foto**. Si la mandas
    como foto te lo dirá y seguirá esperando el archivo: Telegram recomprime las
    fotos y destruye el DICOM.
+4. Si hay resultado, detrás del informe (y del texto del paciente, si lo
+   escribiste) llega el **pre-informe**, unos segundos después. Puede no llegar:
+   es por diseño (§7, «El pre-informe: la credencial de OpenAI»).
 
 > **Prueba solo con placas de RSNA, nunca con la de un paciente. Añadido el
 > 26-sep, a raíz de una evaluación externa.** Mandar el DICOM por Telegram
@@ -129,13 +134,14 @@ RSNA preparado, la de la variable `RSNA_RAIZ`):
 | El rechazo clínico | una placa de un **menor de edad**; hay 1 276 reales en RSNA |
 | El rechazo por formato | manda la placa como foto |
 | El código caducado | inventa un código de 6 caracteres |
+| El pre-informe | un caso con resultado: llega detrás del informe, empieza por «PRE-INFORME — redactado por IA (OpenAI)…». Un rechazo (el menor de edad): no llega ninguno. Con la credencial mal puesta o sin crédito: tampoco llega, y el flujo no se detiene |
 
 `pruebas/seleccionar_casos.py` saca un ejemplo de cada perfil.
 
 ### Lo visual: el guion que ninguna aserción cubre
 
 Las pruebas afirman sobre la base de datos, y por eso hay cosas que **solo se
-ven mirando**. Este guion son las ocho, en el orden en que salen al conducir la
+ven mirando**. Este guion son las nueve, en el orden en que salen al conducir la
 conversación una vez. Se hace **en el teléfono**, no en el escritorio: es donde
 lo va a usar un clínico y es donde las burbujas se parten.
 
@@ -149,9 +155,11 @@ lo va a usar un clínico y es donde las burbujas se parten.
 | 6 | El aviso de discrepancia | El ⚠️ se ve como un aviso y no como parte de la frase anterior |
 | 7 | Las tildes y los grados | `38,2 °C`, `neumonía`, `razón` — si sale `neumonia` o `38,2 C`, algo se comió el UTF-8 por el camino |
 | 8 | El mensaje aparte del paciente | Cuando el paciente escribió algo, llega **detrás** del informe, empezando por «TODO ESTE MENSAJE ES TEXTO DEL PACIENTE» |
+| 9 | El pre-informe | Llega **detrás** del informe y del texto del paciente, empieza por «PRE-INFORME — redactado por IA (OpenAI) a partir del informe de arriba…», no trae ninguna cifra que el informe no tenga y no recomienda nada. Si no llega, no es un fallo |
 
 El 5, el 6 y el 8 son los que importan de verdad: son los que hacen que el
-clínico no confunda lo que dice el sistema con lo que dice el paciente.
+clínico no confunda lo que dice el sistema con lo que dice el paciente. El 9 lo
+hace con la IA: que nadie tome el pre-informe por el informe.
 
 ### El arnés: el circuito entero, 49 veces y sin teclear
 
@@ -228,6 +236,13 @@ $env:TELEGRAM_TOKEN_PROFESIONAL = "..."
 $env:CHAT_SUBIDA_PLACAS = "<tu chat_id con el bot del profesional>"
 C:\venv-copiloto\Scripts\python.exe pruebas/reproducir_casos.py
 ```
+
+**Desde SP5-D, cada caso que termina en un resultado (no los rechazos) hace
+también una llamada a OpenAI con la clave del equipo**, para el pre-informe: del
+orden de una décima de centavo de dólar por llamada, una estimación. El arnés mide
+lo mismo con o sin ese gasto: el informe y la fila de `consultas` no dependen del
+pre-informe (§7). El corpus de `pruebas/corpus/` es del informe determinista, que se
+compone con el código de `Desenlace`; el pre-informe no entra en él.
 
 **`CHAT_SUBIDA_PLACAS` tiene que ser un chat REAL** y es lo único que lo tiene que
 ser. Para conseguir un `file_id` hay que **subir** el fichero, y un bot de
@@ -586,6 +601,7 @@ Las tres nos costaron tiempo:
 | Profesional | `bot-profesional` | `🩺 Copiloto Triaje: Profesional (Telegram)` |
 | Pruebas y avisos | `bot-avisos` | `🩺 Copiloto Triaje: Mantenimiento` (solo para mandar los avisos) |
 | Base de datos | `copiloto-bd` | el del paciente, el del profesional y el de mantenimiento |
+| Pre-informe (SP5-D) | `openai-copiloto` (tipo OpenAI) | solo el del profesional |
 
 La segunda columna es el **marcador** con el que el repositorio nombra cada
 credencial de Telegram, no el nombre que tiene que llevar en n8n. El nombre
@@ -617,6 +633,7 @@ que en el repositorio va vacío (§5, paso 1).
 | `CRED_TELEGRAM_PROFESIONAL`, `bot-profesional` | los de la credencial del bot del profesional |
 | `CRED_TELEGRAM_AVISOS`, `bot-avisos` | los de la credencial del bot de pruebas y avisos |
 | `CRED_POSTGRES_COPILOTO` | el `id` de la credencial `copiloto-bd` |
+| `CRED_OPENAI` | el `id` de la credencial `openai-copiloto` (SP5-D) |
 | `CRED_SECRETO_PACIENTE`, `CRED_SECRETO_PROFESIONAL` | los `id` de las dos credenciales de cabecera con el `secret_token` |
 
 El `id` de una credencial se lee en n8n en la URL de la propia credencial al
@@ -626,7 +643,9 @@ export—, pero identifican la instancia, y por eso no se versionan.
 
 **Una sola vez por máquina:** copiar `n8n/valores.ejemplo.json` a
 `n8n/valores.local.json` y cambiar cada valor de ejemplo por el real. Ese
-fichero está en `.gitignore`: no se versiona ni se comparte.
+fichero está en `.gitignore`: no se versiona ni se comparte. Si ya existía de
+antes de SP5-D, le falta `CRED_OPENAI`: el script se niega a convertir mientras
+no lo tenga.
 
 **Poner los valores reales, ANTES de importar o desplegar un workflow desde el
 repositorio.** La salida va a una carpeta temporal fuera del repositorio, y es
@@ -647,8 +666,10 @@ marcador lo dice `valores.local.json`, y si ahí se cruzan dos `id` —o se cuel
 el de una credencial que no es del proyecto— la herramienta los pone sin
 rechistar. Abre un nodo de Telegram de cada workflow y comprueba que la
 credencial es la del bot del paciente en el del paciente, la del profesional en
-el del profesional y la de pruebas y avisos en el de mantenimiento. La primera
-vez, empieza por el de mantenimiento, que no atiende a nadie.
+el del profesional y la de pruebas y avisos en el de mantenimiento. En el del
+profesional, abre además `Pedir pre-informe` y comprueba que usa
+`openai-copiloto`. La primera vez, empieza por el de mantenimiento, que no
+atiende a nadie.
 
 **Quitar los valores reales, ANTES de versionar un export.** El workflow se
 descarga de n8n a la carpeta temporal y se deja en `n8n/` ya con marcadores:
@@ -710,6 +731,47 @@ es un marcador: los valores de `valores.local.json` no son los de esa
 descarga. Ningún mensaje suyo repite un valor real: dice el marcador, el nodo o
 la línea.
 
+### El pre-informe: la credencial de OpenAI
+
+Desde SP5-D (18-oct-2026), el bot del profesional manda, detrás del informe, un
+pre-informe que redacta un modelo de lenguaje de OpenAI (`gpt-4o-mini`). Para
+que funcione hace falta una credencial. Con la credencial creada pero con la
+clave inválida o sin crédito, el bot sigue dando el informe y el pre-informe
+calla; pero la credencial tiene que **existir**, y su `id` real estar en
+`n8n/valores.local.json`, **antes** de convertir y publicar: con un `id` que no
+existe en la instancia, n8n puede hacer fallar la ejecución entera, y el bot
+del profesional dejaría de contestar. Se despliega así:
+
+1. **Crear la credencial en n8n**, de tipo **OpenAI**, con el nombre
+   `openai-copiloto` y la **clave de API propia del equipo** (de la cuenta de
+   OpenAI del equipo). **Nunca la credencial de un cliente** de la instancia:
+   es la misma regla que con Telegram, y no se toca ninguna ajena. La clave
+   vive dentro de la credencial y no sale en ningún export.
+2. **Poner su `id` en `n8n/valores.local.json`**, en el marcador
+   `CRED_OPENAI` (el `id` se lee en la URL de la credencial al abrirla). El
+   nombre `openai-copiloto` es genérico y no lleva marcador, como `copiloto-bd`.
+3. **Convertir con `scripts/marcadores_n8n.py`**, como se explica arriba, e
+   importar el workflow del profesional desde la salida.
+4. **Probar** (§2): con un caso con resultado, el pre-informe llega detrás del
+   informe y empieza por «PRE-INFORME — redactado por IA (OpenAI)…». Y en el
+   panel de uso de la cuenta de OpenAI, la petición tiene que constar: un cuerpo
+   mal formado también acabaría en silencio.
+
+**Si OpenAI falla, no pasa nada, a propósito.** La petición (nodo `Pedir
+pre-informe`) tiene un tiempo máximo de 15 s, no reintenta y está configurada
+con `onError: continueRegularOutput`. Con OpenAI caído, sin crédito o con la
+clave mal puesta, o si la respuesta no pasa la revisión (`Revisar pre-informe`),
+no se manda pre-informe: el informe ya llegó, el flujo no se detiene y no se
+marca ningún error. (Un fallo de **Telegram** al mandar el pre-informe sí pone
+la ejecución en rojo, y es inocuo: es el último nodo y no se guarda nada.) **Eso también significa que nada avisa**: el mantenimiento
+diario (§5) no vigila a OpenAI, y un pre-informe que dejó de llegar se nota
+porque no llega. Conviene probar un caso con resultado cada vez que se toque la
+credencial o la clave.
+
+**El gasto** es del orden de una décima de centavo de dólar por consulta
+(estimación, no medición): unos cientos de *tokens* con `gpt-4o-mini`. Se vigila
+en el panel de la cuenta de OpenAI del equipo, no en n8n.
+
 ---
 
 ## 8. Retirada
@@ -720,8 +782,9 @@ docker compose -p copiloto-mcp down
 
 Con `-p` no se lee ningún fichero de compose, así que el directorio en el que
 estés deja de ser un riesgo. Después: borrar el volumen `copiloto_bd_datos`,
-desactivar y archivar los tres workflows, borrar sus credenciales, y revocar
-los bots en BotFather.
+desactivar y archivar los tres workflows, borrar sus credenciales (también
+`openai-copiloto`, y revocar su clave de API en la cuenta de OpenAI del equipo),
+y revocar los bots en BotFather.
 
 **Lo que no hay que teclear nunca en ese VPS:** `docker compose down` a secas
 (baja el proyecto del directorio donde estés, que puede ser el del cliente),
@@ -766,8 +829,9 @@ de las fechas de la sesión con el médico (`docs/sp5-sesion.md`).
 3. **En la máquina de desarrollo:** `n8n/valores.local.json`, con los valores
    reales de cada marcador. Si no existe, se crea a partir de
    `n8n/valores.ejemplo.json`. Está ignorado por git y no sale de la
-   máquina. Cómo se usa, en el §7 de este manual, «Los marcadores: del
-   repositorio a n8n, y de n8n al repositorio».
+   máquina. Si ya existía de antes de SP5-D, hay que añadirle `CRED_OPENAI`.
+   Cómo se usa, en el §7 de este manual, «Los marcadores: del repositorio a
+   n8n, y de n8n al repositorio».
 
 4. **La primera vez que se importe un workflow desde el repositorio**, empezar
    por el de mantenimiento, que no atiende a nadie, y mirar en n8n, nodo a

@@ -75,7 +75,7 @@ def test_los_marcadores_son_los_del_contrato(mn):
         "https://n8n.ejemplo.test",
         "CRED_TELEGRAM_PACIENTE", "CRED_TELEGRAM_PROFESIONAL",
         "CRED_TELEGRAM_AVISOS", "CRED_POSTGRES_COPILOTO",
-        "CRED_SECRETO_PACIENTE", "CRED_SECRETO_PROFESIONAL",
+        "CRED_SECRETO_PACIENTE", "CRED_SECRETO_PROFESIONAL", "CRED_OPENAI",
         "bot-paciente", "bot-profesional", "bot-avisos"}
     assert len(mn.MARCADORES) == len(set(mn.MARCADORES))
 
@@ -448,10 +448,13 @@ CREDENCIALES = {
                            "copiloto-paciente: secret_token del webhook", 1),
     },
     "copiloto-profesional.json": {
-        "telegramApi": ("CRED_TELEGRAM_PROFESIONAL", "bot-profesional", 9),
+        "telegramApi": ("CRED_TELEGRAM_PROFESIONAL", "bot-profesional", 10),
         "postgres": ("CRED_POSTGRES_COPILOTO", "copiloto-bd", 5),
         "httpHeaderAuth": ("CRED_SECRETO_PROFESIONAL",
                            "copiloto-profesional: secret_token del webhook", 1),
+        # SP5-D: la credencial PROPIA del proyecto para el pre-informe. Su
+        # nombre es generico, como `copiloto-bd`, y no lleva marcador.
+        "openAiApi": ("CRED_OPENAI", "openai-copiloto", 1),
     },
     "copiloto-mantenimiento.json": {
         "telegramApi": ("CRED_TELEGRAM_AVISOS", "bot-avisos", 1),
@@ -467,8 +470,9 @@ VECES = {
         "https://n8n.ejemplo.test": 1, "CRED_TELEGRAM_PACIENTE": 12,
         "CRED_POSTGRES_COPILOTO": 5, "CRED_SECRETO_PACIENTE": 1, "bot-paciente": 12},
     "copiloto-profesional.json": {
-        "https://n8n.ejemplo.test": 1, "CRED_TELEGRAM_PROFESIONAL": 9,
-        "CRED_POSTGRES_COPILOTO": 5, "CRED_SECRETO_PROFESIONAL": 1, "bot-profesional": 9},
+        "https://n8n.ejemplo.test": 1, "CRED_TELEGRAM_PROFESIONAL": 10,
+        "CRED_POSTGRES_COPILOTO": 5, "CRED_SECRETO_PROFESIONAL": 1,
+        "CRED_OPENAI": 1, "bot-profesional": 10},
     "copiloto-mantenimiento.json": {
         "https://n8n.ejemplo.test": 2, "CRED_TELEGRAM_AVISOS": 1,
         "CRED_POSTGRES_COPILOTO": 4, "bot-avisos": 2},
@@ -477,6 +481,9 @@ VECES = {
 # Lo que no es de la instancia y por eso se queda como esta: el copiloto se
 # llama por el nombre de su servicio en la red de Docker.
 URL_INTERNA = "http://copiloto-mcp:8000/"
+# Y la API publica del LLM del pre-informe (SP5-D), que tampoco es de la
+# instancia: es la misma para cualquiera. Exacta, no un prefijo.
+URL_OPENAI = "https://api.openai.com/v1/chat/completions"
 
 
 def _nodos(fichero):
@@ -526,7 +533,7 @@ def test_las_url_de_los_nodos_http_son_el_marcador_o_la_interna(mn, fichero):
             continue
         url = n["parameters"]["url"]
         conocida = (url.startswith(mn.URL_N8N + "/webhook/")
-                    or url.startswith(URL_INTERNA))
+                    or url.startswith(URL_INTERNA) or url == URL_OPENAI)
         assert conocida, (fichero, n["name"])
 
 
@@ -724,6 +731,8 @@ ANTICUADAS = [
      "el nombre de su credencial telegramApi", "Pedir codigo"),
     ("copiloto-profesional.json", "https://n8n.ejemplo.test",
      "la URL de su webhook", "Webhook Telegram (profesional)"),
+    ("copiloto-profesional.json", "CRED_OPENAI",
+     "el id de su credencial openAiApi", "Pedir pre-informe"),
     ("copiloto-mantenimiento.json", "CRED_POSTGRES_COPILOTO",
      "el id de su credencial postgres", "Limpieza"),
     ("copiloto-mantenimiento.json", "CRED_TELEGRAM_AVISOS",

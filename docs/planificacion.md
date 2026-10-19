@@ -2,10 +2,10 @@
 
 **Copiloto de triaje para neumonía en adultos** · Proyecto Integrador, Maestría en Inteligencia Artificial (UEES), 2026.
 
-Estado a **15 de octubre de 2026**. Este documento recoge lo que el equipo planificó en la
+Estado a **18 de octubre de 2026**. Este documento recoge lo que el equipo planificó en la
 Semana 1 (12 al 19 de septiembre), cómo evolucionó el proyecto a lo largo de los cinco
-sub-proyectos (SP1 a SP5) y, al final, en qué estado quedó cada indicador de éxito. Es el
-único documento de `docs/` que nombra al equipo.
+sub-proyectos (SP1 a SP5, más SP5-D) y, al final, en qué estado quedó cada indicador de
+éxito. Es el único documento de `docs/` que nombra al equipo.
 
 Cada cifra lleva su fuente (un fichero del repositorio o un documento de las semanas del
 curso). Las fuentes de las semanas del curso viven fuera del repositorio y se citan por su
@@ -34,23 +34,28 @@ título: «Presentación del proyecto» (Semana 1, versión viva con su Registro
 **Qué se planificó.** Un copiloto de triaje para neumonía en adultos: dos bots de Telegram
 (paciente y profesional) orquestados con n8n que consultan un servidor de inferencia propio
 (una CNN servida por MCP en Docker), combinan la imagen con una regla clínica publicada
-mediante una fórmula bayesiana explícita y entregan al profesional un pre-informe. En la
+mediante una fórmula bayesiana explícita y entregan al profesional un pre-informe (hoy, el informe). En la
 versión de la Semana 1 el sistema llevaba además un LLM que normalizaba el español coloquial
 del paciente y redactaba el pre-informe, y un plazo de seis semanas (12 de septiembre al 24
 de octubre de 2026) en cuatro sprints y ocho hitos (H1 a H8).
 
 **Qué se entregó.** El servidor, los dos bots, la combinación bayesiana (con su horquilla
 entre independencia y dependencia total), una validación semisintética de esa combinación,
-una sesión de concordancia con un médico general y una interfaz de demostración (Streamlit)
-sobre el mismo motor. El modelo desplegado es una EfficientNet-B0 a 320 px; en el conjunto
+una sesión de concordancia con un médico general, una interfaz de demostración (Streamlit)
+sobre el mismo motor y, detrás del informe del bot del profesional, un pre-informe que redacta
+un LLM (SP5-D, 18 de octubre). El modelo desplegado es una EfficientNet-B0 a 320 px; en el conjunto
 de prueba (3 811 placas) alcanza recall 0,882, especificidad 0,702 y AUC 0,885
 (`app/assets/metricas.json`).
 
 **Qué cambió.** Tres decisiones de alcance, todas tomadas con datos o con un argumento de
-seguridad y todas registradas: se retiró el LLM (el cuestionario es de botones y el informe
-es aritmética auditable), se unificó el criterio de la CNN porque la frontera medida
-demostró que recall ≥ 0,85 y especificidad ≥ 0,75 no se alcanzan a la vez, y se añadieron
-una interfaz web y un análisis por subgrupos que la Semana 1 había dejado fuera.
+seguridad y todas registradas: se retiró el LLM de la entrada (el cuestionario es de botones y
+el informe es aritmética auditable), se unificó el criterio de la CNN porque la frontera
+medida demostró que recall ≥ 0,85 y especificidad ≥ 0,75 no se alcanzan a la vez, y se
+añadieron una interfaz web y un análisis por subgrupos que la Semana 1 había dejado fuera.
+Una cuarta, posterior a la sesión con el médico: el 18 de octubre (SP5-D) el LLM **volvió,
+pero solo como redactor a la salida**, motivado por la nota más baja de esa sesión (el
+lenguaje del mensaje, 2,5 sobre 5). No sustituye al informe ni interviene en el cálculo, y
+**no se validó con el médico** (sección 4.2).
 
 **Qué no se cumplió** (detalle en las secciones 12 y 13):
 
@@ -126,8 +131,8 @@ y §7.2), con el estado en que terminó cada uno. La evidencia está en la secci
 | 1 | Entrenar y evaluar una CNN con transfer learning sobre RSNA, con partición por paciente: recall ≥ 85 %, especificidad ≥ 70 % (objetivo 75 %) y AUC ≥ 0,85 en prueba (criterio unificado el 23-sep) | **Cumplido** con el criterio unificado. Recall 0,882, especificidad 0,702, AUC 0,885. La especificidad objetivo de 0,75 no se alcanza a la vez que el recall |
 | 2 | Desplegar la CNN como servidor MCP en Docker, consumido desde n8n, con latencia de extremo a extremo menor de 8 s | **Cumplido en lo desplegado**: servidor MCP y REST operativos. La latencia de inferencia es de 143 ms de mediana en el servidor; la de extremo a extremo no se midió con la regla del SP5 |
 | 3 | Flujo de dos roles en Telegram: síntomas del paciente con código seudónimo; evaluación por el profesional | **Cumplido** (SP3) |
-| 4 | Normalizar síntomas coloquiales con un LLM (precisión y recall ≥ 85 % por concepto) y combinar la probabilidad previa por regla clínica con la CNN mediante una fórmula bayesiana | **Parcial**. La combinación bayesiana está cumplida (SP4). La normalización con LLM y su métrica se **descartaron** (sección 4.2) |
-| 5 | Validar el prototipo con un médico general sobre 20 a 30 casos, con kappa y utilidad del pre-informe | **Realizado, criterio no cumplido**: 24 casos, dos lecturas; kappa ponderado 0,25 (mínimo 0,4); utilidad 4,0/5 |
+| 4 | Normalizar síntomas coloquiales con un LLM (precisión y recall ≥ 85 % por concepto) y combinar la probabilidad previa por regla clínica con la CNN mediante una fórmula bayesiana | **Parcial**. La combinación bayesiana está cumplida (SP4). La normalización con LLM y su métrica se **descartaron** (sección 4.2); el LLM volvió en SP5-D solo como redactor a la salida |
+| 5 | Validar el prototipo con un médico general sobre 20 a 30 casos, con kappa y utilidad del pre-informe | **Realizado, criterio no cumplido**: 24 casos, dos lecturas; kappa ponderado 0,25 (mínimo 0,4); utilidad 4,0/5 del informe (el pre-informe de SP5-D no se midió) |
 
 ## 4. Alcance: qué incluye y qué no
 
@@ -153,8 +158,8 @@ Presentación del proyecto.
 
 | Elemento | Resultado | Razón |
 | :--- | :--- | :--- |
-| Normalización del lenguaje coloquial con LLM | **Descartada** | Un extractor probabilístico en la *entrada* de un cálculo clínico no falla con un error: produce una probabilidad previa equivocada que nadie ve. El cuestionario es de botones; lo que entra al cálculo es exactamente lo que el paciente tocó (spec de SP3, D4). Efecto secundario declarado: ningún dato del paciente sale hacia un proveedor de LLM |
-| Redacción del pre-informe con LLM | **Descartada** | La combinación es aritmética auditable; un LLM entre los números y el clínico rompe la explicabilidad (spec de SP4, §12). El título del proyecto pierde «y LLM» |
+| Normalización del lenguaje coloquial con LLM | **Descartada** | Un extractor probabilístico en la *entrada* de un cálculo clínico no falla con un error: produce una probabilidad previa equivocada que nadie ve. El cuestionario es de botones; lo que entra al cálculo es exactamente lo que el paciente tocó (spec de SP3, D4). Efecto secundario que tuvo en SP3: ningún dato del paciente salía hacia un proveedor de LLM. Desde SP5-D sale el informe determinista, sin la imagen ni identificadores directos (fila siguiente) |
+| Redacción del pre-informe con LLM | **Descartada en SP4; reincorporada en SP5-D (18-oct), como redactor a la salida, no validada con el médico** | En SP4 se descartó porque un LLM entre los números y el clínico rompe la explicabilidad (spec de SP4, §12). En SP5-D volvió (spec de SP5-D), motivado por el lenguaje del mensaje (2,5 sobre 5 en H7), con salvaguardas: lee solo el informe determinista, que no contiene ni un carácter del paciente (D3); va **detrás** del informe, que no espera (D4); un código comprueba que cada cifra esté en el informe y que no haya palabras de tratamiento ni de diagnóstico, y si no pasa **no se manda nada** (D5); lleva una cabecera que lo rotula (D6); y el consentimiento nombra a OpenAI (D7). Proveedor: OpenAI `gpt-4o-mini`. H7 midió el informe sin pre-informe y el acta no se toca (D8). El título de la Semana 1 llevaba «y LLM»: el LLM está, pero redacta; no extrae ni calcula |
 | Corpus de 50 a 100 frases, tres enfoques y métrica de extracción | **Descartado** | Sin extractor no hay extracción que medir |
 | Combinación bayesiana | Cumplida, con cambio | El mensaje imprime la prevalencia declarada, la razón de verosimilitud de la clínica, la de la imagen y una horquilla entre independencia y dependencia total, en vez de una «probabilidad previa por síntomas» |
 | Validación con el médico | Cumplida, con cambio | Dos lecturas del mismo conjunto en vez de una sesión (el kappa sale solo de la lectura sin copiloto y el tiempo se mide sobre el mismo conjunto); se pregunta por opacidad compatible, no por neumonía |
@@ -181,6 +186,12 @@ métricas de la imagen con las del pipeline completo.
 | Latencia de extremo a extremo | 8 s | 3 s | Desde que el profesional sube la placa hasta que recibe el pre-informe |
 | Reducción del tiempo de triaje | 20 % | 40 % | Tiempo con y sin copiloto sobre el mismo conjunto de casos |
 | Utilidad del pre-informe (CSAT del profesional) | 4/5 | — | Calificación del médico sobre corrección, utilidad y lenguaje |
+
+**Una precisión de terminología (SP5-D).** En la Semana 1, «pre-informe» designaba el mensaje
+que recibe el profesional. Desde SP5-D ese mensaje se llama **informe** (determinista, con
+cinco bloques), y «pre-informe» es solo el segundo texto, en prosa, que redacta un LLM. Los
+indicadores de latencia, utilidad y lenguaje de esta tabla se midieron sobre el **informe**; el
+pre-informe no tiene medición propia.
 
 Indicadores complementarios de la Semana 1: ausencia de fuga de datos entre particiones (0
 pacientes compartidos); latencia de inferencia de la CNN en CPU (menos de 4 s, objetivo 1 s);
@@ -217,10 +228,10 @@ más estricto por sub-proyecto:
    pruebas automáticas en Python, además de las de los flujos de n8n.
 4. **Decisiones y correcciones por escrito.** La Presentación del proyecto se mantuvo como
    documento vivo con un Registro de cambios: lo que los datos desmentían (el objetivo de
-   especificidad, la palanca de mejora del modelo, la composición del dataset, el LLM) se
-   corrigió con fecha y evidencia. Las correcciones de afirmaciones de privacidad hechas el
-   26 de septiembre, a raíz de una evaluación externa, también se dejaron fechadas en los
-   documentos que las contenían.
+   especificidad, la palanca de mejora del modelo, la composición del dataset, el LLM de la
+   entrada) se corrigió con fecha y evidencia. Las correcciones de afirmaciones de privacidad
+   hechas el 26 de septiembre, a raíz de una evaluación externa, también se dejaron
+   fechadas en los documentos que las contenían.
 5. **Medir antes de decidir.** La arquitectura se eligió con ocho corridas comparadas y no
    por reputación del modelo (`docs/comparativa-corridas.md`); el umbral se elige sobre
    validación y nunca sobre prueba. Una reserva que el propio informe de la comparativa
@@ -240,7 +251,7 @@ El control de versiones es Git, con una rama por sub-proyecto y fusiones fechada
 | :--- | :--- | :--- |
 | Iván Camilo Romero Rodríguez | Product Owner y Scrum Master | Backlog, decisiones de diseño y de alcance, flujos de n8n y de los bots, logística de la validación médica, documentación y entregas |
 | Iván Mauricio Romero Mejía | Lead AI Engineer | Datos RSNA, entrenamiento y evaluación de la CNN, servidor MCP en Docker, combinación bayesiana, métricas, calidad del modelo, la calibración y el sesgo |
-| Médico general colaborador (externo, voluntario) | Experto del dominio | Sesión de concordancia: dos lecturas sobre 24 casos y valoración del pre-informe. Sin datos personales en ningún fichero del proyecto |
+| Médico general colaborador (externo, voluntario) | Experto del dominio | Sesión de concordancia: dos lecturas sobre 24 casos y valoración del informe del sistema. Sin datos personales en ningún fichero del proyecto |
 | Tutora del Proyecto Integrador (UEES) | Tutora y sponsor académico | Revisión de los entregables y aprobación de los hitos académicos |
 
 Ambos integrantes actuaron como equipo de desarrollo; la asignación concreta de historias se
@@ -258,7 +269,7 @@ conserva un registro de horas reales, así que esa estimación no se contrasta a
 | Cómputo de entrenamiento | Google Colab (GPU T4), nivel gratuito, con Colab Pro como contingencia | Ocho corridas comparadas a 320 px en tres entornos (Kaggle, Colab y CPU local), además de la primera corrida a 224 px y las tres de diagnóstico del 26-sep. En CPU, el entrenamiento de 4 + 20 épocas cuesta 10,8 h con EfficientNet-B0 y 24,9 h con DenseNet121 (README del repositorio; las 24 épocas completas: la corrida 6, la desplegada, paró a las 11 por la parada temprana y costó ≈ 5,3 h) |
 | Servidor | VPS de 16 GB de RAM y 8 vCPU con Docker, n8n y PostgreSQL; inferencia en CPU | Se cumplió; el servicio se acota a 2 núcleos y 2 GB de memoria |
 | Software | Python (PyTorch), n8n, Docker, PostgreSQL, Telegram Bot API, GitHub | Se cumplió, más Streamlit para la interfaz y scikit-learn para la calibración |
-| Servicios de IA | API de LLM (OpenAI o Gemini), 15 USD de consumo | No se usó: el LLM se descartó (sección 4.2) |
+| Servicios de IA | API de LLM (OpenAI o Gemini), 15 USD de consumo | **Usado** (OpenAI `gpt-4o-mini`) desde SP5-D (18-oct), solo para el pre-informe; el LLM de la entrada se descartó (sección 4.2) |
 | Personal | Dos integrantes, un médico ad honorem y la tutoría académica | Se cumplió; el médico participó de forma voluntaria |
 
 ### 8.2 Presupuesto
@@ -266,8 +277,10 @@ conserva un registro de horas reales, así que esa estimación no se contrasta a
 La Semana 1 estimó 138 USD para los dos meses del proyecto: 100 de infraestructura (costo
 referencial imputado, porque el servidor ya existía), 15 de consumo de API de LLM, 23 de
 contingencia (20 %) y 0 en datos, software y médico. Las 148 horas del equipo no se
-monetizaron. El gasto real no se reconstruyó; lo único que se puede afirmar es que la partida
-de LLM no se ejecutó.
+monetizaron. El gasto real no se reconstruyó. Lo que se puede afirmar es que la partida de
+LLM se ejecutó solo desde SP5-D y en pequeño: unos cientos de *tokens* por consulta, del orden
+de una décima de centavo de dólar (una estimación, no una medición), con una credencial propia
+del proyecto.
 
 ### 8.3 Dónde corre cada cosa
 
@@ -298,7 +311,7 @@ fijadas por versión.
 | H5 | Bot de Telegram con dos roles, extremo a extremo | 2-oct | 25-sep | −7 días (SP3) |
 | H6 | Módulo de síntomas y combinación bayesiana | 9-oct | 26-sep | −13 días, con alcance reducido: la combinación se entregó; el extractor con LLM se descartó (SP4) |
 | H7 | Validación clínica con el médico | 16-oct | 10 y 15-oct | En plazo. Las dos lecturas se hicieron el 10 y el 15 de octubre; el acta se cerró el 15. El criterio de kappa no se cumplió |
-| H8 | Informe final, videos y repositorio público | 24-oct | En curso | A 15 de octubre se estaba consolidando la documentación del curso (SP5-C2) |
+| H8 | Informe final, videos y repositorio público | 24-oct | En curso | A 15 de octubre se estaba consolidando la documentación del curso (SP5-C2); el 18, SP5-D (pre-informe con LLM) |
 
 Fuentes de las fechas reales: historial de fusiones del repositorio, Registro de cambios de
 la Presentación del proyecto y acta de H7.
@@ -320,7 +333,9 @@ la Presentación del proyecto y acta de H7.
 - **Congelación del código.** La Semana 1 prometió que la semana 6 no admitiría código nuevo.
   El tag `h7-sesion` (5 de octubre) congeló el código que generó los mensajes de la sesión.
   Con posterioridad se fusionaron cambios de robustez y de interfaz (SP5-B4 y SP5-C1, el 6
-  de octubre); el calendario de SP5 fijaba el 16 de octubre como último día de código nuevo.
+  de octubre); el calendario de SP5 fijaba el 16 de octubre como último día de código nuevo. SP5-D
+  (18 de octubre) añade después de esa fecha un segundo mensaje en el bot del profesional, por
+  decisión del equipo; el informe determinista que midió la sesión no cambia.
 
 ## 10. Cómo evolucionó el proyecto: SP1 a SP5
 
@@ -331,9 +346,9 @@ especificación, plan e implementación. Lo que cada uno entregó:
 | :--- | :-: | :--- | :--- | :--- | :--- |
 | **SP1. Núcleo de imagen** | H3 | Spec y pipeline el 16-sep; primera corrida el 19-sep; mejoras el 21-sep; cierre el 23-sep | Paquete `copiloto_triaje` (conversión DICOM a PNG, partición por paciente verificada sin fuga, transfer learning en dos fases, evaluación y selección de umbral); notebooks de entrenamiento en GPU; ocho corridas comparadas con tres arquitecturas | La primera corrida (MobileNetV3, 224 px) dio recall 0,766 y AUC 0,845, bajo los mínimos; con 320 px y ajuste fino completo se llegó a recall 0,882, especificidad 0,702 y AUC 0,885 | `docs/superpowers/specs/2026-09-16-sp1-nucleo-imagen-design.md`, `docs/mejoras-2026-09-21.md`, `docs/comparativa-corridas.md` |
 | **SP2. Servidor de inferencia** | H4 | 23 y 24-sep | Servicio MCP y REST en Docker sobre el mismo núcleo; calibrador isotónico y razón de verosimilitud acotada a [0,0163; 77,32]; rechazo de edades fuera de 18 a 100 años; contenedor sin puertos publicados | Latencia de inferencia 38 ms (REST) y 43 ms (MCP) en el contenedor; 143 ms de mediana en el servidor de producción | `docs/superpowers/specs/2026-09-23-sp2-servidor-mcp-design.md`, `docs/sp2-despliegue.md` |
-| **SP3. Bots de Telegram** | H5 | 24 y 25-sep | Dos bots (paciente y profesional) en n8n, base de datos PostgreSQL propia, consentimiento previo, código seudónimo, lista blanca de profesionales, limpieza diaria y avisos de salud | Sin LLM por decisión de diseño. En el 23,3 % de lo que el cribado etiqueta como positivo la razón de verosimilitud de la imagen es menor que 1; por eso el informe presenta la etiqueta y la evidencia por separado | `docs/superpowers/specs/2026-09-24-sp3-bot-n8n-design.md`, `docs/sp3-operacion.md` |
+| **SP3. Bots de Telegram** | H5 | 24 y 25-sep | Dos bots (paciente y profesional) en n8n, base de datos PostgreSQL propia, consentimiento previo, código seudónimo, lista blanca de profesionales, limpieza diaria y avisos de salud | Sin LLM en la entrada por decisión de diseño (en SP5-D vuelve, solo a la salida). En el 23,3 % de lo que el cribado etiqueta como positivo la razón de verosimilitud de la imagen es menor que 1; por eso el informe presenta la etiqueta y la evidencia por separado | `docs/superpowers/specs/2026-09-24-sp3-bot-n8n-design.md`, `docs/sp3-operacion.md` |
 | **SP4. Combinación bayesiana** | H6 | 26-sep | Regla clínica de Heckerling (seis razones de verosimilitud, de 0,12 a 17,5), prevalencia declarada de 0,1466, combinación como horquilla entre independencia y dependencia total, y asma «no sé» como intervalo | La combinación entrega un rango y no una cifra con falsa precisión | `docs/superpowers/specs/2026-09-26-sp4-combinacion-bayesiana-design.md` |
-| **SP5. Validación y cierre** | H7, H8 | 27-sep a hoy (5 y 6-oct las fusiones de B2, B3, B4 y C1) | Validación semisintética de la combinación (generador, oráculo y rejilla de dependencia); instrumentos y sesión de concordancia con un médico; anonimización y pruebas de anonimato; texto del consentimiento al día; rechazo de DICOM que el modelo no puede evaluar; interfaz Streamlit con umbral por vista y mapa de calor; estructura y documentación del curso | La aritmética de la combinación se reproduce caso a caso; el kappa con el médico fue 0,25 | `docs/superpowers/specs/2026-09-27-sp5-validacion-y-cierre-design.md`, `docs/validacion-semisintetica-sp5.md`, `docs/validacion-semisintetica/acta-h7.md` |
+| **SP5. Validación y cierre** | H7, H8 | 27-sep a hoy (5 y 6-oct las fusiones de B2, B3, B4 y C1) | Validación semisintética de la combinación (generador, oráculo y rejilla de dependencia); instrumentos y sesión de concordancia con un médico; anonimización y pruebas de anonimato; texto del consentimiento al día; rechazo de DICOM que el modelo no puede evaluar; interfaz Streamlit con umbral por vista y mapa de calor; estructura y documentación del curso; y, el 18-oct (SP5-D), un pre-informe que redacta un LLM detrás del informe, sin validar con el médico | La aritmética de la combinación se reproduce caso a caso; el kappa con el médico fue 0,25. El lenguaje del mensaje (2,5 sobre 5) motivó SP5-D | `docs/superpowers/specs/2026-09-27-sp5-validacion-y-cierre-design.md`, `docs/validacion-semisintetica-sp5.md`, `docs/validacion-semisintetica/acta-h7.md`, `docs/superpowers/specs/2026-10-18-sp5d-preinforme-llm-design.md` |
 
 Además de los sub-proyectos, el proyecto entregó los trabajos de las Semanas 2 a 4, que
 alimentan estos documentos: el análisis exploratorio de RSNA (`docs/analisis_datos.md`), el
@@ -353,7 +368,8 @@ añadieron los sub-proyectos, con lo que pasó de verdad.
 | Descarga o conversión lenta de DICOM | API de Kaggle y conversión por lotes | No fue problema: la preparación completa de los 26 684 DICOM tarda unos 25 minutos en local (README), y leer solo sus cabeceras, 26 segundos (notebook de exploración) |
 | Límite de GPU gratuita | Checkpoints en Drive y Colab Pro | Se entrenó en Kaggle, Colab y CPU local; el entrenamiento local es reanudable |
 | Incompatibilidad entre n8n y MCP | Endpoint REST de respaldo | **No ocurrió**: el bot llama a la herramienta MCP; el REST queda como respaldo |
-| Salidas inconsistentes del LLM | Few-shot con esquema JSON; léxico de reglas como respaldo | **Eliminado de raíz** al descartar el LLM |
+| Salidas inconsistentes del LLM | Few-shot con esquema JSON; léxico de reglas como respaldo | **Eliminado de raíz del lado de la entrada** al descartar el extractor (SP3-SP4). **Reaparece en la salida con SP5-D y se mitiga, no se elimina**: el LLM solo redacta; un código comprueba antes de enviar que cada cifra esté en el informe, que no haya palabras de tratamiento ni de diagnóstico y que la longitud sea razonable; si no pasa, **silencio**; y la cabecera lo rotula y manda el informe de arriba. Queda el riesgo de una frase verosímil pero errónea que pase la revisión, y que el pre-informe no se validó con el médico |
+| El informe determinista viaja a un tercero (OpenAI) | No previsto en la Semana 1 | **Aceptado y declarado** (spec de SP5-D). Solo viaja el informe, sin imagen, nombre, cuenta, código, edad ni texto del paciente; el consentimiento nombra a OpenAI desde el 18-oct; la evaluación de impacto sigue pendiente (`docs/consideraciones_eticas.md`, §6.4) |
 | Agenda del médico (riesgo crítico) | Sesión agendada desde la semana 3 y fecha alterna en la semana 5 | **Se materializó en parte**: la lectura 1 se movió del 8 al 10 de octubre y el intervalo entre lecturas quedó en 5 días |
 | La radiografía y las respuestas pasan por los servidores de Telegram | Seudonimización, borrado tras el análisis y aviso de consentimiento | **Aceptado y declarado, no mitigado** (spec de SP3, §5.5). El consentimiento se reescribió el 5-oct para nombrar a Telegram, a la IA y el plazo real de conservación |
 | No existen datos reales que emparejen imagen y clínica | No previsto en la Semana 1 | **Riesgo mayor del proyecto, no resuelto** (spec de SP3, §19). La combinación se validó solo con una simulación semisintética, que no mide exactitud clínica |
@@ -377,7 +393,7 @@ del 95 %.
 | Latencia de extremo a extremo | 8 s / 3 s | No se midió con la regla del spec de SP5 (§6.3): `docs/validacion-semisintetica/` no contiene `latencia.json`. Solo consta la latencia de inferencia, que es un tramo | **No medido** | Spec de SP5, §6.3; `docs/validacion-semisintetica/README.md` |
 | Kappa con el médico | 0,4 / 0,6 | Kappa ponderado lineal **0,25** (IC 0,07 a 0,44); Cohen sin ponderar **0,10** (−0,09 a 0,30); binario en «alta» 0,29 (0,03 a 0,55); n = 24, un evaluador | **No cumplido**, ni el mínimo | `docs/validacion-semisintetica/acta-h7.md` |
 | Reducción del tiempo de triaje | 20 % / 40 % | Razón de medias geométricas con/sin copiloto **2,00** (IC BCa 1,57 a 2,49): el tiempo se duplicó. Corregida por el efecto de releer los casos: 1,11 (0,69 a 1,81) | **No cumplido**: el tiempo no se redujo | Ídem |
-| Utilidad del pre-informe (CSAT ≥ 4/5) | 4/5 | Corrección 4,7; utilidad 4,0; **lenguaje 2,5** (n = 20, un médico) | **Parcial**: corrección y utilidad cumplen; el lenguaje no | Ídem |
+| Utilidad del pre-informe (CSAT ≥ 4/5) | 4/5 | Corrección 4,7; utilidad 4,0; **lenguaje 2,5** (n = 20, un médico), medidos sobre el **informe** determinista. El pre-informe redactado por un LLM (SP5-D) no se midió | **Parcial**: corrección y utilidad cumplen; el lenguaje no | Ídem |
 | Precisión y recall de la extracción de síntomas | 0,80 / 0,85 | No existe extractor | **Descartado** | Spec de SP5, §6.2 |
 | Disminución de derivaciones innecesarias a radiología (placas sin opacidad correctamente filtradas) | — | 0,702, que es la especificidad en prueba; medido en RSNA, no en operación | **Medido en su propia definición**, sin evidencia operativa | Spec de SP5, §6.3 |
 | Aritmética de la combinación bayesiana | La posterior calculada coincide con la del generador | Coincide dentro de 0,015 log-odds en todos los casos del escenario sin dependencia | **Cumplido** (simulación semisintética) | `docs/validacion-semisintetica-sp5.md`, «Escenario 0A»; `tests/test_validacion_0a.py` |
@@ -403,7 +419,8 @@ estimación puntual, como estaba declarado.
    control que se releyeron sin mensaje del sistema (media geométrica de las razones: 1,80),
    así que el efecto del copiloto aislado es incierto. Corregida por el efecto de releer, la
    razón es 1,11 (intervalo de 0,69 a 1,81): sin evidencia de reducción. El lenguaje del
-   pre-informe recibió 2,5 sobre 5, la nota más baja de la sesión.
+   informe recibió 2,5 sobre 5, la nota más baja de la sesión; SP5-D (18-oct) responde con un
+   pre-informe redactado por un LLM, que esa sesión no midió y **no se validó con el médico**.
 3. **Especificidad objetivo de 0,75.** La frontera medida lo hace incompatible con un recall
    de 0,85 (con 0,752 de especificidad el recall en validación cae a 0,840). El proyecto
    priorizó el recall, y el mínimo de especificidad se cumple con un margen de 0,002.
@@ -418,6 +435,8 @@ estimación puntual, como estaba declarado.
 
 ### 13.2 Trabajo futuro
 
+- Validar con un médico el pre-informe de SP5-D, que busca mejorar el lenguaje (2,5 sobre 5),
+  y medir con casos reales cuántas veces la revisión por código lo rechaza.
 - Validación local con datos emparejados de imagen y clínica antes de cualquier uso clínico
   (el repositorio es una demostración académica, no un producto sanitario).
 - Repetir las corridas con varias semillas, escalonar el descongelado del backbone y explorar
@@ -432,7 +451,7 @@ estimación puntual, como estaba declarado.
 
 ## Fuentes
 
-- `docs/superpowers/specs/` (SP1 a SP5 y SP5-C1) y `docs/superpowers/plans/`.
+- `docs/superpowers/specs/` (SP1 a SP5, SP5-C1 y SP5-D) y `docs/superpowers/plans/`.
 - `docs/comparativa-corridas.md`, `docs/frontera-recall-especificidad.md`,
   `docs/mejoras-2026-09-21.md`, `docs/sp2-despliegue.md`, `docs/sp3-operacion.md`.
 - `docs/validacion-semisintetica-sp5.md` y `docs/validacion-semisintetica/` (acta de H7,

@@ -65,6 +65,14 @@ y su plan (`docs/superpowers/plans/`):
   `notebooks/01` a `05`, `data/`, `models/`, `results/`) como puntos de entrada finos sobre el
   código de siempre, y la documentación de `docs/` (diseño en
   `docs/superpowers/specs/2026-10-15-sp5c2-estructura-y-documentacion-design.md`).
+- **SP5-D — el pre-informe.** Detrás del informe del bot del profesional, un LLM (OpenAI
+  `gpt-4o-mini`) redacta un segundo mensaje a partir de ese informe y de nada más; un código lo
+  revisa y, si no pasa, no se manda. Son cuatro nodos nuevos en `n8n/copiloto-profesional.json`,
+  el marcador `CRED_OPENAI` y una viñeta más en el consentimiento del bot del paciente. Diseño:
+  [`2026-10-18-sp5d-preinforme-llm-design.md`](superpowers/specs/2026-10-18-sp5d-preinforme-llm-design.md);
+  cómo está montado, en [`arquitectura.md`](arquitectura.md#45-el-pre-informe-un-llm-a-la-salida);
+  la credencial y qué pasa si OpenAI falla, en [`sp3-operacion.md`](sp3-operacion.md), §7. Es el
+  único sitio del sistema que llama a un LLM, y solo desde el bot del profesional.
 
 La arquitectura se fijó **midiendo**, no a priori: las tres candidatas empatan
 en AUC 0,874-0,889, un margen del orden de la varianza entre dos ejecuciones de
@@ -121,7 +129,9 @@ identificadores de las credenciales: `scripts/marcadores_n8n.py` los
 sustituye por los valores de `n8n/valores.local.json` (que no se versiona;
 `n8n/valores.ejemplo.json` dice qué claves lleva) antes de importarlos, y los
 vuelve a poner antes de versionar un export. El procedimiento, en
-[`sp3-operacion.md`](sp3-operacion.md), §7.
+[`sp3-operacion.md`](sp3-operacion.md), §7. Entre los marcadores está `CRED_OPENAI`, el `id` de la
+credencial de n8n con la clave de OpenAI del pre-informe (SP5-D): esa clave **no** es una variable
+de entorno ni se escribe en ningún fichero, vive dentro de la credencial.
 
 ## 4. Dónde corre cada cosa
 
@@ -223,7 +233,9 @@ node tests/decidir.mjs
 node tests/mantenimiento.mjs
 ```
 
-Cada una imprime `TODO VERDE` y sale 0, o cuenta los fallos y sale 1. **No las
+Cada una imprime `TODO VERDE` y sale 0, o cuenta los fallos y sale 1. `profesional.mjs`
+cubre, desde SP5-D, el `jsCode` real de `Desenlace`, `Preparar pre-informe` y `Revisar
+pre-informe`, con ejemplos que pasan y que se rechazan; no llama a OpenAI. **No las
 encadene con una tubería**: `node tests/profesional.mjs | tail` devuelve el
 estado de `tail`, que es 0 siempre, y así se han fusionado pruebas rojas.
 
@@ -545,6 +557,7 @@ C:\venv-copiloto\Scripts\python.exe -m pytest tests/test_app_docker.py -rs
 | SP5 — validación y cierre | [diseño](superpowers/specs/2026-09-27-sp5-validacion-y-cierre-design.md) | planes de [SP5-A](superpowers/plans/2026-09-28-sp5a-generador-y-sesion.md), [SP5-B1](superpowers/plans/2026-09-28-sp5b1-metricas-y-documento.md), [SP5-B2](superpowers/plans/2026-09-29-sp5b2-anonimizacion.md) y [SP5-B3](superpowers/plans/2026-10-05-sp5b3-residuos-del-acta.md) |
 | SP5-C1 — interfaz y umbral por vista | [diseño](superpowers/specs/2026-10-05-sp5c1-interfaz-y-umbral-por-vista-design.md) | [plan](superpowers/plans/2026-10-05-sp5c1-interfaz-y-umbral-por-vista.md) |
 | SP5-C2 — estructura y documentación del curso | [diseño](superpowers/specs/2026-10-15-sp5c2-estructura-y-documentacion-design.md) | — |
+| SP5-D — el pre-informe redactado por un LLM | [diseño](superpowers/specs/2026-10-18-sp5d-preinforme-llm-design.md) | — |
 
 Y además:
 

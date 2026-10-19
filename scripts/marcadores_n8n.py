@@ -60,6 +60,7 @@ MARCADORES = (
     "CRED_POSTGRES_COPILOTO",
     "CRED_SECRETO_PACIENTE",
     "CRED_SECRETO_PROFESIONAL",
+    "CRED_OPENAI",
     "bot-paciente",
     "bot-profesional",
     "bot-avisos",
