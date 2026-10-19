@@ -285,12 +285,13 @@ def test_las_ejecuciones_guardan_el_error_pero_no_los_exitos(flujo):
 
 
 def test_los_dos_bots_siguen_sin_tocarse():
-    """Restriccion global 1. Sus exports siguen siendo los de las tareas 5 y 6."""
+    """Restriccion global 1. Sus exports siguen siendo los de las tareas 5 y 6,
+    mas los cuatro nodos del pre-informe que SP5-D anade al del profesional."""
     for fichero, nombre, cuantos in (
             ("copiloto-paciente.json",
              "\U0001fa7a Copiloto Triaje: Paciente (Telegram)", 24),
             ("copiloto-profesional.json",
-             "\U0001fa7a Copiloto Triaje: Profesional (Telegram)", 25)):
+             "\U0001fa7a Copiloto Triaje: Profesional (Telegram)", 29)):
         f = json.loads((RAIZ / "n8n" / fichero).read_text(encoding="utf-8"))
         assert f["name"] == nombre
         assert len(f["nodes"]) == cuantos, (fichero, len(f["nodes"]))
