@@ -19,7 +19,7 @@ que el fichero que bajaste es el bueno y dónde vive el calibrador, que sí est�
 | SHA-256 | `bb985e1f792e1cfee150ec57bdc6d706f7484499fa999da3406a5798260e8d47` |
 | Umbral de cribado | 0,4258, sobre la puntuación cruda (elegido en validación) |
 | AUC en validación | 0,8827 |
-| Prevalencia local declarada | 0,1466 (la probabilidad previa de la combinación con la clínica) |
+| Prevalencia de partida | 0,1466, la probabilidad previa de la combinación con la clínica: la de la cohorte en que se derivó la regla de Heckerling (134 de 914, Illinois, 1990), a falta de un dato local; la institución la sustituye por la suya |
 | Umbral por vista | PA 0,1798 y AP 0,5815; **apagado por defecto**, lo enciende la institución |
 
 Cómo rinde en prueba (3 811 placas, 844 con opacidad), de `app/assets/metricas.json` (mismo
