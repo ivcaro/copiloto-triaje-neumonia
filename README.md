@@ -101,9 +101,11 @@ configuración. Se despliega **EfficientNet-B0 a 320 px** (corrida 6), que entre
 más barato que DenseNet121 y tiene su calibrador propio. Junto a la red, la **regla clínica de
 Heckerling** (temperatura, frecuencia cardiaca, crepitantes, murmullo disminuido y asma) aporta
 su razón de verosimilitud, y una **combinación bayesiana** explícita da la probabilidad final:
-`odds(prevalencia local 0,1466) × RV clínica × RV imagen`, como una horquilla entre los
-supuestos de independencia y de dependencia total de las dos evidencias. Detalle en
-[`docs/arquitectura.md`](docs/arquitectura.md).
+`odds(prevalencia de partida 0,1466) × RV clínica × RV imagen`, como una horquilla entre los
+supuestos de independencia y de dependencia total de las dos evidencias. La prevalencia de
+partida es la de la cohorte en que se derivó la regla (134 neumonías en 914 pacientes con
+sospecha, Illinois, 1990), a falta de un dato ecuatoriano; la institución que lo adopte la
+sustituye por la suya. Detalle en [`docs/arquitectura.md`](docs/arquitectura.md).
 
 **Preprocesamiento.** Del DICOM de 8 bits a PNG, en escala de grises replicada a tres canales,
 redimensionado a 320 × 320 y normalizado con las estadísticas de ImageNet; idéntico en
@@ -404,7 +406,8 @@ En resumen:
 - **Sesgo medido: el rendimiento depende de la proyección y de la edad.** Con el umbral único,
   el modelo deja sin marcar 3 de cada 10 opacidades en placas PA (recall 0,69; 0,64 con 60 años
   o más) y marca de más en las AP (especificidad 0,39). El perjudicado es el paciente
-  ambulatorio, sobre todo el mayor. La mitigación evaluada, el umbral por vista, iguala el recall
+  ambulatorio, sobre todo el mayor; la placa PA, de pie, es un indicador aproximado de él,
+  porque el conjunto no registra dónde estaba el paciente. La mitigación evaluada, el umbral por vista, iguala el recall
   a cambio de bajar la especificidad global de 0,70 a 0,62: está **desplegada pero apagada** y
   encenderla es una decisión de la institución.
 - **Privacidad, parcial.** No se guarda ninguna imagen y se usan seudónimos, pero la placa y las
@@ -423,7 +426,9 @@ En resumen:
 
 **Limitaciones conocidas.** Se midió en RSNA (placas frontales de un conjunto de Estados Unidos)
 y no en pacientes de ninguna consulta: no hay validación local, ni con otras proyecciones u otros
-equipos. Mide opacidad, no neumonía. Pierde una de cada ocho opacidades en prueba (una de cada
+equipos. El conjunto no trae raza, etnia ni nivel socioeconómico, así que el rendimiento por
+esas dimensiones, que en Ecuador importan, no se puede medir. Mide opacidad, no neumonía.
+Pierde una de cada ocho opacidades en prueba (una de cada
 tres en PA). El 9,9 % de las placas de prueba cae en una banda en que el cribado las marca y la
 imagen resta probabilidad. La combinación con la clínica solo se validó en simulación y con un
 médico, con un acuerdo bajo (kappa 0,25). El pre-informe del LLM no se validó con el médico, y
