@@ -211,8 +211,10 @@ en 12 de 20 casos, y el tiempo de triaje no se redujo (razón 2,00; 1,11 corregi
 de releer, con un intervalo que incluye el 1). Acta:
 [`docs/validacion-semisintetica/acta-h7.md`](docs/validacion-semisintetica/acta-h7.md); lo que el
 equipo lee en ella y lo que cambiaría antes de otra validación, en
-[`docs/validacion-semisintetica/lectura-critica-h7.md`](docs/validacion-semisintetica/lectura-critica-h7.md). La
-simulación semisintética muestra que la combinación por independencia exagera cuando la
+[`docs/validacion-semisintetica/lectura-critica-h7.md`](docs/validacion-semisintetica/lectura-critica-h7.md).
+Al cerrar el acta, el médico **no dio su conformidad**: atribuye sus cambios de opinión a cotejar
+los síntomas, la imagen y el análisis de la IA, y pidió más variables clínicas (tabaquismo,
+secreciones, estado general, laboratorio). La simulación semisintética muestra que la combinación por independencia exagera cuando la
 clínica y la imagen dependen entre sí, así que la cifra combinada es **orientativa**:
 [`docs/validacion-semisintetica-sp5.md`](docs/validacion-semisintetica-sp5.md). Todo esto, en
 [`notebooks/05_evaluacion.ipynb`](notebooks/05_evaluacion.ipynb) y [`results/`](results/README.md).

@@ -78,6 +78,12 @@ No es un resultado: es la **plantilla** del acta de la sesión con el médico
 `sesion.json`; hasta que la sesión se haga, ni `sesion.json` ni `acta-h7.md`
 están en esta carpeta. El procedimiento está en `docs/sp5-sesion.md`.
 
+## `resumen-para-el-medico.md`
+
+El texto del resumen de una página que se envió al médico con el acta para cerrarla:
+lo mismo que el acta, en palabras, con tres preguntas. Sus respuestas están anexadas
+en el acta, sin editar.
+
 ## `lectura-critica-h7.md`
 
 No es un resultado ni son palabras del médico: es el **análisis del equipo** sobre la sesión H7,
