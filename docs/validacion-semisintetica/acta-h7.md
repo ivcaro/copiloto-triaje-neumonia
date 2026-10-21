@@ -94,16 +94,37 @@ generada) y así se le dijo al médico.
 ¿En su práctica, la radiografía en DICOM se obtiene del PACS? Es la pregunta
 que el diseño de SP3 (§18) dejó para antes de H7.
 
-(Respuesta del médico en la reunión de preparación; se anota a mano.)
+No quedó anotada en la reunión de preparación. Al cerrar el acta se le hizo
+otra vez, como pregunta 2 del [resumen de una página](resumen-para-el-medico.md)
+que se le envió con ella, y respondió por WhatsApp. Su respuesta, sin editar:
+
+> «Por Dicon o por link»
 
 ## Observaciones del médico
 
-(Se anexan sin editar. Si no las envió, se hace constar.)
+Se anexan sin editar: sus respuestas a las preguntas 1 y 3 del
+[resumen](resumen-para-el-medico.md), por WhatsApp, transcritas por el equipo
+sin su nombre.
+
+> 1. «No. El analisis puede ser mejor, a mi parecer se cambio de opinion al
+>    cotejar los sintomas, las imagenes y el análisis de la IA»
+> 3. «Sería bueno aumentar sintomas como si es fumador, tipo de tos, aspecto y
+>    coloración de las secreciones, estado general de paciente y resultados de
+>    exámenes de laboratorio, para hacer más presciso el diagnóstico»
 
 ## Conformidad
 
-El acta se cierra con la conformidad del médico, o con la constancia de que
-no la envió.
+**El médico no dio su conformidad.** A la pregunta 1 del resumen —«¿Este
+resumen y el acta reflejan lo que pasó en las sesiones? Sí / No (y qué
+corregiría)»— respondió «No», con el motivo citado arriba.
+
+El equipo entiende que su objeción es a cómo se interpretan los cambios de banda
+de la lectura 2: él los atribuye a cotejar los síntomas, las imágenes y el
+análisis de la IA, no a dejarse llevar por el sistema. Ninguna cifra de esta acta
+cambia por ello. Cómo lo lee el equipo, y qué haría falta para distinguir las dos
+lecturas, está en la [lectura crítica de H7](lectura-critica-h7.md).
+
+Anexado el 21-oct-2026.
 
 ## Anexo: los casos
 
