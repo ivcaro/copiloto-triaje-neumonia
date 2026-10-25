@@ -2136,18 +2136,19 @@ def test_la_cli_cuenta_los_nombres_admitidos_sin_ensenarlos(tmp_path):
     _sin_ninguna_huella(salida, huellas)
 
 
-def test_el_readme_declara_los_dos_integrantes_y_la_tutora():
-    """D5 en el README de verdad: tres nombres (los dos integrantes y la
-    tutora), con ocho tokens entre todos, y cada uno se ve en el README, no
-    solo en la declaracion. Un nombre de mas en la declaracion hace fallar
+def test_el_readme_declara_el_equipo_la_tutora_la_cuenta_y_el_dominio():
+    """D5 en el README de verdad: cinco nombres (los dos integrantes, la
+    tutora, la cuenta de GitHub del repositorio y el dominio de la app), con
+    diez tokens entre todos, y cada uno se ve en el README, no solo en la
+    declaracion. Un nombre de mas en la declaracion hace fallar
     esta prueba: la excepcion no crece sin que alguien lo decida aqui. Los
     nombres no se escriben en esta prueba, que es de los ficheros de fuera."""
     texto = README_DE_VERDAD.read_text(encoding="utf-8")
     nombres = va.nombres_publicos(texto)
-    tres_nombres = len(nombres) == 3
-    assert tres_nombres, f"el README declara {len(nombres)} nombres"
-    ocho_tokens = len({t for n in nombres for t in va.tokens(n)}) == 8
-    assert ocho_tokens, "los nombres declarados no dan los ocho tokens"
+    cinco_nombres = len(nombres) == 5
+    assert cinco_nombres, f"el README declara {len(nombres)} nombres"
+    diez_tokens = len({t for n in nombres for t in va.tokens(n)}) == 10
+    assert diez_tokens, "los nombres declarados no dan los diez tokens"
     visible = "\n".join(linea for linea in texto.splitlines()
                         if not linea.strip().startswith("<!--"))
     se_ven = all(nombre in visible for nombre in nombres)

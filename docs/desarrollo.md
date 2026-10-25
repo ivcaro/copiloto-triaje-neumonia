@@ -742,8 +742,8 @@ cuando el equipo lo diga: Settings → General → Danger Zone → **Change repo
 Así corre la demostración pública de la entrega: la imagen de `app/`, en Docker, en un
 servidor del equipo y detrás de su proxy inverso. Hugging Face pide un plan de pago (PRO) para
 crear un Space de tipo Docker, y por eso esa vía es la alternativa de la
-[sección 13](#13-publicar-la-app). **La dirección pública no se escribe en este repositorio**: se
-da en la entrega del curso y en el código QR del vídeo de presentación. Lo que sigue son los
+[sección 13](#13-publicar-la-app). La dirección pública está en el README (sección «Interfaz de
+usuario») y en el código QR del vídeo de presentación. Lo que sigue son los
 pasos genéricos; lo que va entre `<ángulos>` lo elige quien despliega.
 
 **Antes de empezar.** Un servidor con Docker y BuildKit (por defecto desde Docker 23), unos

@@ -96,8 +96,10 @@ de SP5-C2 los admite en tres ficheros y en ningún otro: `README.md`,
 - **Que se vea**: lo admitido no es hallazgo, pero el script lo cuenta en su
   salida («nombres declarados en el README, admitidos (D5): …»), con los
   ficheros y sin la huella ni el token.
-- **Que no crezca sola**: `test_el_readme_declara_los_dos_integrantes_y_la_tutora`
-  exige que el README declare tres nombres, con ocho tokens entre todos, y
+- **Que no crezca sola**: `test_el_readme_declara_el_equipo_la_tutora_la_cuenta_y_el_dominio`
+  exige que el README declare cinco nombres (los dos integrantes, la tutora,
+  la cuenta de GitHub del repositorio y el dominio de la app), con diez
+  tokens entre todos, y
   que cada uno se vea fuera de la declaración; añadir un nombre obliga a
   cambiar esa prueba. Y con la lista entera,
   `test_los_nombres_del_readme_fuera_de_sus_tres_ficheros_son_hallazgo`
@@ -246,8 +248,8 @@ repositorio se publica con `git push` de su único commit, nunca comprimiendo
 la carpeta.
 
 **La excepción de los nombres (D5) solo fija recuentos.**
-`test_el_readme_declara_los_dos_integrantes_y_la_tutora` exige tres nombres,
-con ocho tokens entre todos, y que cada uno se vea en el README, pero no guarda
+`test_el_readme_declara_el_equipo_la_tutora_la_cuenta_y_el_dominio` exige cinco
+nombres, con diez tokens entre todos, y que cada uno se vea en el README, pero no guarda
 ni los nombres ni sus huellas (no se guardan huellas en las pruebas). Sustituir
 un nombre declarado por otro token de la lista con el mismo número de palabras
 pasaría las pruebas automáticas y quedaría admitido en los tres ficheros: solo

@@ -242,8 +242,8 @@ clínica y la imagen dependen entre sí, así que la cifra combinada es **orient
 **Instalación, paso a paso.**
 
 ```
-git clone <dirección del repositorio>   # PENDIENTE: se escribe al hacer público el repositorio
-cd copiloto-triaje
+git clone https://github.com/ivcaro/copiloto-triaje-neumonia.git
+cd copiloto-triaje-neumonia
 python -m venv .venv
 source .venv/bin/activate            # PowerShell: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt      # versiones fijas; torch en CPU
@@ -350,13 +350,13 @@ despliegue, en [`docs/desarrollo.md`](docs/desarrollo.md#9-la-aplicación-de-dem
 
 **Dónde está desplegada.** La demostración pública corre en un servidor del propio equipo: la
 misma imagen de `app/`, en Docker y detrás del proxy inverso del equipo. No está en Hugging
-Face porque allí un Space de tipo Docker exige un plan de pago (PRO). **Su dirección no está en
-este repositorio**: se da en la entrega del curso y en el código QR del vídeo de presentación.
-Quien no tenga ese enlace puede levantarla en local con las órdenes de arriba, y quien quiera
+Face porque allí un Space de tipo Docker exige un plan de pago (PRO). **Dirección:
+<https://copiloto-app.jivand.com>** (también en el código QR del vídeo de presentación). Es un
+despliegue para la evaluación del curso: si deja de estar disponible, se puede levantar en local con las órdenes de arriba, y quien quiera
 montarla en su propio servidor encuentra los pasos genéricos en
 [`docs/desarrollo.md`](docs/desarrollo.md#12-desplegar-la-app-en-un-servidor-propio).
 
-- **Repositorio público:** **PENDIENTE** <!-- PENDIENTE: dirección del repositorio, cuando se haga público -->
+- **Repositorio:** <https://github.com/ivcaro/copiloto-triaje-neumonia>
 
 La alternativa de un Space de Hugging Face (requiere un plan PRO) también está preparada:
 [`despliegue/huggingface/`](despliegue/huggingface/README.md) arma los ficheros, y los pasos para
@@ -450,8 +450,8 @@ usos previstos y fuera de alcance, en la [ficha del modelo](docs/ficha_modelo.md
 
 ## Autores y contribuciones
 
-<!-- Excepción D5 del anonimato: los nombres de esta línea son los únicos que pueden aparecer, y solo en README.md, LICENSE y docs/planificacion.md. scripts/verificar_anonimato.py los lee de la línea siguiente. -->
-<!-- nombres-publicos: Iván Camilo Romero Rodríguez; Iván Mauricio Romero Mejía; Gladys Villegas -->
+<!-- Excepción D5 del anonimato: los nombres de esta línea son los únicos que pueden aparecer, y solo en README.md, LICENSE y docs/planificacion.md: los del equipo y la tutora, la cuenta de GitHub del repositorio y el dominio de la app. scripts/verificar_anonimato.py los lee de la línea siguiente. -->
+<!-- nombres-publicos: Iván Camilo Romero Rodríguez; Iván Mauricio Romero Mejía; Gladys Villegas; ivcaro; jivand -->
 
 | Integrante | Rol | Contribución |
 | :--- | :--- | :--- |
