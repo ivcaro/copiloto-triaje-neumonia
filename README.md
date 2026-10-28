@@ -521,6 +521,8 @@ pandas, Streamlit, FastAPI, el SDK de MCP, n8n y PostgreSQL.
 
 ## Videos
 
-- **Video pitch (5 minutos):** se añadirá aquí al grabarlo.
-- **Video de respuestas a las preguntas:** se añadirá aquí al grabarlo, cuando el profesor
-  entregue las preguntas en la última semana de clases.
+Los dos videos están adjuntos a la versión [v1.2](https://github.com/ivcaro/copiloto-triaje-neumonia/releases/tag/v1.2)
+del repositorio:
+
+- **Video pitch:** <https://github.com/ivcaro/copiloto-triaje-neumonia/releases/download/v1.2/Video_pitch.mp4>
+- **Video de respuestas a las preguntas:** <https://github.com/ivcaro/copiloto-triaje-neumonia/releases/download/v1.2/Video_preguntas.mp4>

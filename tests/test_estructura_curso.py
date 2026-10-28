@@ -121,12 +121,16 @@ def test_la_tabla_de_contenidos_del_readme_enlaza_cada_seccion():
     assert anclas == [_ancla(s) for s in SECCIONES_DEL_README[1:]]
 
 
-def test_el_readme_no_inventa_los_enlaces_de_los_videos():
-    """Los videos se graban al final: hasta entonces la sección lo dice, sin enlaces falsos."""
+def test_el_readme_enlaza_los_dos_videos_de_la_version_v1_2():
+    """Los dos videos van adjuntos a la versión v1.2, no dentro del repositorio."""
     texto = README.read_text(encoding="utf-8")
-    videos = texto.split("\n## Videos", 1)[1]
-    assert "](" not in videos and "http" not in videos
-    assert "se añadirá" in videos
+    videos = texto.split("\n## Videos", 1)[1].split("\n## ", 1)[0]
+    # La cuenta solo se nombra en el README (D5): la dirección se toma de su línea del repositorio.
+    repositorio = re.search(r"\*\*Repositorio:\*\* <(https://github\.com/[^>]+)>", texto).group(1)
+    descarga = repositorio + "/releases/download/v1.2/"
+    assert re.findall(r"<(https://[^>]+\.mp4)>", videos) == [descarga + "Video_pitch.mp4",
+                                                             descarga + "Video_preguntas.mp4"]
+    assert "se añadirá" not in videos
 
 
 # --------------------------------------------------------------------------
